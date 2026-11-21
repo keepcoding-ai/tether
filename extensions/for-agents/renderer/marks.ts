@@ -77,10 +77,11 @@ export function marks(ui: TetherUi): IDisposable[] {
   const schedule = (): void => {
     if (queued || disposed) return
     queued = true
-    queueMicrotask(() => { queued = false; apply() })
+    // A pass that cannot read the app yet (the dock is not up while extensions activate) waits for the next event.
+    queueMicrotask(() => { queued = false; try { apply() } catch (e) { console.error(`for-agents: marks: ${(e as Error).message}`) } })
   }
 
-  apply()
+  schedule()
   return [
     ui.objects.onDidChange(schedule),
     ui.desks.onDidChange(schedule),

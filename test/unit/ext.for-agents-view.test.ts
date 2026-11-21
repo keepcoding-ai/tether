@@ -166,20 +166,27 @@ describe('the rest of the states', () => {
     assert.equal(m, undefined)
   })
 
-  test('the owner pane of a desk it does not live in keeps its crown', () => {
-    const m = marksOf({ desks: ['d'], deskOwner: { d: own('A') }, panes: [{ id: 'A' }] }, 'A')!
-    assert.deepEqual(kinds(m), ['crown'])
+  test('the owner of a desk who lives in another desk has no crown there: the crown is for the pane in the desk it owns', () => {
+    const m = marksOf({ desks: ['d', 'e'], deskOwner: { d: own('A') }, panes: [{ id: 'A', deskId: 'e' }] }, 'A')
+    assert.equal(m, undefined)
   })
 
-  test('at most three emblems: the eye gives way first', () => {
-    // A owns desk 'd' and its pane is given to Kai (crown, letter), in desk 'e' owned by B (the eye), and the hand is taken.
-    const s: Spec = {
-      desks: ['d', 'e'], panes: [{ id: 'A', deskId: 'e' }],
-      deskOwner: { d: own('A'), e: own('B') }, paneOwner: { A: own('K') }, paneHand: { A: hand('taken') },
+  test('at most three emblems, over every combination of owner, desk owner and hand', () => {
+    const owners: Array<Ownership | undefined> = [undefined, own('A'), own('K'), own('B'), gone('K', 'Kai')]
+    const deskOwners: Array<Ownership | undefined> = [undefined, own('A'), own('B'), gone('A', 'Atrium')]
+    const hands: Array<Hand | undefined> = [undefined, hand('taken'), hand('paused')]
+    let seen = 0
+    for (const id of ['A', 'p']) for (const po of owners) for (const dO of deskOwners) for (const ph of hands) for (const dh of hands) {
+      const s: Spec = {
+        desks: ['d'], panes: [{ id, deskId: 'd' }],
+        ...(po ? { paneOwner: { [id]: po } } : {}), ...(dO ? { deskOwner: { d: dO } } : {}),
+        ...(ph ? { paneHand: { [id]: ph } } : {}), ...(dh ? { deskHand: { d: dh } } : {}),
+      }
+      const n = marksOf(s, id)?.emblems.length ?? 0
+      assert.ok(n <= MAX_EMBLEMS, `${JSON.stringify(s)} has ${n} emblems`)
+      seen++
     }
-    const m = marksOf(s, 'A')!
-    assert.equal(m.emblems.length, MAX_EMBLEMS)
-    assert.deepEqual(kinds(m), ['crown', 'owner', 'hand'])
+    assert.equal(seen, 2 * 5 * 4 * 3 * 3)
   })
 })
 

@@ -4,7 +4,7 @@
 //
 // What each mark says (the approved preview, sections 1 and 2):
 //   seal on a pill ........ the desk has an owner (solid) or its owner ended (struck)
-//   crown ................. this pane is the live owner of a desk
+//   crown ................. this pane is the live owner of the desk it is in
 //   letter ................ a pane given to an agent (the agent's initial, in its hue); with the arrow "de si": its own pane
 //   eye ................... the desk's owner only sees a pane given to another agent
 //   hand / pause .......... the hand is with the person (taken / paused)
@@ -15,7 +15,7 @@
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import { effective, type DeskFacts, type Hand, type LastAct, type OwnerId, type Ownership, type PaneFacts } from '../rules.ts'
 
-/** The most emblems one pane's tab takes (the app's MAX_TAB_EMBLEMS). */
+/** The most emblems one pane's tab takes (the app's MAX_TAB_EMBLEMS); the cases below never exceed it. */
 export const MAX_EMBLEMS = 3
 
 export interface ViewPane { id: string; type: string; deskId?: string | undefined }
@@ -105,7 +105,6 @@ const initialOf = (name: string): string => {
 export function computeView(input: ViewInput, clock: (iso: string) => string = clockOf): ViewModel {
   const name = (id: OwnerId): string => input.nameOf(id) ?? id
   const seals = new Map<string, SealMark>()
-  const crowned = new Set<OwnerId>()
 
   for (const desk of input.desks) {
     const o = input.deskOwner.get(desk.id)
@@ -113,7 +112,6 @@ export function computeView(input: ViewInput, clock: (iso: string) => string = c
     if (o.ended) {
       seals.set(desk.id, { icon: 'robot', hue: agentHue(o.owner), label: o.ended.name, variant: 'struck', tooltip: `${o.ended.name} encerrou: as guias voltaram para você` })
     } else {
-      crowned.add(o.owner)
       const n = name(o.owner)
       seals.set(desk.id, { icon: 'robot', hue: agentHue(o.owner), label: n, variant: 'solid', tooltip: `Dono: ${n} · clique: ir para ${n}`, focus: o.owner })
     }
@@ -136,14 +134,16 @@ export function computeView(input: ViewInput, clock: (iso: string) => string = c
     const emblems: EmblemMark[] = []
     const commander = eff.commander
 
-    if (crowned.has(p.id)) emblems.push({ kind: 'crown', icon: 'crown-simple', hue: agentHue(p.id), tooltip: `${name(p.id)} · dono da mesa` })
+    // The crown is the owner's pane in the desk it owns; an owner living in another desk has no tab here, and no crown elsewhere.
+    const crowned = deskOwner !== undefined && !deskOwner.ended && deskOwner.owner === p.id
+    if (crowned) emblems.push({ kind: 'crown', icon: 'crown-simple', hue: agentHue(p.id), tooltip: `${name(p.id)} · dono da mesa` })
 
     if (commander !== undefined) {
       const n = name(commander)
       const hue = agentHue(commander)
       if (eff.via === 'pane') emblems.push({ kind: 'owner', icon: '', label: initialOf(n), hue, tooltip: `Dono: ${n}` })
       if (eff.via === 'self') {
-        if (!crowned.has(p.id)) emblems.push({ kind: 'owner', icon: '', label: initialOf(n), hue, tooltip: `${n}, de si` })
+        if (!crowned) emblems.push({ kind: 'owner', icon: '', label: initialOf(n), hue, tooltip: `${n}, de si` })
         emblems.push({ kind: 'self', icon: 'arrow-u-down-left', tooltip: 'de si' })
       }
       if (eff.via === 'pane' && eff.viewer !== undefined && eff.viewer !== p.id) emblems.push({ kind: 'viewer', icon: 'eye', tooltip: `${name(eff.viewer)} vê` })
@@ -158,11 +158,8 @@ export function computeView(input: ViewInput, clock: (iso: string) => string = c
       emblems.push({ kind: 'ended', icon: '', label: initialOf(eff.ended.name), hue: agentHue(eff.ended.owner), variant: 'struck', tooltip: `${eff.ended.name} encerrou` })
     }
 
-    // The core takes three; the eye is the one that gives way (the owner's letter and the hand say more).
-    while (emblems.length > MAX_EMBLEMS) {
-      const eye = emblems.findIndex(e => e.kind === 'viewer')
-      emblems.splice(eye >= 0 ? eye : emblems.length - 1, 1)
-    }
+    // Three at most, without a cut: the crown only goes with the pane being the desk's owner, who is then its own viewer
+    // (no eye), and a pane that is its own owner has no letter beside the crown.
 
     const marks: PaneMarks = { emblems }
     if (commander !== undefined && eff.via === 'desk' && eff.hand === 'owner') marks.line = agentHue(commander)
