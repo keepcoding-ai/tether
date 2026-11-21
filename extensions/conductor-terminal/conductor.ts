@@ -5,22 +5,14 @@
 //
 // What no probe proved on a real engine leaves marked `proven: false` (the contract's 3.2): `interrupt` of an agent CLI
 // (`esc`) and `lastAnswer` (the end of the screen). The shell's `ctrl+c` and the typing bytes of the engine are the probes'.
-import { agentRegistry } from '../../src/agents/registry.ts'
 import { isKeyName } from '../../src/daemon/door/keys.ts'
 import { typingOf } from '../../src/daemon/door/typing.ts'
 import type { KeyName, VerbResult } from '../../src/daemon/door/types.ts'
-import type { ConductedVerb, Conductor, ConductorContext, ConductorTarget, Detected, LastAnswer, Proven, ScreenText } from '../for-agents/conductor-api.ts'
+import { ConductError, type ConductedVerb, type Conductor, type ConductorContext, type ConductorTarget, type Detected, type LastAnswer, type Proven, type ScreenText } from '../for-agents/conductor-api.ts'
 
 export const TERMINAL_CONDUCTOR_ID = 'terminal'
 
-/** An error a verb throws, carrying the contract's error code (`bad-request`); the gate's `with-user` passes through as it is. */
-export class ConductError extends Error {
-  readonly code: string
-  constructor(code: string, message: string) {
-    super(message)
-    this.code = code
-  }
-}
+export { ConductError }
 
 const isShell = (t: ConductorTarget): boolean => t.slot?.kind === 'shell'
 
@@ -98,9 +90,7 @@ export const terminalConductor: Conductor = {
 
   /** The text and its Enter by the engine's own typing (door/typing.ts; a shell has none: the default). */
   async send(ctx: ConductorContext, text: string): Promise<Proven<void>> {
-    const kind = ctx.target.slot?.kind
-    const agent = kind && kind !== 'shell' ? agentRegistry.get(kind) : undefined
-    await ctx.write(typingOf(agent).submit(text))
+    await ctx.write(typingOf(ctx.agent).submit(text))
     return { value: undefined, proven: true }
   },
 

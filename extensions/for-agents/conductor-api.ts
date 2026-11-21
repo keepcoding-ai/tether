@@ -8,6 +8,7 @@
 // so `type`, `keys` and `read` of the terminal serve every engine and a CLI conductor writes only what is its engine's.
 // Daemon side only: the renderer never imports this file.
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { DaemonIo } from '../../src/daemon/ext-api.ts'
 import type { KeyName, VerbResult } from '../../src/daemon/door/types.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
@@ -42,11 +43,34 @@ export type Detected =
 /** An act's result and whether a probe proved that act on this engine (an unproven act still runs, marked). */
 export interface Proven<T> { value: T; proven: boolean }
 
+/**
+ * What a conductor's act (or verb) throws to answer with one of the contract's error codes: `bad-request`, `busy`,
+ * `unsupported`, `not-busy`... The gate's refusal is the same type: the context's `write` and `keys` reject with code
+ * `with-user` (or `not-commanded`), and a conductor lets it pass. The extension maps `code` to the verb's error; an
+ * error with no `code` is a bug of the conductor and answers `conductor-failed`.
+ */
+export class ConductError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+  }
+}
+
 export interface ConductorContext {
+  /** Built anew for each call of a verb: `target.slot` is the slot as it was when the verb began. */
   target: ConductorTarget
+  /** The slot as it is now (the target's is a snapshot: re-read it after a wait). Undefined when the slot is gone. */
+  slot(): SlotState | undefined
+  /** The engine's contribution (its `typing`, its name), so a conductor never imports the agents' registry. Undefined for a shell. */
+  agent: AgentContribution | undefined
   /** The screen as the person sees it. */
   screen(opts?: { since?: number }): Promise<ScreenText>
-  /** The only write a conductor has: through the guard (never over the person); rejects `with-user`. */
+  /**
+   * The only write a conductor has: through the guard (never over the person); rejects with a `ConductError` coded
+   * `with-user`. Each chunk's `waitMs` waits BEFORE that chunk (the Enter's delay is on the Enter's chunk). The extension
+   * turns the list into the gate's chunks (`{text}` and `{waitMs}`); the gate checks again before every chunk.
+   */
   write(chunks: readonly { data: string; waitMs?: number }[]): Promise<void>
   keys(keys: readonly KeyName[], opts?: { gapMs?: number }): Promise<void>
   io: DaemonIo
@@ -54,7 +78,11 @@ export interface ConductorContext {
   log(msg: string): void
 }
 
-/** A verb of the content's own ('note', 'navigate'): registered under `agents`, wrapped in the ownership and inventory checks. */
+/**
+ * A verb of the content's own ('type' and 'keys' of the terminal; later 'note', 'navigate'). The extension's verbs of the
+ * same name (`agents type`, `agents keys`) reach it through `conductorRegistry.verbsOf`, after resolving the pane and
+ * checking the ownership and the inventory (`capability`). It throws `ConductError` to answer an error.
+ */
 export interface ConductedVerb {
   name: string
   capability: CapabilityId
@@ -80,6 +108,11 @@ export interface Conductor {
   launchArgs?(req: { model?: string; effort?: string; cwd: string }): Proven<string[]>
   boot?(ctx: ConductorContext): Promise<void>
   send?(ctx: ConductorContext, text: string): Promise<Proven<void>>
+  /**
+   * Sends the engine's interrupt. A conductor that can see the agent stop waits what the engine needs, rereads
+   * `ctx.screen()` and answers `stopped: true`; the extension then tells the door the turn is done (`attention.signal`,
+   * because the engine's own report does not come after an interrupt). `stopped: false` = sent, not confirmed.
+   */
   interrupt?(ctx: ConductorContext): Promise<Proven<{ stopped: boolean }>>
   answer?(ctx: ConductorContext, choice: string): Promise<Proven<void>>
   command?(ctx: ConductorContext, name: string, args?: string): Promise<Proven<void>>

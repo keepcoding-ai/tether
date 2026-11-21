@@ -98,6 +98,8 @@ ${FAKE_PROC}`)
     const refuse = (): never => { throw Object.assign(new Error('with-user'), { code: 'with-user' }) }
     return {
       target: { paneId: slot.slotId, type: 'terminal', slot },
+      slot: () => slots.get(slot.slotId),
+      agent: slot.kind === 'shell' ? undefined : agentRegistry.get(slot.kind),
       screen: () => readers.read(slot.slotId, (since) => slots.readScreen(slot.slotId, since === undefined ? undefined : { since })),
       write: async (chunks) => {
         for (const c of chunks) {
