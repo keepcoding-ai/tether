@@ -119,7 +119,28 @@ const badges = new BadgeBoard()
 /** Attention seals the extensions raised on panes. */
 const seals = new SealBoard(() => refreshSeals())
 /** The agent door's renderer side (app/renderer/door/host.ts): main.ts only hands it its seams. */
-const door = new DoorHost()
+const door = new DoorHost({
+  layoutRestored: () => layoutRestored,
+  hasPane: id => !!findPanel(id),
+  desk: id => (desks.desk(id) ? { asleep: desks.desks.find(d => d.id === id)?.asleep === true } : undefined),
+  // The pane a daemon request asked for: in the asked desk, not active, and the desk stays where it is.
+  addPane: (slot, deskId, asleep) => {
+    slots.set(slot.slotId, slot)
+    desks.desk(deskId)?.addPanel({ ...slotPanelOptions(slot), inactive: true })
+    scheduleSave()
+  },
+  sleep: slotId => {
+    if (asleepPanes.has(slotId) && deskSleptPanes.has(slotId)) return
+    asleepPanes.add(slotId); deskSleptPanes.add(slotId)
+    scheduleSave()
+  },
+  layout: () => layoutJSON(),
+  paneType: component => (component === COMPONENT ? 'terminal' : paneTypes.byComponent(component)?.id ?? component),
+  systemDeskName: id => desks.systemDesks.find(d => d.id === id)?.name,
+  sendDeskMap: map => { void window.tether.request({ t: 'desk-map', map }) },
+  slots: () => slots.values(),
+  log: message => console.warn(message),
+})
 const sealActivations = new Map<number, Set<() => void>>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
@@ -2081,6 +2102,7 @@ async function restoreLayout(): Promise<void> {
   workspaceState = readWorkspace(layoutFile.workspace)
   initEmblems(layoutFile.emblems, emblemHost)
   layoutRestored = true
+  door.layoutRestored()
   scheduleKeyboardTab()
   recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
