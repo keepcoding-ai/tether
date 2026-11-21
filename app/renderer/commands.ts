@@ -54,8 +54,11 @@ export interface Command {
   keepKeyWhenUnavailable?: boolean
   /** Destructive: painted in the error colour, like the ≡ menu's "Sair e encerrar tudo…". */
   danger?: boolean
-  /** `source`: where the run came from (a chord, the palette, the menu, the CLI); most commands ignore it. */
-  run(source: RunSource): void | Promise<void>
+  /**
+   * `source`: where the run came from (a chord, the palette, the menu, the CLI); most commands ignore it. `arg`: what a caller
+   * that knows the target passes (a menu item, another command, a tether:// link); absent from the palette and from chords.
+   */
+  run(source: RunSource, arg?: unknown): void | Promise<void>
 }
 
 /** Where the palette's "recently used" list is kept between sessions. */
@@ -64,13 +67,13 @@ export interface RecentStore { load(): string[]; save(ids: string[]): void }
 export type RunSource = 'palette' | 'key' | 'menu' | 'cli' | 'test'
 
 /** A command an extension declares (manifest `contributes.commands`, VS Code's package.json shape) with the handler its `activate` gives. */
-export function commandFromContribution(c: CommandContribution, run: (source?: RunSource) => void): Command {
+export function commandFromContribution(c: CommandContribution, run: (source?: RunSource, arg?: unknown) => void): Command {
   const expr = c.when ? deserialize(c.when) : undefined
   return {
     id: c.command, title: c.title, group: c.category, icon: c.icon,
     ...(c.keepKeyWhenUnavailable ? { keepKeyWhenUnavailable: true } : {}),
     ...(expr ? { when: (ctx: CommandContext) => evaluate(expr, key => contextKey(ctx, key)) } : {}),
-    run: source => run(source),
+    run: (source, arg) => run(source, arg),
   }
 }
 
@@ -153,12 +156,12 @@ export class CommandRegistry {
   }
 
   /** Runs a command by id. Only a run from the palette counts as "recently used" (a chord held all day would flood it). */
-  async run(id: string, source: RunSource = 'test'): Promise<RunOutcome> {
+  async run(id: string, source: RunSource = 'test', arg?: unknown): Promise<RunOutcome> {
     const c = this.get(id)
     if (!c) return 'unknown'
     if (!this.isAvailable(c)) return 'unavailable'
     if (source === 'palette') this.markUsed(c.id)
-    await c.run(source)
+    await (arg === undefined ? c.run(source) : c.run(source, arg))
     return 'ran'
   }
 
