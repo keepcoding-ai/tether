@@ -275,8 +275,9 @@ export class DeliveryService {
       if (insideOk && this.opts.mcp.sendChannel(slotId, item.msg.body, deliveryMeta(item.msg, item.ext, item.id))) {
         this.shift(item, 'inside')
       } else if (terminalOk && this.terminalReady(port, slotId)) {
-        if (!(await this.type(port, slotId, item))) break
-        this.shift(item, 'typed')
+        const outcome = await this.type(port, slotId, item)
+        if (outcome === 'held-back') break
+        this.shift(item, 'typed', outcome === 'unsent')
       } else break
       delivered = true
     }
@@ -296,29 +297,33 @@ export class DeliveryService {
   }
 
   /**
-   * Types the item with the agent's typing, each chunk after its wait. False when nothing could be written (the item stays
-   * queued). Once the first chunk is in, the item counts as typed: if the pane changed hands, the process died or the user
-   * typed during a wait, the rest (the Enter) is not sent and the text is left in the box for whoever has the pane now.
+   * Types the item with the agent's typing, each chunk after its wait. 'held-back' when nothing could be written (the item
+   * stays queued). Once the first chunk is in, the item counts as typed: if the pane changed hands, the process died or the
+   * user typed during a wait, the rest (the Enter) is not sent and nothing of the tether's goes after it: the text is left in
+   * the box, untouched, for whoever has the pane now, and the outcome is 'unsent' (the receipt says `unsent`).
    */
-  private async type(port: SlotPort, slotId: string, item: QueuedItem): Promise<boolean> {
+  private async type(port: SlotPort, slotId: string, item: QueuedItem): Promise<'sent' | 'unsent' | 'held-back'> {
     const agent = port.meta(slotId)?.agent ?? 'shell'
     const typing = this.opts.typingFor?.(agent) ?? typingOf(agent === 'shell' ? undefined : agentRegistry.get(agent))
     const chunks = typing.submit(terminalText(item.msg, item.ext, item.id))
     const typedAt = (): number | undefined => this.presence.freeAt(slotId)
     let mark: number | undefined
+    let unsent = false
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!
       if (chunk.waitMs && chunk.waitMs > 0) await sleep(chunk.waitMs)
       if (i > 0 && (!port.meta(slotId)?.held || !port.isAlive(slotId) || typedAt() !== mark)) {
         this.opts.log(`door: entrega ${item.id}: o resto não foi digitado (a guia mudou de mãos, o processo saiu ou o usuário digitou)`)
+        unsent = true
         break
       }
       this.selfWriting++
       try {
         port.write(slotId, chunk.data, 'agent')
       } catch (e) {
-        if (i === 0) { this.opts.log(`door: entrega ${item.id}: terminal indisponível (${message(e)}); fica na fila`); return false }
+        if (i === 0) { this.opts.log(`door: entrega ${item.id}: terminal indisponível (${message(e)}); fica na fila`); return 'held-back' }
         this.opts.log(`door: entrega ${item.id}: o resto não foi digitado (${message(e)})`)
+        unsent = true
         break
       } finally {
         this.selfWriting--
@@ -326,22 +331,22 @@ export class DeliveryService {
       if (i === 0) mark = typedAt()
     }
     this.settleAt.set(slotId, this.now() + DOOR_SETTLE_MS)
-    return true
+    return unsent ? 'unsent' : 'sent'
   }
 
-  private shift(item: QueuedItem, state: DeliveryState): void {
+  private shift(item: QueuedItem, state: DeliveryState, unsent = false): void {
     const q = this.queues.get(item.slotId)
     if (q?.[0] === item) q.shift()
     if (q && q.length === 0) this.queues.delete(item.slotId)
-    this.emit(item, state)
+    this.emit(item, state, unsent)
   }
 
-  private receipt(item: QueuedItem, state: DeliveryState, at = new Date().toISOString()): DeliveryReceipt {
-    return { id: item.id, slotId: item.slotId, state, at }
+  private receipt(item: QueuedItem, state: DeliveryState, at = new Date().toISOString(), unsent = false): DeliveryReceipt {
+    return { id: item.id, slotId: item.slotId, state, at, ...(unsent ? { unsent: true as const } : {}) }
   }
 
-  private emit(item: QueuedItem, state: DeliveryState): void {
-    const r = this.receipt(item, state)
+  private emit(item: QueuedItem, state: DeliveryState, unsent = false): void {
+    const r = this.receipt(item, state, undefined, unsent)
     for (const l of [...this.listeners]) {
       if (l.ext !== '' && l.ext !== item.ext) continue
       try { l.fn(r) } catch (e) { this.opts.log(`door: ouvinte da entrega falhou: ${message(e)}`) }

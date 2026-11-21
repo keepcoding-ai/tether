@@ -193,6 +193,7 @@ describe('agent door delivery (D6)', () => {
     const typed = chunks(id).slice(before)
     assert.equal(typed.at(-1), '\r', 'Enter alone in its write')
     assert.equal(typed.slice(0, -1).join(''), `[tether · probe · #kai · de Atrium (member) · ${r.id}] primeira`, 'header and body before the Enter, with no CR')
+    assert.equal('unsent' in receiptOf(r.id)!, false, 'no key in the middle: the receipt carries no unsent')
     assert.deepEqual(delivery.pending(id), [])
     await door.delivery.flush()
     assert.equal(existsSync(inboxPath(home, id)), false, 'the inbox goes when the queue empties')
@@ -222,6 +223,32 @@ describe('agent door delivery (D6)', () => {
     await waitUntil(() => chunks(id).at(-1) === '\r', 10_000, 'the user Enter reached the PTY')
     await waitUntil(() => receiptOf(r.id)?.state === 'typed', USER_QUIET_MS + 10_000, 'typed after the silence')
     assert.ok(Date.now() - enterAt >= USER_QUIET_MS - 500, `typed ${Date.now() - enterAt} ms after the user's Enter`)
+    await slots.forget(id)
+  })
+
+  test('a user key between the text and the Enter: no Enter, nothing of the tether after it, the receipt is typed + unsent', async () => {
+    const id = await running('meio-do-caminho')
+    const contrib = agentRegistry.get('claude')! as { typing?: AgentContribution['typing'] }
+    const savedTyping = contrib.typing
+    // A long wait before the Enter, so the user's key lands inside it.
+    contrib.typing = { submit: (text) => [{ data: text }, { data: '\r', waitMs: 1_500 }] }
+    try {
+      await hold(id)
+      const before = chunks(id).length
+      const p = delivery.deliver(id, msg('sobra na caixa'))
+      await waitUntil(() => chunks(id).length > before, 10_000, 'the text reached the PTY')
+      rec.client.input(id, 'x')
+      const r = await p
+      const text = `[tether · probe · #kai · de Atrium (member) · ${r.id}] sobra na caixa`
+      await waitUntil(() => receiptOf(r.id) !== undefined, 10_000, 'the receipt')
+      await sleep(2_000)
+      assert.deepEqual(chunks(id).slice(before), [text, 'x'], 'the text and the user key; no Enter, no key of the tether')
+      assert.equal(receiptOf(r.id)?.state, 'typed')
+      assert.equal(receiptOf(r.id)?.unsent, true)
+      assert.equal(r.unsent, true)
+    } finally {
+      contrib.typing = savedTyping
+    }
     await slots.forget(id)
   })
 
