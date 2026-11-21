@@ -1999,6 +1999,8 @@ class DaemonImpl implements Daemon {
       }
       case 'seen': {
         const slot = this.slot(req.slotId)
+        // Attention rerouted to a live owner is the owner's to clear (`attention.seen`): a pipe client's `seen` leaves it alone.
+        if (this.stateOf(slot).attentionFor) return { t: 'ok', id }
         if (slot.attention.seen()) this.broadcastState(slot)
         return { t: 'ok', id }
       }

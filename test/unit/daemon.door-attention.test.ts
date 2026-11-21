@@ -144,6 +144,25 @@ describe('agent door attention route (D7)', () => {
     await slots.forget(owner); await slots.forget(worker)
   })
 
+  test('the pipe seen leaves a rerouted attention alone and emits nothing; with the owner away it clears as before', async () => {
+    const { owner, worker } = await pair()
+    await attention.route(worker, owner)
+    turn(worker, 'busy'); turn(worker, 'idle')
+    await waitUntil(() => last(worker).attentionFor !== undefined, 10_000, 'attentionFor shows')
+    const mark = rec.states.length
+    await rec.client.request({ t: 'seen', slotId: worker })
+    await sleep(300)
+    assert.equal(rec.states.slice(mark).filter((s) => s.slotId === worker).length, 0, 'no state emitted')
+    assert.deepEqual(last(worker).attentionFor, { slotId: owner, value: 'done' }, 'the owner attention is still there')
+
+    // The owner is away: the person sees the attention and the pipe seen clears it, as always.
+    await slots.stop(owner)
+    await waitUntil(() => last(worker).attention === 'done', 10_000, 'attention back to the person')
+    await rec.client.request({ t: 'seen', slotId: worker })
+    await waitUntil(() => last(worker).attention === undefined, 10_000, 'cleared by the pipe seen')
+    await slots.forget(owner); await slots.forget(worker)
+  })
+
   test('a routed slot that is forgotten takes its route; route validates the slots', async () => {
     const { owner, worker } = await pair()
     await assert.rejects(attention.route(worker, 'ffffffff'), (e: unknown) => codeOf(e) === 'unknown-slot')
