@@ -9,6 +9,7 @@ import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
 import { doorUnavailable, type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
 import { DeskService } from './desks.ts'
+import { DoorMcp } from './mcp.ts'
 import { AttentionRouteService } from './attention-route.ts'
 import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
@@ -43,6 +44,8 @@ export class DoorHost implements DoorSeams {
   readonly objects: ObjectService
   /** The rerouted attention (D7): the route is in the slot's meta; the service silences the state at the source. */
   private readonly attentionService: AttentionRouteService
+  /** The `tether` MCP server (D5): the verbs with the `mcp` exit as tools, and the channel the delivery uses from inside. */
+  readonly mcp: DoorMcp
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
@@ -58,6 +61,7 @@ export class DoorHost implements DoorSeams {
     this.desks.onDidChange((map) => { this.objects.handleDeskMap(map).catch((e: unknown) => this.log(`objects: ${(e as Error).message}`)) })
     this.requests.register('verb-list', this.verbs.handleList)
     this.requests.register('verb', this.verbs.handleRun)
+    this.mcp = new DoorMcp({ log: (msg) => this.opts.log(msg), verbs: this.verbs, port: () => this.portRef })
   }
 
   /** The server's port; undefined in a satellite. */
@@ -96,16 +100,19 @@ export class DoorHost implements DoorSeams {
 
   input(_slotId: string, _data: string, _origin: InputOrigin): void {}
 
-  /** A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). */
+  /**
+   * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). The `tether` MCP
+   * server's offer (this.mcp.prepare) is not plugged in here yet: it needs this hook to return a promise.
+   */
   prepareLaunch(plan: LaunchPlan, ctx: LaunchContext): LaunchGrant {
     const slotId = ctx.meta.slotId
     const key = this.slotKeys.issue(slotId)
     return { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
   }
 
-  exited(slotId: string): void { this.slotKeys.revoke(slotId); this.attentionService.exited(slotId) }
+  exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }
 
-  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId)]).then(() => undefined) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId)]).then(() => undefined) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
@@ -124,7 +131,7 @@ export class DoorHost implements DoorSeams {
       instructions: (text) => own.add(this.verbs.instructions(ext, text)),
     }
     const delivery: DoorDelivery = {
-      enable: () => owned(own),
+      enable: () => own.add(this.mcp.enableDelivery()),
       deliver: () => reject(what('delivery.deliver')),
       pending: () => [],
       cancel: () => false,
