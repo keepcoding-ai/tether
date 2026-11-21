@@ -10,3 +10,5 @@ extensions/web-bridge/vendor/*.json -text
 extensions/web-bridge/vendor/extension/manifest.json -text
 extensions/web-bridge/vendor/extension/dist/** -text
 extensions/web-bridge/vendor/extension/brand/** -text
+# The vendored xterm-headless package is hashed over its bytes: never converted.
+extensions/for-agents/vendor/** -text
