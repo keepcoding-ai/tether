@@ -14,15 +14,16 @@ export function normalizeHue(hue: number | undefined): number | undefined {
   return ((Math.round(hue) % 360) + 360) % 360
 }
 
-/** The seal as kept: a named icon, a whole hue, the tooltip trimmed. Undefined when there is nothing to draw (no icon name). */
+/** The seal as kept: a named icon, a whole hue, a trimmed label (absent when empty), the tooltip trimmed. Undefined when there is nothing to draw (no icon name). */
 export function normalizeSeal(seal: DeskSeal | undefined): DeskSeal | undefined {
   if (!seal || typeof seal.icon !== 'string' || seal.icon === '') return undefined
   const hue = normalizeHue(seal.hue)
-  return { icon: seal.icon, ...(hue === undefined ? {} : { hue }), tooltip: typeof seal.tooltip === 'string' ? seal.tooltip.trim() : '' }
+  const label = typeof seal.label === 'string' ? seal.label.trim() : ''
+  return { icon: seal.icon, ...(hue === undefined ? {} : { hue }), ...(label === '' ? {} : { label }), tooltip: typeof seal.tooltip === 'string' ? seal.tooltip.trim() : '' }
 }
 
 function sameSeal(a: DeskSeal, b: DeskSeal): boolean {
-  return a.icon === b.icon && a.hue === b.hue && a.tooltip === b.tooltip
+  return a.icon === b.icon && a.hue === b.hue && a.label === b.label && a.tooltip === b.tooltip
 }
 
 /** Seals by desk id, then by extension id. Every change tells the listeners (the pill draws again). */
@@ -78,7 +79,7 @@ export class DeskSealBoard {
   }
 
   private changed(): void {
-    this.sig = JSON.stringify([...this.desks].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id]) => [id, this.of(id).map(p => [p.ext, p.seal.icon, p.seal.hue ?? null, p.seal.tooltip])]))
+    this.sig = JSON.stringify([...this.desks].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id]) => [id, this.of(id).map(p => [p.ext, p.seal.icon, p.seal.hue ?? null, p.seal.label ?? null, p.seal.tooltip])]))
     for (const l of [...this.listeners]) { try { l() } catch (err) { console.error('desk seals', err) } }
   }
 }

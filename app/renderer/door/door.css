@@ -22,7 +22,10 @@
   background: hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-bg-a));
   box-shadow: inset 0 0 0 1px hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-line-a));
 }
-.seg .desk-seal .ph { width: 11px; height: 11px; }
+/* With a label (the owner's name) the seal is the capsule-scale chip of the preview: glyph and name, cut past 150px. */
+.seg .desk-seal.labeled { width: auto; max-width: 150px; height: 17px; gap: 3px; padding: 0 7px 0 5px; border-radius: 999px; font-size: 10.5px; line-height: 15px; font-weight: 500; }
+.seg .desk-seal .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg .desk-seal .ph { width: 11px; height: 11px; flex: none; }
 
 /* The tab's emblems of extensions: on the right, after the title and before the state marks. Hidden while empty. */
 .tether-tab .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }

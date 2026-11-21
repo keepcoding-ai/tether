@@ -379,14 +379,15 @@ export class DeskSwitch {
     return seg
   }
 
-  /** An extension's seal on a pill: a small glyph in the seal's hue (its tooltip joins the pill's own). Not a count, never orange. */
+  /** An extension's seal on a pill: a small glyph, with the label beside it when there is one, in the seal's hue (its tooltip joins the pill's own). Not a count, never orange. */
   private sealGlyph({ ext, seal }: PlacedSeal): HTMLElement {
     const el = document.createElement('span')
-    el.className = seal.hue === undefined ? 'desk-seal' : 'desk-seal hued'
+    el.className = `desk-seal${seal.hue === undefined ? '' : ' hued'}${seal.label ? ' labeled' : ''}`
     el.dataset.ext = ext
     if (seal.hue !== undefined) el.style.setProperty('--seal-hue', String(seal.hue))
     el.setAttribute('aria-hidden', 'true')
     if ((ICON_NAMES as readonly string[]).includes(seal.icon)) el.append(icon(seal.icon as IconName))
+    if (seal.label) { const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = seal.label; el.append(nm) }
     return el
   }
 

@@ -189,6 +189,8 @@ export interface DeskSeal {
   icon: string
   /** The seal's hue (0-359), usually agentHue(slotId). Absent: the pill's text colour. */
   hue?: number
+  /** A short name drawn beside the glyph (the owner's name), cut with an ellipsis past a fixed width. Absent: the glyph alone. */
+  label?: string
   tooltip: string
 }
 

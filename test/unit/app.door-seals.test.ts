@@ -19,6 +19,18 @@ test('seal: needs an icon name; the tooltip is trimmed', () => {
   assert.deepEqual(normalizeSeal({ icon: 'robot', tooltip: 'a' }), { icon: 'robot', tooltip: 'a' })
 })
 
+test('seal: the label is optional, trimmed, and absent when empty (a seal without one stays as it was)', () => {
+  assert.deepEqual(normalizeSeal({ icon: 'robot', label: '  Atrium ', tooltip: 'a' }), { icon: 'robot', label: 'Atrium', tooltip: 'a' })
+  assert.deepEqual(normalizeSeal({ icon: 'robot', label: '   ', tooltip: 'a' }), { icon: 'robot', tooltip: 'a' })
+  const b = new DeskSealBoard()
+  b.set('a', 'desk-1', { icon: 'robot', tooltip: 'a' })
+  const bare = b.signature
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a' }), true, 'a label is a change')
+  assert.notEqual(b.signature, bare, 'the label is in the signature the pill measures and paints by')
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a' }), false)
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Outro', tooltip: 'a' }), true)
+})
+
 test('desk seals: one per extension per desk, a new one replaces', () => {
   const b = new DeskSealBoard()
   assert.equal(b.set('ext-a', 'desk-1', { icon: 'robot', hue: 10, tooltip: 'um' }), true)
