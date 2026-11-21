@@ -1,0 +1,40 @@
+/* The list picker (picker.ts): a box at the top of the window in the palette's dialog language (styles.css, "command palette"),
+   with a title line, the filter field, the rows and, for the row on top, a rule under it. Theme tokens only; a row's hue (a number,
+   0-359, in --pk-hue) takes its lightness and saturation from the --mark-* tokens of door.css, so it reads the same in both themes. */
+dialog.picker {
+  position: fixed; top: 48px; margin: 0 auto; padding: 0; width: 520px; max-width: 92vw;
+  background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  overflow: hidden;
+}
+dialog.picker::backdrop { background: transparent; }
+@media (prefers-reduced-motion: no-preference) { dialog.picker[open] { animation: pk-in var(--motion-fast) ease-out; } }
+@keyframes pk-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+.pk-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 14px 0; font-size: 12px; color: var(--fg-dim); }
+.pk-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: 600; font-size: 13px; }
+.pk-step { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-step:empty { display: none; }
+
+.pk-field { display: flex; align-items: center; gap: 10px; padding: 8px 12px 10px; border-bottom: 1px solid var(--border); color: var(--fg-dim); }
+.pk-lens { display: inline-flex; flex: none; width: 18px; height: 18px; }
+.pk-lens .ph { width: 18px; height: 18px; }
+dialog.picker .pk-field input[type="text"] { flex: 1; min-width: 0; background: none; border: 0; border-radius: 0; padding: 2px 0; color: var(--fg); font: 14px var(--ui); }
+dialog.picker .pk-field input[type="text"]:focus { outline: none; }
+.pk-field input::placeholder { color: var(--fg-dim); }
+
+.pk-list { list-style: none; margin: 0; padding: 6px; max-height: min(52vh, 420px); overflow-y: auto; }
+.pk-list:empty { display: none; }
+.pk-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.pk-item:hover { background: var(--bg-hover); }
+.pk-item.selected { background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); }
+.pk-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; color: var(--fg-dim); }
+.pk-icon .ph { width: 16px; height: 16px; }
+.pk-item.hued .pk-icon { color: hsl(var(--pk-hue) var(--mark-s) var(--mark-fg-l)); }
+.pk-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
+.pk-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-label b { color: var(--accent); font-weight: 600; }
+.pk-detail { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 11.5px; }
+.pk-item.featured .pk-label { font-weight: 600; }
+.pk-sep { height: 1px; margin: 4px 4px; padding: 0; background: var(--border); cursor: default; }
+.pk-empty { margin: 0; padding: 14px 16px; color: var(--fg-dim); font-size: 12.5px; line-height: 1.5; }
+.pk-empty[hidden] { display: none; }

@@ -10,6 +10,7 @@ import type { Layout } from '../layout.ts'
 import { DeskMapSender, deskMapOf } from './desk-map.ts'
 import { deskSeals } from './desk-seal-rules.ts'
 import { collect } from './menus.ts'
+import { Picker } from './picker.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
 import { TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
 
@@ -174,11 +175,13 @@ export class DoorHost {
     this.emblems.removeOwner(ext)
   }
 
-  /** The list picker. Until it exists, every pick resolves as closed. */
-  pickList<T>(_spec: PickSpec<T>): Promise<T | undefined> { return Promise.resolve(undefined) }
+  /** The list picker, drawn on first use (in a process with no document a pick resolves as closed). */
+  private readonly picker = new Picker()
 
-  pickSteps<A, B>(_first: PickSpec<A>, _second: (a: A) => PickSpec<B>): Promise<{ first: A; second: B } | undefined> {
-    return Promise.resolve(undefined)
+  pickList<T>(spec: PickSpec<T>): Promise<T | undefined> { return this.picker.list(spec) }
+
+  pickSteps<A, B>(first: PickSpec<A>, second: (a: A) => PickSpec<B>): Promise<{ first: A; second: B } | undefined> {
+    return this.picker.steps(first, second)
   }
 
   /** An extension's data on desks and panes. */
