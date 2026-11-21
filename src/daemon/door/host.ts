@@ -84,6 +84,7 @@ export class DoorHost implements DoorSeams {
     if (this.portRef) throw new Error('a porta do agente já tem um servidor')
     this.portRef = port
     this.desks.attach(port)
+    this.slotKeys.attach(port.home, (msg) => this.log(msg))
     this.objects.attach(port)
     this.delivery.attach(port)
   }
