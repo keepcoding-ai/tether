@@ -4,6 +4,7 @@ import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { codexAdapter, codexSkills, withCodexMcpOverrides } from '../../src/agents/codex.ts'
 import type { AgentContribution, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { probeCodex, probeCodexNotify } from '../../src/doctor.ts'
+import { typingWith } from '../../src/daemon/door/typing.ts'
 export { manifest } from './manifest.ts'
 
 const RESUME_REASON = 'o tether escolhe a sessão que o slot retoma'
@@ -33,6 +34,8 @@ export const codexAgent: AgentContribution = {
   // No per-launch skills folder in Codex: the skills' text goes in `developer_instructions` (src/agents/codex.ts).
   skills: codexSkills,
   // No channel notifications in Codex: the ronda is unavailable to it.
+  // Codex 0.169 takes text and an Enter less than ~170 ms apart as one paste and does not submit (130 and 150 ms fail).
+  typing: typingWith({ enterDelayMs: 300 }),
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
