@@ -57,7 +57,10 @@ export interface DoorSlots {
    * the agent's own writes do not count, a pane with no `held` never fires, and each `setHeld` arms it again.
    */
   onUserTyped(listener: (slotId: string) => void): IDisposable
-  /** No draft of the person's in the input box and USER_QUIET_MS of silence (the delivery's interlock, read as it is now). */
+  /**
+   * No draft of the person's in the input box and USER_QUIET_MS of the person's silence (the delivery's interlock, read as
+   * it is now, for the person alone: an agent's writes through the door do not count here, though the delivery waits for them).
+   */
   userFree(slotId: string): boolean
 }
 

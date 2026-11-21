@@ -154,7 +154,7 @@ export class DeliveryService {
   /** Keystrokes reached a slot. The delivery's own writes are skipped; the user's and the holder's feed the interlock. */
   input(slotId: string, data: string, origin: InputOrigin): void {
     if (origin === 'agent' && this.selfWriting > 0) return
-    this.presence.input(slotId, data, this.now())
+    this.presence.input(slotId, data, this.now(), origin)
     if (this.queues.has(slotId)) this.armTimer()
   }
 

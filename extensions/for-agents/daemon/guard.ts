@@ -33,8 +33,9 @@ export class WriteGate {
   }
 
   /**
-   * Whether `caller` may type into `paneId` now; undefined = yes. `presence: false` skips `userFree`: the door counts an
-   * agent's own writes as typing in that interlock (B5), so after the first chunk of a write it reads the writer itself.
+   * Whether `caller` may type into `paneId` now; undefined = yes. `userFree` answers for the person alone (an agent's writes
+   * through the door do not count there), so it is read before every chunk. `presence: false` skips it (kept for callers
+   * that check only the command).
    */
   check(paneId: string, caller: OwnerId, opts: { presence?: boolean } = {}): GateRefusal | undefined {
     const eff = this.store.effectiveOf(paneId)
@@ -45,18 +46,13 @@ export class WriteGate {
   }
 
   /**
-   * Writes the chunks in order. Before the first byte the whole gate is checked (commander, hand, the person free). Before
-   * each later chunk, commander and hand again: a key of the person in a pane commanded from outside takes it at once
-   * (`onUserTyped`), so the rest (the Enter included) does not go. A door error (no process) rejects as it is.
+   * Writes the chunks in order. Before every chunk the whole gate is checked (commander, hand, the person free): a key of
+   * the person during the write stops the rest (the Enter included), in a pane commanded from outside (which she also takes,
+   * `onUserTyped`) and in the agent's own pane alike. A door error (no process) rejects as it is.
    */
   async write(paneId: string, caller: OwnerId, chunks: readonly WriteChunk[]): Promise<GuardedWrite> {
     let written = 0
-    let first = true
-    const gate = (): GateRefusal | undefined => {
-      const why = this.check(paneId, caller, { presence: first })
-      first = false
-      return why
-    }
+    const gate = (): GateRefusal | undefined => this.check(paneId, caller)
     for (const chunk of chunks) {
       if ('waitMs' in chunk) { await sleep(chunk.waitMs); written++; continue }
       if ('text' in chunk) {

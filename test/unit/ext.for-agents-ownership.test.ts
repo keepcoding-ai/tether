@@ -219,7 +219,11 @@ describe('for-agents: the ownership in the daemon (X2)', () => {
     const mark = b.slots.readScreen(p2).end
     assert.deepEqual(await b.fa.gate.write(p2, K, [{ text: 'abc' }, { waitMs: 150 }, { keys: ['enter'] }]), { ok: true })
     await waitUntil(() => b.slots.readScreen(p2, { since: mark }).data.includes('IN:"\\r"'), 10_000, 'the Enter of the free write')
-    // A fresh pane (the gate's own write counts as typing in the presence for USER_QUIET_MS, and p3 has a draft of hers).
+    // A second raw write of the same owner right after: its own keys are not the person's, so the gate does not refuse itself.
+    const mark2 = b.slots.readScreen(p2).end
+    assert.deepEqual(await b.fa.gate.write(p2, K, [{ text: 'ghi' }, { keys: ['enter'] }]), { ok: true })
+    await waitUntil(() => b.slots.readScreen(p2, { since: mark2 }).data.includes('\\r"'), 10_000, 'the Enter of the second write')
+    // A fresh pane (p3 has a draft of hers).
     const p4 = (await b.slots.create({ kind: 'soul', cwd: home, name: 'p4' })).slotId
     await waitUntil(() => b.slots.readScreen(p4).data.includes('READY'), 30_000, 'READY in p4')
     await appSet('pane', p4, 'owner', { owner: K, since: new Date().toISOString(), givenBy: 'user' } satisfies Ownership)
@@ -236,6 +240,22 @@ describe('for-agents: the ownership in the daemon (X2)', () => {
     await b.fa.idle()
     assert.deepEqual(port(p4), {}, 'and the key took the pane')
     await b.slots.forget(p4)
+
+    // The agent's own pane ("de si"): typing does not take it, so only the presence sees her key between the text and the Enter.
+    const S = (await b.slots.create({ kind: 'soul', cwd: home, name: 'Si' })).slotId
+    await waitUntil(() => b.slots.readScreen(S).data.includes('READY'), 30_000, 'READY in Si')
+    await b.fa.store.givePane(S, S); await b.fa.idle()
+    const markS = b.slots.readScreen(S).end
+    const selfWrite = b.fa.gate.write(S, S, [{ text: 'jkl' }, { waitMs: 800 }, { keys: ['enter'] }])
+    await sleep(250)
+    b.rec.client.input(S, 'q')
+    assert.deepEqual(await selfWrite, { ok: false, why: 'with-user', written: 2 })
+    await sleep(300)
+    const seenS = b.slots.readScreen(S, { since: markS }).data
+    assert.ok(seenS.includes('IN:"jkl"') && seenS.includes('IN:"q"'), seenS)
+    assert.ok(!seenS.includes('IN:"\\r"'), 'the Enter did not go in the self pane')
+    assert.deepEqual(port(S), { held: `${EXT_ID}:${S}` }, 'and the self pane stays held')
+    await b.slots.forget(S)
   })
 
   test('F12: with "answer" off, a card on the screen sends the request to the person; the hold stays', async () => {

@@ -15,7 +15,7 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** What the desks service (D2) offers `create`: the pane request for a desk, or `bad-request` when the map is known and the desk is not. */
 export interface PaneRequester { paneRequestFor(deskId: string): { deskId: string } }
 
-/** What `userFree` reads: the delivery's user interlock (UserPresence), at the present moment. */
+/** What `userFree` reads: the delivery's user interlock (UserPresence), for the person alone, at the present moment. */
 export interface UserFreeness { isFree(slotId: string): boolean }
 
 export class SlotsService {

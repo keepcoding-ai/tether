@@ -3,6 +3,8 @@
 // - What counts: input of the person (the pipe's `input`/`typed`), and also the input of the agent that holds the pane
 //   through the door (slots.write/keys): in a given pane the owner's word weighs as the user's, so the delivery never types
 //   over the owner's half-typed command either. The delivery's own writes are never fed here (delivery.ts filters them).
+// - Who typed is kept apart ('user' for the pipe, 'agent' for the door): the delivery waits for both (no `who`), while the
+//   gate of raw typing asks for the person alone (`who: 'user'`), so a writer's own keys never make it refuse itself.
 // - Terminal answers are not typing: a chunk that starts with ESC (DA, cursor position, focus reports, and also arrow keys)
 //   is ignored, the same rule as AttentionState.input. A bracketed paste (ESC[200~) is typing: it fills the box.
 // - The draft: set by a printable key or a paste; cleared by Enter (CR or LF), Ctrl+C or Ctrl+U, and when the turn turns busy
@@ -16,6 +18,9 @@ const PASTE_RE = /\x1b\[200~[\s\S]*?(?:\x1b\[201~|$)/g
 const ESCAPE_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|O.|[\s\S])?/g
 
 interface Presence { typedAt: number; draft: boolean }
+
+/** Who typed: the person (the pipe) or an agent (the door). */
+export type Typist = 'user' | 'agent'
 
 /** How one chunk leaves the draft: true (something typed), false (cleared), undefined (no effect). */
 export function draftEffect(data: string): boolean | undefined {
@@ -36,41 +41,57 @@ export function countsAsTyping(data: string): boolean {
 }
 
 export class UserPresence {
-  private readonly bySlot = new Map<string, Presence>()
+  private readonly bySlot = new Map<string, Partial<Record<Typist, Presence>>>()
   private readonly quietMs: number
 
   constructor(quietMs = USER_QUIET_MS) { this.quietMs = quietMs }
 
-  /** Keys of the person (or of the pane's holder) reached the slot at `now` (ms). */
-  input(slotId: string, data: string, now: number): void {
+  /** Keys of the person (or, `who: 'agent'`, of the pane's holder) reached the slot at `now` (ms). */
+  input(slotId: string, data: string, now: number, who: Typist = 'user'): void {
     if (!countsAsTyping(data)) return
-    const p = this.bySlot.get(slotId) ?? { typedAt: now, draft: false }
+    const slot = this.bySlot.get(slotId) ?? {}
+    const p = slot[who] ?? { typedAt: now, draft: false }
     p.typedAt = now
     const effect = draftEffect(data)
     if (effect !== undefined) p.draft = effect
-    this.bySlot.set(slotId, p)
+    slot[who] = p
+    this.bySlot.set(slotId, slot)
   }
 
-  /** The slot's turn turned busy: whatever was in the box was submitted. */
+  /** The slot's turn turned busy: whatever was in the box was submitted (by whoever typed it). */
   turnBusy(slotId: string): void {
-    const p = this.bySlot.get(slotId)
-    if (p) p.draft = false
+    const slot = this.bySlot.get(slotId)
+    if (slot?.user) slot.user.draft = false
+    if (slot?.agent) slot.agent.draft = false
   }
 
   forget(slotId: string): void { this.bySlot.delete(slotId) }
 
-  draft(slotId: string): boolean { return this.bySlot.get(slotId)?.draft ?? false }
-
-  /** When silence frees the slot (ms epoch); undefined when nobody typed; Infinity while a draft is there. */
-  freeAt(slotId: string): number | undefined {
-    const p = this.bySlot.get(slotId)
-    if (!p) return undefined
-    return p.draft ? Infinity : p.typedAt + this.quietMs
+  /** A draft in the box: of `who`, or of either when omitted. */
+  draft(slotId: string, who?: Typist): boolean {
+    return this.typists(slotId, who).some((p) => p.draft)
   }
 
-  /** No draft and `quietMs` of silence at `now`. */
-  isFree(slotId: string, now: number): boolean {
-    const at = this.freeAt(slotId)
+  /**
+   * When silence frees the slot (ms epoch); undefined when nobody typed; Infinity while a draft is there. With `who`, only
+   * that typist counts; without it, both (the later of the two).
+   */
+  freeAt(slotId: string, who?: Typist): number | undefined {
+    const ps = this.typists(slotId, who)
+    if (ps.length === 0) return undefined
+    return Math.max(...ps.map((p) => p.draft ? Infinity : p.typedAt + this.quietMs))
+  }
+
+  /** No draft and `quietMs` of silence at `now` (of `who`, or of both). */
+  isFree(slotId: string, now: number, who?: Typist): boolean {
+    const at = this.freeAt(slotId, who)
     return at === undefined || now >= at
+  }
+
+  private typists(slotId: string, who: Typist | undefined): Presence[] {
+    const slot = this.bySlot.get(slotId)
+    if (!slot) return []
+    const ps = who ? [slot[who]] : [slot.user, slot.agent]
+    return ps.filter((p): p is Presence => p !== undefined)
   }
 }
