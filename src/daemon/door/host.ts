@@ -8,7 +8,9 @@ import type { LaunchPlan } from '../../agents/types.ts'
 import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
 import { doorUnavailable, type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
-import type { DoorApi, DoorAttention, DoorDelivery, DoorDesks, DoorObjects, DoorSlots, DoorVerbs } from './types.ts'
+import { SlotKeys } from './slot-key.ts'
+import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorObjects, type DoorSlots, type DoorVerbs } from './types.ts'
+import { VerbRegistry } from './verbs.ts'
 
 export interface DoorHostOptions {
   log: (msg: string) => void
@@ -25,9 +27,16 @@ export class DoorHost implements DoorSeams {
   private readonly opts: DoorHostOptions
   private readonly handlers = new Map<string, DoorRequestHandler>()
   private portRef: SlotPort | undefined
+  /** The per-launch slot keys (digests only) that prove a CLI verb call came from that slot's environment. */
+  readonly slotKeys = new SlotKeys()
+  /** The contributed verbs: the CLI's `verb-list`/`verb` read it here, and the MCP server (D5) reads the same one. */
+  readonly verbs: VerbRegistry
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
+    this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
+    this.requests.register('verb-list', this.verbs.handleList)
+    this.requests.register('verb', this.verbs.handleRun)
   }
 
   /** The server's port; undefined in a satellite. */
@@ -64,13 +73,16 @@ export class DoorHost implements DoorSeams {
 
   input(_slotId: string, _data: string, _origin: InputOrigin): void {}
 
-  prepareLaunch(plan: LaunchPlan, _ctx: LaunchContext): LaunchGrant {
-    return { plan, revoke: () => {} }
+  /** A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). */
+  prepareLaunch(plan: LaunchPlan, ctx: LaunchContext): LaunchGrant {
+    const slotId = ctx.meta.slotId
+    const key = this.slotKeys.issue(slotId)
+    return { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
   }
 
-  exited(_slotId: string): void {}
+  exited(slotId: string): void { this.slotKeys.revoke(slotId) }
 
-  forgotten(_slotId: string): void {}
+  forgotten(slotId: string): void { this.slotKeys.revoke(slotId) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
@@ -99,8 +111,8 @@ export class DoorHost implements DoorSeams {
       requestPane: () => reject(what('desks.requestPane')),
     }
     const verbs: DoorVerbs = {
-      register: () => owned(own),
-      instructions: () => owned(own),
+      register: (verb) => own.add(this.verbs.register(ext, verb)),
+      instructions: (text) => own.add(this.verbs.instructions(ext, text)),
     }
     const delivery: DoorDelivery = {
       enable: () => owned(own),

@@ -4,6 +4,7 @@
 //   TETHER_TAB_URL    the pane's tether:// link (app/shared/tether-url.ts): following it brings this pane to the front
 //   TETHER_OPEN_CWD   the folder the pane was OPENED in — fixed, it never follows a `cd` (an agent keeps its notes there)
 //   TETHER_CLI        this tether's CLI script (`node "$TETHER_CLI" focus <file>`), for an agent with no `tether` on its PATH
+//   TETHER_SLOT_KEY   a per-launch secret the agent door adds at launch (src/daemon/door/host.ts): proves a CLI verb call comes from this run's environment
 // Set on top of the launch plan's env, after the profile's: a profile cannot make a pane lie about itself.
 import { tabUrl } from '../../app/shared/tether-url.ts'
 import { ENV_SLOT } from '../agents/types.ts'
