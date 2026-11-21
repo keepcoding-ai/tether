@@ -10,6 +10,7 @@ import { FOLLOW_LINK_TIP, terminalLinkProvider } from './terminal-links.ts'
 import { isModifierDown } from './link-open.ts'
 import { linkTargetOfUrl } from '../shared/links.ts'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
+import { routedAttention } from './seal-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
 import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -918,10 +919,14 @@ export class SlotTab implements ITabRenderer {
     if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
-    const mark = att.level ? 'attention' : tabMark(s)
-    setClass(this.attn, `attn${att.level ? ` ${att.level}` : mark ? ` ${mark}` : ''}`)
+    // An attention that waits for an agent owner, not for the person: a diamond in the owner's colour (door.css), not the orange dot.
+    const routed = routedAttention(s, id => { const o = this.host.getSlot(id); return o ? panelTitle(o) : undefined }, att.level)
+    const mark = att.level ? 'attention' : routed ? 'routed' : tabMark(s)
+    setClass(this.attn, `attn${att.level ? ` ${att.level}` : routed ? ' routed' : mark ? ` ${mark}` : ''}`)
     if (this.attn.dataset.mark !== mark) this.attn.dataset.mark = mark
-    setAttr(this.attn, 'title', att.level ? att.lines.join('\n') : tabMarkTip(s))
+    const hue = routed ? String(routed.hue) : ''
+    if (this.attn.style.getPropertyValue('--attn-hue') !== hue) { if (hue) this.attn.style.setProperty('--attn-hue', hue); else this.attn.style.removeProperty('--attn-hue') }
+    setAttr(this.attn, 'title', att.level ? att.lines.join('\n') : routed ? routed.tooltip : tabMarkTip(s))
     if (this.element.dataset.attention !== (att.level ?? '')) this.element.dataset.attention = att.level ?? ''
     setAttr(this.element, 'title', s ? panelTooltip(s) + att.lines.map(l => `\n${l}`).join('') : `Slot ${this.api.id} (desconhecido)`)
   }

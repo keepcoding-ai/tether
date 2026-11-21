@@ -5,12 +5,14 @@
   --mark-s: 62%;
   --mark-fg-l: 72%;
   --mark-bg-a: .18;
+  --mark-solid-s: 62%;
+  --mark-solid-l: 62%;
   --mark-line-a: .5;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme]) { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; }
+  :root:not([data-theme]) { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; --mark-solid-s: 58%; --mark-solid-l: 40%; }
 }
-:root[data-theme="light"] { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; }
+:root[data-theme="light"] { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; --mark-solid-s: 58%; --mark-solid-l: 40%; }
 
 /* The seal on a pill: a small glyph in a round chip, after the name and before any count. Without a hue it takes the pill's text. */
 .seg .desk-seal {
@@ -44,3 +46,10 @@
 .tether-tab button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
 .tether-tab button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tether-tab .ext-emblem .ph { width: 11px; height: 11px; }
+
+/* An attention that waits for an agent owner, not for the person (SlotState.attentionFor): a diamond in the owner's colour on the
+   tab, in place of the orange dot. A shape no other mark of the tether uses; the hue (0-359, agentHue of the owner) is --attn-hue. */
+.tether-tab .attn.routed {
+  display: inline-block; width: 7px; height: 7px; margin: 0 1px; border-radius: 1px; transform: rotate(45deg);
+  background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
+}
