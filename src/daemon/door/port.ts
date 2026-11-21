@@ -38,6 +38,8 @@ export interface SlotCreateInput {
 
 /** The server's slot operations, as the door uses them. Unknown ids throw `unknown-slot`, like the pipe. */
 export interface SlotPort {
+  /** The daemon's home: where door services keep their own files. */
+  readonly home: string
   create(input: SlotCreateInput): Promise<SlotState>
   start(slotId: string, choice?: 'resume' | 'new'): Promise<SlotState>
   stop(slotId: string): Promise<SlotState>

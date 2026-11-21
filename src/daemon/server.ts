@@ -502,6 +502,7 @@ class DaemonImpl implements Daemon {
   /** The slot operations the agent door drives: the same methods the pipe's requests run. */
   private slotPort(): SlotPort {
     return {
+      home: this.home,
       create: async ({ meta, ...input }) => this.stateOf(await this.createSlot(input, meta)),
       start: async (slotId, choice) => {
         const slot = this.slot(slotId)
