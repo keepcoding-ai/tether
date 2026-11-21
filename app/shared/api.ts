@@ -1,7 +1,8 @@
 // The narrow API the preload exposes to the renderer as `window.tether` (contextBridge).
 // Shared by the preload (implements it) and the renderer (consumes it).
 import type { AttentionState, MuteChoice } from './os-notify.ts'
-import type { Event as DaemonEvent, Notice, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
+import type { Event as DaemonEvent, Notice, ObjectKind, Profile, ProfileInput, Reply, Request } from '../../src/daemon/protocol.ts'
+import type { IDisposable } from './vscode-lifecycle.ts'
 import type { AskRequest, Confirmations, DialogAnswer } from './dialog.ts'
 import type { FontSizeCommand } from './font.ts'
 import type { TerminalAppearance } from './terminal-theme.ts'
@@ -43,6 +44,24 @@ export interface ExtSettingChange { id: string; key: string; value: SettingValue
 export interface MainExtensionsList { manifests: ExtensionSummary[]; disabled: string[]; failed: { id: string; error: string }[] }
 
 export type { Profile, ProfileInput }
+
+/** One key of an extension's object data changed (`value` undefined: deleted). */
+export interface ExtObjectChange { kind: ObjectKind; id: string; key: string; value: unknown }
+
+/**
+ * An extension's data on desks and panes, as the renderer (TetherUi.objects) and Electron main (TetherMain.objects) see it:
+ * a mirror of tetherd's store (the truth), kept per extension from `object-get` on each connection and the `object` event.
+ * Each extension sees only its own keys. `pane` ids are slot ids for terminals and the pane id otherwise; `desk` ids are the
+ * layout's desk ids.
+ */
+export interface ExtObjects {
+  get<T>(kind: ObjectKind, id: string, key: string): T | undefined
+  /** `undefined` deletes the key. Any JSON. Resolves once tetherd stored it. */
+  set(kind: ObjectKind, id: string, key: string, value: unknown): Promise<void>
+  /** Every object of a kind that has the key: [id, value]. */
+  entries<T>(kind: ObjectKind, key: string): [string, T][]
+  onDidChange(listener: (e: ExtObjectChange) => void): IDisposable
+}
 
 /** What main learned of an HTML preview's page (app/main/html-preview-main.ts): the files of its folder it loaded and what the policy refused. */
 export interface PreviewReport { partition: string; files: string[]; blocked: Array<{ url: string; reason: string }> }

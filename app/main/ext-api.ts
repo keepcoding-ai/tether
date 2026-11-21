@@ -10,9 +10,11 @@ import type { Rect, Size, Visibility } from './surface-rules.ts'
 import type { MainAgents } from './agents.ts'
 import type { MainNotices } from './tray-notices.ts'
 import type { RemoteSurfaceBridge } from './surface-bridge.ts'
+import type { ExtObjects } from '../shared/api.ts'
 
 export type { Brand } from '../shared/brand.ts'
 export type { RemoteSurfaceBridge } from './surface-bridge.ts'
+export type { ExtObjectChange, ExtObjects } from '../shared/api.ts'
 export type { Rect, Size, Visibility } from './surface-rules.ts'
 export type { AgentExit, AgentExitReason, AgentInfo, AgentRemoval, MainAgents } from './agents.ts'
 
@@ -159,6 +161,12 @@ export interface TetherMain {
    * only the notices it raised (they go with it).
    */
   notices: MainNotices
+  /**
+   * This extension's data on desks and panes: a mirror of tetherd's store (the truth), the same as the renderer's
+   * TetherUi.objects. Optional only because the Browser's main side runs in a child process with a TetherMain of its own
+   * (extensions/browser/process-child.ts) that does not relay it yet; the core's host always sets it.
+   */
+  objects?: ExtObjects
   /** The operating system's file shell. `trash` moves a file or folder to the system's trash (Electron's shell.trashItem); it rejects when it cannot. */
   shell: { trash(path: string): Promise<void> }
   /** A line in tether-app.log, prefixed with the extension's id. */

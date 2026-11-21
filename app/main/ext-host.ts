@@ -21,7 +21,8 @@ import { AgentTracker, type MainAgents } from './agents.ts'
 import { type MainNotices, TrayNotices } from './tray-notices.ts'
 import { BRAND } from '../shared/brand.ts'
 
-import type { ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
+import type { ExtObjects, ExtSettingChange, MainExtensionsList } from '../shared/api.ts'
+import type { ObjectKind } from '../../src/daemon/protocol.ts'
 export type { ExtSettingChange, MainExtensionsList }
 
 export interface MainHostDeps {
@@ -46,6 +47,22 @@ export interface MainHostDeps {
   agents?: MainAgents
   /** The tray's notices (app/main/tray-notices.ts); absent in the unit tests (a private set). */
   notices?: MainNotices
+  /** The agent door's object data as main mirrors it; absent: reads are empty and writes are refused. */
+  objects?: MainDoorObjects
+}
+
+/** Main's mirror of the extensions' object data (agent door): one store per extension, fed by tetherd's `object` events. */
+export interface MainDoorObjects {
+  apiFor(ext: string): ExtObjects
+  /** tetherd's `object` event. */
+  apply(e: { ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }): void
+}
+
+const inertObjects: ExtObjects = {
+  get: () => undefined,
+  set: () => Promise.reject(new Error('door-unavailable: objects')),
+  entries: () => [],
+  onDidChange: () => toDisposable(() => {}),
 }
 
 const noSurfaces: ExtSurfaces = { create: () => Promise.reject(new Error('superfícies indisponíveis')), get: () => undefined, list: () => [] }
@@ -149,6 +166,11 @@ export class MainExtensionHost {
     }
   }
 
+  /** tetherd's `object` event (agent door): main's mirror follows it. */
+  objectEvent(e: { ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }): void {
+    this.deps.objects?.apply(e)
+  }
+
   private apiFor(id: string): TetherMain {
     const deps = this.deps
     return {
@@ -188,6 +210,7 @@ export class MainExtensionHost {
       surfaces: deps.surfaces ? deps.surfaces(id) : noSurfaces,
       agents: deps.agents ?? noAgents,
       notices: deps.notices ?? noNotices,
+      objects: deps.objects ? deps.objects.apiFor(id) : inertObjects,
       shell: { trash: path => (deps.trash ? deps.trash(path) : Promise.reject(new Error('lixeira indisponível'))) },
       log: msg => deps.log(`[${id}] ${msg}`),
     }
