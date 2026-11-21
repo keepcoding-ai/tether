@@ -50,12 +50,16 @@ const CODEX_CARD = [
 const QUESTION = ['Qual banco usamos?', 'QUESTION-MARK', '1. Postgres', '2. SQLite'].join('\n')
 const IDLE = ['› ', '  ? for shortcuts'].join('\n')
 
+/** What the fake conductor says the last answer is (its `at` is when it was written), when a test sets it. */
+const conductorAnswer: { text?: string; at?: string } = {}
+
 /** The fake engine: reads the screen as the conductors do and says what card is on it. */
 const fake: Conductor = {
   id: 'fake-x4',
   match: (t) => (t.slot?.kind === 'soul' ? 10 : undefined),
   capabilities: [],
   watch: true,
+  lastAnswer: async () => (conductorAnswer.text === undefined ? undefined : { value: { text: conductorAnswer.text, at: conductorAnswer.at ?? '2099-01-01T00:00:00.000Z', source: 'screen' }, proven: false }),
   detect: async (ctx): Promise<Detected> => {
     const t = await ctx.screen()
     const lines = t.screen.map((l) => l.trimEnd()).filter((l) => l.trim() !== '')
@@ -106,10 +110,10 @@ class World {
   }
 
   /** The core's decoration: attention of a routed slot with a live recipient becomes `attentionFor`. */
-  raise(id: string, value: 'done' | 'waiting', extra: Partial<SlotState> = {}): SlotState {
+  raise(id: string, value: 'done' | 'waiting', extra: Partial<SlotState> = {}, drop: (keyof SlotState)[] = []): SlotState {
     const to = this.routes.get(id)
     const live = to !== undefined && this.states.get(to)?.status === 'running'
-    return this.set(id, { ...extra, ...(live ? { attentionFor: { slotId: to, value } } : { attention: value }) }, live ? ['attention'] : ['attentionFor'])
+    return this.set(id, { ...extra, ...(live ? { attentionFor: { slotId: to, value } } : { attention: value }) }, [...drop, ...(live ? ['attention' as const] : ['attentionFor' as const])])
   }
 
   clear(id: string): SlotState {
@@ -170,6 +174,8 @@ class World {
   }
 }
 
+const TURN_START = '2026-11-21T10:00:00.000Z'
+const TURN_END = '2026-11-21T10:00:09.000Z'
 const own = (v: string) => ({ owner: v, since: 'then', givenBy: 'user' })
 const settle = (ms = 150): Promise<void> => sleep(ms)
 
@@ -199,8 +205,9 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
   // ---- the edge --------------------------------------------------------------------------------
 
   test('a finished turn is one notice in the guia\'s name, with the exact body of 4.3', async () => {
-    w.files.set(slotAnswerPath('C:/home', 'p1'), JSON.stringify({ ts: 1, text: 'Feito: criei o arquivo.', from: 'claude-stop' }))
-    w.raise('p1', 'done', { idleSince: 'T1' })
+    w.set('p1', { turn: 'busy', busySince: TURN_START })
+    w.files.set(slotAnswerPath('C:/home', 'p1'), JSON.stringify({ ts: TURN_END, text: 'Feito: criei o arquivo.', from: 'claude-stop' }))
+    w.raise('p1', 'done', { idleSince: TURN_END }, ['turn'])
     await settle()
     assert.equal(w.delivered.length, 1)
     const { to, msg } = w.delivered[0]!
@@ -343,7 +350,7 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
     await settle()
     assert.deepEqual(w.cancelled, ['r1', 'r2'])
     await w.api.objects.set('pane', 'p1', 'owner', undefined)
-    assert.deepEqual(w.cancelled, ['r1', 'r2'], 'nothing left to cancel')
+    assert.deepEqual(w.cancelled, ['r1', 'r2', 'r3'], 'r3: the desk owner is told it only sees now; the revoke replaces it')
   })
 
   test('a delivery that finished no longer counts as waiting', async () => {
@@ -396,6 +403,111 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
     await w.api.objects.set('pane', 'p1', 'hand', hand('taken'))
     await settle()
     assert.equal(w.delivered.length, 0)
+  })
+})
+
+describe('for-agents: giving, revoking, pausing and the answer of the turn (X4)', () => {
+  let w: World
+  let store: OwnershipStore
+  let notices: Notices
+  let live: IDisposable[]
+  let unregister: IDisposable
+
+  before(() => { unregister = conductorRegistry.register(fake) })
+  after(() => unregister.dispose())
+
+  beforeEach(() => {
+    w = new World()
+    w.add('own', 'Atrium'); w.add('kai', 'Kai'); w.add('p1', 'bancada'); w.add('p2', 'cozinha')
+    store = new OwnershipStore(w.api.objects as never, w.api.desks as never)
+    w.routes.set('p1', 'own'); w.routes.set('p2', 'own')
+    conductorAnswer.text = undefined; conductorAnswer.at = undefined
+    notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10 })
+    live = [w.api.slots.onState((s) => notices.stateChanged(s)), w.api.objects.onDidChange((e) => notices.objectChanged(e))]
+  })
+  afterEach(() => { for (const d of live) d.dispose(); notices.dispose() })
+
+  const system = { name: 'tether', id: 'tether', role: 'system' }
+  const lines = (): [string, string][] => w.delivered.map((d) => [d.to, d.msg.body])
+
+  test('giving and revoking a desk: the agent that gained and the one that lost are told, one line, system', async () => {
+    await w.api.objects.set('desk', 'cena', 'owner', own('own'))
+    await w.api.objects.set('desk', 'cena', 'owner', own('kai'))
+    await w.api.objects.set('desk', 'cena', 'owner', undefined)
+    await settle()
+    assert.deepEqual(lines(), [
+      ['own', 'você recebeu a mesa cena'],
+      ['kai', 'você recebeu a mesa cena'], ['own', 'a mesa cena foi revogada'],
+      ['kai', 'a mesa cena foi revogada'],
+    ])
+    for (const d of w.delivered) { assert.equal(d.msg.kind, 'notice'); assert.deepEqual(d.msg.from, system) }
+  })
+
+  test('giving a guia: the agent that gets it is told, and so is the desk owner, who now only sees; revoking tells the loser', async () => {
+    await w.api.objects.set('desk', 'cena', 'owner', own('own'))
+    w.delivered.length = 0
+    await w.api.objects.set('pane', 'p2', 'owner', own('kai'))
+    await settle()
+    assert.deepEqual(lines(), [['kai', 'você recebeu a guia cozinha'], ['own', 'a guia cozinha foi dada a Kai: agora você só vê']])
+    for (const d of w.delivered) assert.deepEqual(d.msg.from, system)
+    w.delivered.length = 0
+    await w.api.objects.set('pane', 'p2', 'owner', undefined)
+    await settle()
+    assert.deepEqual(lines(), [['kai', 'a guia cozinha foi revogada']])
+  })
+
+  test('a guia given to itself ("de si") tells nobody; a gain that changes nothing is not told twice', async () => {
+    await w.api.objects.set('pane', 'p1', 'owner', own('p1'))
+    await settle()
+    assert.deepEqual(lines(), [])
+    await w.api.objects.set('pane', 'p1', 'owner', own('kai'))
+    await w.api.objects.set('pane', 'p1', 'owner', own('kai'))
+    await settle()
+    assert.deepEqual(lines(), [['kai', 'você recebeu a guia bancada']])
+  })
+
+  test('the owner paused everywhere is told once, and told when it is resumed', async () => {
+    await w.api.objects.set('pane', 'own', 'frozen', { since: 'now' })
+    await w.api.objects.set('pane', 'own', 'frozen', { since: 'again' })
+    await w.api.objects.set('pane', 'own', 'frozen', undefined)
+    await settle()
+    assert.deepEqual(lines(), [['own', 'você foi pausada em tudo'], ['own', 'você foi retomada']])
+    assert.deepEqual(w.delivered[0]!.msg.from, system)
+  })
+
+  const commanded = (): void => { w.objs.set('desk|cena|owner', own('own')) }
+
+  test('an answer from before the turn is never sent as this one: the conductor\'s fresh source, or no block', async () => {
+    commanded()
+    w.files.set(slotAnswerPath('C:/home', 'p1'), JSON.stringify({ ts: '2026-11-21T09:00:00.000Z', text: 'resposta do turno anterior', from: 'claude-stop' }))
+    w.set('p1', { turn: 'busy', busySince: TURN_START })
+    w.raise('p1', 'done', { idleSince: TURN_END }, ['turn'])
+    await settle()
+    assert.equal(w.delivered[0]!.msg.body, 'terminou · guia p1 · mesa cena\nLer tudo: agents last-answer p1', 'stale file, no conductor answer: no block')
+
+    // The conductor has an answer written after the second turn began: it is this turn's.
+    w.clear('p1')
+    w.set('p1', { turn: 'busy', busySince: '2026-11-21T10:05:00.000Z' })
+    conductorAnswer.text = 'resposta deste turno'; conductorAnswer.at = '2026-11-21T10:05:08.000Z'
+    w.raise('p1', 'done', { idleSince: '2026-11-21T10:05:09.000Z' }, ['turn'])
+    await settle()
+    assert.equal(w.delivered[1]!.msg.body, 'terminou · guia p1 · mesa cena\nÚltima resposta (20 caracteres):\nresposta deste turno\nLer tudo: agents last-answer p1')
+
+    // The same conductor answer is stale for the next turn.
+    w.clear('p1')
+    w.set('p1', { turn: 'busy', busySince: '2026-11-21T10:10:00.000Z' })
+    w.raise('p1', 'done', { idleSince: '2026-11-21T10:10:09.000Z' }, ['turn'])
+    await settle()
+    assert.equal(w.delivered[2]!.msg.body, 'terminou · guia p1 · mesa cena\nLer tudo: agents last-answer p1')
+  })
+
+  test('an answer file written during the turn is used', async () => {
+    commanded()
+    w.files.set(slotAnswerPath('C:/home', 'p1'), JSON.stringify({ ts: TURN_END, text: 'dentro do turno', from: 'claude-stop' }))
+    w.set('p1', { turn: 'busy', busySince: TURN_START })
+    w.raise('p1', 'done', { idleSince: TURN_END }, ['turn'])
+    await settle()
+    assert.match(w.delivered[0]!.msg.body, /dentro do turno/)
   })
 })
 

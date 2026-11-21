@@ -4,7 +4,7 @@
 // (`object-set` on the pipe); the agents' verbs run through the door's registry (the MCP exit) and through the pipe's `verb`
 // request (the CLI exit). The user's home, pipe and tetherd are never touched.
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
@@ -16,6 +16,7 @@ import type { Ownership } from '../../extensions/for-agents/rules.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
 import '../../src/agents/load.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
+import { inboxPath } from '../../src/daemon/door/delivery.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { DoorAttention, DoorSlots, VerbResult } from '../../src/daemon/door/types.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
@@ -164,6 +165,24 @@ describe('for-agents: the verbs of the owner (X3)', () => {
   }
   const screenOf = (id: string): string => slots.readScreen(id).data
   const quiet = async (): Promise<void> => { await sleep(250) }
+  // The notices of the owner (notices.ts) are on: A is no pane "de si" in most cases, so what is told to A waits in its queue,
+  // which is the inbox file of the delivery. A case that expects a notice waits for it there, and a case that makes a message
+  // wait for a pane waits for it to be typed before the next one starts, so no case leaves anything in another's way.
+  const inboxOf = (id: string): string => { try { return readFileSync(inboxPath(home, id), 'utf8') } catch { return '' } }
+  const toldTo = (id: string, text: string, what: string): Promise<void> => waitUntil(() => inboxOf(id).includes(text), 20_000, what)
+  /**
+   * Empties a queue that waits for the pane to be typed into. The fake agent has no report of its own, so each typed message
+   * leaves its turn open; the pane takes the next one only when the turn is closed, and the test closes it with the same signal
+   * the engines' reports give. Ends with the pane quiet and out of a turn.
+   */
+  const drainInto = async (id: string, what: string): Promise<void> => {
+    const deadline = Date.now() + 90_000
+    while (inboxOf(id).trim() !== '' || slots.get(id)?.turn === 'busy') {
+      if (Date.now() > deadline) throw new Error(`timeout (90000 ms) waiting for ${what}`)
+      if (slots.get(id)?.turn === 'busy') attention.signal(id, 'done')
+      await sleep(400)
+    }
+  }
 
   test('the table: every verb of 3.1 is registered with both exits, an English description and a Portuguese help', () => {
     const names = ['list', 'open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'give', 'revoke']
@@ -204,10 +223,17 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.match(screenOf(p1), /olá p1/)
 
     await appSet('pane', p1, 'hand', { with: 'user', why: 'taken', by: 'gesture', since: new Date().toISOString() })
+    await toldTo(A, 'o usuário tomou a guia p1', 'the owner told that p1 was taken')
     const q = await call(A, 'send', { guia: p1, text: 'espera' })
     assert.equal(data(q).state, 'queued')
     assert.equal(data(q).why, 'with-user')
     await appSet('pane', p1, 'hand')
+    await toldTo(A, 'o usuário devolveu a guia p1', 'the owner told that p1 was given back')
+    // The fake agent has no report of its own: its turn ends only by a signal, and the delivery types into an agent that is not in
+    // a turn. The case ends the turn itself and waits for the message that waited to be typed, so it does not come in the middle
+    // of a later case.
+    attention.signal(p1, 'done')
+    await waitUntil(() => screenOf(p1).includes('espera'), 30_000, 'the message that waited, typed in p1 once its turn ended')
   })
 
   test('send raw: types through the conductor and the gate, and refuses with-user without a byte', async () => {
@@ -224,6 +250,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     await quiet()
     assert.doesNotMatch(screenOf(p2), /nao/)
     await appSet('pane', p2, 'hand')
+    await toldTo(A, 'o usuário devolveu a guia p2', 'the owner told that p2 was given back')
   })
 
   test('errors of ownership: a pane of another desk, a pane only seen, an unknown name', async () => {
@@ -281,14 +308,17 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     const done = await call(A, 'interrupt', { guia: p1 })
     assert.equal(data(done).state, 'stopped')
     await waitUntil(() => slots.get(p1)?.attentionFor?.value === 'done' && slots.get(p1)?.attentionFor?.slotId === A, 10_000, 'the done signal, routed to the owner')
+    await toldTo(A, `terminou · guia ${p1} · mesa cena`, 'the owner told that the turn ended')
     attention.seen(p1)
 
     await appSet('pane', p1, 'hand', { with: 'user', why: 'paused', by: 'gesture', since: new Date().toISOString() })
+    await toldTo(A, 'p1 foi pausada para você', 'the owner told that p1 was paused')
     const before = screenOf(p1)
     assert.equal(codeOf(await call(A, 'interrupt', { guia: p1 })), 'with-user')
     await quiet()
     assert.equal(screenOf(p1), before)
     await appSet('pane', p1, 'hand')
+    await toldTo(A, 'p1 foi retomada', 'the owner told that p1 was resumed')
     stopped = false
     detected = { state: 'idle' }
   })
@@ -340,6 +370,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     await appSet('pane', p1, 'hand', { with: 'user', why: 'taken', by: 'gesture', since: new Date().toISOString() })
     assert.equal(codeOf(await call(A, 'answer', { guia: p1, choice: 'no' })), 'with-user')
     await appSet('pane', p1, 'hand')
+    await toldTo(A, 'o usuário devolveu a guia p1', 'the owner told that p1 was given back')
     detected = { state: 'idle' }
   })
 
@@ -352,6 +383,10 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.equal(codeOf(await call(A, 'command', { name: 'compact' })), 'not-commanded', 'no pane "de si"')
 
     await appSet('pane', A, 'owner', { owner: A, since: new Date().toISOString(), givenBy: 'user' } satisfies Ownership)
+    // A is "de si" now, so what waited for it (the notices of the cases before) is typed into it, one at a time; the deferred
+    // command is measured from when that queue is empty and the pane is quiet.
+    await drainInto(A, "the owner's queue to empty into its own pane")
+    await quiet()
     const own = await call(A, 'command', { name: 'clear' })
     assert.equal(data(own).deferred, true)
     assert.equal(seen.commands.includes('clear'), false, 'not run inside the call')
@@ -376,6 +411,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     await appSet('pane', p1, 'hand', { with: 'user', why: 'taken', by: 'gesture', since: new Date().toISOString() })
     assert.equal(codeOf(await call(A, 'type', { guia: p1, text: 'nope' })), 'with-user')
     await appSet('pane', p1, 'hand')
+    await toldTo(A, 'o usuário devolveu a guia p1', 'the owner told that p1 was given back')
     await quiet()
     assert.doesNotMatch(screenOf(p1), /nope/)
   })

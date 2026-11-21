@@ -38,6 +38,8 @@ export const ANSWER_CHARS = 600
 export const CARD_LINES = 20
 /** The owner's return is told after the burst of states it causes settles. */
 export const RETURN_SETTLE_MS = 150
+/** With the turn's start unknown (the daemon began in the middle of it), an answer written this long before its end still counts. */
+export const ANSWER_SKEW_MS = 10_000
 
 const SYSTEM_FROM = { name: 'tether', id: 'tether', role: 'system' } as const
 
@@ -135,6 +137,12 @@ export class Notices {
   private readonly panesOfReceipt = new Map<string, string[]>()
   /** The hand of each pane as last told; a pane absent is with its owner. */
   private readonly hands = new Map<string, HandState>()
+  /** pane -> when its current (or last) turn began (ISO), from the busy states. */
+  private readonly turnStart = new Map<string, string>()
+  /** `desk:<id>` / `pane:<id>` -> the live owner last told, to tell who gained and who lost on the next change. */
+  private readonly owners = new Map<string, string>()
+  /** The owners paused everywhere that were told. */
+  private readonly frozenTold = new Set<string>()
   private disposed = false
 
   constructor(api: NoticesApi, wiring: NoticesWiring, opts: { settleMs?: number; readers?: ScreenReaders } = {}) {
@@ -149,6 +157,8 @@ export class Notices {
   /** Every state of every slot comes here; only a change of the rerouted attention does anything. */
   stateChanged(s: SlotState): void {
     if (this.disposed) return
+    // The start of the turn is only in the state while it runs; the finish needs it to tell this turn's answer from the last one's.
+    if (s.turn === 'busy' && s.busySince) this.turnStart.set(s.slotId, s.busySince)
     const af = s.attentionFor
     if (!af) {
       this.edges.delete(s.slotId)
@@ -209,16 +219,26 @@ export class Notices {
 
   /** The start of the answer: the file the engine's reporter writes before the `done` (K2), else the conductor's source. */
   private async lastAnswer(s: SlotState, owner: string): Promise<string | undefined> {
+    // An answer older than the turn that ended is the previous turn's (the reporter writes nothing for a turn with no text):
+    // it is never sent as this one's. Without the turn's start, the answer must be next to the end of the turn.
+    const start = this.turnStart.get(s.slotId)
+    const floor = start ? Date.parse(start) : s.idleSince ? Date.parse(s.idleSince) - ANSWER_SKEW_MS : Number.NaN
+    const fresh = (at: unknown): boolean => {
+      if (Number.isNaN(floor)) return true
+      const t = typeof at === 'number' ? at : typeof at === 'string' ? Date.parse(at) : Number.NaN
+      return t >= floor
+    }
     try {
       const raw = await this.api.io.tryReadText(slotAnswerPath(this.api.home, s.slotId))
-      const text = raw ? (JSON.parse(raw) as { text?: unknown }).text : undefined
-      if (typeof text === 'string' && text.trim()) return text
+      const file = raw ? (JSON.parse(raw) as { text?: unknown; ts?: unknown }) : undefined
+      if (typeof file?.text === 'string' && file.text.trim() && fresh(file.ts)) return file.text
     } catch { /* a half-written or foreign file: the conductor is next */ }
     const target = targetFor(this.api, s.slotId)
     const c = conductorRegistry.pick(target, 'lastAnswer')
     if (!c) return undefined
     try {
-      return (await c.lastAnswer!(buildContext({ api: this.api, gate: this.wiring.gate, readers: this.readers }, owner, target)))?.value.text
+      const found = (await c.lastAnswer!(buildContext({ api: this.api, gate: this.wiring.gate, readers: this.readers }, owner, target)))?.value
+      return found && fresh(found.at) ? found.text : undefined
     } catch {
       return undefined
     }
@@ -256,7 +276,8 @@ export class Notices {
 
   /** Remembers the hands that are not with the owners at the start, so that giving one back is told. */
   seed(): void {
-    for (const [id] of this.wiring.store.ownedPanes()) this.noteHand(id)
+    for (const [id, o] of this.wiring.store.ownedPanes()) { this.noteHand(id); if (!o.ended) this.owners.set(`pane:${id}`, o.owner) }
+    for (const [id, o] of this.wiring.store.ownedDesks()) if (!o.ended) this.owners.set(`desk:${id}`, o.owner)
     for (const [deskId] of this.wiring.store.ownedDesks()) {
       for (const p of this.api.desks.map()?.desks.find((d) => d.id === deskId)?.panes ?? []) this.noteHand(p.id)
     }
@@ -268,11 +289,14 @@ export class Notices {
   }
 
   /** A change of the ownership objects: pending notices of the panes go, and a change of hand is told to the owner. */
-  objectChanged(e: { kind: 'desk' | 'pane'; id: string; key: string }): void {
+  objectChanged(e: { kind: 'desk' | 'pane'; id: string; key: string; value?: unknown }): void {
     if (this.disposed) return
     const panes = panesAffected(this.api, this.wiring.store, e)
     for (const id of panes) this.cancelPending(id)
-    if (e.key !== OBJECT_KEYS.hand) return
+    if (e.key === OBJECT_KEYS.owner) this.ownerChanged(e)
+    if (e.key === OBJECT_KEYS.frozen) this.frozenChanged(e)
+    // The hands are kept up to date by every change that can move them; only a change of the hand itself is told.
+    const tell = e.key === OBJECT_KEYS.hand
     // One notice per owner, one line per pane (taking a desk touches every pane it commands).
     const byOwner = new Map<string, { lines: string[]; panes: string[] }>()
     for (const id of panes) {
@@ -282,7 +306,7 @@ export class Notices {
       if (now === 'owner') this.hands.delete(id)
       else this.hands.set(id, now)
       // The guia "de si" is the owner's own: it is never told of it (F5).
-      if (eff.commander === undefined || eff.commander === id) continue
+      if (!tell || eff.commander === undefined || eff.commander === id) continue
       const s = this.api.slots.get(id)
       const line = handLine(prev, now, s ? slotTitle(s) : id)
       if (!line) continue
@@ -296,6 +320,50 @@ export class Notices {
     for (const [owner, { lines, panes: told }] of byOwner) {
       void this.send(owner, { kind: 'notice', from: SYSTEM_FROM, body: lines.join('\n') }, told).catch((err: unknown) => this.api.log(`aviso da mão falhou: ${(err as Error).message}`))
     }
+  }
+
+  // ---- giving and revoking, pausing everywhere ------------------------------------------------------
+
+  /** The gains and losses of a change of `owner`: each agent affected is told in one line (the person's gestures and agents' `give`). */
+  private ownerChanged(e: { kind: 'desk' | 'pane'; id: string; value?: unknown }): void {
+    const key = `${e.kind}:${e.id}`
+    const v = e.value as { owner?: unknown; ended?: unknown } | undefined
+    const next = v && typeof v.owner === 'string' && !v.ended ? v.owner : undefined
+    const prev = this.owners.get(key)
+    if (next !== undefined) this.owners.set(key, next)
+    else this.owners.delete(key)
+    if (prev === next) return
+    const told = (to: string, text: string, panes?: string[]): void => {
+      void this.send(to, { kind: 'notice', from: SYSTEM_FROM, body: text }, panes).catch((err: unknown) => this.api.log(`aviso da posse falhou: ${(err as Error).message}`))
+    }
+    if (e.kind === 'desk') {
+      const name = this.api.desks.map()?.desks.find((d) => d.id === e.id)?.name ?? e.id
+      if (next !== undefined) told(next, `você recebeu a mesa ${name}`)
+      if (prev !== undefined) told(prev, `a mesa ${name} foi revogada`)
+      return
+    }
+    const nameOf = (id: string): string => { const s = this.api.slots.get(id); return s ? slotTitle(s) : id }
+    const name = nameOf(e.id)
+    const panes = [e.id]
+    if (next !== undefined && next !== e.id) {
+      told(next, `você recebeu a guia ${name}`, panes)
+      // The desk's owner no longer commands it: it only sees.
+      const deskOwner = this.wiring.store.deskOfPane(e.id)?.owner
+      if (deskOwner && !deskOwner.ended && deskOwner.owner !== next && deskOwner.owner !== e.id) {
+        told(deskOwner.owner, `a guia ${name} foi dada a ${nameOf(next)}: agora você só vê`, panes)
+      }
+    }
+    if (prev !== undefined && prev !== e.id) told(prev, `a guia ${name} foi revogada`, panes)
+  }
+
+  /** "Pausar <dono> em tudo" (and back): the owner is told once. */
+  private frozenChanged(e: { kind: 'desk' | 'pane'; id: string; value?: unknown }): void {
+    if (e.kind !== 'pane') return
+    const now = e.value !== undefined
+    if (now === this.frozenTold.has(e.id)) return
+    if (now) this.frozenTold.add(e.id)
+    else this.frozenTold.delete(e.id)
+    void this.send(e.id, { kind: 'notice', from: SYSTEM_FROM, body: now ? 'você foi pausada em tudo' : 'você foi retomada' }).catch((err: unknown) => this.api.log(`aviso da pausa falhou: ${(err as Error).message}`))
   }
 
   // ---- delivering -------------------------------------------------------------------------------
@@ -351,6 +419,9 @@ export class Notices {
     this.edges.delete(paneId)
     this.away.delete(paneId)
     this.hands.delete(paneId)
+    this.turnStart.delete(paneId)
+    this.owners.delete(`pane:${paneId}`)
+    this.frozenTold.delete(paneId)
     this.readers.drop(paneId)
   }
 
