@@ -3,10 +3,9 @@
 // unit tests; the probes gather them. Derived from the soul's checks in doctor.ts and kept apart: each program evolves alone.
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { cleanEnv } from './agents/claude.ts'
 import { ENV_HANDS_REPORT, ENV_HANDS_SLOT, resolveHandsCommand } from './agents/hands.ts'
-import { findOnPath } from './agents/shell-sync.ts'
 import { inspectRenamedNode, isNodeExecutable, type ExeStatus } from './core/exe-sync.ts'
 import { tetherHome } from './core/paths.ts'
 import type { CheckResult } from './doctor.ts'
@@ -43,6 +42,16 @@ export function checkHandsExe(s: ExeStatus, handsIsNode: boolean, platform: Node
   return { level: 'OK', name, detail: `tether-hands: ${how} de ${s.stamp?.source ?? '?'}${s.outdated ? ', desatualizada' : ''}` }
 }
 
+/** An executable on PATH (Windows: with .exe/.cmd/.bat). Kept here: tetherd imports this file, never shell-sync.ts. */
+function onPath(name: string, env: Record<string, string | undefined> = process.env): string | undefined {
+  const names = process.platform === 'win32' ? [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name] : [name]
+  for (const dir of (env.PATH ?? env.Path ?? '').split(delimiter)) {
+    if (!dir) continue
+    for (const n of names) if (existsSync(join(dir, n))) return join(dir, n)
+  }
+  return undefined
+}
+
 /** bin/hands and the bundle it imports (bin/hands → ../dist/hands.mjs). */
 function handsSourceText(command: string, args: string[]): string | undefined {
   const script = args[0] && (isAbsolute(args[0]) || existsSync(args[0])) ? args[0] : command
@@ -56,7 +65,7 @@ function handsSourceText(command: string, args: string[]): string | undefined {
 export async function probeHands(): Promise<CheckResult> {
   let command: string, args: string[]
   try { ({ command, args } = await resolveHandsCommand()) } catch (e) { return { level: 'ERRO', name: 'hands', detail: (e as Error).message, hint: 'corrija TETHER_HANDS_CMD' } }
-  const found = command !== 'hands' && (existsSync(command) || findOnPath(command) !== undefined)
+  const found = command !== 'hands' && (existsSync(command) || onPath(command) !== undefined)
   if (!found) return checkHands({ command, found: false, versionOutput: undefined, sourceText: undefined })
   const env = cleanEnv()
   delete env[ENV_HANDS_REPORT]
