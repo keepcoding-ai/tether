@@ -1,0 +1,8 @@
+{
+ "source": "sonda-tela/samples/shell.raw",
+ "text": "sonda-tela/evidence/shell.xterm-screen.txt",
+ "cols": 100,
+ "rows": 30,
+ "raw": "\u001b[?9001h\u001b[?1004h\u001b[?25l\u001b[2J\u001b[m\u001b[HMicrosoft Windows [versão 10.0.26300.9974]\u001b]0;C:\\WINDOWS\\SYSTEM32\\cmd.exe\u0007\u001b[?25h\u001b[?25l\r\n(c) Microsoft Corporation. Todos os direitos reservados.\u001b[4;1HD:\\atrium\\.tmp\\tether-agents\\sonda-tela>\u001b[?25hecho hello-from-shell\r\n\u001b[?25lhello-from-shell\u001b[7;1HD:\\atrium\\.tmp\\tether-agents\\sonda-tela>\u001b[?25hdir /b samples\r\n\r\nD:\\atrium\\.tmp\\tether-agents\\sonda-tela>exit\r\n",
+ "expected": "Microsoft Windows [versão 10.0.26300.9974]\n(c) Microsoft Corporation. Todos os direitos reservados.\n\nD:\\atrium\\.tmp\\tether-agents\\sonda-tela>echo hello-from-shell\nhello-from-shell\n\nD:\\atrium\\.tmp\\tether-agents\\sonda-tela>dir /b samples\n\nD:\\atrium\\.tmp\\tether-agents\\sonda-tela>exit\n"
+}

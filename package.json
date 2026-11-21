@@ -21,6 +21,7 @@
     "emblems:derive": "node app/emblem-icons-derive.mjs",
     "bridge:build": "node extensions/web-bridge/build.mjs",
     "browser:vendor": "node extensions/browser/vendor.mjs",
+    "for-agents:vendor": "node extensions/for-agents/vendor.mjs",
     "app:build": "node app/build.mjs",
     "app:install": "node app/install.mjs install",
     "app:uninstall": "node app/install.mjs uninstall",

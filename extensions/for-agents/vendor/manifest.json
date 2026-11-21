@@ -1,0 +1,10 @@
+{
+  "name": "@xterm/headless",
+  "version": "6.0.0",
+  "source": "https://registry.npmjs.org/@xterm/headless/-/headless-6.0.0.tgz",
+  "integrity": "sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==",
+  "files": {
+    "xterm-headless/lib-headless/xterm-headless.mjs": "b27576b6bef6610be97e55a959319baa8a6b1a4fae629d49926971a536428c7a",
+    "xterm-headless/package.json": "6c39530ee759998113bd8bcc306d1b725c0b1d5b0cdc04e071f6945a5f5edf1a"
+  }
+}
