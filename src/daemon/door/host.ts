@@ -120,6 +120,28 @@ export class DoorHost implements DoorSeams {
 
   forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.slotsService.forgotten(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
 
+  /**
+   * The start, after the extensions activated: a hold whose extension is not active (turned off, failed, gone) is a hold
+   * nobody keeps, so it goes, with the attention route of the same slot (the route is the hold's other half). A hold of an
+   * active extension is left to it. One log line per slot cleared.
+   */
+  async releaseInactive(active: readonly string[]): Promise<void> {
+    const port = this.portRef
+    if (!port) return
+    const keep = new Set(active)
+    for (const s of port.list()) {
+      const meta = port.meta(s.slotId)
+      if (!meta?.held || keep.has(meta.held.ext)) continue
+      const ext = meta.held.ext
+      delete meta.held
+      const routed = meta.attentionTo !== undefined
+      if (routed) { delete meta.attentionTo; this.attentionService.unindex(s.slotId) }
+      try { await port.saveMeta(s.slotId) } catch (e) { this.log(`não gravei o meta de ${s.slotId}: ${(e as Error).message}`) }
+      port.broadcastState(s.slotId)
+      this.log(`slot ${s.slotId}: posse da extensão inativa ${ext} desfeita${routed ? ', com a rota de atenção' : ''}`)
+    }
+  }
+
   // ---- the extensions' API ---------------------------------------------------------------------
 
   /** The door part of extension `ext`'s TetherDaemon; its registrations land in `own`. */

@@ -116,6 +116,8 @@ async function main(): Promise<void> {
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}, executor ${executor.mode}`)
   log(`extensions: ${extHost.activated.length} active${extHost.failed.length ? `, ${extHost.failed.length} failed` : ''}`)
+  // A hold left by an extension that is not active now (turned off, failed) has no keeper: it goes before anyone reads it.
+  await door.releaseInactive(extHost.activated)
   // Only the owner of the pipe gets here: the extensions' startup side effects (files, helper processes) run now.
   extHost.emitStarted()
   perfLog.start()

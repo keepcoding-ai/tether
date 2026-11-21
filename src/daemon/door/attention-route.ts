@@ -78,6 +78,9 @@ export class AttentionRouteService {
     }
   }
 
+  /** The route of `slotId` was taken out of its meta by the host (the start's sweep): the reverse index forgets it. */
+  unindex(slotId: string): void { this.drop(slotId) }
+
   // ---- the extensions' API -----------------------------------------------------------------------
 
   apiFor(ext: string, own: DisposableStore): DoorAttention {

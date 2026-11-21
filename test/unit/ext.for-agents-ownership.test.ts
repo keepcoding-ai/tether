@@ -54,22 +54,23 @@ function fakeAdapter(home: string): AgentAdapter {
 }
 
 /** A tetherd with only for-agents, activated by the real extension host; `wire` is captured to reach its pieces. */
-async function boot(home: string, logs: string[]): Promise<Booted> {
+async function boot(home: string, logs: string[], withExt = true): Promise<Booted> {
   let fa: ForAgentsDaemon | undefined
   const entry: ExtensionEntry<TetherDaemon> = { manifest, activate: (api) => { const w = wire(api); fa = w.forAgents; return w.disposables } }
   const door = new DoorHost({ log: (m) => logs.push(m) })
-  const host = new DaemonExtensionHost({ home, log: (m) => logs.push(m), door, extensions: [entry] })
+  const host = new DaemonExtensionHost({ home, log: (m) => logs.push(m), door, extensions: withExt ? [entry] : [] })
   host.activate()
   const daemon = await startDaemon({
     home, pipe: uniquePipe(home), memoryIntervalMs: 0, readyFallbackMs: 300, minAgentAgeMs: 0, adapters: { soul: fakeAdapter(home) }, door,
     transformPlan: host.transformPlan, onSlot: host.emitSlot, log: (m) => logs.push(m),
   })
+  await door.releaseInactive(host.activated) // what main.ts runs between the start and emitStarted
   host.emitStarted()
   const rec = await Recorder.connect(daemon.pipe)
   const probe = new DisposableStore()
   const api = door.apiFor('probe', probe)
-  assert.ok(fa, 'for-agents activated')
-  return { daemon, door, host, rec, fa, slots: api.slots, attention: api.attention, probe }
+ if (withExt) assert.ok(fa, 'for-agents activated')
+  return { daemon, door, host, rec, fa: fa as ForAgentsDaemon, slots: api.slots, attention: api.attention, probe }
 }
 
 const desk = (id: string, panes: string[], kind: 'queue' | 'system' = 'queue') => ({ id, name: id, kind, panes: panes.map((p) => ({ id: p, type: 'terminal' })) })
@@ -315,6 +316,51 @@ describe('for-agents: a restarted daemon keeps the ownership', () => {
       await b.fa.reconciler.reconcileAll()
       await sleep(200)
       assert.equal(b.rec.states.length, n, 'the restarted state needs no mending')
+    } finally {
+      b.probe.dispose(); b.rec.close()
+      await b.daemon.close().catch(() => {})
+      await removeHome(home)
+    }
+  })
+})
+
+describe('for-agents: a hold of an inactive extension goes at the start', () => {
+  test('without the extension the hold and the route go; with it they stay', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'echo.cjs'), ECHO)
+    const logs: string[] = []
+    let b = await boot(home, logs)
+    try {
+      const make = async (name: string): Promise<string> => {
+        const id = (await b.slots.create({ kind: 'soul', cwd: home, name })).slotId
+        await waitUntil(() => b.slots.readScreen(id).data.includes('READY'), 30_000, `READY in ${name}`)
+        return id
+      }
+      const A = await make('Atrium'), p1 = await make('p1')
+      await b.fa.store.givePane(p1, A); await b.fa.idle()
+      assert.deepEqual(b.slots.get(p1)?.held, { ext: EXT_ID, by: A })
+      assert.equal(b.attention.routeOf(p1), A)
+      await b.door.objects.flush(); await b.door.desks.flush()
+      const restart = async (withExt: boolean): Promise<void> => {
+        b.probe.dispose(); b.rec.close()
+        await b.daemon.close()
+        b = await boot(home, logs, withExt)
+        if (withExt) await b.fa.idle()
+      }
+
+      // With it: nothing is swept.
+      await restart(true)
+      assert.deepEqual(b.slots.get(p1)?.held, { ext: EXT_ID, by: A })
+      assert.equal(b.attention.routeOf(p1), A)
+      assert.equal(logs.filter((l) => l.includes('extensão inativa')).length, 0)
+
+      // Without it: the hold and the route go, one log line, and the state carries no `held`.
+      await restart(false)
+      assert.equal(b.slots.get(p1)?.held, undefined)
+      assert.equal(b.attention.routeOf(p1), undefined)
+      assert.equal(b.slots.get(A)?.held, undefined)
+      assert.equal(logs.filter((l) => l.includes(`slot ${p1}: posse da extensão inativa ${EXT_ID}`)).length, 1)
+      assert.ok(!('held' in (b.slots.get(p1) ?? {})))
     } finally {
       b.probe.dispose(); b.rec.close()
       await b.daemon.close().catch(() => {})
