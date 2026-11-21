@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { UsageError } from '../../src/cli/args.ts'
-import { cmdVerb, verbsHelp, type VerbIo } from '../../src/cli/verb.ts'
+import { cmdVerb, helpWithVerbs, verbsHelp, type VerbIo } from '../../src/cli/verb.ts'
 import type { DaemonClient } from '../../src/daemon/client.ts'
 import { SlotKeys } from '../../src/daemon/door/slot-key.ts'
 import type { VerbCaller } from '../../src/daemon/door/types.ts'
@@ -107,5 +107,18 @@ describe('cli: tether <ns> <verbo>', () => {
     const r = { stdout: '', stderr: '', env: {}, out: () => {}, err: (t: string) => { r.stderr += t }, connect: async () => undefined }
     await assert.rejects(cmdVerb('agents', ['send'], r), (e: unknown) => e instanceof UsageError && /comando desconhecido: agents.*o tether precisa estar rodando/.test(e.message))
     assert.equal(await verbsHelp(async () => undefined), '')
+  })
+
+  test('help: the usage first, then the contributed verbs; without tetherd (or a slow one) the usage alone', async () => {
+    const { io } = rig()
+    const usage = 'uso: tether <comando>\n'
+    const withDaemon = await helpWithVerbs(usage, io({}).connect)
+    assert.ok(withDaemon.startsWith(usage))
+    assert.match(withDaemon, /verbos de extensões:[\s\S]*agents send/)
+    assert.doesNotMatch(withDaemon, /mcp-only/)
+    assert.equal(await helpWithVerbs(usage, async () => undefined), usage)
+    const t0 = Date.now()
+    assert.equal(await helpWithVerbs(usage, () => new Promise(() => {}), 50), usage)
+    assert.ok(Date.now() - t0 < 1000)
   })
 })

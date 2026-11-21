@@ -114,6 +114,15 @@ export async function verbsHelp(connect: () => Promise<DaemonClient | undefined>
   } catch { return '' } finally { client.close() }
 }
 
+/** `tether help`: the built-in usage, then the contributed verbs when tetherd answers within `waitMs`; the bare usage otherwise. */
+export async function helpWithVerbs(usage: string, connect: () => Promise<DaemonClient | undefined>, waitMs = 1500): Promise<string> {
+  let timer: NodeJS.Timeout | undefined
+  const none = new Promise<string>((resolve) => { timer = setTimeout(() => resolve(''), waitMs); timer.unref() })
+  try {
+    return usage + await Promise.race([verbsHelp(connect).catch(() => ''), none])
+  } finally { clearTimeout(timer) }
+}
+
 export async function cmdVerb(command: string, argv: string[], io: VerbIo): Promise<number> {
   const client = await io.connect()
   // Without tetherd nothing says whether `command` is a verb or a typo: it stays an unknown command (exit 2, as before verbs

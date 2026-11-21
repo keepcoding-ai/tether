@@ -26,7 +26,7 @@ import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
-import { cmdVerb } from './verb.ts'
+import { cmdVerb, helpWithVerbs } from './verb.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
 import { cmdTrace } from './trace.ts'
@@ -112,7 +112,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'help':
       case '--help':
       case '-h':
-        out(USAGE)
+        out(await helpWithVerbs(USAGE, () => tryConnect(context())))
         return 0
       case 'doctor': {
         const results = await runDoctor()
