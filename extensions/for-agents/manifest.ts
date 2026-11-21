@@ -4,6 +4,7 @@
 // `agents` (the agent sees mcp__tether__agents_send, runs `tether agents send`). Ids never change.
 import type { ExtensionManifest } from '../types.ts'
 
+const CATEGORY = 'Agentes'
 export const EXT_ID = 'for-agents'
 /** The namespace of the verbs (VerbContribution.ns), distinct from the id. */
 export const VERB_NS = 'agents'
@@ -15,4 +16,17 @@ export const manifest: ExtensionManifest = {
   description: 'Dar uma guia ou uma mesa a um agente: ele passa a comandar o que está nela, como você comandaria.',
   hosts: ['renderer', 'daemon'],
   optional: true,
+  contributes: {
+    // The gestures of ownership as commands; `arg` is `{ kind: 'pane' | 'desk', id }` (with `to` to give, `scope: 'all'` to pause an
+    // owner everywhere), and with none they act on the active pane. `for-agents.inventory` is declared by the pad that answers it.
+    commands: [
+      { command: 'for-agents.give', title: 'Dar a guia ativa a um agente…', category: CATEGORY, icon: 'robot' },
+      { command: 'for-agents.take', title: 'Tomar a guia ativa do agente', category: CATEGORY, icon: 'hand-grabbing' },
+      { command: 'for-agents.return', title: 'Devolver a guia ativa ao agente', category: CATEGORY, icon: 'arrow-u-up-left' },
+      { command: 'for-agents.revoke', title: 'Revogar o dono da guia ativa', category: CATEGORY, icon: 'link-break' },
+      { command: 'for-agents.pause', title: 'Pausar o agente na guia ativa', category: CATEGORY, icon: 'pause' },
+      { command: 'for-agents.resume', title: 'Retomar o agente na guia ativa', category: CATEGORY, icon: 'play' },
+      { command: 'for-agents.go-to-owner', title: 'Ir para o dono da guia ativa', category: CATEGORY, icon: 'arrow-square-out' },
+    ],
+  },
 }
