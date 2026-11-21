@@ -178,6 +178,29 @@ export function backgroundStep(home, slotId, hookName, payload) {
   return true
 }
 
+/**
+ * The last answer of the main agent: on Stop, `<home>/slots/<slot>.answer.json` = `{ ts, sessionId?, text, from }`, replaced whole
+ * each turn (temp + rename). A subagent's Stop (`agent_id`) and a Stop without text write nothing. Never throws: a failed write is swallowed.
+ * @param {string} home @param {string} slotId @param {string} hookName @param {Payload} payload @param {string} ts
+ * @returns {boolean} true when the file was written */
+export function answerStep(home, slotId, hookName, payload, ts) {
+  if (hookName !== 'Stop' || str(payload.agent_id)) return false
+  const text = str(payload.last_assistant_message)
+  if (!text) return false
+  try {
+    const sessionId = str(payload.session_id)
+    const dir = join(home, 'slots')
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, `${slotId}.answer.json`)
+    const tmp = `${path}.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(sessionId ? { ts, sessionId, text, from: 'claude-stop' } : { ts, text, from: 'claude-stop' }))
+    renameSync(tmp, path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** @param {string} stdin */
 function record(stdin) {
   const home = tetherHome()
@@ -205,6 +228,7 @@ function record(stdin) {
     if (parts.length) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: hookName, additionalContext: parts.join('\n\n') } }))
     if (hookName === 'PostToolUse') return
     try { if (backgroundStep(home, slotId, hookName, payload)) return } catch (e) { log(home, `background: ${/** @type {Error} */ (e).message}`) }
+    answerStep(home, slotId, hookName, payload, ts) // before the attention report: whoever reacts to 'done' finds the answer
     const attention = toAttention(hookName, payload, ts)
     if (attention) {
       const dir = join(home, 'slots')

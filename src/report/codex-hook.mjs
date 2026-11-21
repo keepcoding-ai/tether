@@ -73,6 +73,29 @@ function writeAtomic(path, content) {
   renameSync(tmp, path)
 }
 
+/** The title-generation notify Codex fires on a first turn: not an answer. */
+const TITLE_PREFIX = 'Generate a concise, single-line task title'
+
+/** The answer file's content for a notify payload, or undefined when it is not a finished turn with an answer.
+ * @param {Payload} payload @param {string} ts @returns {Record<string, string> | undefined} */
+export function answerOf(payload, ts) {
+  if (str(payload.type) !== 'agent-turn-complete') return undefined
+  const text = str(payload['last-assistant-message'])
+  if (!text) return undefined
+  const input = payload['input-messages']
+  const first = Array.isArray(input) ? input[0] : input
+  if (typeof first === 'string' && first.trimStart().startsWith(TITLE_PREFIX)) return undefined
+  /** @type {Record<string, string>} */
+  const out = { ts }
+  const sessionId = str(payload['thread-id'])
+  const turnId = str(payload['turn-id'])
+  if (sessionId) out.sessionId = sessionId
+  if (turnId) out.turnId = turnId
+  out.text = text
+  out.from = 'codex-notify'
+  return out
+}
+
 /** @param {string} json */
 function record(json) {
   const home = tetherHome()
@@ -94,6 +117,10 @@ function record(json) {
     if (ev) {
       appendFileSync(join(dir, `${slotId}.jsonl`), JSON.stringify(ev) + '\n')
       writeAtomic(marker, ev.sessionId)
+    }
+    const answer = answerOf(payload, ts)
+    if (answer) {
+      try { writeAtomic(join(dir, `${slotId}.answer.json`), JSON.stringify(answer)) } catch { /* a courtesy, never the turn's problem */ }
     }
     const kind = attentionOf(payload)
     if (kind) {
