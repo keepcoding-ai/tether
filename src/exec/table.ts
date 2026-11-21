@@ -13,12 +13,14 @@ const loaders = {
   agents: (() => import('./ops-agents.ts').then((m) => m.agentOps)) as unknown as Loader,
   ext: (() => import('./ops-ext.ts').then((m) => m.extOps)) as unknown as Loader,
   os: (() => import('./ops-os.ts').then((m) => m.osOps)) as unknown as Loader,
+  hands: (() => import('./ops-hands.ts').then((m) => m.handsOps)) as unknown as Loader,
 }
 
 /** The operations each lazy module exports (exec.table.test.ts checks the lists against the modules). */
 export const lazyNames = {
   agents: ['resolveClaude', 'resolveCodex', 'ensureSettingsFile', 'hasStatusLine', 'userNotify', 'resolveShell', 'resolveSoul', 'soulLaunch', 'renamedNode', 'loadSkills', 'materializeSkills'],
   ext: ['writeTextAtomicDir'],
+  hands: ['resolveHands', 'handsLaunch'],
   os: ['killTree', 'sampleProcessTable', 'listListeners', 'startTime', 'startTimeInfo', 'stopStartTimeHelper', 'ensurePrivateDir', 'procPlan', 'identifyProcess', 'listeningOwner'],
 } as const
 

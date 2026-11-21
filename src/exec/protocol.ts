@@ -46,6 +46,8 @@ export interface OpTypes {
   resolveShell: { args: [slotArgs: string[], profileArgs: string[] | undefined, env: EnvMap]; value: CommandLine }
   resolveSoul: { args: [env: EnvMap]; value: CommandLine }
   soulLaunch: { args: [env: EnvMap, home: string]; value: { command: CommandLine; logs: string[] } }
+  resolveHands: { args: [env: EnvMap]; value: CommandLine }
+  handsLaunch: { args: [env: EnvMap, home: string]; value: { command: CommandLine; logs: string[] } }
   renamedNode: { args: [home: string, name: ExeName, source: string, platform: NodeJS.Platform]; value: RenamedNodeReply }
   loadSkills: { args: [library: string]; value: SkillsLoad }
   materializeSkills: { args: [spec: MaterializeSpec]; value: string }
@@ -86,6 +88,8 @@ export const OP_META = {
   resolveShell: { lane: 'io', idempotent: true },
   resolveSoul: { lane: 'work', idempotent: true },
   soulLaunch: { lane: 'work', idempotent: true },
+  resolveHands: { lane: 'work', idempotent: true },
+  handsLaunch: { lane: 'work', idempotent: true },
   renamedNode: { lane: 'work', idempotent: true },
   loadSkills: { lane: 'work', idempotent: true },
   materializeSkills: { lane: 'work', idempotent: true },
