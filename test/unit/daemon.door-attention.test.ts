@@ -12,7 +12,7 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { DoorAttention, DoorSlots } from '../../src/daemon/door/types.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
+import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const STAY = ["process.stdout.write('READY\\r\\n')", 'setInterval(() => {}, 1000)'].join('\n')
 const codeOf = (e: unknown): string | undefined => (e as { code?: string }).code
@@ -129,6 +129,21 @@ describe('agent door attention route (D7)', () => {
     await slots.forget(worker)
   })
 
+  test('attention.seen clears a rerouted attention; the pipe seen is not sent by a client that sees no `attention`', async () => {
+    const { owner, worker } = await pair()
+    await attention.route(worker, owner)
+    turn(worker, 'busy'); turn(worker, 'idle')
+    await waitUntil(() => last(worker).attentionFor !== undefined, 10_000, 'attentionFor shows')
+    attention.seen(worker)
+    await waitUntil(() => last(worker).attentionFor === undefined, 10_000, 'attentionFor cleared')
+    assert.equal(last(worker).attention, undefined, 'cleared for good, not handed back to the person')
+    await slots.stop(owner)
+    await sleep(300)
+    assert.equal(last(worker).attention, undefined, 'and it does not come back when the owner leaves')
+    assert.throws(() => attention.seen('ffffffff'), (e: unknown) => codeOf(e) === 'unknown-slot')
+    await slots.forget(owner); await slots.forget(worker)
+  })
+
   test('a routed slot that is forgotten takes its route; route validates the slots', async () => {
     const { owner, worker } = await pair()
     await assert.rejects(attention.route(worker, 'ffffffff'), (e: unknown) => codeOf(e) === 'unknown-slot')
@@ -156,10 +171,11 @@ describe('agent door attention route (D7)', () => {
     await slots.forget(owner); await slots.forget(worker)
   })
 
-  test('a satellite door (no port) rejects the acts, answers routeOf empty, and `seen` is not live yet', async () => {
+  test('a satellite door (no port) rejects the acts, answers routeOf empty, and so does seen', async () => {
     const inert = new DoorHost({ log: () => {} }).apiFor('x', new DisposableStore()).attention
     await assert.rejects(inert.route('a', 'b'), (e: unknown) => codeOf(e) === 'door-unavailable')
     await assert.rejects(inert.unroute('a'), (e: unknown) => codeOf(e) === 'door-unavailable')
     assert.equal(inert.routeOf('a'), undefined)
+    assert.throws(() => inert.seen('a'), (e: unknown) => codeOf(e) === 'door-unavailable')
   })
 })

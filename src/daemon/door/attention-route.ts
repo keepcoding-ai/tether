@@ -113,7 +113,7 @@ export class AttentionRouteService {
         port.broadcastState(slotId)
       },
       routeOf: (slotId) => this.port()?.meta(slotId)?.attentionTo,
-      seen: () => { throw doorUnavailable(`attention.seen, extensão ${ext}: falta o gancho do servidor`) },
+      seen: (slotId) => { live('attention.seen').seen(slotId) },
     }
   }
 
