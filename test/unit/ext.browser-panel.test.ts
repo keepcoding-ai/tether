@@ -10,10 +10,10 @@ describe('browser: panel rules', () => {
     assert.equal(ownerHue('slot-a'), ownerHue('slot-a'))
     const ids = Array.from({ length: 40 }, (_, i) => `slot-${i}-${i * 7919}`)
     const hues = ids.map(ownerHue)
-    for (const h of hues) assert.ok(Number.isInteger(h) && h >= 0 && h < 360, String(h))
+    for (const h of hues) assert.ok(Number.isInteger(h) && h >= 170 && h <= 330, String(h))
     assert.ok(new Set(hues).size >= 30, `spread: ${new Set(hues).size} distinct hues of 40`)
     // Pinned values: the colour of an owner never changes between versions.
-    assert.deepEqual(['a', 'slot-1', '0f8d2c3e-aaaa'].map(ownerHue), [340, 263, 43])
+    assert.deepEqual(['a', 'slot-1', '0f8d2c3e-aaaa'].map(ownerHue), [322, 184, 170])
   })
 
   test('the short name is one line and bounded; the chip says "encerrado" and is dimmed once the agent ended', () => {

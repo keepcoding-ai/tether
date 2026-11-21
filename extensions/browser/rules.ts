@@ -1,4 +1,6 @@
 // The browser extension's texts (design §5.3 and §12a), pure so the unit test and the views share them.
+import { agentHue } from '../../app/shared/agent-color.ts'
+
 export const EMPTY_TITLE = 'Nenhuma guia aberta'
 export const EMPTY_HELP = 'Quando um agente abrir uma guia, ela aparece aqui.'
 export const OFF_ACTION = 'Abrir as configurações do navegador'
@@ -82,15 +84,8 @@ export function ownerChip(agent: { name: string; alive: boolean } | undefined): 
   return agent.alive ? { text: shortName(agent.name), ended: false, known: true } : { text: `${shortName(agent.name)} encerrado`, ended: true, known: true }
 }
 
-/**
- * The hue (0-359) of an owner: the same slot id always gives the same one, in every run and on every machine (FNV-1a, 32 bits).
- * Only the hue is derived; saturation and lightness belong to the theme (the CSS), so the chip reads in both.
- */
-export function ownerHue(slotId: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < slotId.length; i++) { h ^= slotId.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
-  return h % 360
-}
+/** The owner's hue is the agent's hue: one colour function for every host (app/shared/agent-color.ts). */
+export const ownerHue = agentHue
 
 /**
  * The address as the bar writes it: never longer than `max` characters; a `data:` address (which can be megabytes) shows only its
