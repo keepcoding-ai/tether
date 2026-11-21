@@ -33,13 +33,10 @@ import { httpMcpConfigOf } from '../../agents/mcp.ts'
 import { channelArgsOf } from '../../agents/registry.ts'
 import type { LaunchPlan } from '../../agents/types.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../mcp-http.ts'
-import { RONDA_MCP_SERVER } from '../ronda-channel.ts'
+import { LEGACY_REVISIONS, RONDA_MCP_SERVER } from '../ronda-channel.ts'
 import type { LaunchContext, SlotPort } from './port.ts'
 import { DOOR_MCP_SERVER, ENV_DOOR_MCP_KEY, type VerbCaller } from './types.ts'
 import type { RegisteredVerb, VerbRegistry } from './verbs.ts'
-
-/** Protocol revisions of the legacy era (the `initialize` handshake), the newest last: the same list as the ronda's server. */
-const LEGACY_REVISIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']
 
 /** What makes the channel's text legitimate to the agent (contract 4.5); the extensions' paragraphs follow it. */
 export const DOOR_INSTRUCTIONS = [

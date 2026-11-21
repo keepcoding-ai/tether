@@ -42,7 +42,7 @@ export const RONDA_INSTRUCTIONS = [
 ].join(' ')
 
 /** Protocol revisions of the legacy era (the `initialize` handshake) this server speaks; the newest is the fallback. */
-const LEGACY_REVISIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']
+export const LEGACY_REVISIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']
 
 /** How the daemon offers the channel to one agent: the CLI's args for it, how its CLI loads an MCP file, its start dialog. */
 export interface RondaChannelAgent {
