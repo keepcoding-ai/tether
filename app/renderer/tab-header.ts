@@ -1,5 +1,5 @@
 // The one tab header every pane kind uses (terminal, note, preview, empty, extensions, disabled, browser): the same row of
-// `.kind` icon · `.text` title (ellipsis) · emblems · status dot · `.close` ×, the same height and spacing, and the same
+// `.kind` icon · `.text` title (ellipsis) · `.ext-emblems` (extensions' emblems) · emblems · status dot · `.close` ×, the same height and spacing, and the same
 // pointer rules (the × does not start a dockview drag; right-click opens the pane menu; double-click is the caller's).
 import { icon } from './icons.ts'
 
@@ -28,6 +28,11 @@ export interface TabHeader {
   readonly element: HTMLElement
   readonly kind: HTMLElement
   readonly text: HTMLElement
+  /**
+   * The extensions' emblems (TetherUi.panes.setEmblem), on the right just before the state emblems; the core fills it. Hidden
+   * while empty, so a tab without extension emblems keeps today's spacing.
+   */
+  readonly extEmblems: HTMLElement
   readonly close: HTMLButtonElement | undefined
 }
 
@@ -38,7 +43,8 @@ export function createTabHeader(o: TabHeaderOptions): TabHeader {
   if (o.glyph) kind.append(icon(o.glyph))
   if (o.kindChildren) kind.append(...o.kindChildren)
   const text = document.createElement('span'); text.className = o.textClass ? `text ${o.textClass}` : 'text'
-  element.append(kind, text, ...(o.emblems ?? []))
+  const extEmblems = document.createElement('span'); extEmblems.className = 'ext-emblems'; extEmblems.hidden = true
+  element.append(kind, text, extEmblems, ...(o.emblems ?? []))
   if (o.dot) element.append(o.dot)
   let close: HTMLButtonElement | undefined
   if (o.close) {
@@ -52,5 +58,5 @@ export function createTabHeader(o: TabHeaderOptions): TabHeader {
   }
   if (o.onMenu) { const m = o.onMenu; element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); m(ev) }) }
   if (o.onDblClick) { const d = o.onDblClick; element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); d() }) }
-  return { element, kind, text, close }
+  return { element, kind, text, extEmblems, close }
 }

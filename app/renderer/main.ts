@@ -41,7 +41,7 @@ import type { PauseBatch } from '../../src/daemon/pause.ts'
 import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { setupToolbarOverflow } from './toolbar-overflow.ts'
-import { CLOSE_LABEL, LINK_LABEL, withTabMenuBasics } from './tab-menu-basics.ts'
+import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-menu-basics.ts'
 import type { SearchTab } from './session-search-rules.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
@@ -84,7 +84,8 @@ import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
-import type { PaneInfo } from './ext-api.ts'
+import type { DeskView, PaneInfo } from './ext-api.ts'
+import { DoorHost, withDeskMenuGroup, withPaneMenuItems } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
@@ -117,6 +118,8 @@ const tabs = new Map<string, SlotTab>()
 const badges = new BadgeBoard()
 /** Attention seals the extensions raised on panes. */
 const seals = new SealBoard(() => refreshSeals())
+/** The agent door's renderer side (app/renderer/door/host.ts): main.ts only hands it its seams. */
+const door = new DoorHost()
 const sealActivations = new Map<number, Set<() => void>>()
 /** The empty panes (F5): a reserved place with the chooser inside (app/renderer/empty-panel.ts). */
 const empties = new Map<string, EmptyPanel>()
@@ -707,7 +710,7 @@ function scheduleSave(): void {
   notifyAgentPanes() // every move, rename or pane added or removed saves the layout
   if (!layoutRestored) return
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()) }, SAVE_DEBOUNCE_MS)
+  saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()); door.layoutSaved() }, SAVE_DEBOUNCE_MS)
 }
 
 /**
@@ -969,6 +972,7 @@ function renderStrip(): void {
   const line = tinted ? deskTokens(tinted.color).fill : undefined
   if (line !== undefined && $('workbench').style.getPropertyValue('--desk-line-color') !== line) $('workbench').style.setProperty('--desk-line-color', line)
   renderDrawerButton()
+  door.stripRendered(() => ({ desks: deskViews(), activeId: desks.activeDeskId }))
 }
 
 /** The pane the user is looking at: the active pane of the visible desk (the drawer's while it is open), with the window focused. */
@@ -1126,8 +1130,16 @@ function showDeskMenu(id: string, x: number, y: number): void {
   if (index < desks.desks.length - 2) items.push({ icon: 'arrow-line-right', label: 'Mover para o fim', run: () => desks.move(id, desks.desks.length - 1) })
   if (!desks.desks[index]?.asleep && desks.desks.filter(d => !d.asleep).length > 1) items.push({ icon: 'moon', label: 'Hibernar mesa', run: () => { void hibernateDesk(id) } })
   if (desks.desks.length > 1) items.push({ icon: 'x', label: 'Fechar mesa…', danger: true, run: () => { void closeDesk(id) } })
-  showContextMenu(x, y, items)
+  showContextMenu(x, y, withDeskMenuGroup<MenuEntry>(items, fromExtMenu(door.deskMenuItems(id)), SEP, labelOfEntry, DESK_MENU_ANCHORS))
 }
+
+/** The queue desks as an extension sees them (TetherUi.desks.list). */
+function deskViews(): DeskView[] {
+  return desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, asleep: d.asleep === true, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id) }))
+}
+
+/** Where the extensions' group goes in a desk pill's menu: before the first of these that is there. */
+const DESK_MENU_ANCHORS = ['Hibernar mesa', 'Fechar mesa…']
 
 function movePaneToDesk(slotId: string, to: string): void {
   if (desks.movePanel(slotId, to)) { refreshSessions(); renderStrip() }
@@ -1961,6 +1973,7 @@ function applyState(slot: SlotState): void {
   if (slot.attention && slot.slotId === watchedPane()) void window.tether.request({ t: 'seen', slotId: slot.slotId })
   recomputeProjects() // the slot's kind or folder may have changed
   notifyAgentPanes()
+  door.stateApplied(slot)
 }
 
 function onDaemonEvent(ev: DaemonEvent): void {
@@ -1973,6 +1986,8 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'profiles': setProfiles(ev.profiles, undefined); break
     case 'pause': pauseBatch = ev.batch; refreshSessions(); refreshSessionsDialog(); break
     case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break
+    case 'desks': door.desksEvent(ev.map); break
+    case 'object': door.objectEvent(ev); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -1993,6 +2008,7 @@ async function refreshSlots(): Promise<void> {
   slots.clear()
   queue.clear()
   for (const s of reply.slots ?? []) { slots.set(s.slotId, s); queue.update(s.slotId, s.status === 'queued') }
+  door.slotsListed(reply.slots ?? [])
 }
 
 /** Shows or hides a pane's header details; the state is a layout param, saved with the layout. */
@@ -2646,16 +2662,16 @@ function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElemen
   const slot = slots.get(slotId)
   const panel = findPanel(slotId)
   if (!slot) {
-    if (empties.has(slotId)) { panel?.api.setActive(); showContextMenu(x, y, emptyMenuEntries(slotId), opener); return }
+    if (empties.has(slotId)) { panel?.api.setActive(); showContextMenu(x, y, basePaneEntries(slotId), opener); return }
     // Any other kind of pane shows its type's own menu (an extension's: the note, the previews, a placeholder), read as
     // data and completed with the core's floor (link, close); a type without a menu shows only the floor.
     if (!panel) return
     panel.api.setActive()
-    showContextMenu(x, y, typeMenuEntries(slotId), opener)
+    showContextMenu(x, y, basePaneEntries(slotId), opener)
     return
   }
   panel?.api.setActive()
-  showContextMenu(x, y, slotMenuEntries(slot), opener)
+  showContextMenu(x, y, basePaneEntries(slotId), opener)
 }
 
 /** Labels shared by the core's menus and the pins read off menus drawn by pane types (which declare no pins). */
@@ -2694,8 +2710,7 @@ const CLOSE_GUIDE_LABEL = 'Fechar guia'
  */
 function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
   if (!findPanel(id)) return []
-  const slot = slots.get(id)
-  const base = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
+  const base = basePaneEntries(id)
   if (opts.from !== 'manager') return base
   const owner = framePadOf(id)?.panelId
   const canFocus = !owner || !!findPanel(owner) || !!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)
@@ -2707,6 +2722,26 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
     return unpinned
   })
   return [focus, close, SEP, ...rest]
+}
+
+/**
+ * A pane's own menu as its tab shows it: the slot's, the empty pane's or the pane type's, with the extensions' rows
+ * (TetherUi.panes.tabMenu) before its floor.
+ */
+function basePaneEntries(id: string): MenuEntry[] {
+  const slot = slots.get(id)
+  const own = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
+  return withPaneMenuItems<MenuEntry>(own, fromExtMenu(door.paneMenuItems(describePane(id))), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
+}
+
+/** An extension's menu rows as the core's menu entries. */
+function fromExtMenu(entries: readonly ContextMenuEntry[]): MenuEntry[] {
+  return entries.map((e): MenuEntry => e === 'sep' ? SEP : { ...e, icon: e.icon as IconName })
+}
+
+/** An entry's label (none for a separator or a heading). */
+function labelOfEntry(e: MenuEntry): string | undefined {
+  return e === SEP || 'heading' in e ? undefined : e.label
 }
 
 /** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
@@ -4207,7 +4242,7 @@ function activateRendererExtensions(): void {
     contributeDeclared(manifest, own)
     const add = <T extends IDisposable>(d: T): T => own.add(d)
     // What the extension put on the UI goes with it.
-    add(toDisposable(() => { const a = badges.removeOwner(id); const b = seals.removeOwner(id); if (a && !b) refreshSeals() }))
+    add(toDisposable(() => { const a = badges.removeOwner(id); const b = seals.removeOwner(id); if (a && !b) refreshSeals(); door.removeOwner(id) }))
     const ownSystemDesk = (deskId: string): void => {
       if (!manifest.contributes?.systemDesks?.some(d => d.id === deskId)) throw new Error(`mesa de sistema não declarada no manifesto de ${id}: ${deskId}`)
     }
@@ -4235,7 +4270,21 @@ function activateRendererExtensions(): void {
         all: () => allPanels().map(p => describePane(p.id)).filter((x): x is PaneInfo => x !== undefined),
         describe: paneId => describePane(paneId),
         onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
+        setEmblem: (paneId, emblem) => door.setEmblem(id, paneId, emblem),
+        tabMenu: provider => add(door.paneMenu(id, provider)),
       },
+      desks: {
+        list: () => deskViews(),
+        activeId: () => desks.activeDeskId,
+        onDidChange: listener => add(door.onDesksChange(listener)),
+        setSeal: (deskId, seal) => door.setSeal(id, deskId, seal),
+        menu: provider => add(door.deskMenu(id, provider)),
+      },
+      pick: {
+        list: spec => door.pickList(spec),
+        steps: (first, second) => door.pickSteps(first, second),
+      },
+      objects: door.objectsFor(id),
       workspace: {
         folders: () => projectFolders,
         onDidChange: listener => { workspaceListeners.add(listener); return add(toDisposable(() => { workspaceListeners.delete(listener) })) },
@@ -4260,7 +4309,7 @@ function activateRendererExtensions(): void {
           return add(toDisposable(commands.register(commandFromContribution(declared, run))))
         },
         ids: () => commands.all().map(c => c.id),
-        run: commandId => commands.run(commandId, 'menu'),
+        run: (commandId, arg) => commands.run(commandId, 'menu', arg),
       },
       ipc: () => uiIpc(id, window.tether.ext),
       settings: {

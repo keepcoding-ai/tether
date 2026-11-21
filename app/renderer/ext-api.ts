@@ -7,7 +7,7 @@ import type { AddPanelOptions, IDockviewPanel } from 'dockview-core'
 import type { ChannelMap, UiIpc } from '../shared/ext-ipc.ts'
 import type { SettingValue } from '../shared/vscode-configuration-registry.ts'
 import type { SettingsError } from '../shared/settings-file.ts'
-import type { SettingsFileState, SettingsList, SettingWriteResult } from '../shared/api.ts'
+import type { ExtObjects, SettingsFileState, SettingsList, SettingWriteResult } from '../shared/api.ts'
 import type { MenuItem } from '../shared/vscode-menu-registry.ts'
 import type { IDisposable } from '../shared/vscode-lifecycle.ts'
 import type { DialogAnswer, DialogSpec } from '../shared/dialog.ts'
@@ -48,6 +48,7 @@ export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './sur
 export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
 export type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 export type { FrameDeskGroup, FrameFilter, FramePane, FrameSnapshot, PanelFrameRow, PanelFrameTree } from './panel-frames.ts'
+export type { ExtObjectChange, ExtObjects } from '../shared/api.ts'
 
 /** A pane as an extension sees it (F8): its type, its opening folder, and the agent kind behind it ('claude'… never 'shell'). */
 export interface PaneInfo {
@@ -170,6 +171,54 @@ export interface ChooserDestinations {
   configure(id: string): void
 }
 
+/** A queue desk as an extension sees it (`desks.list`): its panes are every pane id it holds, of any type. */
+export interface DeskView {
+  id: string
+  name: string
+  color: string
+  asleep: boolean
+  panes: readonly string[]
+}
+
+/**
+ * An extension's seal on a queue desk's pill: a small glyph in its own colour and a tooltip line. One per extension per desk.
+ * It never counts in the orange attention count.
+ */
+export interface DeskSeal {
+  /** An icon name of app/renderer/icons.ts. */
+  icon: string
+  /** The seal's hue (0-359), usually agentHue(slotId). Absent: the pill's text colour. */
+  hue?: number
+  tooltip: string
+}
+
+/** An extension's emblem on any pane's tab (terminal, note, browser): on the right, next to the state marks. One per extension per pane. */
+export interface TabEmblem {
+  icon: string
+  hue?: number
+  tooltip: string
+  /** A click on the emblem (absent: nothing). */
+  onActivate?: () => void
+}
+
+/** One row of the list picker (`pick`). */
+export interface PickItem<T> {
+  value: T
+  label: string
+  detail?: string
+  icon?: string
+  hue?: number
+}
+
+export interface PickSpec<T> {
+  title: string
+  placeholder?: string
+  /** The item on top, apart from the rest and selected when the picker opens. */
+  featured?: PickItem<T>
+  items: readonly PickItem<T>[] | (() => Promise<readonly PickItem<T>[]>)
+  emptyText?: string
+}
+
 export interface TetherUi {
   /** The extension's id. */
   readonly id: string
@@ -219,7 +268,38 @@ export interface TetherUi {
     describe(id: string): PaneInfo | undefined
     /** The active pane (of the visible desk, the open drawer or the focused pad) changed. */
     onDidChangeActive(listener: (info: PaneInfo | undefined) => void): IDisposable
+    /**
+     * This extension's emblem on the tab of ANY pane (terminal, note, browser), on the right next to the state marks; `undefined`
+     * removes it. One per extension per pane. It follows the pane to another desk and goes with the extension.
+     */
+    setEmblem(paneId: string, emblem: TabEmblem | undefined): void
+    /**
+     * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close). The
+     * provider gets the pane and returns its rows (none: an empty list); it runs each time the menu opens.
+     */
+    tabMenu(provider: (pane: PaneInfo) => ContextMenuEntry[]): IDisposable
   }
+  /** The queue desks (system desks are `systemDesks`). */
+  desks: {
+    /** The queue's desks, in order. */
+    list(): readonly DeskView[]
+    activeId(): string
+    /** A desk was added, removed, renamed, recoloured, moved, put to sleep or woken, or the visible desk changed. */
+    onDidChange(listener: () => void): IDisposable
+    /** This extension's seal on a queue desk's pill; `undefined` removes it. It goes with the extension. */
+    setSeal(deskId: string, seal: DeskSeal | undefined): void
+    /** This extension's rows in a desk pill's menu, in a group of their own before "Hibernar mesa". */
+    menu(provider: (deskId: string) => ContextMenuEntry[]): IDisposable
+  }
+  /** A list picker, filtered by typing. */
+  pick: {
+    /** Opens the picker; resolves with the picked value, or `undefined` when the person closed it. */
+    list<T>(spec: PickSpec<T>): Promise<T | undefined>
+    /** Two steps: pick in the first, then in the second (built from the first). Esc in the second goes back to the first. */
+    steps<A, B>(first: PickSpec<A>, second: (a: A) => PickSpec<B>): Promise<{ first: A; second: B } | undefined>
+  }
+  /** This extension's data on desks and panes (tetherd keeps it; this is a mirror). */
+  objects: ExtObjects
   /**
    * The window's projects (F8; VS Code's IWorkspaceContextService): folders inferred from the AI agents' panes plus the
    * pinned ones, in order of arrival. The core owns them; an extension (the explorer) shows and edits them.
@@ -251,11 +331,14 @@ export interface TetherUi {
     /** Commands with everything in code (an editor's own actions, registered while it has the focus). */
     register(...commands: Command[]): IDisposable
     /** The handler of a command the manifest declares (`contributes.commands`: title, category, icon, enablement). */
-    registerCommand(id: string, run: (source?: RunSource) => void): IDisposable
+    registerCommand(id: string, run: (source?: RunSource, arg?: unknown) => void): IDisposable
     /** Every registered command id. */
     ids(): string[]
-    /** Runs a command by id (a menu item calling another extension's command); 'unknown' when none is registered. */
-    run(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
+    /**
+     * Runs a command by id (a menu item calling another extension's command); 'unknown' when none is registered. `arg` reaches
+     * the handler as is (a command run without one, from the palette or a chord, asks for what it needs itself).
+     */
+    run(id: string, arg?: unknown): Promise<'ran' | 'unknown' | 'unavailable'>
   }
   /** The extension's channels to its main side (`ext:<id>:<channel>`), typed by its channel map. */
   ipc<C extends ChannelMap>(): UiIpc<C>
