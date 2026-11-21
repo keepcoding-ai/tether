@@ -148,6 +148,9 @@ import filePlusIcon from '@phosphor-icons/core/assets/regular/file-plus.svg'
 import folderPlusIcon from '@phosphor-icons/core/assets/regular/folder-plus.svg'
 import pulse from '@phosphor-icons/core/assets/regular/pulse.svg'
 import gauge from '@phosphor-icons/core/assets/regular/gauge.svg'
+import robot from '@phosphor-icons/core/assets/regular/robot.svg'
+import crownSimple from '@phosphor-icons/core/assets/regular/crown-simple.svg'
+import arrowUDownLeft from '@phosphor-icons/core/assets/regular/arrow-u-down-left.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -294,6 +297,9 @@ const SVG = {
   'terminal': terminalIcon,
   pulse,
   gauge,
+  robot,
+  'crown-simple': crownSimple,
+  'arrow-u-down-left': arrowUDownLeft,
   // The product's monogram (brand/assets/app/mask.json, 24x24 currentColor): the Bridge's status icon wears it.
   'brand': BRAND.icon,
 } as const
