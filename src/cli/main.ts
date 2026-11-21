@@ -26,6 +26,7 @@ import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
+import { cmdVerb } from './verb.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
 import { cmdTrace } from './trace.ts'
@@ -74,6 +75,8 @@ export const USAGE = `uso: tether <comando> [opções]
   proc <ls|info|start|wait|stop|restart|rm|use|release|ports|logs|history|host> …
                                       processos de fundo geridos pelo tether (servidores, workers):
                                       sobrevivem ao painel e ao tetherd (veja: tether proc help)
+  <ns> <verbo> [args]                 verbo contribuído por uma extensão (precisa do tetherd; sem
+                                      <verbo>, lista os do <ns>)
   link                                imprime o link tether:// deste painel (só dentro do tether)
   focus [arquivo|link] [--pad [panel|desk|global]] [--slot id]
                                       traz para a frente: o arquivo como nota (abre se não estiver
@@ -136,7 +139,8 @@ export async function main(argv: string[]): Promise<number> {
       case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
-        throw new UsageError(`comando desconhecido: ${command}`, true)
+        // Not a built-in: a verb an extension contributed (`tether <ns> <verbo>`); the built-ins above always win.
+        return await cmdVerb(command, rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
     }
   } catch (e) {
     if (e instanceof UsageError) {
