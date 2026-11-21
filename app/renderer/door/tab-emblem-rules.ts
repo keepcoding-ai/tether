@@ -1,9 +1,10 @@
-// The extensions' marks on a pane's tab: emblems (TetherUi.panes.setEmblem / setEmblems) and a thin line under it
-// (setTabLine). The first half is pure: who put which mark on which pane, stable order (by extension id), everything goes with
-// its extension. The second half is the DOM: it fills the `.ext-emblems` container of every tab header (tab-header.ts) and the
-// line of the tab from the board. A tab header is one for every pane kind, and a pane that changes desk gets a new tab element,
-// so the painter watches the page for tabs instead of asking each pane kind to call in: a tab that appears is painted at once.
-import type { TabEmblem } from '../ext-api.ts'
+// The extensions' marks on a pane: emblems on its tab (TetherUi.panes.setEmblem / setEmblems), a thin line under its tab
+// (setTabLine), and a line in its status bar (setHeadItem). The first half of each is pure: who put which mark on which pane,
+// stable order (by extension id), everything goes with its extension. The second half is the DOM: it fills the `.ext-emblems`
+// container of every tab header (tab-header.ts), the line of the tab, and the `.ext-head` of every terminal panel's status bar
+// (panel.ts) from the boards. A tab header is one for every pane kind, and a pane that changes desk gets a new tab element, so
+// the painters watch the page for tabs and panels instead of asking each pane kind to call in: one that appears is painted at once.
+import type { PaneHeadItem, TabEmblem } from '../ext-api.ts'
 import { normalizeHue } from './desk-seal-rules.ts'
 
 /** How many emblems one extension may put on one pane; more are dropped (the tab has little room). */
@@ -128,9 +129,70 @@ export class TabEmblemBoard {
   }
 }
 
-// ---------- the DOM: the `.ext-emblems` and the line of each tab header ----------
+/** A status-bar line as kept: the text and tooltip trimmed, a whole hue, the click as given. Undefined when it has no text. */
+export function normalizeHeadItem(item: PaneHeadItem | undefined): PaneHeadItem | undefined {
+  if (!item || typeof item.text !== 'string' || item.text.trim() === '') return undefined
+  const hue = normalizeHue(item.hue)
+  return {
+    icon: typeof item.icon === 'string' ? item.icon : '',
+    ...(hue === undefined ? {} : { hue }),
+    text: item.text.trim(),
+    tooltip: typeof item.tooltip === 'string' ? item.tooltip.trim() : '',
+    ...(typeof item.onActivate === 'function' ? { onActivate: item.onActivate } : {}),
+  }
+}
+
+/** The status-bar lines by pane id, then by extension id; one per extension per pane. Every change tells `changed` the pane. */
+export class HeadItemBoard {
+  private readonly panes = new Map<string, Map<string, PaneHeadItem>>()
+  private readonly changed: (paneId: string) => void
+
+  constructor(changed: (paneId: string) => void = () => {}) { this.changed = changed }
+
+  set(ext: string, paneId: string, item: PaneHeadItem | undefined): boolean {
+    const next = normalizeHeadItem(item)
+    const mine = this.panes.get(paneId)
+    const prev = mine?.get(ext)
+    if (!next) {
+      if (!prev) return false
+      mine!.delete(ext)
+      if (mine!.size === 0) this.panes.delete(paneId)
+    } else {
+      if (prev && prev.icon === next.icon && prev.hue === next.hue && prev.text === next.text && prev.tooltip === next.tooltip && prev.onActivate === next.onActivate) return false
+      const bucket = mine ?? new Map<string, PaneHeadItem>()
+      bucket.set(ext, next)
+      this.panes.set(paneId, bucket)
+    }
+    this.changed(paneId)
+    return true
+  }
+
+  /** The lines of a pane, in stable order (by extension id), with who put each. */
+  placed(paneId: string): ReadonlyArray<{ ext: string; item: PaneHeadItem }> {
+    const mine = this.panes.get(paneId)
+    return mine ? byExt(mine).map(([ext, item]) => ({ ext, item })) : []
+  }
+
+  of(paneId: string): readonly PaneHeadItem[] { return this.placed(paneId).map(p => p.item) }
+
+  get size(): number { return this.panes.size }
+
+  removeOwner(ext: string): boolean {
+    const touched: string[] = []
+    for (const [paneId, mine] of [...this.panes]) {
+      if (!mine.delete(ext)) continue
+      touched.push(paneId)
+      if (mine.size === 0) this.panes.delete(paneId)
+    }
+    for (const id of touched) this.changed(id)
+    return touched.length > 0
+  }
+}
+
+// ---------- the DOM: the `.ext-emblems` and the line of each tab header, the `.ext-head` of each status bar ----------
 
 const TAB = '.tether-tab[data-slot]'
+const PANEL = '.panel[data-slot-id]'
 
 /** The icon for a name the app has; undefined for one it does not (the emblem then draws as an empty chip). */
 type MakeIcon = (name: string) => SVGSVGElement | undefined
@@ -165,6 +227,33 @@ function paintTab(tab: HTMLElement, emblems: readonly PlacedEmblem[], line: numb
       // Like the ×: a press on the emblem does not start a tab drag, and a click on it is not a click on the tab.
       el.addEventListener('pointerdown', ev => ev.stopPropagation())
       el.addEventListener('click', ev => { ev.stopPropagation(); try { click() } catch (err) { console.error('panes.setEmblem onActivate', err) } })
+    }
+    return el
+  })
+  box.replaceChildren(...nodes)
+  box.hidden = nodes.length === 0
+}
+
+/** Fills the `.ext-head` container of one panel's status bar with the pane's lines; hidden when there are none. */
+function paintHead(panel: HTMLElement, items: ReadonlyArray<{ ext: string; item: PaneHeadItem }>, icons: MakeIcon): void {
+  const box = panel.querySelector<HTMLElement>('.status-bar > .ext-head')
+  if (!box) return
+  const nodes = items.map(({ ext, item }) => {
+    const click = item.onActivate
+    const el = document.createElement(click ? 'button' : 'span')
+    if (el instanceof HTMLButtonElement) { el.type = 'button'; el.setAttribute('aria-haspopup', 'menu') }
+    el.className = item.hue === undefined ? 'ext-head-item' : 'ext-head-item hued'
+    el.dataset.ext = ext
+    if (item.hue !== undefined) el.style.setProperty('--head-hue', String(item.hue))
+    if (item.tooltip) el.title = item.tooltip
+    const glyph = item.icon ? icons(item.icon) : undefined
+    if (glyph) el.append(glyph)
+    const text = document.createElement('span'); text.className = 'tx'; text.textContent = item.text
+    el.append(text)
+    if (click) {
+      const caret = icons('caret-down')
+      if (caret) { caret.classList.add('caret'); el.append(caret) }
+      el.addEventListener('click', ev => { ev.stopPropagation(); try { click(el) } catch (err) { console.error('panes.setHeadItem onActivate', err) } })
     }
     return el
   })
@@ -233,6 +322,17 @@ export class TabEmblemPainter {
 
   constructor(board: TabEmblemBoard) {
     this.painter = new Painter(TAB, 'data-slot', () => board.size > 0, (tab, id, icons) => paintTab(tab, board.of(id), board.lineOf(id), icons))
+  }
+
+  repaint(paneId?: string): void { this.painter.repaint(paneId) }
+}
+
+/** The terminal panels' status bars: the extensions' lines, from the board. */
+export class HeadItemPainter {
+  private readonly painter: Painter
+
+  constructor(board: HeadItemBoard) {
+    this.painter = new Painter(PANEL, 'data-slot-id', () => board.size > 0, (panel, id, icons) => paintHead(panel, board.placed(id), icons))
   }
 
   repaint(paneId?: string): void { this.painter.repaint(paneId) }

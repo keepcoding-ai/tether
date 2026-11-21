@@ -91,3 +91,21 @@
 
 /* The thin line under a tab an owner commands (TetherUi.panes.setTabLine), in the owner's hue. */
 .tether-tab.ext-line { box-shadow: inset 0 -2px 0 hsl(var(--line-hue, 0) var(--mark-solid-s) var(--mark-solid-l) / .6); }
+
+/* An extension's line in a terminal panel's status bar (TetherUi.panes.setHeadItem): a chip after the core's marks; a ▾ when it opens something. */
+.status-bar .ext-head { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.status-bar .ext-head[hidden] { display: none; }
+.status-bar .ext-head-item {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; height: 20px; padding: 0 6px 0 7px; border-radius: 999px;
+  font: inherit; font-size: 11px; color: var(--fg-dim); background: color-mix(in srgb, currentColor 10%, transparent); border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+}
+.status-bar .ext-head-item.hued {
+  color: hsl(var(--head-hue) var(--mark-s) var(--mark-fg-l));
+  background: hsl(var(--head-hue) var(--mark-s) 50% / var(--mark-bg-a));
+  border-color: hsl(var(--head-hue) var(--mark-s) 50% / var(--mark-line-a));
+}
+.status-bar .ext-head-item .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-bar .ext-head-item .ph { flex: none; width: 12px; height: 12px; }
+.status-bar button.ext-head-item { cursor: pointer; }
+.status-bar button.ext-head-item:hover { filter: brightness(1.12); }
+.status-bar button.ext-head-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DeskSealBoard, normalizeHue, normalizeSeal } from '../../app/renderer/door/desk-seal-rules.ts'
-import { MAX_TAB_EMBLEMS, TabEmblemBoard, normalizeEmblem } from '../../app/renderer/door/tab-emblem-rules.ts'
+import { HeadItemBoard, MAX_TAB_EMBLEMS, TabEmblemBoard, normalizeEmblem, normalizeHeadItem } from '../../app/renderer/door/tab-emblem-rules.ts'
 import { DoorHost } from '../../app/renderer/door/host.ts'
 
 test('hue: whole number 0-359, out of range wraps, junk is absent', () => {
@@ -195,9 +195,28 @@ test('tab line K1.4: one hue per extension per pane, the first extension by id d
   assert.deepEqual(touched, ['p1', 'p1', 'p1', 'p1'])
 })
 
-test('door host K1.3-K1.4: the pane marks go with their extension (removeOwner)', () => {
+test('head item K1.5: needs text; one per extension per pane; read back in order; goes with the extension', () => {
+  assert.equal(normalizeHeadItem({ icon: 'x', text: '  ', tooltip: '' }), undefined)
+  assert.deepEqual(normalizeHeadItem({ icon: 'x', hue: 361, text: ' Atrium pela mesa · enviou pedido 14:02 ', tooltip: ' t ' }), { icon: 'x', hue: 1, text: 'Atrium pela mesa · enviou pedido 14:02', tooltip: 't' })
+  const touched: string[] = []
+  const b = new HeadItemBoard(id => touched.push(id))
+  assert.equal(b.set('zeta', 'p1', { icon: 'x', text: 'z', tooltip: '' }), true)
+  assert.equal(b.set('alfa', 'p1', { icon: 'x', text: 'a', tooltip: '' }), true)
+  assert.equal(b.set('alfa', 'p1', { icon: 'x', text: 'a', tooltip: '' }), false)
+  assert.deepEqual(b.of('p1').map(i => i.text), ['a', 'z'])
+  assert.equal(b.removeOwner('zeta'), true)
+  assert.deepEqual(b.of('p1').map(i => i.text), ['a'])
+  assert.equal(b.set('alfa', 'p1', undefined), true)
+  assert.equal(b.size, 0)
+  assert.deepEqual(touched, ['p1', 'p1', 'p1', 'p1'])
+})
+
+test('door host K1.3-K1.5: the pane marks go with their extension (removeOwner)', () => {
   const door = new DoorHost()
+  door.setHeadItem('for-agents', 'p1', { icon: 'x', text: 'Atrium pela mesa', tooltip: '' })
   door.setEmblems('for-agents', 'p1', [{ icon: '', label: 'K', tooltip: 'Kai' }])
   door.setTabLine('for-agents', 'p1', 200)
+  assert.deepEqual(door.headItems('p1').map(i => i.text), ['Atrium pela mesa'])
   door.removeOwner('for-agents')
+  assert.deepEqual(door.headItems('p1'), [])
 })

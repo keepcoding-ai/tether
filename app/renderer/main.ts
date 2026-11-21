@@ -4330,6 +4330,8 @@ function activateRendererExtensions(): void {
         setEmblem: (paneId, emblem) => door.setEmblem(id, paneId, emblem),
         setEmblems: (paneId, emblems) => door.setEmblems(id, paneId, emblems),
         setTabLine: (paneId, hue) => door.setTabLine(id, paneId, hue),
+        setHeadItem: (paneId, item) => door.setHeadItem(id, paneId, item),
+        headItems: paneId => door.headItems(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {

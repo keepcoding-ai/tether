@@ -2,7 +2,7 @@
 // (state applied, slots listed, layout saved, strip rendered, the two menus, the daemon's `desks` and `object` events) and
 // the TetherUi blocks of the door (desks, pane emblems and menus, pick, objects) are served from here. The rules live in
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
-import type { ContextMenuRow, DeskSeal, DeskView, PaneInfo, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
+import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
@@ -13,7 +13,7 @@ import { collect } from './menus.ts'
 import { ObjectMirrors, rendererAsk, type DaemonAsk, type ObjectEventBody } from './objects.ts'
 import { Picker } from './picker.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
-import { TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
+import { HeadItemBoard, HeadItemPainter, TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
 
 /** What main.ts gives the host so the daemon's pane requests and the desk map work (absent: both are inert). */
 export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
@@ -46,6 +46,8 @@ export class DoorHost {
     this.objects = new ObjectMirrors(ask)
     this.emblems = new TabEmblemBoard(paneId => this.emblemPainter.repaint(paneId))
     this.emblemPainter = new TabEmblemPainter(this.emblems)
+    this.heads = new HeadItemBoard(paneId => this.headPainter.repaint(paneId))
+    this.headPainter = new HeadItemPainter(this.heads)
     this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
   }
 
@@ -170,8 +172,16 @@ export class DoorHost {
   /** An extension's line under a pane's tab, in a hue. */
   setTabLine(ext: string, paneId: string, hue: number | undefined): void { this.emblems.setLine(ext, paneId, hue) }
 
+  /** An extension's line in a pane's status bar (a terminal panel draws it). */
+  setHeadItem(ext: string, paneId: string, item: PaneHeadItem | undefined): void { this.heads.set(ext, paneId, item) }
+
+  /** Every extension's status-bar line of a pane. */
+  headItems(paneId: string): readonly PaneHeadItem[] { return this.heads.of(paneId) }
+
   private readonly emblemPainter: TabEmblemPainter
   private readonly emblems: TabEmblemBoard
+  private readonly headPainter: HeadItemPainter
+  private readonly heads: HeadItemBoard
 
   /** Everything an extension put through the door goes with it. */
   removeOwner(ext: string): void {
@@ -179,6 +189,7 @@ export class DoorHost {
     for (const e of [...this.paneMenus]) if (e.ext === ext) this.paneMenus.delete(e)
     deskSeals.removeOwner(ext)
     this.emblems.removeOwner(ext)
+    this.heads.removeOwner(ext)
   }
 
   /** The list picker, drawn on first use (in a process with no document a pick resolves as closed). */

@@ -403,6 +403,8 @@ export class TerminalPanel implements IContentRenderer {
     const ronda = document.createElement('button'); ronda.type = 'button'; ronda.className = 'ronda'; ronda.dataset.action = 'ronda-off'; ronda.hidden = true
     ronda.append(icon('timer'), document.createElement('span'))
     ronda.addEventListener('click', ev => { ev.stopPropagation(); if (this.slotId) void window.tether.request({ t: 'ronda-off', slotId: this.slotId, force: true }) })
+    // The extensions' lines (TetherUi.panes.setHeadItem): filled by app/renderer/door/tab-emblem-rules.ts, hidden while empty.
+    const extHead = document.createElement('span'); extHead.className = 'ext-head'; extHead.hidden = true
     const spacer = document.createElement('span'); spacer.className = 'sp'
     const action = (name: string, ic: IconName, label: string, run: () => void): HTMLButtonElement => {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'sb-action'; b.dataset.action = name
@@ -414,7 +416,7 @@ export class TerminalPanel implements IContentRenderer {
     switchProfile.hidden = true
     const openFolder = action('open-folder', 'folder-open', OPEN_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onOpenFolder(this.slotId) })
     const copyFolder = action('copy-folder', 'copy', COPY_FOLDER_TOOLTIP, () => { if (this.slotId) this.host.onCopyFolder(this.slotId) })
-    head.append(status, bell, profile, cwd, unsafe, ronda, spacer, switchProfile, openFolder, copyFolder)
+    head.append(status, bell, profile, cwd, unsafe, ronda, extHead, spacer, switchProfile, openFolder, copyFolder)
     this.head = { status, bell, ronda, profile, unsafe, cwd, openFolder, copyFolder, switchProfile }
     this.termHost = document.createElement('div')
     this.termHost.className = 'panel-term'

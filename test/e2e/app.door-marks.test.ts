@@ -4,6 +4,9 @@
 //   2. the seal shows on a common desk pill, the orange count does not change, and everything goes when the extension goes;
 //   3. the emblem shows on the right of a terminal tab and of a note tab and follows the pane when it changes desk. With
 //      TETHER_MARKS_PRINTS set to a folder, two prints (light and dark theme) go there.
+//   4. (K1.2-K1.5) the struck seal and the seal the extension answers a click on; a set of emblems (a letter, a glyph, at most
+//      three, a struck one); the line under a tab; the line in a panel's status bar. Taken away, the marks are today's again,
+//      and everything goes with the extension. With TETHER_K1_PRINTS set to a folder, one print per seam (light theme).
 // Every kill goes through test/kill.ts (pid + creation time); the daemon here is closed in-process.
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
@@ -196,5 +199,154 @@ test('door marks: the desk seal and the tab emblem', { timeout: 300_000 }, async
     await page.evaluate(() => window.__tether.disposeExtension('door-probe'))
     await page.waitForFunction(() => document.querySelectorAll('.ext-emblem, .desk-seal').length === 0)
     assert.equal(await tabOf(page, noteId).locator(':scope > .ext-emblems').evaluate(el => (el as HTMLElement).hidden), true, 'the emblem container is hidden again')
+  })
+})
+
+/** What a pill, a tab and a status bar show of the extensions, as text: equal strings mean the same marks. */
+const marksOf = (page: Page, desk: string, paneId: string): Promise<string> => page.evaluate(({ desk, paneId }) => {
+  const pill = document.querySelector(`#desk-switch .seg[data-desk="${desk}"]`)
+  const tab = document.querySelector<HTMLElement>(`.tether-tab[data-slot="${paneId}"]`)
+  const bar = document.querySelector<HTMLElement>(`.panel[data-slot-id="${paneId}"] .status-bar`)
+  const box = tab?.querySelector<HTMLElement>('.ext-emblems')
+  return JSON.stringify({
+    seals: [...(pill?.querySelectorAll('.desk-seal') ?? [])].map(s => s.outerHTML),
+    tabLine: tab?.classList.contains('ext-line') ?? null, tabHue: tab?.style.getPropertyValue('--line-hue') ?? null,
+    emblems: box?.innerHTML ?? null, emblemsHidden: box?.hidden ?? null,
+    head: bar ? [...bar.children].filter(c => !(c as HTMLElement).hidden).map(c => c.className) : null,
+  })
+}, { desk, paneId })
+
+type Box = { x: number; y: number; width: number; height: number }
+
+test('door marks K1.2-K1.5: struck and clickable seal, emblem sets, the tab line and the status bar line', { timeout: 300_000 }, async () => {
+  await withApp(async (page, home) => {
+    await page.keyboard.press('Control+Shift+N')
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
+    await page.evaluate(() => window.__tether.switchDesk('desk-1'))
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
+    const create = (name: string): Promise<string> => page.evaluate(async ({ cwd, name }) => (await window.tether.request({ t: 'create', kind: 'shell', cwd, name, start: false })).slot!.slotId, { cwd: home, name })
+    const ownerTab = await create('Atrium · Claude')
+    const commanded = await create('soul · bancada')
+    const given = await create('codex · conferência')
+    await page.waitForTimeout(500)
+    for (const id of [ownerTab, commanded, given]) await page.evaluate(id => window.__tether.openSlot(id), id)
+    for (const id of [ownerTab, commanded, given]) await tabOf(page, id).waitFor()
+    // The status bar of the pane the line goes in, shown (it starts hidden).
+    await tabOf(page, given).click()
+    await tabOf(page, given).click({ button: 'right' })
+    await page.locator('#ctx-menu li', { hasText: 'Mostrar barra de status' }).click()
+    const bar = page.locator(`.panel[data-slot-id="${given}"] .status-bar`)
+    await bar.waitFor()
+    const hueA = agentHue('claude-1')
+    const hueK = agentHue('claude-2')
+    const before = { d1: await marksOf(page, 'desk-1', commanded), d2: await marksOf(page, 'desk-2', given) }
+    const dir = process.env.TETHER_K1_PRINTS
+    if (dir) { mkdirSync(dir, { recursive: true }); await page.evaluate(() => { document.documentElement.dataset.theme = 'light' }) }
+    const shot = async (name: string, boxes: Array<Box | null>): Promise<void> => {
+      if (!dir) return
+      await page.waitForTimeout(250)
+      const bs = boxes.filter((b): b is Box => b !== null)
+      const x = Math.max(0, Math.min(...bs.map(b => b.x)) - 10), y = Math.max(0, Math.min(...bs.map(b => b.y)) - 10)
+      const right = Math.max(...bs.map(b => b.x + b.width)) + 10, bottom = Math.max(...bs.map(b => b.y + b.height)) + 10
+      await page.screenshot({ path: join(dir, name), clip: { x, y, width: right - x, height: bottom - y } })
+    }
+
+    // ---- K1.2: the seal on a pill, struck, and a click the extension answers ----
+    await probe(page, 'sealState', 'desk-1', { icon: 'puzzle-piece', hue: hueA, label: 'Atrium', tooltip: 'Dona: Atrium · clique: ir para Atrium', clickable: true })
+    await probe(page, 'sealState', 'desk-2', { icon: 'puzzle-piece', hue: hueK, label: 'Kai', tooltip: 'Kai encerrou às 13:40', variant: 'struck' })
+    await pill(page, 'desk-2').locator('.desk-seal.struck').waitFor()
+    const struck = await pill(page, 'desk-2').locator('.desk-seal').evaluate(el => ({ outline: getComputedStyle(el).outlineStyle, line: getComputedStyle(el.querySelector('.nm')!).textDecorationLine, bg: getComputedStyle(el).backgroundColor }))
+    assert.equal(struck.outline, 'dashed', 'the struck seal is dashed')
+    assert.equal(struck.line, 'line-through', 'and its name struck through')
+    assert.equal(struck.bg, 'rgba(0, 0, 0, 0)', 'without fill')
+    assert.equal(await pill(page, 'desk-1').locator('.desk-seal.struck').count(), 0, 'solid is the default')
+    await pill(page, 'desk-2').locator('.desk-seal').click()
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
+    assert.deepEqual(await probe<string[]>(page, 'sealClicks'), [], 'a seal without onActivate is the pill: it shows its desk')
+    await page.evaluate(() => window.__tether.switchDesk('desk-1'))
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
+    // On desk-2 seen from desk-1: the click is the extension's and the visible desk does not change.
+    await probe(page, 'sealState', 'desk-2', { icon: 'puzzle-piece', hue: hueK, label: 'Kai', tooltip: 'Kai encerrou às 13:40', variant: 'struck', clickable: true })
+    await pill(page, 'desk-2').locator('.desk-seal.act').waitFor()
+    await pill(page, 'desk-2').locator('.desk-seal').click()
+    await page.waitForTimeout(200)
+    assert.deepEqual(await probe<string[]>(page, 'sealClicks'), ['desk-2'], 'the click reached the extension')
+    assert.equal(await page.evaluate(() => window.__tether.activeDesk()), 'desk-1', 'and the visible desk did not change')
+    await shot('k1.2-selo-cheio-e-riscado-light.png', [await page.locator('#desk-switch').boundingBox()])
+
+    // ---- K1.3: a set of emblems (a letter, a glyph), cut at three; a struck one ----
+    await probe(page, 'emblemSet', given, [
+      { icon: '', label: 'Kai', hue: hueK, tooltip: 'Dada a Kai' },
+      { icon: 'eye', hue: hueA, tooltip: 'Atrium vê' },
+      { icon: 'tag', tooltip: 'terceiro' },
+      { icon: 'tag', tooltip: 'quarto (cai)' },
+    ])
+    await tabOf(page, given).locator('.ext-emblem').nth(2).waitFor()
+    const set = await tabOf(page, given).locator('.ext-emblems > .ext-emblem').evaluateAll(els => els.map(e => ({ cls: e.className, text: e.textContent, svg: e.querySelectorAll('svg').length, title: e.getAttribute('title') })))
+    assert.equal(set.length, 3, 'three at most')
+    assert.deepEqual(set.map(e => e.title), ['Dada a Kai', 'Atrium vê', 'terceiro'], 'in the order given')
+    assert.ok(set[0]!.cls.includes('letter') && set[0]!.text === 'K' && set[0]!.svg === 0, 'the letter, alone')
+    assert.equal(set[1]!.svg, 1, 'the glyph')
+    await probe(page, 'emblem', ownerTab, { icon: 'star', hue: hueA, tooltip: 'Dona da mesa' })
+    await probe(page, 'emblemSet', commanded, [{ icon: '', label: 'K', hue: hueK, tooltip: 'Kai encerrou', variant: 'struck' }])
+    await tabOf(page, commanded).locator('.ext-emblem.struck').waitFor()
+    assert.equal(await tabOf(page, commanded).locator('.ext-emblem.struck').evaluate(el => getComputedStyle(el).outlineStyle), 'dashed')
+    await shot('k1.3-emblemas-light.png', [await tabOf(page, ownerTab).boundingBox(), await tabOf(page, given).boundingBox()])
+    await probe(page, 'emblemSet', commanded, undefined)
+
+    // ---- K1.4: the thin line under a commanded tab ----
+    await probe(page, 'tabLine', commanded, hueA)
+    await page.waitForFunction(id => document.querySelector(`.tether-tab[data-slot="${id}"]`)?.classList.contains('ext-line') === true, commanded)
+    const line = await tabOf(page, commanded).evaluate(el => ({ hue: (el as HTMLElement).style.getPropertyValue('--line-hue'), shadow: getComputedStyle(el).boxShadow }))
+    assert.equal(line.hue, String(hueA))
+    assert.match(line.shadow, /inset/, `the line is drawn (${line.shadow})`)
+    assert.equal(await tabOf(page, given).evaluate(el => el.classList.contains('ext-line')), false, 'only on that tab')
+    // It follows the pane to another desk and back.
+    await page.evaluate(id => { window.__tether.movePaneToDesk(id, 'desk-2'); window.__tether.switchDesk('desk-2') }, commanded)
+    await page.waitForFunction(id => window.__tether.activeDesk() === 'desk-2' && document.querySelector(`.tether-tab[data-slot="${id}"]`)?.classList.contains('ext-line') === true, commanded)
+    await page.evaluate(id => { window.__tether.movePaneToDesk(id, 'desk-1'); window.__tether.switchDesk('desk-1') }, commanded)
+    await page.waitForFunction(id => window.__tether.activeDesk() === 'desk-1' && document.querySelector(`.tether-tab[data-slot="${id}"]`)?.classList.contains('ext-line') === true, commanded)
+    await tabOf(page, given).click()
+    await shot('k1.4-sublinhado-light.png', [await tabOf(page, ownerTab).boundingBox(), await tabOf(page, given).boundingBox(), await tabOf(page, commanded).boundingBox()])
+
+    // ---- K1.5: the status bar line, its ▾ opening the tab menu by it, read back for a manager ----
+    assert.equal(await bar.locator('.ext-head').evaluate(el => (el as HTMLElement).hidden), true, 'hidden while empty')
+    await probe(page, 'headItem', given, { icon: 'puzzle-piece', hue: hueA, text: 'Atrium pela mesa · enviou pedido 14:02', tooltip: 'Quem comanda e a última coisa que fez', menu: true })
+    const item = bar.locator('.ext-head > .ext-head-item')
+    await item.waitFor()
+    assert.equal(await item.locator('.tx').innerText(), 'Atrium pela mesa · enviou pedido 14:02')
+    assert.equal(await item.locator('svg.caret').count(), 1, 'a caret when it opens something')
+    const order = await bar.evaluate(el => [...el.children].map(c => c.className.split(' ')[0]))
+    assert.ok(order.indexOf('ext-head') > order.indexOf('ronda') && order.indexOf('ext-head') < order.indexOf('sp'), `after the core's marks, before the actions (${order.join(' ')})`)
+    assert.deepEqual(await probe(page, 'headItems', given), [{ text: 'Atrium pela mesa · enviou pedido 14:02', hue: hueA, clickable: true }])
+    assert.deepEqual(await probe(page, 'headItems', commanded), [], 'none on another pane')
+    await shot('k1.5-barra-de-status-light.png', [await bar.boundingBox()])
+    await item.click()
+    await page.waitForSelector('#ctx-menu li')
+    assert.deepEqual(await probe<string[]>(page, 'headClicks'), [given])
+    await page.keyboard.press('Escape')
+    await probe(page, 'headItem', given, { icon: 'puzzle-piece', text: 'com você · antes: Atrium, pela mesa', tooltip: 'Tomada por você' })
+    await page.waitForFunction(id => document.querySelector(`.panel[data-slot-id="${id}"] .ext-head-item .tx`)?.textContent === 'com você · antes: Atrium, pela mesa', given)
+    assert.equal(await bar.locator('.ext-head-item svg.caret').count(), 0, 'no caret without a click')
+    assert.equal(await bar.locator('span.ext-head-item').count(), 1, 'plain text, not a button')
+
+    // ---- taken away: the marks are today's again; then everything goes with the extension ----
+    await probe(page, 'sealState', 'desk-1', undefined)
+    await probe(page, 'sealState', 'desk-2', undefined)
+    await probe(page, 'emblem', ownerTab, undefined)
+    await probe(page, 'emblemSet', given, [])
+    await probe(page, 'tabLine', commanded, undefined)
+    await probe(page, 'headItem', given, undefined)
+    await page.waitForTimeout(300)
+    assert.equal(await marksOf(page, 'desk-1', commanded), before.d1, 'pill and tab as before')
+    assert.equal(await marksOf(page, 'desk-2', given), before.d2, 'pill, tab and status bar as before')
+    await probe(page, 'sealState', 'desk-2', { icon: 'puzzle-piece', label: 'Kai', tooltip: 'x', variant: 'struck', clickable: true })
+    await probe(page, 'emblemSet', given, [{ icon: '', label: 'K', tooltip: 'x' }])
+    await probe(page, 'tabLine', given, hueA)
+    await probe(page, 'headItem', given, { icon: 'puzzle-piece', text: 'linha', tooltip: '' })
+    await bar.locator('.ext-head-item').waitFor()
+    await page.evaluate(() => window.__tether.disposeExtension('door-probe'))
+    await page.waitForFunction(() => document.querySelectorAll('.ext-emblem, .desk-seal, .ext-line, .ext-head-item').length === 0)
+    assert.equal(await marksOf(page, 'desk-2', given), before.d2, 'nothing of the extension after it went')
   })
 })

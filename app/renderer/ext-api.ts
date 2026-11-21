@@ -235,6 +235,24 @@ export interface TabEmblem {
   onActivate?: () => void
 }
 
+/**
+ * A line of the panel's status bar an extension owns ("Atrium pela mesa · enviou pedido 14:02 ▾"): a chip after the core's
+ * marks, in the item's hue. One per extension per pane. Only a terminal pane's status bar draws it; `panes.headItems` reads it
+ * for any pane (a view that lists panes shows the same line).
+ */
+export interface PaneHeadItem {
+  /** An icon name of app/renderer/icons.ts (an unknown name draws none). */
+  icon: string
+  hue?: number
+  text: string
+  tooltip: string
+  /**
+   * A click on the item, with the item's element (to open a menu by it: `panes.showTabMenu(id, x, y, anchor)`). With it the
+   * item is a button and shows a ▾; without it, plain text.
+   */
+  onActivate?: (anchor: HTMLElement) => void
+}
+
 /** One row of the list picker (`pick`). */
 export interface PickItem<T> {
   value: T
@@ -317,6 +335,10 @@ export interface TetherUi {
      * extension per pane; with two extensions the first by id draws. It follows the pane and goes with the extension.
      */
     setTabLine(paneId: string, hue: number | undefined): void
+    /** This extension's line in the pane's status bar (see PaneHeadItem); `undefined` removes it. It goes with the extension. */
+    setHeadItem(paneId: string, item: PaneHeadItem | undefined): void
+    /** Every extension's status-bar line of a pane, in a stable order (by extension id): for a view that shows the same line. */
+    headItems(paneId: string): readonly PaneHeadItem[]
     /**
      * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
      * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider
