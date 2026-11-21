@@ -27,7 +27,8 @@ import { daemonEnv, findNode, findNodeAsync, readDaemonRecord, writeDaemonRecord
 import { extensionOutdated, extensionVersionOf, readUpdateMarker, restartIfOutdated, storedExtensionVersion, syncExtensionVersion, updateExtensionDir, updateMarkerPath } from '../../extensions/web-bridge/update.ts'
 import type { DaemonCheck, TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { fsIo } from '../../src/daemon/ext-io.ts'
-import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { DisposableStore, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { DoorHost } from '../../src/daemon/door/host.ts'
 import { BRAND } from '../../app/shared/brand.ts'
 import { auditVendor, hashTree, sha256, VENDOR_MANIFEST, type BuildInfo } from '../../extensions/web-bridge/vendor-rules.ts'
 import { hashTree as hashTreeSync, manifestOf } from '../../extensions/web-bridge/vendor-rules-sync.ts'
@@ -424,6 +425,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
     const started: Array<() => void> = []
     const log: string[] = []
     const api: TetherDaemon = {
+      ...new DoorHost({ log: () => {} }).apiFor('web-bridge', new DisposableStore()),
       id: 'web-bridge', brand: BRAND, home,
       agents: { register: () => toDisposable(() => {}), get: () => undefined },
       launch: { use: () => toDisposable(() => {}) },

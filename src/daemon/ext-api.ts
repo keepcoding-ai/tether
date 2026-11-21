@@ -8,8 +8,10 @@ import type { SlotMeta } from '../core/event.ts'
 import type { Profile } from '../core/profile.ts'
 import type { SlotState } from './protocol.ts'
 import type { TraceSource } from '../trace/timeline.ts'
+import type { DoorApi } from './door/types.ts'
 
 export type { AgentContribution, AgentMcp, TraceSource }
+export type * from './door/types.ts'
 
 /** A doctor check an extension contributes (same shape `tether doctor` prints). */
 export interface DaemonCheck {
@@ -45,7 +47,11 @@ export interface DaemonIo {
   exists(path: string): Promise<boolean>
 }
 
-export interface TetherDaemon {
+/**
+ * The door services (agent door, door/types.ts) are part of it: `slots`, `desks`, `verbs`, `delivery`, `attention`, `objects`.
+ * Only the tetherd that owns the pipe has them live; elsewhere registering works and acting rejects with `door-unavailable`.
+ */
+export interface TetherDaemon extends DoorApi {
   /** The extension's id (manifest.id). */
   readonly id: string
   /** The product's identity (app/shared/brand.ts). */
