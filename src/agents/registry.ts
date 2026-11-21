@@ -53,6 +53,16 @@ export interface AgentContribution {
    * HTTP server. Absent = the agent has no channel and the ronda is unavailable to it.
    */
   channel?: (server: string) => string[]
+  /**
+   * The args that turn on the channels of SEVERAL servers in one launch (the ronda's and the agent door's `tether`).
+   * Absent: the core joins the values of `channel(server)` under the first flag.
+   */
+  channels?: (servers: readonly string[]) => string[]
+  /**
+   * How this CLI takes a typed and submitted text (agent door delivery through the terminal): the chunks to write, each
+   * after its wait. Absent: the core's default (door/typing.ts).
+   */
+  typing?: { submit(text: string): { data: string; waitMs?: number }[] }
   /** The confirmation the CLI shows at start for those args, which the daemon answers only when it sees it exactly. */
   channelConfirm?: ChannelConfirm
 }

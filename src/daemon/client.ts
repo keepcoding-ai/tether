@@ -11,7 +11,7 @@ import { exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
 import { encode, LineParser } from './ndjson.ts'
-import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type ErrorCode, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
+import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type DeskMap, type ErrorCode, type ObjectKind, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
 export type Hello = { v: number; pid: number; version: string; exec?: string }
 export type OkReply = Extract<Reply, { t: 'ok' }>
@@ -61,6 +61,10 @@ type Events = {
   proc: [proc: ProcState]
   'proc-removed': [name: string]
   'proc-data': [name: string, data: string]
+  /** Agent door: the desk map changed. */
+  desks: [map: DeskMap]
+  /** Agent door: one key of an extension's object data changed (`value` undefined: deleted). */
+  object: [e: { ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }]
   close: []
 }
 
@@ -211,6 +215,14 @@ export class DaemonClient extends EventEmitter<Events> {
       case 'proc-data':
         this.emit('proc-data', msg.name, msg.data)
         return
+      case 'desks':
+        this.emit('desks', msg.map)
+        return
+      case 'object': {
+        const { t: _t, ...e } = msg
+        this.emit('object', e)
+        return
+      }
     }
   }
 

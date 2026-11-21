@@ -56,6 +56,14 @@ export interface SlotMeta {
   profileEnv?: Record<string, string>
   /** ISO time the last run ended (written by tetherd on exit, cleared on launch). */
   endedAt?: string
+  /** Agent door: the extension that created the slot and the agent slot it acted for (mirrored in SlotState). */
+  createdBy?: { ext: string; slotId?: string }
+  /** Agent door: a terminal pane is asked for in this desk; written before `create` answers, cleared by a desk map that shows the slot. */
+  paneRequest?: { deskId: string }
+  /** Agent door: the pane is in an agent's hands (`ext` says so, `by` is the holder's slotId). Absent: with the user. */
+  held?: { ext: string; by: string }
+  /** Agent door: the slotId this slot's attention is rerouted to. */
+  attentionTo?: string
 }
 
 /** Who is running the slot right now: <home>/slots/<slotId>.run.json (written by the launcher). */

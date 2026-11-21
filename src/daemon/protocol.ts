@@ -107,7 +107,49 @@ export interface SlotState {
    * (`channel`: older than 0.3.7, which typed the nudge into the terminal).
    */
   ronda?: Ronda & { due?: boolean; channel?: 'listening' | 'none' }
+  /** The agent door: the extension (and the agent slot it acted for) that created this slot (SlotMeta.createdBy). */
+  createdBy?: { ext: string; slotId?: string }
+  /** A terminal pane is asked for this slot in that desk (SlotMeta.paneRequest); cleared once a desk map shows the slot. */
+  paneRequest?: { deskId: string }
+  /** The pane is in an agent's hands (SlotMeta.held). Absent: with the user. */
+  held?: SlotHold
+  /** This slot's attention is rerouted to a live slot: `attention` is then ABSENT and its value lives here. */
+  attentionFor?: { slotId: string; value: 'done' | 'waiting' }
 }
+
+/** Who holds a pane given to an agent: the extension that says so and the holder (an agent's slotId). */
+export interface SlotHold { ext: string; by: string }
+
+/** A read of a slot's screen: the raw ring with the PTY size NOW and the ring's monotonic offsets. */
+export interface ScreenRead {
+  /** The raw scrollback (escape sequences included). */
+  data: string
+  cols: number
+  rows: number
+  /** Scrollback.start / .end: pass `end` back as `since` to read only what is new. */
+  start: number
+  end: number
+  /** The ring lost the part `since` asked for (or was cleared by a relaunch): `data` is the whole ring. */
+  reset: boolean
+}
+
+/** One desk of the app's layout as the daemon is told it (`desk-map`). */
+export interface DeskMapDesk {
+  id: string
+  name: string
+  kind: 'queue' | 'system'
+  asleep?: true
+  /** Every pane of the desk. `type`: 'terminal' for a slot's pane (id = slotId), else the pane type id ('note', 'browser.tab'...). */
+  panes: { id: string; type: string }[]
+}
+export interface DeskMap {
+  desks: DeskMapDesk[]
+  /** The drawer, which is not a desk. */
+  drawer: { id: string; type: string }[]
+}
+
+/** The objects an extension keeps data on (agent door, objects). */
+export type ObjectKind = 'desk' | 'pane'
 
 export type ErrorCode =
   | 'unknown-slot'
@@ -131,6 +173,10 @@ export type ErrorCode =
   | 'bad-adopt'        // proc-adopt refused: nothing was touched (message: why and what to do)
   | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
   | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
+  | 'door-unavailable'  // the agent door is not live in this process (a satellite), or the owning extension left
+  | 'door-no-pty'       // a door write to a slot with no process
+  | 'door-denied'       // the caller's identity does not match
+  | 'unknown-verb'      // no contributed verb by that namespace and name
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -156,6 +202,8 @@ export type Request =
    */
   | { t: 'attach'; id: number; slotId: string; cols: number; rows: number }
   | { t: 'detach'; id: number; slotId: string }
+  /** Agent door: reads the slot's screen without attaching or resizing. Reply: `screen`. */
+  | { t: 'read-screen'; id: number; slotId: string; since?: number }
   | { t: 'resize'; id: number; slotId: string; cols: number; rows: number }
   /** Kill the slot's process (the slot and its binding stay). */
   | { t: 'stop'; id: number; slotId: string }
@@ -184,6 +232,19 @@ export type Request =
   | { t: 'restart'; id: number; slotId: string }
   /** The user looked at the slot's pane (it got the focus): clears `attention`. Daemons before 0.3.0 answer bad-request. */
   | { t: 'seen'; id: number; slotId: string }
+  /**
+   * Agent door: which panes are in which desk. The whole map, sent with the layout save (debounced) and on every reconnect;
+   * kept in <home>/desks.json. A slot that shows in any desk loses its `paneRequest`.
+   */
+  | { t: 'desk-map'; id: number; map: DeskMap }
+  /** Agent door: the contributed verbs. Reply: `verbs`. */
+  | { t: 'verb-list'; id: number }
+  /** Agent door: runs a contributed verb for a slot. `key`: the slot's key (TETHER_SLOT_KEY), which proves the identity. Reply: `verb`. */
+  | { t: 'verb'; id: number; ns: string; name: string; args: Record<string, unknown>; slotId: string; key?: string }
+  /** Agent door: all of one extension's object data. Reply: `objects`. */
+  | { t: 'object-get'; id: number; ext: string }
+  /** Agent door: sets (or, without `value`, deletes) one key of an object of an extension. */
+  | { t: 'object-set'; id: number; ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }
   /**
    * Politely ask agents to stop at a safe point (one batch at a time; `pause-active` otherwise). `slotIds`: those
    * slots; omitted = every slot whose agent is mid-turn (`turn === 'busy'`). Reply: `pause` (the new batch).
@@ -296,6 +357,14 @@ export type Reply =
       released?: boolean
       /** proc-host: null when no host answers. */
       host?: { pid: number; version: string; startedAt: string; live: number } | null
+      /** read-screen. */
+      screen?: ScreenRead
+      /** verb-list. */
+      verbs?: { ns: string; name: string; help: string; input: Record<string, unknown>; positional?: string[] }[]
+      /** verb. */
+      verb?: { text: string; data?: unknown; isError?: boolean }
+      /** object-get. */
+      objects?: { desk: Record<string, Record<string, unknown>>; pane: Record<string, Record<string, unknown>> }
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 
@@ -317,5 +386,9 @@ export type Event =
   | { t: 'proc-removed'; name: string }
   /** Output of a process this client attached to (proc-attach). */
   | { t: 'proc-data'; name: string; data: string }
+  /** Agent door: the desk map changed (any client reads it). */
+  | { t: 'desks'; map: DeskMap }
+  /** Agent door: one key of an extension's object data changed (`value` absent: deleted). */
+  | { t: 'object'; ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }
 
 export type DaemonMessage = Reply | Event
