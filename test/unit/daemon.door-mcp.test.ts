@@ -1,0 +1,267 @@
+// The agent door's MCP server `tether` (src/daemon/door/mcp.ts) over real HTTP on http://localhost:<port>: nothing offered (and
+// the plan untouched) while no verb has the `mcp` exit and no delivery is on; with the ronda's channel already in the plan, both
+// servers under ONE channel flag; the era trap (`server/discover` never gets a result, `initialize` stays legacy); the verbs
+// with the `mcp` exit as tools; a tool call reaching the handler with the slot of the route; a wrong key refused; tools/list_changed
+// when a verb comes in; the revoke; and the key never in a log line or in the MCP file. No agent, no tetherd: a fake port.
+import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { after, describe, test } from 'node:test'
+import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
+import '../../src/agents/load.ts'
+import { agentRegistry, channelArgsOf, type AgentContribution } from '../../src/agents/registry.ts'
+import type { LaunchPlan } from '../../src/agents/types.ts'
+import type { SlotMeta } from '../../src/core/event.ts'
+import { DoorMcp, DOOR_INSTRUCTIONS, toolNameOf } from '../../src/daemon/door/mcp.ts'
+import type { LaunchContext, SlotPort } from '../../src/daemon/door/port.ts'
+import { SlotKeys } from '../../src/daemon/door/slot-key.ts'
+import { DOOR_MCP_SERVER, ENV_DOOR_MCP_KEY, type VerbCaller, type VerbContribution } from '../../src/daemon/door/types.ts'
+import { VerbRegistry } from '../../src/daemon/door/verbs.ts'
+import type { SlotState } from '../../src/daemon/protocol.ts'
+import { RONDA_MCP_SERVER } from '../../src/daemon/ronda-channel.ts'
+import { removeHome, tempHome, waitUntil } from './daemon.helpers.ts'
+
+const claude = (): AgentContribution => agentRegistry.get('claude')!
+const RONDA_ARGS = ['--dangerously-load-development-channels', `server:${RONDA_MCP_SERVER}`]
+const RONDA_FILE = 'ronda.json'
+
+/** A plan as the ronda leaves it: its channel flag first, its MCP file last. */
+const rondaPlan = (): LaunchPlan => ({
+  command: 'claude',
+  args: [...RONDA_ARGS, '--settings', 's.json', '--mcp-config', RONDA_FILE],
+  cwd: '.',
+  env: { PATH: 'x' },
+  mcpServers: { [RONDA_MCP_SERVER]: RONDA_FILE },
+})
+const plainPlan = (): LaunchPlan => ({ command: 'claude', args: ['--settings', 's.json'], cwd: '.', env: { PATH: 'x' } })
+
+function ctxOf(slotId: string, over: Partial<LaunchContext> = {}): LaunchContext {
+  return {
+    meta: { slotId } as SlotMeta,
+    agent: claude(),
+    channel: { args: RONDA_ARGS, inject: claude().mcp!.inject },
+    rondaOffered: true,
+    ...over,
+  }
+}
+
+const verb = (name: string, over: Partial<VerbContribution> = {}): VerbContribution => ({
+  ns: 'probe', name, description: `The ${name} verb.`, help: `verbo ${name}`,
+  input: { type: 'object', properties: { text: { type: 'string' } } },
+  run: () => ({ text: name }),
+  ...over,
+})
+
+async function post(url: string, key: string, msg: unknown, session?: string) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${key}`, ...(session ? { 'mcp-session-id': session } : {}) },
+    body: JSON.stringify(msg),
+  })
+  const text = await r.text()
+  const lines = text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)) as Record<string, any>)
+  return { status: r.status, session: r.headers.get('mcp-session-id') ?? undefined, msg: lines.at(-1) ?? (text ? JSON.parse(text) as Record<string, any> : undefined), text }
+}
+const initialize = (version: string, id = 1) => ({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion: version, capabilities: {}, clientInfo: { name: 't', version: '1' } } })
+
+describe('agent door MCP server (D5)', () => {
+  const homes: string[] = []
+  const servers: DoorMcp[] = []
+  after(async () => {
+    for (const s of servers) await s.close()
+    for (const h of homes) await removeHome(h)
+  })
+
+  function make() {
+    const home = tempHome()
+    homes.push(home)
+    const logs: string[] = []
+    const verbs = new VerbRegistry({ keys: new SlotKeys(), stateOf: () => undefined })
+    const states = new Map<string, SlotState>()
+    const port = { home, stateOf: (id: string) => states.get(id) } as unknown as SlotPort
+    const mcp = new DoorMcp({ log: (m) => logs.push(m), verbs, port: () => port })
+    servers.push(mcp)
+    const addSlot = (slotId: string): void => { states.set(slotId, { slotId } as unknown as SlotState) }
+    return { home, logs, verbs, mcp, addSlot }
+  }
+
+  async function launch(mcp: DoorMcp, slotId: string) {
+    const out = await mcp.prepare(rondaPlan(), ctxOf(slotId))
+    assert.ok(out.offered)
+    const file = out.plan.args[out.plan.args.lastIndexOf('--mcp-config') + 1]!
+    const cfg = JSON.parse(readFileSync(file, 'utf8')).mcpServers[DOOR_MCP_SERVER]
+    return { out, file, url: cfg.url as string, key: out.plan.env[ENV_DOOR_MCP_KEY]! }
+  }
+
+  test('no verb with the mcp exit and no delivery: the plan goes out as it came in, and nothing listens', async () => {
+    const { mcp, verbs } = make()
+    const plan = rondaPlan()
+    const out = await mcp.prepare(plan, ctxOf('s1'))
+    assert.equal(out.plan, plan, 'the very same plan')
+    assert.deepEqual(out.plan, rondaPlan())
+    assert.equal(out.offered, false)
+    assert.equal(mcp.port, undefined, 'the host never listened')
+    // A verb shown only on the CLI does not make the server wanted either.
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('cli-only', { exits: ['cli'] })))
+    assert.equal((await mcp.prepare(plan, ctxOf('s1'))).plan, plan)
+    // An agent without HTTP MCP servers gets nothing, even with a tool.
+    own.add(verbs.register('ext', verb('tool')))
+    const noHttp = { ...claude(), mcp: { inject: claude().mcp!.inject } }
+    assert.equal((await mcp.prepare(plan, ctxOf('s1', { agent: noHttp }))).plan, plan)
+    assert.equal(mcp.port, undefined)
+    own.dispose()
+  })
+
+  test('with the ronda and tether: one channel flag with both servers, the MCP file last, the key in the env only', async () => {
+    const { mcp, verbs, logs } = make()
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('tool')))
+    const { out, file, url, key } = await launch(mcp, 's1')
+    const flag = RONDA_ARGS[0]!
+    assert.deepEqual(out.plan.args.slice(0, 3), [flag, `server:${RONDA_MCP_SERVER}`, `server:${DOOR_MCP_SERVER}`])
+    assert.equal(out.plan.args.filter((a) => a === flag).length, 1, 'one flag only')
+    assert.equal(out.channel, true)
+    assert.deepEqual(out.plan.args.slice(-4), ['--mcp-config', RONDA_FILE, '--mcp-config', file])
+    assert.deepEqual(out.plan.mcpServers, { [RONDA_MCP_SERVER]: RONDA_FILE, [DOOR_MCP_SERVER]: file })
+    assert.equal(file, join(homesLast(), 'door', 'mcp', 's1.json'))
+    assert.match(url, /^http:\/\/localhost:\d+\/mcp\/s1$/)
+    assert.equal(key.length, 32)
+    const text = readFileSync(file, 'utf8')
+    assert.ok(!text.includes(key), 'the file holds no key')
+    assert.match(text, new RegExp(`Bearer \\$\\{${ENV_DOOR_MCP_KEY}\\}`))
+    // Without the ronda's offer the door adds no channel (no one would answer the start dialog), only the tools.
+    const alone = await mcp.prepare(plainPlan(), ctxOf('s2', { rondaOffered: false }))
+    assert.equal(alone.offered, true)
+    assert.equal(alone.channel, false)
+    assert.ok(!alone.plan.args.includes(flag))
+    assert.ok(logs.every((l) => !l.includes(key) && !l.includes(alone.plan.env[ENV_DOOR_MCP_KEY]!)), 'no log line carries a key')
+    own.dispose()
+  })
+
+  test('era: server/discover never gets a result; initialize is legacy, declares tools that change, the channel and the instructions', async () => {
+    const { mcp, verbs, logs } = make()
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('tool')))
+    own.add(verbs.instructions('ext', 'Use probe_tool to probe.'))
+    const { url, key } = await launch(mcp, 's1')
+    const probe = await post(url, key, { jsonrpc: '2.0', id: 0, method: 'server/discover', params: {} })
+    assert.notEqual(probe.status, 200, 'the probe before a session is refused: the client falls back to initialize')
+    assert.ok(!probe.text.includes('supportedVersions'))
+
+    const init = await post(url, key, initialize('2025-11-25'))
+    assert.equal(init.status, 200)
+    const r = init.msg!.result
+    assert.equal(r.protocolVersion, '2025-11-25')
+    assert.deepEqual(r.capabilities, { tools: { listChanged: true }, experimental: { 'claude/channel': {} } })
+    assert.equal(r.serverInfo.name, DOOR_MCP_SERVER)
+    assert.equal(r.instructions, `${DOOR_INSTRUCTIONS}\n\n[ext]\nUse probe_tool to probe.`)
+    assert.ok(logs.includes('door: slot s1: sessão do servidor tether (era legada, protocolo 2025-11-25)'))
+
+    const inside = await post(url, key, { jsonrpc: '2.0', id: 2, method: 'server/discover', params: {} }, init.session)
+    assert.equal(inside.msg!.error.code, -32601)
+    assert.equal(inside.msg!.result, undefined)
+
+    const modern = await post(url, key, initialize('2026-07-28', 3))
+    assert.equal(modern.msg!.result.protocolVersion, '2025-11-25')
+    own.dispose()
+  })
+
+  test('tools/list shows the mcp verbs; tools/call gives the handler the slot of the route; a wrong key is 401', async () => {
+    const { mcp, verbs, addSlot } = make()
+    addSlot('s1')
+    addSlot('s2')
+    const calls: Array<{ caller: VerbCaller; args: Record<string, unknown> }> = []
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('read-screen', { run: (caller, args) => { calls.push({ caller, args }); return { text: `ok ${caller.slotId}`, data: { slot: caller.slotId } } } })))
+    own.add(verbs.register('ext', verb('cli-only', { exits: ['cli'] })))
+    own.add(verbs.register('ext', verb('boom', { run: () => { throw new Error('quebrou') } })))
+    const a = await launch(mcp, 's1')
+    const b = await launch(mcp, 's2')
+
+    const init = await post(b.url, b.key, initialize('2025-06-18'))
+    const list = await post(b.url, b.key, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, init.session)
+    assert.deepEqual(list.msg!.result.tools.map((t: { name: string }) => t.name), ['probe_read_screen', 'probe_boom'])
+    assert.deepEqual(list.msg!.result.tools[0], { name: 'probe_read_screen', description: 'The read-screen verb.', inputSchema: verb('x').input })
+
+    const call = await post(b.url, b.key, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'probe_read_screen', arguments: { text: 'oi' } } }, init.session)
+    assert.deepEqual(call.msg!.result, { content: [{ type: 'text', text: 'ok s2' }], structuredContent: { slot: 's2' } })
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0]!.args, { text: 'oi' })
+    assert.equal(calls[0]!.caller.slotId, 's2', 'the slot of the route, never anything the agent says')
+    assert.equal(calls[0]!.caller.via, 'mcp')
+    assert.equal(calls[0]!.caller.proven, true)
+    assert.equal(calls[0]!.caller.state.slotId, 's2')
+
+    const boom = await post(b.url, b.key, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'probe_boom' } }, init.session)
+    assert.equal(boom.msg!.result.isError, true)
+    const unknown = await post(b.url, b.key, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'probe_cli_only' } }, init.session)
+    assert.equal(unknown.msg!.error.code, -32602, 'a cli-only verb is no tool')
+
+    assert.equal((await post(b.url, 'x'.repeat(32), initialize('2025-06-18'))).status, 401, 'wrong key')
+    assert.equal((await post(b.url, a.key, initialize('2025-06-18'))).status, 401, 'another slot\'s key')
+    own.dispose()
+  })
+
+  test('tools/list_changed reaches the open stream when a verb comes in; the stream edges are told; a channel message goes out', async () => {
+    const { mcp, verbs } = make()
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('first')))
+    const edges: Array<[string, boolean]> = []
+    own.add(mcp.onDidStream((id, open) => edges.push([id, open])))
+    const { url, key } = await launch(mcp, 's1')
+    const init = await post(url, key, initialize('2025-11-25'))
+    assert.equal(mcp.connected('s1'), false)
+    assert.equal(mcp.sendChannel('s1', 'x', {}), false, 'nothing sent without a stream')
+    const ac = new AbortController()
+    const get = await fetch(url, { headers: { accept: 'text/event-stream', authorization: `Bearer ${key}`, 'mcp-session-id': init.session! }, signal: ac.signal })
+    await waitUntil(() => mcp.connected('s1'), 5_000, 'stream open')
+    assert.deepEqual(edges, [['s1', true]])
+
+    const reader = get.body!.getReader()
+    let seen = ''
+    const until = async (needle: string): Promise<void> => { while (!seen.includes(needle)) seen += new TextDecoder().decode((await reader.read()).value) }
+    own.add(verbs.instructions('ext', 'only instructions: the tool list is the same')) // no list_changed for this one
+    own.add(verbs.register('ext', verb('second')))
+    await until('notifications/tools/list_changed')
+    assert.equal(seen.split('notifications/tools/list_changed').length - 1, 1, 'one notice, for the verb only')
+
+    assert.equal(mcp.sendChannel('s1', 'corpo', { kind: 'message', from: 'Atrium' }), true)
+    await until('notifications/claude/channel')
+    const note = JSON.parse(seen.split('\n').find((l) => l.includes('notifications/claude/channel'))!.slice(6))
+    assert.deepEqual(note, { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: 'corpo', meta: { kind: 'message', from: 'Atrium' } } })
+
+    mcp.revoke('s1')
+    assert.deepEqual(edges, [['s1', true], ['s1', false]])
+    ac.abort()
+    own.dispose()
+  })
+
+  test('the delivery alone makes it wanted; revoke ends the key and removes the file', async () => {
+    const { mcp } = make()
+    const plan = plainPlan()
+    const on = mcp.enableDelivery()
+    const { file, url, key } = await launch(mcp, 's1')
+    assert.ok(existsSync(file))
+    mcp.revoke('s1')
+    await mcp.flush()
+    assert.ok(!existsSync(file), 'the file goes with the run')
+    assert.equal((await post(url, key, initialize('2025-11-25'))).status, 401, 'the key died with the run')
+    on.dispose()
+    on.dispose() // twice is once
+    assert.equal(mcp.wanted, false)
+    assert.equal((await mcp.prepare(plan, ctxOf('s1'))).plan, plan)
+  })
+
+  test('channelArgsOf: one flag for several servers; the agent\'s own `channels` wins; no channel is []', () => {
+    assert.deepEqual(channelArgsOf(claude(), ['a', 'b']), ['--dangerously-load-development-channels', 'server:a', 'server:b'])
+    assert.deepEqual(channelArgsOf(claude(), ['a']), ['--dangerously-load-development-channels', 'server:a'])
+    assert.deepEqual(channelArgsOf(claude(), []), [])
+    assert.deepEqual(channelArgsOf({}, ['a']), [])
+    assert.deepEqual(channelArgsOf({ channel: (s) => ['--ch', s], channels: (ss) => ['--all', ss.join(',')] }, ['a', 'b']), ['--all', 'a,b'])
+    assert.deepEqual(channelArgsOf({ channel: (s) => (s === 'a' ? ['--x', s] : ['--y', s]) }, ['a', 'b']), ['--x', 'a', '--y', 'b'])
+    assert.equal(toolNameOf({ ns: 'my-ext', name: 'read-screen' }), 'my_ext_read_screen')
+  })
+
+  function homesLast(): string { return homes.at(-1)! }
+})
