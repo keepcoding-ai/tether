@@ -76,6 +76,21 @@ export interface ChannelConfirm {
   keys: string
 }
 
+/**
+ * The args that turn on the channels of `servers` in one launch. With `channels`, the agent says; else the values of each
+ * `channel(server)` go under the first server's flag (`--flag server:a server:b`: one flag, one start dialog; a repeated flag
+ * is unproven). An args list of another flag is kept whole. No channel, or no server: [].
+ */
+export function channelArgsOf(agent: Pick<AgentContribution, 'channel' | 'channels'>, servers: readonly string[]): string[] {
+  if (servers.length === 0) return []
+  if (agent.channels) return agent.channels(servers)
+  const channel = agent.channel
+  if (!channel) return []
+  const [first, ...rest] = servers.map((s) => channel(s))
+  const flag = first![0]
+  return [...first!, ...rest.flatMap((a) => (a[0] === flag ? a.slice(1) : a))]
+}
+
 export const AGENT_NAME_RE = /^[a-z][a-z0-9-]{0,31}$/
 
 export class AgentRegistry {
