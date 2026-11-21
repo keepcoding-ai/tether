@@ -58,6 +58,8 @@ export interface SlotPort {
   meta(slotId: string): SlotMeta | undefined
   /** Writes the slot's meta as it is in memory and waits until it is on disk. */
   saveMeta(slotId: string): Promise<void>
+  /** The slot's attention was seen: clears the core's `done`/`waiting` (what the pipe's `seen` does) and sends the state. */
+  seen(slotId: string): void
   /** Sends the slot's state to every client (and to the `stateChanged` hook). */
   broadcastState(slotId: string): void
   /** An event to every client (the door's `desks` and `object`). */

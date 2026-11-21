@@ -539,6 +539,10 @@ class DaemonImpl implements Daemon {
         this.saveMeta(slot.meta)
         await this.store.flush(slotMetaPath(this.home, slotId))
       },
+      seen: (slotId) => {
+        const slot = this.slot(slotId)
+        if (slot.attention.seen()) this.broadcastState(slot)
+      },
       broadcastState: (slotId) => this.broadcastState(this.slot(slotId)),
       broadcast: (event) => this.broadcast(event),
     }
