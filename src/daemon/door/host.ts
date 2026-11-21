@@ -7,7 +7,8 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../../app/sh
 import type { LaunchPlan } from '../../agents/types.ts'
 import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
-import { doorUnavailable, type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
+import { type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
+import { DeliveryService } from './delivery.ts'
 import { DeskService } from './desks.ts'
 import { DoorMcp } from './mcp.ts'
 import { AttentionRouteService } from './attention-route.ts'
@@ -20,13 +21,6 @@ import { VerbRegistry } from './verbs.ts'
 export interface DoorHostOptions {
   log: (msg: string) => void
 }
-
-/** A registration that does nothing yet but is owned (and disposed) like a real one. */
-function owned(own: DisposableStore): IDisposable {
-  return own.add(toDisposable(() => {}))
-}
-
-const reject = (what: string): Promise<never> => Promise.reject(doorUnavailable(what))
 
 export class DoorHost implements DoorSeams {
   private readonly opts: DoorHostOptions
@@ -46,6 +40,8 @@ export class DoorHost implements DoorSeams {
   private readonly attentionService: AttentionRouteService
   /** The `tether` MCP server (D5): the verbs with the `mcp` exit as tools, and the channel the delivery uses from inside. */
   readonly mcp: DoorMcp
+  /** The delivery (D6): inside through `mcp`, through the terminal of a held pane, or queued in <home>/slots/<slot>.inbox.jsonl. */
+  readonly delivery: DeliveryService
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
@@ -62,6 +58,7 @@ export class DoorHost implements DoorSeams {
     this.requests.register('verb-list', this.verbs.handleList)
     this.requests.register('verb', this.verbs.handleRun)
     this.mcp = new DoorMcp({ log: (msg) => this.opts.log(msg), verbs: this.verbs, port: () => this.portRef })
+    this.delivery = new DeliveryService({ log: (msg) => this.opts.log(msg), mcp: this.mcp, port: () => this.portRef })
   }
 
   /** The server's port; undefined in a satellite. */
@@ -88,6 +85,7 @@ export class DoorHost implements DoorSeams {
     this.portRef = port
     this.desks.attach(port)
     this.objects.attach(port)
+    this.delivery.attach(port)
   }
 
   requestHandler(t: string): DoorRequestHandler | undefined {
@@ -96,9 +94,9 @@ export class DoorHost implements DoorSeams {
 
   decorate(meta: SlotMeta, state: SlotState): void { this.attentionService.decorate(meta, state) }
 
-  stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state) }
+  stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state); this.delivery.stateChanged(state) }
 
-  input(_slotId: string, _data: string, _origin: InputOrigin): void {}
+  input(slotId: string, data: string, origin: InputOrigin): void { this.delivery.input(slotId, data, origin) }
 
   /**
    * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). Then the `tether` MCP
@@ -118,13 +116,12 @@ export class DoorHost implements DoorSeams {
 
   exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }
 
-  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId)]).then(() => undefined) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
 
   // ---- the extensions' API ---------------------------------------------------------------------
 
   /** The door part of extension `ext`'s TetherDaemon; its registrations land in `own`. */
   apiFor(ext: string, own: DisposableStore): DoorApi {
-    const what = (service: string): string => `${service}, extensão ${ext}`
     const slots: DoorSlots = this.slotsService.apiFor(ext, own)
     const desks: DoorDesks = {
       map: () => this.desks.map(),
@@ -137,12 +134,8 @@ export class DoorHost implements DoorSeams {
       instructions: (text) => own.add(this.verbs.instructions(ext, text)),
     }
     const delivery: DoorDelivery = {
+      ...this.delivery.apiFor(ext, own),
       enable: () => own.add(this.mcp.enableDelivery()),
-      deliver: () => reject(what('delivery.deliver')),
-      pending: () => [],
-      cancel: () => false,
-      onDidDeliver: () => owned(own),
-      pathOf: () => 'wait',
     }
     const attention: DoorAttention = this.attentionService.apiFor(ext, own)
     const objects: DoorObjects = this.objects.apiFor(ext, own)
