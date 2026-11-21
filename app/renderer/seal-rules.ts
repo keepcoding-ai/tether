@@ -4,6 +4,8 @@
 //     terminal seal's rules: it goes out when the pane is seen, unless it is sticky (it only goes out when its owner
 //     resolves it), several seals on a pane live together and with the terminal's own, and they go with their owner.
 
+import { agentHue } from '../shared/agent-color.ts'
+
 /** What a terminal's seal says (the slot's `attention`). */
 export type SlotAttention = 'done' | 'waiting'
 
@@ -165,4 +167,29 @@ export function effectiveAttention(terminal: SlotAttention | undefined, extSeals
 /** The tooltip lines of a pane's seal: the terminal's, then each extension message. */
 export function attentionLines(terminal: SlotAttention | undefined, messages: readonly string[]): string[] {
   return [...(terminal === 'waiting' ? ['Esperando você'] : terminal === 'done' ? ['Terminou'] : []), ...messages]
+}
+
+/** The mark of an attention the daemon sent to an agent owner instead of the person (`SlotState.attentionFor`). */
+export interface RoutedAttention {
+  value: SlotAttention
+  /** The owner's hue (agentHue of its slot id): the mark is drawn in the owner's colour. */
+  hue: number
+  tooltip: string
+}
+
+/**
+ * What a pane shows for an attention that waits for its owner, not for the person: a diamond in the owner's colour, in place of
+ * the orange dot. Undefined when the slot has none, or when something that is for the person is up (`attention` of the terminal,
+ * an extension's seal: `personLevel`), because orange means "needs you" and wins. It is not counted anywhere: the pill, the bell
+ * and the toast read `attention`, which the daemon leaves empty for a routed slot.
+ */
+export function routedAttention(
+  s: { attentionFor?: { slotId: string; value: SlotAttention } } | undefined,
+  ownerName: (slotId: string) => string | undefined,
+  personLevel?: SlotAttention,
+): RoutedAttention | undefined {
+  const r = s?.attentionFor
+  if (!r || personLevel) return undefined
+  const name = ownerName(r.slotId) || r.slotId
+  return { value: r.value, hue: agentHue(r.slotId), tooltip: r.value === 'waiting' ? `Esperando ${name}` : `Terminou, para ${name}` }
 }

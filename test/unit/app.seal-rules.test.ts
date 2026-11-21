@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { attentionLines, BadgeBoard, countLabel, effectiveAttention, normalizeBadge, pillMark, SealBoard } from '../../app/renderer/seal-rules.ts'
+import { agentHue } from '../../app/shared/agent-color.ts'
+import { attentionLines, BadgeBoard, countLabel, effectiveAttention, normalizeBadge, pillMark, routedAttention, SealBoard } from '../../app/renderer/seal-rules.ts'
 
 test('normalizeBadge: a zero or invalid count is no count; nothing left is no badge', () => {
   assert.equal(normalizeBadge(undefined), undefined)
@@ -91,4 +92,22 @@ test('pillMark: pane seals and the badge add up; the flag alone is a pip', () =>
   assert.deepEqual(pillMark({ done: 1, waiting: 0, lines: ['m'] }, { count: 2 }), { text: '3', tone: 'done', lines: ['m'] })
   assert.deepEqual(pillMark(undefined, { count: 4 }), { text: '4', tone: 'plain', lines: [] })
   assert.equal(pillMark({ done: 1, waiting: 1 }, undefined)!.tone, 'waiting')
+})
+
+test('routedAttention: an attention that waits for the owner is the mark of the owner, in its hue', () => {
+  const name = (id: string): string | undefined => (id === 'claude-1' ? 'Atrium' : undefined)
+  assert.deepEqual(routedAttention({ attentionFor: { slotId: 'claude-1', value: 'waiting' } }, name), { value: 'waiting', hue: agentHue('claude-1'), tooltip: 'Esperando Atrium' })
+  assert.deepEqual(routedAttention({ attentionFor: { slotId: 'claude-1', value: 'done' } }, name), { value: 'done', hue: agentHue('claude-1'), tooltip: 'Terminou, para Atrium' })
+  // An owner the app does not know is named by its slot id.
+  assert.equal(routedAttention({ attentionFor: { slotId: 'soul-9', value: 'done' } }, name)!.tooltip, 'Terminou, para soul-9')
+  assert.equal(routedAttention({ attentionFor: { slotId: 'soul-9', value: 'done' } }, name)!.hue, agentHue('soul-9'))
+})
+
+test('routedAttention: nothing without a route, and the attention for the person (orange) wins', () => {
+  const name = (): string => 'Atrium'
+  assert.equal(routedAttention(undefined, name), undefined)
+  assert.equal(routedAttention({}, name), undefined)
+  assert.equal(routedAttention({ attentionFor: { slotId: 'claude-1', value: 'waiting' } }, name, 'done'), undefined)
+  // The pill, the bell and the toast read `attention`, which the daemon leaves empty on a routed slot: the mark is not a count.
+  assert.deepEqual(pillMark({ done: 0, waiting: 0 }, undefined), undefined)
 })
