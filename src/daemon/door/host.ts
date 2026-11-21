@@ -101,13 +101,19 @@ export class DoorHost implements DoorSeams {
   input(_slotId: string, _data: string, _origin: InputOrigin): void {}
 
   /**
-   * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). The `tether` MCP
-   * server's offer (this.mcp.prepare) is not plugged in here yet: it needs this hook to return a promise.
+   * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). Then the `tether` MCP
+   * server, only when this launch gets it (a promise then: its MCP file must be on disk before the spawn); otherwise the
+   * grant is plain and the plan is the given one plus the slot key.
    */
-  prepareLaunch(plan: LaunchPlan, ctx: LaunchContext): LaunchGrant {
+  prepareLaunch(plan: LaunchPlan, ctx: LaunchContext): LaunchGrant | Promise<LaunchGrant> {
     const slotId = ctx.meta.slotId
     const key = this.slotKeys.issue(slotId)
-    return { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
+    const keyed: LaunchGrant = { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
+    if (!this.mcp.offers(ctx)) return keyed
+    return this.mcp.prepare(keyed.plan, ctx).then((offer) => ({
+      plan: offer.plan,
+      revoke: () => { keyed.revoke(); if (offer.offered) this.mcp.revoke(slotId, offer.run) },
+    }))
   }
 
   exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }

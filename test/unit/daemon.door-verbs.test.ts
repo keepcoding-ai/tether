@@ -19,8 +19,8 @@ import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.
 /** A door that remembers the key it put in the last launch's env, only so the test can try it and hunt for it on disk. */
 class SpyDoor extends DoorHost {
   lastKey: string | undefined
-  override prepareLaunch(plan: LaunchPlan, ctx: LaunchContext) {
-    const grant = super.prepareLaunch(plan, ctx)
+  override async prepareLaunch(plan: LaunchPlan, ctx: LaunchContext) {
+    const grant = await super.prepareLaunch(plan, ctx)
     this.lastKey = grant.plan.env[ENV_SLOT_KEY]
     return grant
   }
