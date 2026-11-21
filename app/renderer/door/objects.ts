@@ -135,10 +135,10 @@ export class ObjectMirrors {
   reload(): Promise<void> { return Promise.all([...this.stores.values()].map(s => s.load())).then(() => {}) }
 }
 
-/** The renderer's way to the daemon: `window.tether.request`, read when used (no document in the unit tests: every call fails as no connection). */
+/** The renderer's way to the daemon: `window.tether.request`, read when used (no document in the unit tests: every call fails as door-unavailable). */
 export function rendererAsk(): DaemonAsk {
   return async body => {
     const api = (globalThis as { window?: { tether?: { request(b: RequestBody): Promise<Reply> } } }).window?.tether
-    return api ? api.request(body) : { t: 'error', id: -1, code: 'bad-request', message: 'sem conexão com o tetherd' }
+    return api ? api.request(body) : { t: 'error', id: -1, code: 'bad-request', message: 'door-unavailable: sem conexão com o tetherd' }
   }
 }
