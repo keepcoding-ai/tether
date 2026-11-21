@@ -57,6 +57,7 @@ import { procdPipePath, type HostRun } from '../procd/protocol.ts'
 import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
 import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
 import { DoorHost } from './door/host.ts'
+import { typingOf } from './door/typing.ts'
 import { DoorError, type DoorSeams, type InputOrigin, type SlotCreateInput, type SlotPort } from './door/port.ts'
 
 export const DAEMON_VERSION = '0.3.7'
@@ -87,16 +88,14 @@ const HYDRATE_CONCURRENCY = 6
 const TITLE_LOOKUPS = 4
 /** A subagent marker older than this no longer counts (its SubagentStop was lost: a crash, a kill). */
 const BG_MAX_AGE_MS = 6 * 60 * 60_000
-/** Pause resume: slots typed into at once, and the gap between the text and the Enter (else the TUI sees a paste). */
+/** Pause resume: slots typed into at once (the gap between the text and the Enter is the engine's typing). */
 const PAUSE_RESUME_PARALLEL = 3
-const PAUSE_RESUME_ENTER_DELAY_MS = 130
 /** A due ronda re-checks a busy agent (or one whose channel is not connected) this often. */
 const RONDA_RETRY_MS = 2_000
 /** Screen kept while looking for the channel's start dialog (chars of raw output). */
 const CONFIRM_SCREEN_MAX = 16_000
 /** Gap between seeing the dialog and answering it (the TUI must have finished drawing and be reading keys). */
 const CONFIRM_DELAY_MS = 400
-const ENTER = String.fromCharCode(13)
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
@@ -2735,12 +2734,17 @@ class DaemonImpl implements Daemon {
       this.savePause()
       return
     }
-    // Text and Enter in separate chunks: the Claude TUI takes a burst as a paste and would not submit it.
-    slot.pty?.write(buildResumeText(entry.note))
-    await sleep(PAUSE_RESUME_ENTER_DELAY_MS)
-    if (isAlive(slot)) {
-      slot.pty?.write(ENTER)
-      if (slot.attention.input(ENTER)) this.broadcastState(slot)
+    // Typed as the engine types (door/typing.ts: text and Enter in separate chunks, the engine's wait between them), and told
+    // to the door at each write: the delivery's interlock sees it, so a delivery never lands between the text and the Enter.
+    const agent = slot.meta.agent === 'shell' ? undefined : agentRegistry.get(slot.meta.agent)
+    const chunks = typingOf(agent).submit(buildResumeText(entry.note))
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!
+      if (chunk.waitMs && chunk.waitMs > 0) await sleep(chunk.waitMs)
+      if (i > 0 && !isAlive(slot)) break
+      slot.pty?.write(chunk.data)
+      if (i > 0 && slot.attention.input(chunk.data)) this.broadcastState(slot)
+      this.door.input(slotId, chunk.data, 'agent')
     }
     batch.entries[idx] = transition(batch.entries[idx]!, 'resumed', now())
     this.savePause()
