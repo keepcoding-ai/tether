@@ -84,6 +84,7 @@ describe('agent door desks (D2)', () => {
     rec.close()
     await daemon.close()
     await boot()
+    await door.desks.ready
     assert.deepEqual(door.desks.map(), map)
     assert.equal(door.desks.deskOf('slot-a')?.id, 'd1')
   })

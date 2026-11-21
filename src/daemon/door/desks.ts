@@ -2,8 +2,7 @@
 // <home>/desks.json (so it answers while the app is closed) and uses it for the `paneRequest` bookkeeping: a slot asked a pane
 // in a desk keeps `paneRequest` until a map shows the slot in some desk. A hibernated desk changes nothing here: the process
 // of a slot asked into it starts at once and only the pane sleeps (the renderer's job).
-import { readFileSync } from 'node:fs'
-import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { DeskMap, DeskMapDesk } from '../protocol.ts'
@@ -55,13 +54,16 @@ export class DeskService implements DoorDesks {
   /** The server's port arrived: the home is known, so the last map is read from disk. Once. */
   attach(port: SlotPort): void {
     this.port = port
-    try {
-      const map = parseDeskMap(JSON.parse(readFileSync(desksPath(port.home), 'utf8')))
-      if (map) this.adopt(map)
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`desks.json ilegível, ignorado: ${(e as Error).message}`)
-    }
+    this.ready = readFile(desksPath(port.home), 'utf8').then((text) => {
+      const map = parseDeskMap(JSON.parse(text))
+      if (map && this.current === undefined) this.adopt(map)
+    }).catch((e: unknown) => {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`door: desks.json ilegível, ignorado: ${(e as Error).message}`)
+    })
   }
+
+  /** Resolves once the map on disk was read (the loop never blocks on it); a map the app sent first wins over the disk's. */
+  ready: Promise<void> = Promise.resolve()
 
   // ---- DoorDesks ---------------------------------------------------------------------------------
 
@@ -103,6 +105,7 @@ export class DeskService implements DoorDesks {
     const map = parseDeskMap((req as { map?: unknown }).map)
     if (!map) throw new DoorError('bad-request', 'desk-map precisa de um mapa de mesas válido')
     const port = this.live()
+    await this.ready
     if (this.adopt(map)) {
       this.persist(port.home)
       port.broadcast({ t: 'desks', map })
