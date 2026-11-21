@@ -4328,6 +4328,8 @@ function activateRendererExtensions(): void {
         describe: paneId => describePane(paneId),
         onDidChangeActive: listener => { activePaneListeners.add(listener); return add(toDisposable(() => { activePaneListeners.delete(listener) })) },
         setEmblem: (paneId, emblem) => door.setEmblem(id, paneId, emblem),
+        setEmblems: (paneId, emblems) => door.setEmblems(id, paneId, emblems),
+        setTabLine: (paneId, hue) => door.setTabLine(id, paneId, hue),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {

@@ -84,3 +84,10 @@
 /* A seal the extension answers a click on (DeskSeal.onActivate). */
 .seg .desk-seal.act { cursor: pointer; }
 .seg .desk-seal.act:hover { filter: brightness(1.12); }
+
+/* An emblem with a letter in place of the glyph (TabEmblem.label: the owner's initial), and one whose owner ended ('struck'). */
+.tether-tab .ext-emblem.letter { width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1; }
+.tether-tab .ext-emblem.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed var(--fg-dim); outline-offset: -1px; opacity: .8; }
+
+/* The thin line under a tab an owner commands (TetherUi.panes.setTabLine), in the owner's hue. */
+.tether-tab.ext-line { box-shadow: inset 0 -2px 0 hsl(var(--line-hue, 0) var(--mark-solid-s) var(--mark-solid-l) / .6); }

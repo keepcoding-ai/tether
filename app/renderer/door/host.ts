@@ -164,6 +164,12 @@ export class DoorHost {
   /** An extension's emblem on a pane's tab (its `.ext-emblems`): the painter fills every tab of that pane, now and when one appears. */
   setEmblem(ext: string, paneId: string, emblem: TabEmblem | undefined): void { this.emblems.set(ext, paneId, emblem) }
 
+  /** An extension's emblems on a pane's tab, in order (up to three). */
+  setEmblems(ext: string, paneId: string, emblems: readonly TabEmblem[] | undefined): void { this.emblems.setMany(ext, paneId, emblems) }
+
+  /** An extension's line under a pane's tab, in a hue. */
+  setTabLine(ext: string, paneId: string, hue: number | undefined): void { this.emblems.setLine(ext, paneId, hue) }
+
   private readonly emblemPainter: TabEmblemPainter
   private readonly emblems: TabEmblemBoard
 

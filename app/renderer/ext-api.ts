@@ -218,11 +218,19 @@ export interface DeskSeal {
   onActivate?: () => void
 }
 
-/** An extension's emblem on any pane's tab (terminal, note, browser): on the right, next to the state marks. One per extension per pane. */
+/**
+ * An extension's emblem on any pane's tab (terminal, note, browser): on the right, next to the state marks. Up to three
+ * per extension per pane (`setEmblems`), in the order given.
+ */
 export interface TabEmblem {
+  /** An icon name of app/renderer/icons.ts; with a `label` it is not drawn (it may be ''). */
   icon: string
   hue?: number
   tooltip: string
+  /** One letter drawn in place of the icon (the owner's initial, "K"); longer text is cut to its first character. */
+  label?: string
+  /** 'struck': dashed and dimmed (what it names has ended). Absent: 'solid'. */
+  variant?: 'solid' | 'struck'
   /** A click on the emblem (absent: nothing). */
   onActivate?: () => void
 }
@@ -299,6 +307,16 @@ export interface TetherUi {
      * removes it. One per extension per pane. It follows the pane to another desk and goes with the extension.
      */
     setEmblem(paneId: string, emblem: TabEmblem | undefined): void
+    /**
+     * This extension's emblems on the tab of ANY pane, in the order given (up to three; the rest is dropped). Replaces
+     * what `setEmblem` or an earlier call put; an empty list or `undefined` removes them. `setEmblem(e)` is `setEmblems([e])`.
+     */
+    setEmblems(paneId: string, emblems: readonly TabEmblem[] | undefined): void
+    /**
+     * A thin line in a hue (0-359) under the tab of ANY pane (the pane is commanded by an owner); `undefined` removes it. One per
+     * extension per pane; with two extensions the first by id draws. It follows the pane and goes with the extension.
+     */
+    setTabLine(paneId: string, hue: number | undefined): void
     /**
      * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
      * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider

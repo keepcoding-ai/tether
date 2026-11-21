@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DeskSealBoard, normalizeHue, normalizeSeal } from '../../app/renderer/door/desk-seal-rules.ts'
-import { TabEmblemBoard, normalizeEmblem } from '../../app/renderer/door/tab-emblem-rules.ts'
+import { MAX_TAB_EMBLEMS, TabEmblemBoard, normalizeEmblem } from '../../app/renderer/door/tab-emblem-rules.ts'
+import { DoorHost } from '../../app/renderer/door/host.ts'
 
 test('hue: whole number 0-359, out of range wraps, junk is absent', () => {
   assert.equal(normalizeHue(200.4), 200)
@@ -147,4 +148,56 @@ test('seal K1.2: variant only when struck; the click stays as given; both are ch
   assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a', variant: 'struck', onActivate: () => {} }), true, 'a new handler is a change')
   assert.equal(b.signature, clickable, 'but not a repaint: the pill calls the handler in force at the click')
   assert.equal(b.of('desk-1')[0]!.seal.variant, 'struck')
+})
+
+test('emblems K1.3: a letter in place of the icon, one character; struck kept, solid not', () => {
+  assert.deepEqual(normalizeEmblem({ icon: '', label: ' Kai ', tooltip: 'Dada a Kai' }), { icon: '', tooltip: 'Dada a Kai', label: 'K' })
+  assert.deepEqual(normalizeEmblem({ icon: 'eye', label: '   ', tooltip: 'x' }), { icon: 'eye', tooltip: 'x' }, 'a blank label is no label')
+  assert.equal(normalizeEmblem({ icon: '', label: '', tooltip: 'x' }), undefined, 'nothing to draw')
+  assert.equal(normalizeEmblem({ icon: '', label: '🤖x', tooltip: '' })!.label, '🤖', 'a whole code point')
+  assert.deepEqual(normalizeEmblem({ icon: 'x', tooltip: '', variant: 'solid' }), { icon: 'x', tooltip: '' })
+  assert.deepEqual(normalizeEmblem({ icon: 'x', tooltip: '', variant: 'struck' }), { icon: 'x', tooltip: '', variant: 'struck' })
+})
+
+test('emblems K1.3: several per extension, in the order given, up to three; one call replaces the set', () => {
+  const touched: string[] = []
+  const b = new TabEmblemBoard(id => touched.push(id!))
+  assert.equal(MAX_TAB_EMBLEMS, 3)
+  assert.equal(b.setMany('for-agents', 'p1', [{ icon: '', label: 'K', tooltip: 'Kai' }, { icon: 'eye', tooltip: 'Atrium vê' }, { icon: 'x', tooltip: '3' }, { icon: 'x', tooltip: '4' }]), true)
+  assert.deepEqual(b.of('p1').map(p => p.emblem.label ?? p.emblem.tooltip), ['K', 'Atrium vê', '3'], 'the fourth is dropped')
+  b.set('alfa', 'p1', { icon: 'x', tooltip: 'alfa' })
+  assert.deepEqual(b.of('p1').map(p => p.ext), ['alfa', 'for-agents', 'for-agents', 'for-agents'], 'grouped by extension id')
+  assert.equal(b.setMany('for-agents', 'p1', [{ icon: '', label: 'K', tooltip: 'Kai' }, { icon: 'eye', tooltip: 'Atrium vê' }, { icon: 'x', tooltip: '3' }]), false, 'the same set changes nothing')
+  assert.equal(b.set('for-agents', 'p1', { icon: 'eye', tooltip: 'só um' }), true, 'setEmblem replaces the set by one')
+  assert.equal(b.of('p1').filter(p => p.ext === 'for-agents').length, 1)
+  assert.equal(b.setMany('for-agents', 'p1', []), true, 'an empty list takes them away')
+  assert.equal(b.setMany('for-agents', 'p1', undefined), false)
+  assert.deepEqual(b.of('p1').map(p => p.ext), ['alfa'])
+})
+
+test('tab line K1.4: one hue per extension per pane, the first extension by id draws, it goes with the extension', () => {
+  const touched: string[] = []
+  const b = new TabEmblemBoard(id => touched.push(id!))
+  assert.equal(b.lineOf('p1'), undefined)
+  assert.equal(b.size, 0)
+  assert.equal(b.setLine('zeta', 'p1', 300.4), true)
+  assert.equal(b.lineOf('p1'), 300)
+  assert.equal(b.size, 1, 'a line alone counts as a marked pane (the painter watches)')
+  assert.equal(b.setLine('zeta', 'p1', 300), false)
+  b.setLine('alfa', 'p1', 200)
+  assert.equal(b.lineOf('p1'), 200, 'the first by id')
+  assert.equal(b.removeOwner('alfa'), true)
+  assert.equal(b.lineOf('p1'), 300)
+  assert.equal(b.setLine('zeta', 'p1', undefined), true)
+  assert.equal(b.lineOf('p1'), undefined)
+  assert.equal(b.size, 0)
+  assert.equal(b.setLine('zeta', 'p1', Number.NaN), false, 'junk is no line')
+  assert.deepEqual(touched, ['p1', 'p1', 'p1', 'p1'])
+})
+
+test('door host K1.3-K1.4: the pane marks go with their extension (removeOwner)', () => {
+  const door = new DoorHost()
+  door.setEmblems('for-agents', 'p1', [{ icon: '', label: 'K', tooltip: 'Kai' }])
+  door.setTabLine('for-agents', 'p1', 200)
+  door.removeOwner('for-agents')
 })
