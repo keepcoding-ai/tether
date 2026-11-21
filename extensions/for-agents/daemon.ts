@@ -9,6 +9,7 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { OwnershipStore, takesByTyping } from './daemon/ownership.ts'
 import { Reconciler } from './daemon/reconcile.ts'
 import { WriteGate } from './daemon/guard.ts'
+import { registerVerbs } from './daemon/verbs.ts'
 
 export { manifest } from './manifest.ts'
 /** The same pure rules the renderer draws from. */
@@ -45,6 +46,7 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
     api.slots.onUserTyped(typingTakes),
     // The name the struck mark keeps is read here: by the time a pane object drops, its slot is no longer listed.
     api.onSlot((ev) => { if (ev.kind === 'removed') forgotten(ev.slot.slotId, slotTitle(ev.slot)) }),
+    ...registerVerbs(api, { store, gate }),
     api.onStarted(() => { reconciler.start().catch((e: unknown) => api.log(`a passada de partida falhou: ${(e as Error).message}`)) }),
     toDisposable(() => { reconciler.undo().catch((e: unknown) => api.log(`desfazer a posse falhou: ${(e as Error).message}`)) }),
   ]

@@ -9,6 +9,7 @@ import { describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
 import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
+import { AGENT_VERBS } from '../../extensions/for-agents/daemon/verbs.ts'
 import { ConductorRegistry, type Conductor, type ConductorTarget } from '../../extensions/for-agents/conductor-api.ts'
 import {
   capabilityOn, deskAcceptsOwner, effective, mayGiveOrRevoke, paneCapabilityState, portOf, relationOf,
@@ -243,14 +244,15 @@ describe('for-agents and the conductors turned on and unused', () => {
     }
   }
 
-  test('a slot\'s state is the same with and without them; they register nothing and write nothing', async () => {
+  test('a slot\'s state is the same with and without them; they register only the verbs and write nothing', async () => {
     const without = await run(false)
     const withNew = await run(true)
     assert.deepEqual(withNew.activated, NEW)
     assert.deepEqual(withNew.state, without.state)
     assert.equal(withNew.state.held, undefined)
     assert.equal(withNew.state.attentionFor, undefined)
-    assert.equal(withNew.verbs, without.verbs)
+    // Since X3 the extension registers its verbs of the `agents` namespace (and only those); they act on nothing until something is given.
+    assert.equal(withNew.verbs, without.verbs + AGENT_VERBS.length)
     assert.equal(withNew.objects, false)
   })
 })
