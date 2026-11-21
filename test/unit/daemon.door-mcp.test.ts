@@ -2,16 +2,18 @@
 // the plan untouched) while no verb has the `mcp` exit and no delivery is on; with the ronda's channel already in the plan, both
 // servers under ONE channel flag; the era trap (`server/discover` never gets a result, `initialize` stays legacy); the verbs
 // with the `mcp` exit as tools; a tool call reaching the handler with the slot of the route; a wrong key refused; tools/list_changed
-// when a verb comes in; the revoke; and the key never in a log line or in the MCP file. No agent, no tetherd: a fake port.
+// when a verb comes in; the revoke; and the key never in a log line or in the MCP file. A fake port first; then one real launch
+// in a test tetherd (own home and pipe, a fake agent process, no LLM) proving the server awaits the door's offer.
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
 import '../../src/agents/load.ts'
 import { agentRegistry, channelArgsOf, type AgentContribution } from '../../src/agents/registry.ts'
-import type { LaunchPlan } from '../../src/agents/types.ts'
+import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { DoorHost } from '../../src/daemon/door/host.ts'
 import { DoorMcp, DOOR_INSTRUCTIONS, toolNameOf } from '../../src/daemon/door/mcp.ts'
 import type { LaunchContext, SlotPort } from '../../src/daemon/door/port.ts'
 import { SlotKeys } from '../../src/daemon/door/slot-key.ts'
@@ -19,7 +21,8 @@ import { DOOR_MCP_SERVER, ENV_DOOR_MCP_KEY, type VerbCaller, type VerbContributi
 import { VerbRegistry } from '../../src/daemon/door/verbs.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { RONDA_MCP_SERVER } from '../../src/daemon/ronda-channel.ts'
-import { removeHome, tempHome, waitUntil } from './daemon.helpers.ts'
+import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const claude = (): AgentContribution => agentRegistry.get('claude')!
 const RONDA_ARGS = ['--dangerously-load-development-channels', `server:${RONDA_MCP_SERVER}`]
@@ -264,4 +267,86 @@ describe('agent door MCP server (D5)', () => {
   })
 
   function homesLast(): string { return homes.at(-1)! }
+})
+
+/**
+ * A fake agent for a real launch (a .cjs file: a `node -e` process dies at once under the panel host on Windows). At start it
+ * says whether the `tether` MCP file of its last `--mcp-config` is already on disk, then, as Claude Code would, initializes
+ * with the bearer from its env and calls the tool; it prints the tool's text. It never prints the key.
+ */
+const FAKE_AGENT = `
+const fs = require('node:fs')
+const argv = process.argv.slice(2)
+const file = argv[argv.lastIndexOf('--mcp-config') + 1]
+const present = !!file && fs.existsSync(file)
+process.stdout.write('DOOR-FILE ' + (present ? 'present' : 'absent') + '\\n')
+setInterval(() => {}, 60000)
+if (!present) return
+const server = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.tether
+const auth = server.headers.Authorization.replace('\${TETHER_MCP_KEY}', process.env.TETHER_MCP_KEY || '')
+const post = async (msg, session) => {
+  const r = await fetch(server.url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: auth, ...(session ? { 'mcp-session-id': session } : {}) }, body: JSON.stringify(msg) })
+  const text = await r.text()
+  const lines = text.split('\\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)))
+  return { session: r.headers.get('mcp-session-id'), body: lines[lines.length - 1] || (text ? JSON.parse(text) : undefined) }
+}
+;(async () => {
+  const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'fake', version: '1' } } })
+  await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, init.session)
+  const call = await post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'probe_whoami', arguments: {} } }, init.session)
+  process.stdout.write('TOOL{{' + call.body.result.content[0].text + '}}\\n')
+})().catch((e) => process.stdout.write('TOOL-FAILED ' + e.message + '\\n'))
+`
+
+describe('agent door MCP server in a real launch (D5)', () => {
+  let home: string
+  let daemon: Daemon | undefined
+  let rec: Recorder | undefined
+  const own = new DisposableStore()
+  const logs: string[] = []
+  after(async () => {
+    own.dispose()
+    rec?.close()
+    await daemon?.close()
+    await door.mcp.close()
+    await removeHome(home)
+  })
+  const door = new DoorHost({ log: (m) => logs.push(m) })
+
+  test('with an mcp verb registered, the launch plan carries the tether server and its file is on disk before the process starts', async () => {
+    home = tempHome()
+    const script = join(home, 'fake-door-agent.cjs')
+    writeFileSync(script, FAKE_AGENT)
+    let launched: LaunchPlan | undefined
+    const env: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== 'NODE_TEST_CONTEXT') env[k] = v
+    const fake: AgentAdapter = { name: 'claude', plan: (input) => ({ command: process.execPath, args: [script], cwd: input.slot.cwd, env }), sessionExists: async () => 'unknown', title: async (b) => b.title }
+    const calls: VerbCaller[] = []
+    own.add(door.apiFor('probe', own).verbs.register(verb('whoami', { run: (caller) => { calls.push(caller); return { text: `slot=${caller.slotId}` } } })))
+    // Spy on the plan the door hands back (the hook's promise is awaited by the server before the spawn).
+    const real = door.prepareLaunch.bind(door)
+    door.prepareLaunch = async (plan, ctx) => { const g = await real(plan, ctx); launched = g.plan; return g }
+    daemon = await startDaemon({ home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, adapters: { claude: fake }, channelOf: () => undefined, door, log: (m) => logs.push(m) })
+    rec = await Recorder.connect(daemon.pipe)
+    const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home, start: true })
+    const id = slot!.slotId
+    await rec.client.request({ t: 'attach', slotId: id, cols: 200, rows: 30 })
+    await rec.see(id, /DOOR-FILE (present|absent)/, 30_000)
+    assert.match(rec.text(id), /DOOR-FILE present/, 'the MCP file was on disk when the process started')
+    const file = join(home, 'door', 'mcp', `${id}.json`)
+    assert.ok(launched, 'the door hook ran')
+    assert.deepEqual(launched!.args.slice(-2), ['--mcp-config', file])
+    assert.equal(launched!.mcpServers?.[DOOR_MCP_SERVER], file)
+    assert.equal(typeof launched!.env[ENV_DOOR_MCP_KEY], 'string')
+    await rec.see(id, /TOOL\{\{[^}]*\}\}/, 30_000)
+    assert.match(rec.text(id), new RegExp(`TOOL\\{\\{slot=${id}\\}\\}`), 'the tool call reached the handler with the launched slot')
+    assert.equal(calls.at(-1)?.via, 'mcp')
+    const key = launched!.env[ENV_DOOR_MCP_KEY]!
+    assert.ok(!logs.some((l) => l.includes(key)), 'no log line carries the key')
+    assert.ok(!readFileSync(file, 'utf8').includes(key), 'the file holds no key')
+    // Forget ends the run's grant and removes the file.
+    await rec.client.request({ t: 'forget', slotId: id })
+    await door.mcp.flush()
+    assert.ok(!existsSync(file))
+  })
 })
