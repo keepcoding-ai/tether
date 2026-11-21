@@ -212,6 +212,10 @@ export interface DeskSeal {
   /** A short name drawn beside the glyph (the owner's name), cut with an ellipsis past a fixed width. Absent: the glyph alone. */
   label?: string
   tooltip: string
+  /** 'struck': dashed, dimmed and the label struck through (what it names has ended). Absent: 'solid'. */
+  variant?: 'solid' | 'struck'
+  /** A click on the seal (absent: the click is the pill's, which shows its desk). It does not show the desk nor start a drag. */
+  onActivate?: () => void
 }
 
 /** An extension's emblem on any pane's tab (terminal, note, browser): on the right, next to the state marks. One per extension per pane. */

@@ -345,7 +345,7 @@ export class DeskSwitch {
     const name = document.createElement('span'); name.className = 'seg-name'; name.textContent = d.name
     seg.append(name)
     const seals = deskSeals.of(d.id)
-    for (const p of seals) seg.append(this.sealGlyph(p))
+    for (const p of seals) seg.append(this.sealGlyph(p, d.id, measuring))
     const att = v
     const total = att.done + att.waiting
     if (total > 0) {
@@ -387,15 +387,29 @@ export class DeskSwitch {
     return seg
   }
 
-  /** An extension's seal on a pill: a small glyph, with the label beside it when there is one, in the seal's hue (its tooltip joins the pill's own). Not a count, never orange. */
-  private sealGlyph({ ext, seal }: PlacedSeal): HTMLElement {
+  /**
+   * An extension's seal on a pill: a small glyph, with the label beside it when there is one, in the seal's hue (its tooltip joins
+   * the pill's own). Not a count, never orange. 'struck' draws it dashed and struck through. With `onActivate` a click on the seal
+   * is the extension's (the handler in force at the click), not the pill's: it neither shows the desk nor starts a drag.
+   */
+  private sealGlyph({ ext, seal }: PlacedSeal, deskId: string, measuring: boolean): HTMLElement {
     const el = document.createElement('span')
-    el.className = `desk-seal${seal.hue === undefined ? '' : ' hued'}${seal.label ? ' labeled' : ''}`
+    el.className = `desk-seal${seal.hue === undefined ? '' : ' hued'}${seal.label ? ' labeled' : ''}${seal.variant === 'struck' ? ' struck' : ''}${seal.onActivate ? ' act' : ''}`
     el.dataset.ext = ext
     if (seal.hue !== undefined) el.style.setProperty('--seal-hue', String(seal.hue))
     el.setAttribute('aria-hidden', 'true')
     if ((ICON_NAMES as readonly string[]).includes(seal.icon)) el.append(icon(seal.icon as IconName))
     if (seal.label) { const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = seal.label; el.append(nm) }
+    if (seal.onActivate && !measuring) {
+      if (seal.tooltip) el.title = seal.tooltip
+      el.addEventListener('pointerdown', ev => ev.stopPropagation())
+      el.addEventListener('dblclick', ev => ev.stopPropagation())
+      el.addEventListener('click', ev => {
+        ev.stopPropagation()
+        const now = deskSeals.of(deskId).find(p => p.ext === ext)?.seal.onActivate
+        try { now?.() } catch (err) { console.error('desks.setSeal onActivate', err) }
+      })
+    }
     return el
   }
 

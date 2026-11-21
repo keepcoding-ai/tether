@@ -8,6 +8,7 @@ import { menus } from './menus.ts'
 import { objects } from './objects.ts'
 import { ownerMenus } from './owner-menus.ts'
 import { picks } from './picks.ts'
+import { sealStates } from './seal-states.ts'
 
 export { manifest }
 
@@ -18,5 +19,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...picks(ui),
     ...objects(ui),
     ...ownerMenus(ui),
+    ...sealStates(ui),
   ]
 }

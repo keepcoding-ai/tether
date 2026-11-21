@@ -77,3 +77,10 @@
   background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); color: var(--fg); font-weight: normal;
 }
 #ctx-menu ul.submenu[hidden] { display: none; }
+
+/* A seal whose owner ended (DeskSeal.variant 'struck'): no fill, a dashed ring in the dim text colour, the name struck through. */
+.seg .desk-seal.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--fg-dim) 70%, transparent); outline-offset: -1px; opacity: .85; }
+.seg .desk-seal.struck .nm { text-decoration: line-through; }
+/* A seal the extension answers a click on (DeskSeal.onActivate). */
+.seg .desk-seal.act { cursor: pointer; }
+.seg .desk-seal.act:hover { filter: brightness(1.12); }

@@ -129,3 +129,22 @@ test('emblem: needs an icon name; an absent click stays absent', () => {
   assert.equal(normalizeEmblem({ icon: '', tooltip: 'x' }), undefined)
   assert.deepEqual(normalizeEmblem({ icon: 'k', hue: 361, tooltip: ' t ' }), { icon: 'k', hue: 1, tooltip: 't' })
 })
+
+test('seal K1.2: variant only when struck; the click stays as given; both are changes the pill repaints by', () => {
+  const click = (): void => {}
+  assert.deepEqual(normalizeSeal({ icon: 'robot', tooltip: 'a', variant: 'solid' }), { icon: 'robot', tooltip: 'a' }, 'solid is the default: not kept')
+  assert.deepEqual(normalizeSeal({ icon: 'robot', tooltip: 'a', variant: 'struck' }), { icon: 'robot', tooltip: 'a', variant: 'struck' })
+  assert.equal(normalizeSeal({ icon: 'robot', tooltip: 'a', onActivate: click })!.onActivate, click)
+  const b = new DeskSealBoard()
+  b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a' })
+  const solid = b.signature
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a', variant: 'struck' }), true)
+  assert.notEqual(b.signature, solid, 'struck is in the signature')
+  const struck = b.signature
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a', variant: 'struck', onActivate: click }), true)
+  assert.notEqual(b.signature, struck, 'clickable is in the signature (the glyph gets its handler)')
+  const clickable = b.signature
+  assert.equal(b.set('a', 'desk-1', { icon: 'robot', label: 'Atrium', tooltip: 'a', variant: 'struck', onActivate: () => {} }), true, 'a new handler is a change')
+  assert.equal(b.signature, clickable, 'but not a repaint: the pill calls the handler in force at the click')
+  assert.equal(b.of('desk-1')[0]!.seal.variant, 'struck')
+})
