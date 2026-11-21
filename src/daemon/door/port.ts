@@ -79,6 +79,8 @@ export type DoorRequestHandler = (req: { t: string; id: number } & Record<string
 /** A launch's grant of the door: the plan to spawn, and how to take back what was granted if the launch is cancelled. */
 export interface LaunchGrant {
   plan: LaunchPlan
+  /** The door's `tether` channel went into the plan (its start dialog may show: the daemon watches to confirm it). */
+  channel?: boolean
   revoke(): void
 }
 

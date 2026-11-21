@@ -1513,7 +1513,9 @@ class DaemonImpl implements Daemon {
     // From here the spawn holds the seat (no await before it in process; `launching` in the host): a stop waits for it.
     slot.preLaunch = undefined
     plan = grant.plan
-    slot.confirmWatch = offer.offered && channel?.confirm ? { spec: channel.confirm, screen: '' } : undefined
+    // The start dialog of the channel flag, whether the ronda's (alone or joined by the door's) or the door's alone.
+    const confirm = channel?.confirm ?? (meta.agent === 'shell' ? undefined : agentRegistry.get(meta.agent)?.channelConfirm)
+    slot.confirmWatch = (offer.offered || grant.channel) && confirm ? { spec: confirm, screen: '' } : undefined
     slot.scrollback.clear()
     slot.attention.reset()
     this.clearBackground(meta.slotId)

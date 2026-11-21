@@ -12,7 +12,8 @@
 // registered, or the delivery is on (`enableDelivery`). Otherwise the plan goes out exactly as it came in, and the host never
 // even listens. The channel args: the ronda's server (`tether-ronda`, B1) already put its channel flag first in the plan; the
 // door's server joins it under that same flag (channelArgsOf), because a second dialog or a repeated flag is unproven. When
-// the ronda was not offered, the door adds no channel at all (the start dialog would have no one to answer it).
+// the ronda was not offered, the door's channel goes alone only while the delivery is on (the daemon answers its start dialog
+// with the agent's `channelConfirm`); the tools alone take no channel.
 //
 // The key: 192 bits per launch, in the plan's env as TETHER_MCP_KEY (the MCP file says `Bearer ${TETHER_MCP_KEY}` and holds no
 // secret), separate from the slot key (TETHER_SLOT_KEY) so revoking one never drops the other. The host keeps only its
@@ -197,7 +198,7 @@ export class DoorMcp {
       const key = randomBytes(24).toString('base64url')
       let next = await mcp.inject(plan, file, [DOOR_MCP_SERVER])
       next = { ...next, env: { ...next.env, [ENV_DOOR_MCP_KEY]: key } }
-      const joined = withDoorChannel(next, ctx)
+      const joined = withDoorChannel(next, ctx, this.deliveryUsers > 0)
       if (this.runs.get(slotId) !== run) return { plan, offered: false, channel: false }
       this.host.grant(slotId, key, { create: () => { const b = new DoorBackend(slotId, this); this.backends.set(slotId, b); return b } })
       return { plan: joined.plan, offered: true, channel: joined.channel, run }
@@ -332,13 +333,19 @@ export class DoorMcp {
 }
 
 /**
- * The door's channel joined to the ronda's flag: the plan starts with the ronda's channel args (ronda-channel.ts puts them
- * first); they are replaced by the args of both servers under one flag. No ronda offer, no agent channel, or a plan that does
- * not start with the ronda's args: the plan as it is, with no door channel.
+ * The door's channel in the plan. With the ronda offered: the plan starts with the ronda's channel args (ronda-channel.ts puts
+ * them first); they are replaced by the args of both servers under one flag. Without it: the door's channel alone goes first,
+ * only when the delivery is on (`delivery`: the channel exists to deliver; the tools alone take no channel nor its start
+ * dialog). No agent channel, or a ronda plan that does not start with the ronda's args: the plan as it is, with no door channel.
  */
-export function withDoorChannel(plan: LaunchPlan, ctx: Pick<LaunchContext, 'agent' | 'channel' | 'rondaOffered'>): { plan: LaunchPlan; channel: boolean } {
+export function withDoorChannel(plan: LaunchPlan, ctx: Pick<LaunchContext, 'agent' | 'channel' | 'rondaOffered'>, delivery = false): { plan: LaunchPlan; channel: boolean } {
+  if (!ctx.agent) return { plan, channel: false }
+  if (!ctx.rondaOffered) {
+    const own = delivery ? channelArgsOf(ctx.agent, [DOOR_MCP_SERVER]) : []
+    return own.length === 0 ? { plan, channel: false } : { plan: { ...plan, args: [...own, ...plan.args] }, channel: true }
+  }
   const ronda = ctx.channel?.args
-  if (!ctx.rondaOffered || !ronda || !ctx.agent || ronda.length === 0) return { plan, channel: false }
+  if (!ronda || ronda.length === 0) return { plan, channel: false }
   if (ronda.some((a, i) => plan.args[i] !== a)) return { plan, channel: false }
   const both = channelArgsOf(ctx.agent, [RONDA_MCP_SERVER, DOOR_MCP_SERVER])
   if (both.length === 0) return { plan, channel: false }

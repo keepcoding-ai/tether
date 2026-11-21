@@ -23,6 +23,7 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import { RONDA_MCP_SERVER } from '../../src/daemon/ronda-channel.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
+import { CHANNEL_DIALOG } from './ronda-dialog.fixture.ts'
 
 const claude = (): AgentContribution => agentRegistry.get('claude')!
 const RONDA_ARGS = ['--dangerously-load-development-channels', `server:${RONDA_MCP_SERVER}`]
@@ -133,13 +134,56 @@ describe('agent door MCP server (D5)', () => {
     const text = readFileSync(file, 'utf8')
     assert.ok(!text.includes(key), 'the file holds no key')
     assert.match(text, new RegExp(`Bearer \\$\\{${ENV_DOOR_MCP_KEY}\\}`))
-    // Without the ronda's offer the door adds no channel (no one would answer the start dialog), only the tools.
+    // Without the ronda's offer and with only tools (no delivery), the door adds no channel.
     const alone = await mcp.prepare(plainPlan(), ctxOf('s2', { rondaOffered: false }))
     assert.equal(alone.offered, true)
     assert.equal(alone.channel, false)
     assert.ok(!alone.plan.args.includes(flag))
     assert.ok(logs.every((l) => !l.includes(key) && !l.includes(alone.plan.env[ENV_DOOR_MCP_KEY]!)), 'no log line carries a key')
     own.dispose()
+  })
+
+  test('without the ronda: the delivery on gives the door its own channel flag; the tools alone or nothing give no channel', async () => {
+    const { mcp, verbs } = make()
+    const flag = RONDA_ARGS[0]!
+    // Nothing wanted: the very plan, with or without the ronda.
+    const plain = plainPlan()
+    assert.equal((await mcp.prepare(plain, ctxOf('n1', { rondaOffered: false }))).plan, plain)
+    // The delivery on, no ronda: the flag with tether only, first; the channel told to the grant.
+    const on = mcp.enableDelivery()
+    const alone = await mcp.prepare(plainPlan(), ctxOf('d1', { rondaOffered: false }))
+    assert.equal(alone.offered, true)
+    assert.equal(alone.channel, true)
+    assert.deepEqual(alone.plan.args.slice(0, 2), [flag, `server:${DOOR_MCP_SERVER}`])
+    assert.equal(alone.plan.args.filter((a) => a === flag).length, 1)
+    assert.ok(!alone.plan.args.includes(`server:${RONDA_MCP_SERVER}`))
+    // The delivery on, with the ronda: one flag with both, as before.
+    const both = await mcp.prepare(rondaPlan(), ctxOf('d2'))
+    assert.deepEqual(both.plan.args.slice(0, 3), [flag, `server:${RONDA_MCP_SERVER}`, `server:${DOOR_MCP_SERVER}`])
+    assert.equal(both.plan.args.filter((a) => a === flag).length, 1)
+    on.dispose()
+    // Only a tool, no ronda: the server without a channel.
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('tool')))
+    const tools = await mcp.prepare(plainPlan(), ctxOf('t1', { rondaOffered: false }))
+    assert.equal(tools.channel, false)
+    assert.ok(!tools.plan.args.includes(flag))
+    own.dispose()
+  })
+
+  test('the host grant carries the channel of the MCP offer', async () => {
+    const host = new DoorHost({ log: () => {} })
+    const home = tempHome()
+    homes.push(home)
+    host.attach({ home, stateOf: () => undefined } as unknown as SlotPort)
+    const on = host.mcp.enableDelivery()
+    const g = await host.prepareLaunch(plainPlan(), ctxOf('h1', { rondaOffered: false }))
+    assert.equal(g.channel, true)
+    g.revoke()
+    on.dispose()
+    const plain = await host.prepareLaunch(plainPlan(), ctxOf('h2', { rondaOffered: false }))
+    assert.equal(plain.channel, undefined, 'nothing wanted: the plain grant')
+    await host.mcp.close()
   })
 
   test('era: server/discover never gets a result; initialize is legacy, declares tools that change, the channel and the instructions', async () => {
@@ -348,5 +392,66 @@ describe('agent door MCP server in a real launch (D5)', () => {
     await rec.client.request({ t: 'forget', slotId: id })
     await door.mcp.flush()
     assert.ok(!existsSync(file))
+  })
+})
+
+describe('the door channel without the ronda in a real launch (D6b)', () => {
+  const homes: string[] = []
+  after(async () => { for (const h of homes) await removeHome(h) })
+  // Prints Claude's channel dialog (captured screen) and echoes each key as <...> (the dialog turns on the win32 input mode,
+  // so a key may come as an escape sequence: the test counts that something came, not its bytes).
+  const DIALOG_AGENT = `
+process.stdout.write(${JSON.stringify(CHANNEL_DIALOG)})
+process.stdin.setRawMode?.(true)
+process.stdin.on('data', (d) => process.stdout.write('<' + String(d).split(String.fromCharCode(13)).join('#CR#') + '>'))
+setInterval(() => {}, 60000)
+`
+
+  async function launch(delivery: boolean): Promise<{ logs: string[]; typed: string }> {
+    const home = tempHome()
+    homes.push(home)
+    const script = join(home, 'dialog-agent.cjs')
+    writeFileSync(script, DIALOG_AGENT)
+    const env: Record<string, string> = {}
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== 'NODE_TEST_CONTEXT') env[k] = v
+    const fake: AgentAdapter = { name: 'claude', plan: (input) => ({ command: process.execPath, args: [script], cwd: input.slot.cwd, env }), sessionExists: async () => 'unknown', title: async (b) => b.title }
+    const logs: string[] = []
+    const door = new DoorHost({ log: (m) => logs.push(m) })
+    const own = new DisposableStore()
+    if (delivery) own.add(door.apiFor('probe', own).delivery.enable())
+    // The fake is `node <script>`: the channel flag must be an arg node takes before a script. Claude's dialog stays the real one.
+    const contribution = claude() as { channels?: AgentContribution['channels'] }
+    const saved = contribution.channels
+    contribution.channels = () => ['--no-warnings']
+    const daemon = await startDaemon({ home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, adapters: { claude: fake }, channelOf: () => undefined, door, log: (m) => logs.push(m) })
+    const rec = await Recorder.connect(daemon.pipe)
+    try {
+      const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home })
+      const id = slot!.slotId
+      await rec.client.request({ t: 'attach', slotId: id, cols: 140, rows: 40 })
+      await rec.client.request({ t: 'start', slotId: id, choice: 'new' })
+      await rec.see(id, /Enter[\s\S]*cancel/, 8_000)
+      if (delivery) await waitUntil(() => logs.some((l) => l.endsWith('channel confirmation recognized; answering')), 10_000, 'the dialog answered')
+      await new Promise((r) => setTimeout(r, 1_500))
+      return { logs, typed: (rec.text(id).match(/<[^>]*>/g) ?? []).join('') }
+    } finally {
+      contribution.channels = saved
+      own.dispose()
+      rec.close()
+      await daemon.close()
+      await door.mcp.close()
+    }
+  }
+
+  test('no ronda, the delivery on: the door channel goes in and its start dialog is answered once', async () => {
+    const { logs, typed } = await launch(true)
+    assert.equal(logs.filter((l) => l.endsWith('channel confirmation recognized; answering')).length, 1, 'answered once')
+    assert.ok(typed.length > 0, 'a key reached the agent')
+  })
+
+  test('no ronda, nothing on: no channel, the dialog gets no key', async () => {
+    const { logs, typed } = await launch(false)
+    assert.ok(!logs.some((l) => l.includes('channel confirmation recognized')))
+    assert.equal(typed, '')
   })
 })

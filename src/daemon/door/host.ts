@@ -110,6 +110,7 @@ export class DoorHost implements DoorSeams {
     if (!this.mcp.offers(ctx)) return keyed
     return this.mcp.prepare(keyed.plan, ctx).then((offer) => ({
       plan: offer.plan,
+      channel: offer.channel,
       revoke: () => { keyed.revoke(); if (offer.offered) this.mcp.revoke(slotId, offer.run) },
     }))
   }

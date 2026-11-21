@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
 import '../../src/agents/load.ts'
+import { agentRegistry, type AgentContribution } from '../../src/agents/registry.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import { slotAttentionPath } from '../../src/core/paths.ts'
 import { deliveryMeta } from '../../src/daemon/door/channel-meta.ts'
@@ -112,6 +113,13 @@ describe('agent door delivery (D6)', () => {
     await daemon.close()
     await door.mcp.close()
   }
+
+  // The fake is `node <script>`: the door's channel flag (it goes first in the plan once the delivery is on) would be read
+  // by node. These tests are about the terminal path: the channel stays off, as for an agent without one.
+  const contribution = agentRegistry.get('claude')! as { channels?: AgentContribution['channels'] }
+  const savedChannels = contribution.channels
+  before(() => { contribution.channels = () => [] })
+  after(() => { contribution.channels = savedChannels })
 
   before(async () => {
     home = tempHome()
