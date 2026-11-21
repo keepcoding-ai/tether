@@ -180,6 +180,12 @@ test('door routed: object data in both hosts and the mark of an attention for th
     // The pill counts the common one only.
     await pill(page, 'desk-1').locator('.desk-badge').waitFor()
     assert.equal(await pill(page, 'desk-1').locator('.desk-badge').innerText(), '1', 'the orange count is 1: the routed attention is not counted')
+    const pillDiamond = pill(page, 'desk-1').locator('.desk-routed')
+    assert.equal(await pillDiamond.count(), 1, 'the pill shows one diamond for the tab that waits for the owner')
+    assert.equal(await pillDiamond.innerText(), '', 'the diamond has no number')
+    assert.equal(await pillDiamond.evaluate(el => (el as HTMLElement).style.getPropertyValue('--attn-hue')), String(hue), 'the pill diamond takes the hue of the owner')
+    assert.equal(await pillDiamond.evaluate(el => getComputedStyle(el).transform !== 'none'), true, 'the pill mark is a diamond')
+    assert.equal(await pill(page, 'desk-2').locator('.desk-routed').count(), 0, 'a desk without a routed tab has no diamond')
 
     // The bell: the history of attention main keeps hears the common slot (the control), never the routed one.
     const bell = (): Promise<AttentionItem[]> => page.evaluate(() => window.tether.attentionGet().then(s => s.items))
@@ -191,15 +197,15 @@ test('door routed: object data in both hosts and the mark of an attention for th
     const dir = process.env.TETHER_ROUTED_PRINTS
     if (dir) {
       mkdirSync(dir, { recursive: true })
+      await page.keyboard.press('Control+Shift+H') // the panel's status bar is hidden by default: show it for the print
+      await sleep(400)
       for (const scheme of ['light', 'dark'] as const) {
         await page.evaluate(s => { document.documentElement.dataset.theme = s }, scheme)
         await sleep(300)
-        const strip = (await page.locator('#desk-switch').boundingBox())!
-        const tabs = await Promise.all([ownerId, workerId, commonId].map(id => tabOf(page, id).boundingBox()))
-        const bottom = Math.max(...tabs.map(t => t!.y + t!.height)) + 12
-        const top = Math.max(0, Math.min(strip.y, ...tabs.map(t => t!.y)) - 8)
-        await page.screenshot({ path: join(dir, `r6-atencao-desviada-${scheme}.png`), clip: { x: 0, y: top, width: 1100, height: bottom - top } })
+        // The whole window: the pill and the tab at the top, the panel's status bar (with the bell) at the bottom.
+        await page.screenshot({ path: join(dir, `z1-${scheme}.png`) })
       }
+      await page.keyboard.press('Control+Shift+H')
     }
 
     // ---- 3. looking at the pane: `seen` goes for the common attention, not for the one that waits for the owner ----

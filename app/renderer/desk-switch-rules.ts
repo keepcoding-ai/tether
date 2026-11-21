@@ -92,6 +92,8 @@ export interface SegView {
   waiting: number
   /** A pane of the desk is mid-turn (the quiet green dot, shown only without attention). */
   busy: boolean
+  /** The hue of the first agent owner a pane of the desk waits for (the diamond, no number); undefined when none. */
+  routedHue?: number
   /** The seals' lines, listed in the tooltip. */
   lines: readonly string[]
 }
@@ -105,7 +107,7 @@ export function structureKey(desks: readonly { id: string; name: string; color: 
 export function measureKey(views: readonly SegView[]): string {
   return JSON.stringify(views.map(v => {
     const total = v.done + v.waiting
-    return [v.id, v.name, v.active, total > 0 ? String(total) : v.busy ? '•' : '']
+    return [v.id, v.name, v.active, total > 0 ? String(total) : v.busy ? '•' : '', v.routedHue !== undefined]
   }))
 }
 
@@ -116,6 +118,6 @@ export function measureKey(views: readonly SegView[]): string {
 export function paintKey(visible: readonly string[], views: readonly SegView[], hints: readonly string[]): string {
   const shown = new Set(visible)
   return JSON.stringify(views.flatMap((v, i) => shown.has(v.id)
-    ? [[v.id, v.name, v.color, v.active, v.done, v.waiting, v.busy, v.lines, hints[i] ?? '']]
+    ? [[v.id, v.name, v.color, v.active, v.done, v.waiting, v.busy, v.routedHue ?? null, v.lines, hints[i] ?? '']]
     : []))
 }

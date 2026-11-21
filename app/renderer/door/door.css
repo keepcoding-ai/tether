@@ -61,3 +61,9 @@
   display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 1px; transform: rotate(45deg);
   background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
 }
+
+/* The pill of a desk with a tab that waits for an agent owner: the diamond in the owner's colour, no number, beside (not instead of) the orange count. */
+.seg .desk-routed {
+  flex: none; width: 7px; height: 7px; margin: 0 3px; border-radius: 1px; transform: rotate(45deg);
+  background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
+}

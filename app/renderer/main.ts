@@ -29,7 +29,7 @@ import { DeskSet } from './desk-set.ts'
 import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
 import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
 import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
-import { deskMark, type DeskMark } from './desk-mark.ts'
+import { deskMark, markAttention, routedHue, type DeskMark } from './desk-mark.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
 import { DEFAULT_UI, DIM_LEVELS, type UiSettings, type DimLevel } from '../shared/ui-settings.ts'
 import { cycleDesk, deskAt, neighbourDesk } from './desks.ts'
@@ -913,7 +913,11 @@ function markWith(att: DeskAttention, panes: readonly { id: string }[]): DeskMar
 }
 
 function deskMarkOf(deskId: string): DeskMark {
-  return markWith(deskAttention(deskId), deskPanes(deskId))
+  const panes = deskPanes(deskId)
+  const m = markWith(deskAttention(deskId), panes)
+  // A pane that waits for an agent owner adds the diamond in the owner's colour; the orange count is not touched.
+  const hue = routedHue(panes.map(p => slots.get(p.id)))
+  return hue === undefined ? m : { attention: markAttention(m), routedHue: hue, ...(m === 'busy' ? { busy: true } : {}) }
 }
 
 /** The seal a pane shows: the terminal's own merged with the extensions' (seal-rules.ts). */

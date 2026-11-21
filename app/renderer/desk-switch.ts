@@ -244,7 +244,7 @@ export class DeskSwitch {
     return this.awake.map(d => {
       const m = this.mark(d.id)
       const a: DeskAttention = typeof m === 'object' ? m.attention : { done: 0, waiting: 0 }
-      return { id: d.id, name: d.name, color: d.color, active: d.id === this.active, done: a.done, waiting: a.waiting, busy: m === 'busy', lines: a.lines ?? [] }
+      return { id: d.id, name: d.name, color: d.color, active: d.id === this.active, done: a.done, waiting: a.waiting, busy: m === 'busy' || (typeof m === 'object' && m.busy === true), lines: a.lines ?? [], ...(typeof m === 'object' && m.routedHue !== undefined ? { routedHue: m.routedHue } : {}) }
     })
   }
 
@@ -359,6 +359,13 @@ export class DeskSwitch {
       dot.setAttribute('aria-label', 'em andamento')
       seg.append(dot)
     }
+    if (v.routedHue !== undefined) {
+      const dia = document.createElement('span')
+      dia.className = 'desk-routed'
+      dia.style.setProperty('--attn-hue', String(v.routedHue))
+      dia.setAttribute('aria-label', 'tem guia esperando um agente')
+      seg.append(dia)
+    }
     if (measuring) return seg
     seg.setAttribute('role', 'tab')
     seg.setAttribute('aria-selected', String(active))
@@ -367,7 +374,8 @@ export class DeskSwitch {
     const go = index < 9 ? ` (${hint})` : ''
     const what = total === 0 ? (v.busy ? '\nEm andamento' : '') : `${att.lines.map(l => `\n${l}`).join('')}\n${[att.waiting ? `${att.waiting} esperando você` : '', att.done ? `${att.done} terminou` : ''].filter(Boolean).join(', ')}`
     const sealLines = seals.map(p => p.seal.tooltip).filter(Boolean).map(l => `\n${l}`).join('')
-    seg.title = `${d.name}${go}${what}${sealLines}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
+    const routedLine = v.routedHue !== undefined ? '\nTem guia esperando um agente' : ''
+    seg.title = `${d.name}${go}${what}${routedLine}${sealLines}\nDuplo clique renomeia; clique direito: mais opções. Arraste para reordenar.`
     seg.addEventListener('mousedown', ev => { if (ev.button === 0 && !(ev.target as Element).closest('input')) ev.preventDefault() })
     seg.addEventListener('click', () => { if (this.swallowClick) return; this.host.switchTo(d.id) })
     seg.addEventListener('dblclick', ev => { ev.preventDefault(); if (this.swallowClick) return; this.startRename(d.id) })
