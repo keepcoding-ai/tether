@@ -261,7 +261,7 @@ export class OwnershipStore {
    * True when the owner's last finished send to the pane failed, no send succeeded after it, and it ended within `windowMs`
    * (the heuristic's false `done` comes seconds after the Enter). Taking it clears it: it explains one `done`, not the next turns.
    */
-  takeSendFailure(paneId: string, windowMs = 30_000): boolean {
+  takeSendFailure(paneId: string, windowMs = 10_000): boolean {
     const e = this.sends.get(paneId)
     if (!e || e.failedAt === undefined) return false
     const recent = Date.now() - e.failedAt <= windowMs
