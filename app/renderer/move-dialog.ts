@@ -287,6 +287,17 @@ export function openMoveDialog(input: MoveDialogInput): Promise<MoveOp | undefin
           const tile = el('div', 'tile')
           const tl = el('div', 'tl'); tl.append(el('span', undefined, f.name), el('span', undefined, plural(f.panes.length, 'painel', 'painéis')))
           tile.append(tl, frameDrawing(f, false))
+          // Same as clicking the frame's row in the tree: opens it so its inner zones show.
+          tile.title = 'Abrir quadro'
+          tile.tabIndex = 0
+          tile.setAttribute('role', 'button')
+          tile.setAttribute('aria-label', `Abrir quadro ${f.name}`)
+          tile.addEventListener('click', () => select(state.sel.scope, f.id))
+          tile.addEventListener('keydown', ev => {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return
+            ev.preventDefault(); ev.stopPropagation() // the dialog's own Enter would confirm the move
+            select(state.sel.scope, f.id)
+          })
           tiles.append(tile)
         }
         mid.append(tiles)
