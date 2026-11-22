@@ -466,6 +466,9 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
           await io.mkdirp(dirOf(id))
           await warm(id)
           cold = colds.get(id)!
+        } else if (cold.seq === 0) {
+          // A read before the first line warmed it without the folder.
+          await io.mkdirp(dirOf(id))
         }
         const line: Line = { ...input, seq: cold.seq + 1, at: input.at ?? stamp() }
         const prefix = cold.needsNewline ? '\n' : ''

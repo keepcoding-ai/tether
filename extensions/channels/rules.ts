@@ -30,7 +30,7 @@ export type ChannelOwner = { kind: 'user' } | { kind: 'agent'; id: AgentId; name
 
 export interface Channel {
   id: ChannelId
-  /** The room: what goes in `room` and what the verbs accept. isRoomName; unique among the open channels. Never changes. */
+  /** The room: what goes in `room` and what the verbs accept. isRoomName; unique among the open channels. Fixed at birth, but a desk channel reopening while an open channel took its name gets a suffix (slugOf). */
   name: string
   /** What the channel's pane shows. A desk channel's follows the desk's name. */
   title: string

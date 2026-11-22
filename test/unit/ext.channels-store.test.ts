@@ -457,6 +457,21 @@ describe('lines, files and the tail', () => {
     assert.deepEqual((await store.history('c_1')).map((l) => l.seq), [1, 2, 3])
   })
 
+  test('read before the first line (history, since, lastSeq), then append: the folder is made, the line is 1', async () => {
+    for (const read of [
+      (s: ChannelStore, id: string) => s.history(id),
+      (s: ChannelStore, id: string) => s.since(id, 0),
+      (s: ChannelStore, id: string) => s.lastSeq(id),
+    ]) {
+      const home = await newHome()
+      const store = await openStore(fsIo, home, options)
+      const ch = await agentChannel(store)
+      await read(store, ch.id)
+      assert.equal((await store.append(ch.id, say(1))).seq, 1)
+      assert.equal((await linesIn(home, ch.id, '000001.jsonl')).length, 1)
+    }
+  })
+
   test('a line with a multi-line body stays one line on disk', async () => {
     const home = await newHome()
     const store = await openStore(fsIo, home, options)
