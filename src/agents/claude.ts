@@ -62,7 +62,7 @@ export function hookSettings(hookPath: string = defaultHookPath(), statusLinePat
       SubagentStop: hook('SubagentStop'),
     },
   }
-  // Model (loud when it is Fable), effort and cwd. Left out (null) when the user has a status line of their own.
+  // Model (loud when it is Fable), effort and cwd. Left out (null) only by callers that want hooks alone.
   if (statusLinePath !== null) settings.statusLine = { type: 'command', command: `node "${statusLinePath.replace(/\\/g, '/')}"` }
   return settings
 }
@@ -72,27 +72,17 @@ const settingsContent = new Map<string, string>()
 
 /**
  * Makes sure the injected settings file exists with the right content (the executor writes it, atomic: temp + rename) and
- * returns its path. Two files: <home>/claude-settings.json (with our status line) and claude-settings.no-statusline.json
- * (without), because `--settings` wins over the user's own statusLine and the choice depends on each launch's cwd.
+ * returns its path: <home>/claude-settings.json, always with our status line. `--settings` wins over the user's own
+ * statusLine, so claude-statusline.mjs chains the user's command after ours (see there).
  */
-export async function ensureSettingsFile(home: string, withStatusLine = true, exec: Executor = agentExecutor()): Promise<string> {
-  const file = join(home, withStatusLine ? 'claude-settings.json' : 'claude-settings.no-statusline.json')
+export async function ensureSettingsFile(home: string, exec: Executor = agentExecutor()): Promise<string> {
+  const file = join(home, 'claude-settings.json')
   let content = settingsContent.get(file)
   if (content === undefined) {
-    content = JSON.stringify(hookSettings(defaultHookPath(), withStatusLine ? defaultStatusLinePath() : null), null, 2) + '\n'
+    content = JSON.stringify(hookSettings(defaultHookPath(), defaultStatusLinePath()), null, 2) + '\n'
     settingsContent.set(file, content)
   }
   return exec.run('ensureSettingsFile', [file, content])
-}
-
-/** The settings files whose statusLine the user already has for a launch in `cwd`: user settings, then the project's. */
-export function statusLineFiles(cwd: string, configDir: string): string[] {
-  return [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
-}
-
-/** Whether the user already has a status line for a launch in `cwd`. Then tether leaves theirs alone. */
-export function userHasStatusLine(cwd: string, configDir: string, exec: Executor = agentExecutor()): Promise<boolean> {
-  return exec.run('hasStatusLine', [statusLineFiles(cwd, configDir)])
 }
 
 /**
@@ -131,9 +121,8 @@ const PICKS_SESSION = new Set(['-c', '--continue', '-r', '--resume'])
 async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
   const cwd = await canonicalDir(resume ? resume.cwd : slot.cwd)
-  const configDir = profile?.env?.CLAUDE_CONFIG_DIR || claudeConfigDir()
   const ex = input.exec ?? agentExecutor()
-  const settings = await ensureSettingsFile(home, !(await userHasStatusLine(cwd, configDir, ex)), ex)
+  const settings = await ensureSettingsFile(home, ex)
   const args = ['--settings', settings]
   // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]

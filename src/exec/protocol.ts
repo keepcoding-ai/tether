@@ -41,7 +41,6 @@ export interface OpTypes {
   resolveClaude: { args: [env: EnvMap]; value: string }
   resolveCodex: { args: [env: EnvMap]; value: CodexCmd }
   ensureSettingsFile: { args: [file: string, content: string]; value: string }
-  hasStatusLine: { args: [files: string[]]; value: boolean }
   userNotify: { args: [home: string]; value: string[] | undefined }
   resolveShell: { args: [slotArgs: string[], profileArgs: string[] | undefined, env: EnvMap]; value: CommandLine }
   resolveSoul: { args: [env: EnvMap]; value: CommandLine }
@@ -81,7 +80,6 @@ export const OP_META = {
   resolveClaude: { lane: 'work', idempotent: true },
   resolveCodex: { lane: 'io', idempotent: true },
   ensureSettingsFile: { lane: 'io', idempotent: true },
-  hasStatusLine: { lane: 'io', idempotent: true },
   userNotify: { lane: 'io', idempotent: true },
   resolveShell: { lane: 'io', idempotent: true },
   resolveSoul: { lane: 'work', idempotent: true },

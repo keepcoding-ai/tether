@@ -5,10 +5,10 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { ensureSettingsFile, statusLineFiles } from '../../src/agents/claude.ts'
+import { ensureSettingsFile } from '../../src/agents/claude.ts'
 import { SkillsCache } from '../../src/agents/skills.ts'
 import { createExecutor } from '../../src/exec/executor.ts'
-import { anyDefinesStatusLine, clearClaudeResolveCache, clearSoulResolveCache, materializeSkills, resolveClaudeCommand, resolveCodexCommand, resolveSoulCommand, userNotify } from '../../src/exec/ops-agents.ts'
+import { clearClaudeResolveCache, clearSoulResolveCache, materializeSkills, resolveClaudeCommand, resolveCodexCommand, resolveSoulCommand, userNotify } from '../../src/exec/ops-agents.ts'
 import { ENV_SOUL_CMD } from '../../src/agents/soul.ts'
 
 const inline = createExecutor({ mode: 'inline' })
@@ -58,37 +58,20 @@ test('resolveClaudeCommand: a touched binary is re-resolved; injected seams bypa
 
 test('ensureSettingsFile: one write, then stat-only; a changed or deleted file is rewritten', async () => {
   const home = tmp()
-  const file = await ensureSettingsFile(home, true, inline)
+  const file = await ensureSettingsFile(home, inline)
   const text = readFileSync(file, 'utf8')
   const m1 = statSync(file).mtimeMs
-  assert.equal(await ensureSettingsFile(home, true, inline), file)
+  assert.equal(await ensureSettingsFile(home, inline), file)
   assert.equal(statSync(file).mtimeMs, m1)
   writeFileSync(file, '{"tampered":true}\n')
-  await ensureSettingsFile(home, true, inline)
+  await ensureSettingsFile(home, inline)
   assert.equal(readFileSync(file, 'utf8'), text)
   rmSync(file)
-  await ensureSettingsFile(home, true, inline)
+  await ensureSettingsFile(home, inline)
   assert.equal(readFileSync(file, 'utf8'), text)
-  const bare = await ensureSettingsFile(home, false, inline)
-  assert.notEqual(bare, file)
-  assert.ok(!('statusLine' in JSON.parse(readFileSync(bare, 'utf8'))))
+  assert.ok('statusLine' in JSON.parse(readFileSync(file, 'utf8')))
 })
 
-test('userHasStatusLine: parsed once per file version; edits, deletion and the injected reader are honoured', () => {
-  const cfg = tmp(), cwd = tmp()
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
-  writeFileSync(join(cfg, 'settings.json'), '{"statusLine":{"type":"command","command":"x"}}')
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
-  writeFileSync(join(cfg, 'settings.json'), '{}')
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
-  mkdirSync(join(cwd, '.claude'))
-  writeFileSync(join(cwd, '.claude', 'settings.local.json'), '{"statusLine":{}}')
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), true)
-  rmSync(join(cwd, '.claude', 'settings.local.json'))
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg)), false)
-  assert.equal(anyDefinesStatusLine(statusLineFiles(cwd, cfg), () => '{"statusLine":1}'), true)
-})
 
 test('readUserSettings: an unchanged file is served from memory, a rewrite or removal shows at once', () => {
   const home = tmp()
