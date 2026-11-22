@@ -2,11 +2,12 @@
 // rules (rules.ts), which import nothing of either host.
 import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
 import { gestures } from './renderer/gestures.ts'
+import { inventoryPad } from './renderer/inventory-pad.ts'
 import { marks } from './renderer/marks.ts'
 
 export { manifest } from './manifest.ts'
 export { effective } from './rules.ts'
 
 export function activate(ui: TetherUi): Disposable[] {
-  return [...marks(ui), ...gestures(ui)]
+  return [...marks(ui), ...gestures(ui), ...inventoryPad(ui)]
 }

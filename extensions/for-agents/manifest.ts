@@ -18,7 +18,7 @@ export const manifest: ExtensionManifest = {
   optional: true,
   contributes: {
     // The gestures of ownership as commands; `arg` is `{ kind: 'pane' | 'desk', id }` (with `to` to give, `scope: 'all'` to pause an
-    // owner everywhere), and with none they act on the active pane. `for-agents.inventory` is declared by the pad that answers it.
+    // owner everywhere), and with none they act on the active pane. `for-agents.inventory` opens the inventory pad.
     commands: [
       { command: 'for-agents.give', title: 'Dar a guia ativa a um agente…', category: CATEGORY, icon: 'robot' },
       { command: 'for-agents.take', title: 'Tomar a guia ativa do agente', category: CATEGORY, icon: 'hand-grabbing' },
@@ -27,6 +27,10 @@ export const manifest: ExtensionManifest = {
       { command: 'for-agents.pause', title: 'Pausar o agente na guia ativa', category: CATEGORY, icon: 'pause' },
       { command: 'for-agents.resume', title: 'Retomar o agente na guia ativa', category: CATEGORY, icon: 'play' },
       { command: 'for-agents.go-to-owner', title: 'Ir para o dono da guia ativa', category: CATEGORY, icon: 'arrow-square-out' },
+      { command: 'for-agents.inventory', title: 'Abrir o que o agente pode (inventário)', category: CATEGORY, icon: 'sliders-horizontal' },
     ],
+    // The inventory: a pad of the right bar that draws its own header ("O que Atrium pode · kai-aware"); one view, which follows
+    // the desk on screen or the desk or pane a command pointed it at.
+    pads: [{ id: 'for-agents.inventory', title: 'O que o agente pode', icon: 'sliders-horizontal', defaultSide: 'right', scope: 'global', absorbsHeader: true, order: 50 }],
   },
 }
