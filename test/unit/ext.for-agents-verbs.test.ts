@@ -66,6 +66,10 @@ describe('for-agents: the verbs of the owner (X3)', () => {
   let stopped = false
   let lastText: string | undefined
   let unregister: { dispose(): void }
+  // The real conductors (Claude, Soul, Codex, terminal) live in the same process-wide registry the verbs read, and a real Soul
+  // would fill in the acts the fake lacks (`unsupported` would become the real conductor's answer). The registry has no way to
+  // take another's entry out, so the case isolates it: the others are set aside for this file's run and put back at the end.
+  let setAside: Conductor[] = []
   let A: string, K: string, p1: string, p2: string, p3: string
 
   const fake: Conductor = {
@@ -127,6 +131,9 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     })
     await door.releaseInactive(host.activated)
     host.emitStarted()
+    const list = (conductorRegistry as unknown as { list: Conductor[] }).list
+    setAside = list.filter((c) => c !== fake)
+    list.splice(0, list.length, fake)
     rec = await Recorder.connect(daemon.pipe)
     const api = door.apiFor('probe', probe)
     slots = api.slots
@@ -142,6 +149,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
   })
   after(async () => {
     unregister.dispose()
+    ;(conductorRegistry as unknown as { list: Conductor[] }).list.push(...setAside)
     probe.dispose()
     rec.close()
     await daemon.close().catch(() => {})
@@ -289,8 +297,11 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.equal(codeOf(await call(A, 'send', { guia: 'n1', text: 'x' })), 'no-conductor', 'a note is commanded by the desk, but nothing conducts it yet')
     const answer = fake.answer
     delete (fake as { answer?: unknown }).answer
-    assert.equal(codeOf(await call(A, 'answer', { guia: p1, choice: 'yes' })), 'unsupported')
-    fake.answer = answer
+    try {
+      assert.equal(codeOf(await call(A, 'answer', { guia: p1, choice: 'yes' })), 'unsupported')
+    } finally {
+      fake.answer = answer
+    }
     await sendMap(map([A, p1, p2], [K, p3]))
   })
 
