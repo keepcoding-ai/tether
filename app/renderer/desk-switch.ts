@@ -40,7 +40,7 @@ export interface DeskSwitchHost {
   menu(id: string, x: number, y: number): void
   /** The "+N" menu: one entry per hidden desk; `pick` switches to it. */
   overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
-  /** The moon at the start of the capsule: one entry per hibernated desk; `wake` wakes it and switches to it. */
+  /** The moon closing the desks: one entry per hibernated desk; `wake` wakes it and switches to it. */
   sleepMenu(entries: { id: string; name: string }[], x: number, y: number, wake: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
   hint(position: number): string
@@ -151,9 +151,12 @@ export class DeskSwitch {
     this.measure = document.createElement('div')
     this.measure.className = 'desk-measure'
     this.measure.setAttribute('aria-hidden', 'true')
-    // What can vanish (the moon) leads the capsule, before the Gaveta; the fixed "+" and "⋯" close it side by side.
-    element.append(this.segs, this.more, this.add, this.options, this.measure)
-    element.prepend(this.sleep)
+    // The moon closes the desks; the same divider as after the special pills (index.html .sw-div) opens the fixed
+    // actions "+" and "⋯". The divider stays when the moon is hidden, and room() counts it as chrome.
+    const actionsDiv = document.createElement('span')
+    actionsDiv.className = 'sw-div'
+    actionsDiv.setAttribute('aria-hidden', 'true')
+    element.append(this.segs, this.more, this.sleep, actionsDiv, this.add, this.options, this.measure)
     // An extension put or took away a seal (door/desk-seal-rules.ts): the widths may change, so it paints like a mark that changed.
     deskSeals.onChange(() => { if (this.sKey !== undefined) this.render(this.desks, this.active, this.mark) })
     const ro = new ResizeObserver(() => this.schedule())
