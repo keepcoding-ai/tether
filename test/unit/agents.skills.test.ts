@@ -86,7 +86,9 @@ test('for-agents: only the soul engine receives it; the others keep the rest', a
     assert.ok(existsSync(join(claudeDir, 'skills', n, 'SKILL.md')))
   }
   const text = readFileSync(join(soulDir, 'skills', 'for-agents', 'SKILL.md'), 'utf8')
-  for (const verb of ['open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'give', 'revoke']) assert.match(text, new RegExp('\\| `' + verb + '` \\|'))
+  for (const verb of ['open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'give', 'revoke']) assert.match(text, new RegExp('\\| `' + verb + '[ `]'))
+  assert.match(text, /send <guia> <text> \[--raw\]/)
+  assert.doesNotMatch(text, /raw: true|fresh: true|to: self/)
   assert.match(text, /node "\$TETHER_CLI" agents list/)
 })
 
