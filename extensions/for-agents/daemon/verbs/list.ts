@@ -56,15 +56,22 @@ export const listVerb: VerbDef = {
         const d = map?.desks.find((x) => x.id === deskId)
         if (!d || (wantDesk && wantDesk !== d.id && wantDesk !== d.name)) return []
         const hand = deps.store.deskFacts(deskId).hand
-        const panes = d.panes.map((p) => { inDesks.add(p.id); return paneEntry(deps, owner, p.id) }).filter(keep)
+        // The empty board of a desk is no pane of the owner's: it is neither listed nor counted.
+        const panes = d.panes.filter((p) => p.type !== 'empty').map((p) => { inDesks.add(p.id); return paneEntry(deps, owner, p.id) }).filter(keep)
         return [{ id: d.id, name: d.name, hand: hand ? hand.why : 'owner', panes }]
       })
     const panes = wantDesk ? [] : deps.store.ownedPanes()
       .filter(([id, o]) => o.owner === owner && !o.ended && !inDesks.has(id))
+      .filter(([id]) => paneTypeOf(deps, id) !== 'empty')
       .map(([id]) => paneEntry(deps, owner, id)).filter(keep)
     // The owner's own pane, "de si", is in `ownedPanes` already (its owner is itself).
     const total = desks.reduce((n, d) => n + d.panes.length, 0) + panes.length
-    const text = total === 0 && desks.length === 0 ? 'Você não é dono de nenhuma mesa nem de nenhuma guia.' : `${desks.length} mesa(s), ${total} guia(s).`
+    const line = (e: Record<string, unknown>): string => `  - ${e.name} (${e.kind ?? e.type}, ${e.turn === 'busy' ? 'em turno' : 'parada'})`
+    const lines = [
+      ...desks.flatMap((d) => [`Mesa "${d.name}":`, ...(d.panes.length === 0 ? ['  sem guias'] : d.panes.map(line))]),
+      ...(panes.length > 0 ? ['Guias fora de mesas:', ...panes.map(line)] : []),
+    ]
+    const text = total === 0 && desks.length === 0 ? 'Você não é dono de nenhuma mesa nem de nenhuma guia.' : [`${desks.length} mesa(s), ${total} guia(s).`, ...lines].join('\n')
     return ok(text, { me: me(deps, caller), desks, panes })
   },
 }

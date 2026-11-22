@@ -237,6 +237,27 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.deepEqual(empty.panes, [])
   })
 
+  test('list: the empty board of a desk is no pane; a desk with only it says it has no panes', async () => {
+    const withEmpty: DeskMap = {
+      desks: [desk('cena', [{ id: A }, { id: p1 }, { id: 'empty:x1', type: 'empty' }]), desk('vazia', [{ id: 'empty:x2', type: 'empty' }]), desk('casa', [{ id: K }, { id: p3 }]), desk('sistema', [], 'system')],
+      drawer: [],
+    }
+    await sendMap(withEmpty)
+    await appSet('desk', 'vazia', 'owner', { owner: A, since: new Date().toISOString(), givenBy: 'user' } satisfies Ownership)
+    try {
+      const r = await call(A, 'list')
+      const desks = data(r).desks as { id: string; panes: { id: string }[] }[]
+      assert.deepEqual(desks.find((x) => x.id === 'cena')!.panes.map((p) => p.id).sort(), [A, p1].sort())
+      assert.equal(desks.find((x) => x.id === 'vazia')!.panes.length, 0)
+      assert.match(r.text, /^2 mesa\(s\), 2 guia\(s\)\./)
+      assert.match(r.text, /Mesa "vazia":\n {2}sem guias/)
+      assert.match(r.text, /Mesa "cena":\n {2}- /)
+    } finally {
+      await appSet('desk', 'vazia', 'owner')
+      await sendMap(map([A, p1, p2], [K, p3]))
+    }
+  })
+
   test('send: through the delivery with the owner\'s envelope; with the hand with the person it queues', async () => {
     const r = await call(A, 'send', { guia: p1, text: 'olá p1' })
     assert.equal(r.isError, undefined, r.text)
