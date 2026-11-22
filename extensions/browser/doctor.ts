@@ -20,6 +20,8 @@ export interface BrowserDoctorDeps {
   alive?(pid: number): boolean
   fetch?: typeof fetch
   now?(): number
+  /** Whether the app listens for the wake of the browser (wake.ts): without an endpoint, the browser is then resting, not missing. */
+  appUp?(): Promise<boolean>
 }
 
 interface Endpoint { port: number; pid: number; instance: string }
@@ -81,6 +83,7 @@ export function browserChecks(deps: BrowserDoctorDeps): Array<() => Promise<Daem
     async () => {
       const name = 'processo do navegador do tether'
       const ep = readEndpoint(deps.home)
+      if (!ep && await deps.appUp?.().catch(() => false)) return { level: 'OK', name, detail: 'parado: sobe quando uma guia ou um agente precisar, e sai sem guias' }
       if (!ep) return { level: 'AVISO', name, detail: `${endpointFileOf(deps.home)} ausente ou ilegível: o app do tether não está aberto, ou o porteiro não abriu`, hint: 'abra o tether; se ele já está aberto, veja tether-app.log' }
       let age = ''
       try { age = `, porteiro aberto ${agoText(now() - statSync(endpointFileOf(deps.home)).mtimeMs)}` } catch { /* raced away */ }

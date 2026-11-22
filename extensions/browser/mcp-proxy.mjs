@@ -5,6 +5,7 @@
 // server's own. The proxy ends when the CLI closes its stdin or the server ends (and takes the server down with it).
 import { spawn } from 'node:child_process'
 import { McpRewriter } from './mcp-texts.ts'
+import { isToolCallLine, requestWake, toolCallGate } from './wake.ts'
 
 const [server, ...serverArgs] = process.argv.slice(2)
 if (!server) { process.stderr.write('[tether-browser proxy] usage: mcp-proxy.mjs <server.mjs> [server arguments]\n'); process.exit(1) }
@@ -27,7 +28,15 @@ function lines(stream, onLine) {
   })
 }
 
-lines(process.stdin, line => { child.stdin.write(`${rewriter.fromClient(line)}\n`) })
+// The browser process runs only while something needs it: a tool call first asks the app to have it up (wake.ts), the other
+// lines pass at once (in order). Without the app's answer the call goes on and the server says the app is not running.
+const flagAt = serverArgs.indexOf('--adopt-endpoint-file')
+const endpointFile = flagAt >= 0 ? serverArgs[flagAt + 1] : undefined
+const toolCalls = toolCallGate(() => (endpointFile ? requestWake(endpointFile) : Promise.resolve(false)))
+lines(process.stdin, line => {
+  const message = isToolCallLine(line) ? { method: 'tools/call' } : {}
+  toolCalls.push(message, undefined, () => { child.stdin.write(`${rewriter.fromClient(line)}\n`) })
+})
 lines(child.stdout, line => { process.stdout.write(`${rewriter.fromServer(line)}\n`) })
 process.stdin.on('end', () => child.stdin.end())
 process.stdin.on('close', () => child.stdin.end())

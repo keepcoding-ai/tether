@@ -13,7 +13,7 @@ import type { SlotMeta } from '../../src/core/event.ts'
 import { profileOption } from '../../src/core/profile.ts'
 import { findNodeAsync } from '../web-bridge/warmup.ts'
 import { McpHttpHost, type McpBackend } from '../../src/daemon/mcp-http.ts'
-import { type BrowserBackendInput, browserDirOf, createBrowserLaunchMiddleware, keysDirOf, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
+import { type BrowserBackendInput, browserDirOf, createBrowserLaunchMiddleware, endpointFileOf, keysDirOf, MCP_SERVER_NAME, releaseSlot, sweepStale } from './agents.ts'
 import { warmPrivateDirs } from './private-dir-core.ts'
 import { debugStateOf, debugSummary } from './debug-file.ts'
 import { browserChecks } from './doctor.ts'
@@ -21,6 +21,7 @@ import { browserTraceSource } from './trace-source.ts'
 import { auditVendor } from './vendor-rules.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
+import { toolCallGate, requestWake, wakePipeUp } from './wake.ts'
 import { PROFILE_OPTION, serveModeOf, servesAgent, type ServeMode } from './rules.ts'
 
 export { manifest } from './manifest.ts'
@@ -89,7 +90,7 @@ export function createBrowserBackends(vendorDir: string, server: string, log: (m
     // A failed load is tried again by the next agent (the folder may have been repaired).
     bundle.catch(() => { bundle = undefined })
     const lib = await bundle
-    return lib.createTetherBrowserServer({
+    const server = lib.createTetherBrowserServer({
       endpointFile: input.endpointFile,
       keyFile: input.keyFile,
       ...(input.evaluate ? { allowEvaluate: true } : {}),
@@ -102,7 +103,37 @@ export function createBrowserBackends(vendorDir: string, server: string, log: (m
       // Only the connection's own line; tool failures name addresses and stay out of the log.
       log: line => { if (line.startsWith('connected')) log(line) },
     })
+    return wakeBeforeCalls(server, () => requestWake(input.endpointFile))
   }
+}
+
+/**
+ * The browser process runs only while something needs it: an agent's tool call, over HTTP, first asks the app to have it up
+ * (wake.ts). The server's transport is wrapped so its incoming tool calls wait for that; everything else passes in order.
+ */
+export function wakeBeforeCalls(backend: McpBackend, wake: () => Promise<unknown>): McpBackend {
+  return {
+    close: () => backend.close(),
+    connect: transport => {
+      const gate = toolCallGate(wake)
+      let handler: ((message: unknown, extra?: unknown) => void) | undefined
+      const wrapped = new Proxy(transport, {
+        get: (t, prop) => (prop === 'onmessage' ? handler : bound(t, prop)),
+        set: (t, prop, value) => {
+          if (prop !== 'onmessage') { (t as unknown as Record<PropertyKey, unknown>)[prop] = value; return true }
+          handler = value as typeof handler
+          t.onmessage = value ? (message, extra) => gate.push(message, extra, (m, e) => handler?.(m, e)) : undefined
+          return true
+        },
+      })
+      return backend.connect(wrapped)
+    },
+  }
+}
+
+function bound(target: object, prop: PropertyKey): unknown {
+  const v = (target as Record<PropertyKey, unknown>)[prop]
+  return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {
@@ -148,7 +179,7 @@ export function activate(api: TetherDaemon): IDisposable[] {
     api.launch.use(middleware),
     api.onSlot(ev => { if (ev.kind === 'exited' && ev.slot.kind !== 'shell') { http.revoke(ev.slot.slotId); void releaseSlot(api.home, ev.slot.slotId, api.io) } }),
     { dispose: () => { void http.close() } },
-    ...browserChecks({ home: api.home }).map(check => api.doctor.register(check)),
+    ...browserChecks({ home: api.home, appUp: () => wakePipeUp(endpointFileOf(api.home)) }).map(check => api.doctor.register(check)),
     api.doctor.register(async () => debugCheck(browserSettings(api))),
     api.traces.register(browserTraceSource(api.home)),
   ]
