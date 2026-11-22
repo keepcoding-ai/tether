@@ -40,6 +40,12 @@ export function channelMeta(fields: Readonly<Record<string, unknown>>): Record<s
   return out
 }
 
+/** The addressees as one line (`a, b`), each name sanitised; undefined when there are none. */
+export function toNames(msg: DeliveryMessage, sep = ','): string | undefined {
+  const names = (msg.to ?? []).map((n) => oneLine(n)).filter(Boolean)
+  return names.length ? names.join(sep) : undefined
+}
+
 /**
  * The meta of one delivery (contract 4.5): kind, origin, room, from, from_id, role, id, reply_to. `origin` is the extension
  * that delivers, set by the core and written after nothing the message carries, so the message never chooses it.
@@ -54,5 +60,7 @@ export function deliveryMeta(msg: DeliveryMessage, origin: string, id: string): 
     role: msg.from.role,
     id,
     reply_to: msg.inReplyTo,
+    to: toNames(msg),
+    ref: msg.ref,
   })
 }

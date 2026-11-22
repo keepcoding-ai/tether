@@ -62,6 +62,8 @@ export interface DoorSlots {
    * it is now, for the person alone: an agent's writes through the door do not count here, though the delivery waits for them).
    */
   userFree(slotId: string): boolean
+  /** When (ms epoch) the person last typed into the slot; undefined when she never did. The agent's own keys do not count. */
+  userTypedAt(slotId: string): number | undefined
 }
 
 // ---- 2. desks --------------------------------------------------------------------------------
@@ -141,6 +143,10 @@ export interface DeliveryMessage {
   body: string
   /** To answer an earlier message. */
   inReplyTo?: string
+  /** The names the message is addressed to (an address, not a secret: everyone in the room still hears it). */
+  to?: readonly string[]
+  /** The message's own id in its room, the same for every addressee (unlike the delivery id, one per addressee). */
+  ref?: string
 }
 
 export type DeliveryState =

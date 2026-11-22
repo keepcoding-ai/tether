@@ -75,12 +75,13 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 const isStr = (x: unknown): x is string => typeof x === 'string'
 
 /** The message as given, checked; `bad-request` otherwise. */
-function checkMessage(raw: unknown): DeliveryMessage {
+export function checkMessage(raw: unknown): DeliveryMessage {
   const m = raw as Partial<DeliveryMessage> | null
   const from = m?.from as Partial<DeliveryMessage['from']> | undefined
   if (!m || typeof m !== 'object' || !isStr(m.kind) || !KINDS.has(m.kind) || !isStr(m.body)
     || !from || !isStr(from.name) || !isStr(from.id) || !from.id || !isStr(from.role) || !ROLES.has(from.role as DeliveryRole)
-    || (m.room !== undefined && !isStr(m.room)) || (m.inReplyTo !== undefined && !isStr(m.inReplyTo))) {
+    || (m.room !== undefined && !isStr(m.room)) || (m.inReplyTo !== undefined && !isStr(m.inReplyTo))
+    || (m.ref !== undefined && !isStr(m.ref)) || (m.to !== undefined && !(Array.isArray(m.to) && m.to.every(isStr)))) {
     throw new DoorError('bad-request', 'delivery.deliver: mensagem inválida (kind, from {name, id, role} e body são obrigatórios)')
   }
   return {
@@ -89,6 +90,8 @@ function checkMessage(raw: unknown): DeliveryMessage {
     from: { name: from.name, id: from.id, role: from.role as DeliveryRole },
     body: m.body,
     ...(m.inReplyTo ? { inReplyTo: m.inReplyTo } : {}),
+    ...(m.to && m.to.length ? { to: [...m.to] } : {}),
+    ...(m.ref ? { ref: m.ref } : {}),
   }
 }
 
