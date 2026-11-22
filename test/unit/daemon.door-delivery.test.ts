@@ -39,7 +39,7 @@ if (process.env.OPEN_STREAM === '1' && file && fs.existsSync(file)) {
     return r.headers.get('mcp-session-id')
   }
   ;(async () => {
-    const session = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'fake', version: '1' } } })
+    const session = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: process.env.CLIENT_NAME || 'fake', version: '1' } } })
     await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, session)
     const r = await fetch(server.url, { method: 'GET', headers: { accept: 'text/event-stream', authorization: auth, 'mcp-session-id': session } })
     log(process.env.CHAN_LOG, { open: r.status })
@@ -87,7 +87,8 @@ describe('agent door delivery (D6)', () => {
       delete env.NODE_TEST_CONTEXT
       env.ECHO_LOG = echoLog(input.slot.slotId)
       env.CHAN_LOG = chanLog(input.slot.slotId)
-      env.OPEN_STREAM = input.slot.name === 'dentro' ? '1' : '0'
+      env.OPEN_STREAM = input.slot.name === 'dentro' || input.slot.name === 'codex-dentro' ? '1' : '0'
+      if (input.slot.name === 'codex-dentro') env.CLIENT_NAME = 'codex-mcp-client'
       return { command: process.execPath, args: [join(home, 'fake-agent.cjs')], cwd: input.slot.cwd, env }
     },
     sessionExists: async () => 'unknown',
@@ -173,6 +174,21 @@ describe('agent door delivery (D6)', () => {
     assert.equal(receiptOf(r.id)?.state, 'inside')
     await sleep(300)
     assert.equal(chunks(id).length, before, 'not one byte typed')
+    await slots.forget(id)
+  })
+
+  test('a connected client that does not wake on a channel message (codex) is not inside: the terminal path delivers, no channel is sent', async () => {
+    const id = await running('codex-dentro')
+    await waitUntil(() => readLines<Record<string, any>>(chanLog(id)).some((l) => l.open === 200), 30_000, 'the fake codex opened its stream')
+    assert.equal(door.mcp.connected(id), true)
+    assert.equal(door.mcp.wakes(id), false)
+    assert.equal(delivery.pathOf(id), 'wait', 'connected but not held: no inside')
+    const r = await delivery.deliver(id, msg('pelo terminal'))
+    assert.equal(r.state, 'queued')
+    await hold(id)
+    await waitUntil(() => delivery.pathOf(id) === 'terminal', 10_000, 'the terminal path')
+    await waitUntil(() => receiptOf(r.id)?.state === 'typed', 15_000, 'typed, not inside')
+    assert.equal(readLines<Record<string, any>>(chanLog(id)).some((l) => l.method === 'notifications/claude/channel'), false, 'no channel message')
     await slots.forget(id)
   })
 
