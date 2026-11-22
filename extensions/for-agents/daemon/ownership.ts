@@ -224,6 +224,51 @@ export class OwnershipStore {
     return value
   }
 
+  // ---- the outcome of the owner's sends ---------------------------------------------------------
+  // In memory on purpose: it only decides whether the core's silence heuristic (a typed Enter marks the turn busy, a redrawn
+  // box then reads as `done`) may be told as "terminou". It is about the moment, not a fact worth keeping across a restart.
+
+  private readonly sends = new Map<string, { inFlight: number; failedAt: number | undefined; waiters: (() => void)[] }>()
+
+  /** A send to the pane starts; call the returned function once with whether it failed (text left in the box, unconfirmed). */
+  beginSend(paneId: string): (failed: boolean) => void {
+    let e = this.sends.get(paneId)
+    if (!e) this.sends.set(paneId, e = { inFlight: 0, failedAt: undefined, waiters: [] })
+    const entry = e
+    entry.inFlight++
+    let ended = false
+    return (failed) => {
+      if (ended) return
+      ended = true
+      entry.inFlight--
+      entry.failedAt = failed ? Date.now() : undefined
+      if (entry.inFlight === 0) for (const w of entry.waiters.splice(0)) w()
+    }
+  }
+
+  /** Resolves when no send to the pane is in flight (at most `capMs`: a stuck send never holds a notice for good). */
+  sendSettled(paneId: string, capMs = 20_000): Promise<void> {
+    const e = this.sends.get(paneId)
+    if (!e || e.inFlight === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, capMs)
+      t.unref?.()
+      e.waiters.push(() => { clearTimeout(t); resolve() })
+    })
+  }
+
+  /**
+   * True when the owner's last finished send to the pane failed, no send succeeded after it, and it ended within `windowMs`
+   * (the heuristic's false `done` comes seconds after the Enter). Taking it clears it: it explains one `done`, not the next turns.
+   */
+  takeSendFailure(paneId: string, windowMs = 30_000): boolean {
+    const e = this.sends.get(paneId)
+    if (!e || e.failedAt === undefined) return false
+    const recent = Date.now() - e.failedAt <= windowMs
+    e.failedAt = undefined
+    return recent
+  }
+
   private handKey(target: HandTarget): ['pane' | 'desk', string, string] {
     return 'pane' in target ? ['pane', target.pane, OBJECT_KEYS.hand] : ['desk', target.desk, OBJECT_KEYS.hand]
   }

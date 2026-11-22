@@ -61,20 +61,36 @@ export const sendVerb: VerbDef = {
     const { paneId, target } = commanded(deps, caller, guia, 'send')
     const conductor = conductorFor(target, 'send')
     const ctx = buildContext(deps, caller.slotId, target)
-    if (!raw) {
-      // The core's `pathOf` already says 'terminal' only for a pane held, alive, out of a turn, with nothing waiting for an answer
-      // and the person free (the delivery's own four conditions); the screen's veto is added here: no card or dialog showing.
-      if (deps.api.delivery.pathOf(paneId) === 'terminal' && (await idleOnScreen(target, ctx))) {
-        const typed = await typeThroughConductor(deps, caller, paneId, conductor, ctx, text)
-        if (typed) return typed
-      }
-      const data = await deliverAsOwner(deps, caller, paneId, text)
-      touch(deps, paneId, caller.slotId, 'send')
-      if (data.unsent) refuse('unsent', `o texto ficou na caixa de ${paneName(deps, paneId)} sem o Enter (a guia mudou de mãos ou o usuário digitou); não foi enviado`, { id: data.id })
-      return ok(`Mensagem ${String(data.state)} para ${paneName(deps, paneId)}.`, data)
+    // The notices read this: a `done` that comes from the core's silence heuristic after a send that left the text in the box
+    // is not a finished turn. `busy` and `with-user` say nothing about the box, so they do not count as a failed send.
+    const endSend = deps.store.beginSend(paneId)
+    let failed = false
+    try {
+      return await sendOn(deps, caller, paneId, target, conductor, ctx, text, raw)
+    } catch (e) {
+      const code = (e as { code?: unknown } | null)?.code
+      failed = code !== 'busy' && code !== 'with-user'
+      throw e
+    } finally {
+      endSend(failed)
     }
-    const r = await conductor.send!(ctx, text)
-    touch(deps, paneId, caller.slotId, 'send')
-    return ok(`Texto digitado em ${paneName(deps, paneId)}.`, { state: 'typed', raw: true }, r.proven)
   },
+}
+
+async function sendOn(deps: VerbDeps, caller: VerbCaller, paneId: string, target: ConductorTarget, conductor: Conductor, ctx: ConductorContext, text: string, raw: boolean): Promise<VerbResult> {
+  if (!raw) {
+    // The core's `pathOf` already says 'terminal' only for a pane held, alive, out of a turn, with nothing waiting for an answer
+    // and the person free (the delivery's own four conditions); the screen's veto is added here: no card or dialog showing.
+    if (deps.api.delivery.pathOf(paneId) === 'terminal' && (await idleOnScreen(target, ctx))) {
+      const typed = await typeThroughConductor(deps, caller, paneId, conductor, ctx, text)
+      if (typed) return typed
+    }
+    const data = await deliverAsOwner(deps, caller, paneId, text)
+    touch(deps, paneId, caller.slotId, 'send')
+    if (data.unsent) refuse('unsent', `o texto ficou na caixa de ${paneName(deps, paneId)} sem o Enter (a guia mudou de mãos ou o usuário digitou); não foi enviado`, { id: data.id })
+    return ok(`Mensagem ${String(data.state)} para ${paneName(deps, paneId)}.`, data)
+  }
+  const r = await conductor.send!(ctx, text)
+  touch(deps, paneId, caller.slotId, 'send')
+  return ok(`Texto digitado em ${paneName(deps, paneId)}.`, { state: 'typed', raw: true }, r.proven)
 }

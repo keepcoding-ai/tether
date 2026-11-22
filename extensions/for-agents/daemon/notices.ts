@@ -186,6 +186,17 @@ export class Notices {
   private async announce(paneId: string, owner: string, key: string): Promise<void> {
     const s = this.api.slots.get(paneId)
     if (!s?.attentionFor) return
+    // A `done` can come from the core's silence heuristic (an Enter typed marks the turn busy; the redrawn box then reads as
+    // finished) while the owner's send is still being checked by the conductor. Wait for that send: if it ended with the text
+    // left in the box, no turn ran and "terminou" would be false.
+    if (s.attentionFor.value === 'done') {
+      await this.wiring.store.sendSettled(paneId)
+      if (this.edges.get(paneId) !== key) return
+      if (this.wiring.store.takeSendFailure(paneId)) {
+        this.api.log(`aviso de ${paneId} descartado: o último envio do dono não chegou ao agente, o "terminou" veio do silêncio`)
+        return
+      }
+    }
     const what = await this.classifyEdge(s, key)
     if (!what) return
     // What the person or the owner did while the screen was read decides whether the notice is still true.
