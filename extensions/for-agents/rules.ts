@@ -133,11 +133,31 @@ export function effective(pane: PaneFacts, desk: DeskFacts | undefined, frozen: 
  * What the door must say about a pane of a slot, from its effective ownership: `held` while the commander has the hand
  * (its own pane included: that is what lets the tether type into an agent's own pane); the attention routed to the
  * commander only for a pane it commands from outside (the request of an agent's own pane goes to the person: above it
- * there is only the person). The reconciler applies exactly this; nothing else calls `setHeld` or `route`.
+ * there is only the person). The reconciler applies exactly this (and `ownPanePort` for a pane nobody commands); nothing
+ * else calls `setHeld` or `route`.
  */
 export function portOf(eff: Effective): { heldBy?: OwnerId; routeTo?: OwnerId } {
   if (eff.commander === undefined || eff.hand !== 'owner') return {}
   return eff.via === 'self' ? { heldBy: eff.commander } : { heldBy: eff.commander, routeTo: eff.commander }
+}
+
+/** The agents that own something now: every live `owner` of the desks and panes given (a forgotten one owns nothing). */
+export function liveOwnersOf(ownerships: Iterable<Ownership>): Set<OwnerId> {
+  const out = new Set<OwnerId>()
+  for (const o of ownerships) if (live(o)) out.add(o.owner)
+  return out
+}
+
+/**
+ * The door of a live owner's own pane that nobody commands (typically the owner's pane inside the desk it was given, or
+ * outside the desk or pane it owns): held by the owner itself, never routed, so what reaches it through the door (the
+ * notices of its ownership, the messages of other extensions) can be typed by the delivery even when its engine has no
+ * path inside. Only the port: `effective()` is untouched, so nothing of it is drawn as "de si" and no verb changes.
+ * Not held while the person holds the hand there, while that owner is paused everywhere, or once it owns nothing.
+ */
+export function ownPanePort(pane: PaneFacts, eff: Effective, owners: ReadonlySet<OwnerId>, frozen: ReadonlySet<OwnerId>): { heldBy?: OwnerId } {
+  if (eff.commander !== undefined || pane.hand || !owners.has(pane.id) || frozen.has(pane.id)) return {}
+  return { heldBy: pane.id }
 }
 
 /** What an agent may do on a pane: 'command' (every verb), 'view' (list, read-screen, last-answer), or nothing. */

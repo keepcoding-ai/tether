@@ -69,6 +69,29 @@ test('middleware: shells and agents without skills are untouched', async () => {
   assert.equal((await mw(p, { agent: 'claude', slotId: 'x' } as SlotMeta)).args[0], '--plugin-dir')
 })
 
+test('for-agents: only the soul engine receives it; the others keep the rest', async () => {
+  const skills = loadSkills(libraryDir())
+  const fa = skills.find(s => s.name === 'for-agents')
+  assert.ok(fa)
+  assert.deepEqual(fa.agents, ['soul'])
+  assert.match(fa.description, /\[tether · for-agents/)
+  assert.equal(parseFrontmatter('---\nname: x\n---\n')?.agents, undefined)
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const soulDir = (await soulSkills.inject(plan(), bundleOf(home))).env[SOUL_SHARED_FOLDERS_ENV]!
+  assert.ok(existsSync(join(soulDir, 'skills', 'for-agents', 'SKILL.md')))
+  const claudeDir = (await claudeSkills.inject(plan(), bundleOf(home))).args[1]!
+  assert.ok(!existsSync(join(claudeDir, 'skills', 'for-agents')))
+  for (const n of ['use-todo', 'ronda', 'processes', 'llm-usage']) {
+    assert.ok(existsSync(join(soulDir, 'skills', n, 'SKILL.md')))
+    assert.ok(existsSync(join(claudeDir, 'skills', n, 'SKILL.md')))
+  }
+  const text = readFileSync(join(soulDir, 'skills', 'for-agents', 'SKILL.md'), 'utf8')
+  for (const verb of ['open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'give', 'revoke']) assert.match(text, new RegExp('\\| `' + verb + '[ `]'))
+  assert.match(text, /send <guia> <text> \[--raw\]/)
+  assert.doesNotMatch(text, /raw: true|fresh: true|to: self/)
+  assert.match(text, /node "\$TETHER_CLI" agents list/)
+})
+
 test('the library ships processes (tether:processes for claude): when to use it, the CLI, exit 3, no domain words', async () => {
   const skills = loadSkills(libraryDir())
   const proc = skills.find(s => s.name === 'processes')

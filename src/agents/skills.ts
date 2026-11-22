@@ -16,6 +16,8 @@ export interface TetherSkill {
   /** The folder's name, equal to the frontmatter's `name`. */
   name: string
   description: string
+  /** Frontmatter `agents:` (comma separated): the engines that receive this skill. Absent = every engine. */
+  agents?: string[]
   /** The folder holding SKILL.md (and anything it ships with). */
   dir: string
   /** SKILL.md's full text. */
@@ -38,7 +40,7 @@ export interface AgentSkills {
 }
 
 /** `name` and `description` from a SKILL.md's frontmatter (folded `>-` blocks joined); undefined without a frontmatter name. */
-export function parseFrontmatter(text: string): { name: string; description: string } | undefined {
+export function parseFrontmatter(text: string): { name: string; description: string; agents?: string[] } | undefined {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
   if (!m) return undefined
   const lines = m[1]!.split(/\r?\n/)
@@ -54,7 +56,14 @@ export function parseFrontmatter(text: string): { name: string; description: str
     }
     fields[kv[1]!] = value.replace(/^["']|["']$/g, '')
   }
-  return fields.name ? { name: fields.name, description: fields.description ?? '' } : undefined
+  if (!fields.name) return undefined
+  const agents = (fields.agents ?? '').split(',').map(a => a.trim()).filter(Boolean)
+  return { name: fields.name, description: fields.description ?? '', ...(agents.length ? { agents } : {}) }
+}
+
+/** The skills meant for one engine: those with no `agents:` restriction, plus those that name it. */
+export function skillsFor(agent: string, skills: readonly TetherSkill[]): TetherSkill[] {
+  return skills.filter(s => !s.agents || s.agents.includes(agent))
 }
 
 export interface SkillsSnapshot {
@@ -129,12 +138,13 @@ export const CLAUDE_PLUGIN_NAME = 'tether'
 /** Claude Code: a `tether` plugin under <home>/skills/claude/tether, loaded for this session only with `--plugin-dir`. */
 export const claudeSkills: AgentSkills = {
   async inject(plan, bundle) {
-    if (!bundle.skills.length) return plan
+    const skills = skillsFor('claude', bundle.skills)
+    if (!skills.length) return plan
     const dir = await bundle.exec.run('materializeSkills', [{
       target: join(bundle.home, 'skills', 'claude', CLAUDE_PLUGIN_NAME),
       version: bundle.version,
       layout: 'claude-plugin',
-      skills: bundle.skills.map(s => ({ name: s.name, dir: s.dir })),
+      skills: skills.map(s => ({ name: s.name, dir: s.dir })),
       pluginJson: JSON.stringify({
         name: CLAUDE_PLUGIN_NAME,
         description: 'Skills do tether, entregues a todo agente aberto num painel.',
@@ -153,8 +163,9 @@ export const claudeSkills: AgentSkills = {
 export const SOUL_SHARED_FOLDERS_ENV = 'SOUL_CLI_SHARED_FOLDERS'
 export const soulSkills: AgentSkills = {
   async inject(plan, bundle) {
-    if (!bundle.skills.length) return plan
-    const dir = await bundle.exec.run('materializeSkills', [{ target: join(bundle.home, 'skills', 'soul'), version: bundle.version, layout: 'shared', skills: bundle.skills.map(s => ({ name: s.name, dir: s.dir })) }])
+    const skills = skillsFor('soul', bundle.skills)
+    if (!skills.length) return plan
+    const dir = await bundle.exec.run('materializeSkills', [{ target: join(bundle.home, 'skills', 'soul'), version: bundle.version, layout: 'shared', skills: skills.map(s => ({ name: s.name, dir: s.dir })) }])
     const current = plan.env[SOUL_SHARED_FOLDERS_ENV]?.trim()
     const value = current ? `${current}${delimiter}${dir}` : dir
     return { ...plan, env: { ...plan.env, [SOUL_SHARED_FOLDERS_ENV]: value } }

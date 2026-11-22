@@ -8,12 +8,12 @@
 // the same pane never interleave their door calls.
 //
 // When it runs, with no sweep per event: a change of a pane object (that pane), of a desk object (the panes of that desk),
-// of a 'frozen' mark (the panes of that owner), a new desk map (the panes whose desk changed), a forgotten owner (what
+// of a 'frozen' mark (the panes of that owner), an owner coming or going (its own pane), a new desk map (the panes whose desk changed), a forgotten owner (what
 // carried its name), the card of a pane coming or going (that pane, F12), and the start (what has an owner or a hold).
-// Its memory: the previous desk map (pane -> desk) and the panes with a card on the screen. No timer.
+// Its memory: the previous desk map (pane -> desk), the panes with a card on the screen and the live owners. No timer.
 import type { DeskMap, DoorAttention, DoorDesks, DoorSlots } from '../../../src/daemon/ext-api.ts'
 import { EXT_ID } from '../manifest.ts'
-import { OBJECT_KEYS, capabilityOn, portOf, type Effective, type OwnerId } from '../rules.ts'
+import { OBJECT_KEYS, capabilityOn, liveOwnersOf, ownPanePort, portOf, type Effective, type OwnerId } from '../rules.ts'
 import type { OwnershipStore } from './ownership.ts'
 
 export interface ReconcilerDeps {
@@ -57,6 +57,8 @@ export class Reconciler {
   /** The start pass waiting for the data to load; `idle` waits for it too. */
   private starting: Promise<void> | undefined
   private readonly ready: () => Promise<unknown>
+  /** The agents that own something now (rules.ts `liveOwnersOf`); at most one entry per owner. */
+  private owners: ReadonlySet<OwnerId> = new Set()
   /** Panes held by another extension: logged once, never touched. */
   private readonly foreignTold = new Set<string>()
 
@@ -76,8 +78,11 @@ export class Reconciler {
    * desk, and before any desk map the desk is unknown, so the hold kept in the meta stays as it is (a restart keeps it).
    */
   targetOf(paneId: string): PortTarget | undefined {
-    if (!this.store.paneFacts(paneId).owner && this.desks.map() === undefined) return undefined
-    return this.targetFrom(paneId, this.store.effectiveOf(paneId))
+    const facts = this.store.paneFacts(paneId)
+    if (!facts.owner && this.desks.map() === undefined) return undefined
+    const eff = this.store.effectiveOf(paneId)
+    if (eff.commander === undefined) return { ...ownPanePort(facts, eff, this.owners, this.store.frozen()) }
+    return this.targetFrom(paneId, eff)
   }
 
   private targetFrom(paneId: string, eff: Effective): PortTarget {
@@ -99,6 +104,8 @@ export class Reconciler {
       return
     }
     if (!PORT_KEYS.has(e.key)) return
+    // Who owns something may have changed: the own pane of an owner that came or went (rules.ts `ownPanePort`).
+    if (e.key === OBJECT_KEYS.owner) this.schedule(this.refreshOwners())
     if (e.kind === 'pane') this.schedule([e.id])
     else this.schedule(this.panesOfDesk(e.id))
   }
@@ -119,6 +126,7 @@ export class Reconciler {
     this.cards.delete(paneId)
     this.foreignTold.delete(paneId)
     this.store.refreshFrozen()
+    this.schedule(this.refreshOwners())
   }
 
   /**
@@ -146,9 +154,10 @@ export class Reconciler {
   /** The start's walk, once the data is loaded (before that, every pane would look ownerless and lose its hold). */
   private pass(): void {
     this.store.refreshFrozen()
+    this.refreshOwners()
     const map = this.desks.map()
     if (map) this.prevMap = mapIndex(map)
-    const ids = new Set<string>()
+    const ids = new Set<string>(this.owners)
     for (const [id] of this.store.ownedPanes()) ids.add(id)
     for (const [deskId] of this.store.ownedDesks()) for (const id of this.panesOfDesk(deskId)) ids.add(id)
     for (const id of this.ours()) ids.add(id)
@@ -226,6 +235,19 @@ export class Reconciler {
   }
 
   // ---- reads ------------------------------------------------------------------------------------
+
+  /**
+   * Rebuilds the live owners from the store and returns the ones that came or went (their own panes must be applied again).
+   * Run only when an 'owner' key changes, a pane object drops, and at the start: gestures, never per message.
+   */
+  private refreshOwners(): string[] {
+    const next = liveOwnersOf([...this.store.ownedPanes(), ...this.store.ownedDesks()].map(([, o]) => o))
+    const changed: string[] = []
+    for (const id of next) if (!this.owners.has(id)) changed.push(id)
+    for (const id of this.owners) if (!next.has(id)) changed.push(id)
+    this.owners = next
+    return changed
+  }
 
   private panesOfDesk(deskId: string): string[] {
     return this.desks.map()?.desks.find((d) => d.id === deskId)?.panes.map((p) => p.id) ?? []

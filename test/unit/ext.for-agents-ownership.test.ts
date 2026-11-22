@@ -3,7 +3,7 @@
 // person's gestures are written the way the app writes them (`object-set` on the pipe) and her keys go through the pipe's
 // `input`; the agents' gestures go through the store. The user's home, pipe and tetherd are never touched.
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
@@ -12,6 +12,7 @@ import { EXT_ID, manifest } from '../../extensions/for-agents/manifest.ts'
 import type { Ownership } from '../../extensions/for-agents/rules.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
+import { slotEventsPath } from '../../src/core/paths.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
@@ -127,7 +128,8 @@ describe('for-agents: the ownership in the daemon (X2)', () => {
     await appSet('desk', 'cena', 'owner', { owner: A, since: new Date().toISOString(), givenBy: 'user' } satisfies Ownership)
     assert.deepEqual(port(p1), by(A))
     assert.deepEqual(port(p2), by(A))
-    assert.deepEqual(port(A), {}, 'the owner\'s own pane in its desk is the person\'s')
+    assert.deepEqual(port(A), { held: `${EXT_ID}:${A}` }, 'the owner\'s own pane in its desk: nobody commands it, held by the owner for its notices, no route')
+    assert.equal(b.fa.store.effectiveOf(A).commander, undefined, 'still the person\'s: only the port changes')
     assert.deepEqual(port(K), {})
     assert.deepEqual(port(p3), {}, 'another desk')
   })
@@ -305,6 +307,107 @@ describe('for-agents: the ownership in the daemon (X2)', () => {
     await waitUntil(() => [A, K, p1, p2, p3].every((id) => !b.slots.get(id)?.held && !b.attention.routeOf(id)), 10_000, 'undone')
     const data = JSON.parse(readFileSync(join(home, 'objects', 'for-agents.json'), 'utf8')) as { desk: Record<string, unknown> }
     assert.ok(data.desk.cena, 'the desk keeps its owner on disk')
+  })
+})
+
+describe('for-agents: an owner with no path inside hears its notices through its own pane', () => {
+  let home: string
+  let b: Booted
+  const logs: string[] = []
+  // A = the owner (a soul-like fake: no MCP, so no `inside`), p1 and p2 = work panes.
+  let A: string, p1: string, p2: string
+
+  before(async () => {
+    home = tempHome()
+    writeFileSync(join(home, 'echo.cjs'), ECHO)
+    b = await boot(home, logs)
+    const make = async (name: string): Promise<string> => {
+      const id = (await b.slots.create({ kind: 'soul', cwd: home, name })).slotId
+      await waitUntil(() => b.slots.readScreen(id).data.includes('READY'), 30_000, `READY in ${name}`)
+      return id
+    }
+    A = await make('Atrium'); p1 = await make('p1'); p2 = await make('p2')
+  })
+  after(async () => {
+    b.probe.dispose()
+    b.rec.close()
+    await b.daemon.close().catch(() => {})
+    await removeHome(home)
+  })
+
+  const appSet = async (kind: ObjectKind, objectId: string, key: string, value?: unknown): Promise<void> => {
+    await b.rec.client.request({ t: 'object-set', ext: EXT_ID, kind, objectId, key, ...(value === undefined ? {} : { value }) })
+    await b.fa.idle()
+  }
+  const sendMap = async (map: DeskMap): Promise<void> => { await b.rec.client.request({ t: 'desk-map', map }); await b.fa.idle() }
+  const heldBy = (id: string): string | undefined => { const h = b.slots.get(id)?.held; return h ? `${h.ext}:${h.by}` : undefined }
+  const gift = (): Ownership => ({ owner: A, since: new Date().toISOString(), givenBy: 'user' })
+  const screenOf = (id: string, since?: number): string => b.slots.readScreen(id, since !== undefined ? { since } : undefined).data
+  const mark = (): number => b.slots.readScreen(A).end
+  // `pending` counts only the asking extension's items: ask as for-agents.
+  const queued = (): number => b.door.apiFor(EXT_ID, b.probe).delivery.pending(A).length
+  // The typed Enter marks the turn busy; a real soul ends it with a `turn` event, the echo never does: the test writes it.
+  // Once per busy turn: the events file is watched with a debounce, and a write at every poll would keep pushing the read away.
+  let turnTs = Date.now()
+  let ended: string | undefined
+  const endTurn = (): void => {
+    const s = b.slots.get(A)
+    if (s?.turn !== 'busy' || s.busySince === ended) return
+    ended = s.busySince
+    turnTs = Math.max(turnTs + 1, Date.now())
+    appendFileSync(slotEventsPath(home, A), JSON.stringify({ ts: new Date(turnTs).toISOString(), kind: 'turn', state: 'idle' }) + '\n')
+  }
+  const told = async (text: string, since?: number): Promise<void> => {
+    await waitUntil(() => { endTurn(); return screenOf(A, since).includes(text) }, 20_000, `"${text}" typed into the owner's pane`)
+    await waitUntil(() => { endTurn(); return b.slots.get(A)?.turn !== 'busy' }, 10_000, 'the turn ended')
+  }
+
+  test('the defect: only the desk given (as the app writes it), the notice leaves the queue and is typed', async () => {
+    await sendMap({ desks: [desk('cena', [A, p1]), desk('casa', [p2])], drawer: [] })
+    assert.equal(heldBy(A), undefined, 'nothing before a gift')
+    await appSet('desk', 'cena', 'owner', gift())
+    assert.equal(heldBy(A), `${EXT_ID}:${A}`)
+    assert.equal(b.attention.routeOf(A), undefined, 'its own requests stay with the person')
+    await told('recebeu a mesa cena')
+    assert.equal(b.fa.store.paneFacts(A).owner, undefined, 'no "de si" was written')
+  })
+
+  test('owning nothing any more takes the hold away', async () => {
+    await appSet('desk', 'cena', 'owner')
+    assert.equal(heldBy(A), undefined)
+    assert.equal(b.slots.get(p1)?.held, undefined)
+  })
+
+  test('a desk that does not hold the owner\'s pane: its own pane is held all the same', async () => {
+    await appSet('desk', 'casa', 'owner', gift())
+    assert.equal(heldBy(A), `${EXT_ID}:${A}`)
+    assert.equal(heldBy(p2), `${EXT_ID}:${A}`, 'the desk\'s pane, commanded')
+    await told('recebeu a mesa casa')
+  })
+
+  test('the person\'s hand on the owner\'s pane, or "pausar em tudo", keeps the notice in the queue', async () => {
+    await b.fa.store.take({ pane: A }, 'taken'); await b.fa.idle()
+    assert.equal(heldBy(A), undefined, 'the hand is with the person')
+    const m1 = mark()
+    await appSet('pane', p1, 'owner', gift())
+    await waitUntil(() => queued() > 0, 10_000, 'the notice queued')
+    await sleep(1_500)
+    assert.ok(!screenOf(A, m1).includes('recebeu a guia'), 'not typed while the hand is with the person')
+    await b.fa.store.giveBack({ pane: A }); await b.fa.idle()
+    assert.equal(heldBy(A), `${EXT_ID}:${A}`)
+    await told('recebeu a guia', m1)
+    await waitUntil(() => { endTurn(); return queued() === 0 }, 20_000, 'the queue drained')
+
+    await b.fa.store.freeze(A); await b.fa.idle()
+    assert.equal(heldBy(A), undefined, 'paused everywhere')
+    const m2 = mark()
+    await appSet('pane', p1, 'owner')
+    await waitUntil(() => queued() > 0, 10_000, 'the notices queued')
+    await sleep(1_500)
+    assert.ok(!screenOf(A, m2).includes('foi revogada'), 'not typed while paused everywhere')
+    await b.fa.store.unfreeze(A); await b.fa.idle()
+    assert.equal(heldBy(A), `${EXT_ID}:${A}`, 'still owns casa')
+    await told('foi revogada', m2)
   })
 })
 
