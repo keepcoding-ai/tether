@@ -85,8 +85,22 @@ export function sendChunks(text: string): { data: string; waitMs?: number }[] {
   const clean = text.replace(/\x1b/g, '').replace(/\r\n?/g, '\n').replace(/\n$/, '')
   if (clean.trim() === '') throw new ConductError('bad-request', 'send: texto vazio')
   const lines = clean.split('\n')
-  if (lines.length === 1) return [{ data: clean }, { data: '\r', waitMs: ENTER_DELAY_MS }]
-  return [{ data: `${PASTE_START}${lines.join('\r')}${PASTE_END}` }, { data: '\r', waitMs: PASTE_ENTER_DELAY_MS }]
+  if (lines.length === 1) return [{ data: asKeyEvents(clean) }, { data: '\r', waitMs: ENTER_DELAY_MS }]
+  return [{ data: `${PASTE_START}${asKeyEvents(lines.join('\r'))}${PASTE_END}` }, { data: '\r', waitMs: PASTE_ENTER_DELAY_MS }]
+}
+
+/**
+ * Codex reads the console as key events, and the ConPTY turns UTF-8 input into them by the keyboard layout: a character that is
+ * not on the layout (`·`, `«`, `¿`, `—`, `€`) arrives as nothing (measured on Codex 0.169.0, pt-BR layout). Every non-ASCII
+ * UTF-16 unit goes as a win32-input-mode key press (`CSI Vk;Sc;Uc;Kd;Cs;Rc _`, Vk and Sc 0), which carries the character itself.
+ */
+function asKeyEvents(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i)
+    out += unit < 0x80 ? text[i] : `\x1b[0;0;${unit};1;0;1_`
+  }
+  return out
 }
 
 /** What an `answer` choice does on this card: a key named on the screen (`y`, `p`) or Esc, with whether a probe proved it. */

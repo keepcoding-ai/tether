@@ -129,8 +129,18 @@ describe('conductor-codex: the acts', () => {
     assert.deepEqual(codexConductor.capabilities.map((c) => c.id), ['send', 'interrupt', 'answer', 'command'])
   })
 
+  /** The text as the conductor types it: the envelope's `·` is a win32-input-mode key press. */
+  const keyed = (s: string): string => s.replaceAll('·', '\x1b[0;0;183;1;0;1_')
+
+  test('send: non-ASCII goes as win32-input-mode key presses (the ConPTY drops what the layout lacks, as `·`), one per UTF-16 unit', () => {
+    const key = (u: number) => `\x1b[0;0;${u};1;0;1_`
+    assert.deepEqual(sendChunks('a · b'), [{ data: `a ${key(0xb7)} b` }, { data: '\r', waitMs: 300 }])
+    assert.deepEqual(sendChunks('ç\n€'), [{ data: `\x1b[200~${key(0xe7)}\r${key(0x20ac)}\x1b[201~` }, { data: '\r', waitMs: 400 }])
+    assert.deepEqual(sendChunks('😀')[0], { data: `${key(0xd83d)}${key(0xde00)}` }, 'a surrogate pair is two events')
+  })
+
   test('send: one line is the text, then Enter 300 ms later in its own write; several lines are a bracketed paste, 400 ms, Enter', async () => {
-    assert.deepEqual(sendChunks('olá'), [{ data: 'olá' }, { data: '\r', waitMs: 300 }])
+    assert.deepEqual(sendChunks('ola'), [{ data: 'ola' }, { data: '\r', waitMs: 300 }])
     assert.deepEqual(sendChunks('a\nb\n'), [{ data: '\x1b[200~a\rb\x1b[201~' }, { data: '\r', waitMs: 400 }])
     assert.deepEqual(sendChunks('x\x1b[201~y'), [{ data: 'x[201~y' }, { data: '\r', waitMs: 300 }], 'an escape in the text never reaches the terminal')
     assert.throws(() => sendChunks('  \n'), { code: 'bad-request' })
@@ -169,7 +179,7 @@ describe('conductor-codex: the acts', () => {
     f.ctx.screen = async (): Promise<ScreenText> => ({ screen: stuck ? stuckScreen : WORKING, history: [], cols: 120, rows: 40, end: 0 })
     f.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') stuck = false }
     await codexConductor.send!(f.ctx, envelope)
-    assert.deepEqual(f.writes.map((w) => w.data), [envelope, '\r', '\r'])
+    assert.deepEqual(f.writes.map((w) => w.data), [keyed(envelope), '\r', '\r'])
   })
 
   // The screen of the owner's scene (22/11, Codex 0.169.0, resumed session, narrow terminal), read right after a `send` that answered
@@ -213,7 +223,7 @@ describe('conductor-codex: the acts', () => {
     f.ctx.screen = async (): Promise<ScreenText> => ({ screen: stuck ? SCENE : SCENE_TAKEN, history: SCENE_HISTORY, cols: 80, rows: 40, end: 0 })
     f.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') stuck = false }
     await codexConductor.send!(f.ctx, SCENE_ENVELOPE)
-    assert.deepEqual(f.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r', '\r'])
+    assert.deepEqual(f.writes.map((w) => w.data), [keyed(SCENE_ENVELOPE), '\r', '\r'])
   })
 
   test('send: an empty box with no sign of the turn is not a sent message: it waits for one, and fails `unsent` past the deadline', async () => {
@@ -225,11 +235,11 @@ describe('conductor-codex: the acts', () => {
     late.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') phase = 2 }
     setTimeout(() => { if (phase === 0) phase = 1 }, 1000)
     await codexConductor.send!(late.ctx, SCENE_ENVELOPE)
-    assert.deepEqual(late.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r', '\r'], 'the late draft got its Enter')
+    assert.deepEqual(late.writes.map((w) => w.data), [keyed(SCENE_ENVELOPE), '\r', '\r'], 'the late draft got its Enter')
     // Never a sign: `unsent`, never `typed`, and no Enter pressed into an empty box.
     const never = fakeCtx([IDLE])
     assert.equal(await codeOf(codexConductor.send!(never.ctx, SCENE_ENVELOPE)), 'unsent')
-    assert.deepEqual(never.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r'])
+    assert.deepEqual(never.writes.map((w) => w.data), [keyed(SCENE_ENVELOPE), '\r'])
   })
 
   test('send and command write nothing over a card (a `y` in the text would approve)', async () => {
