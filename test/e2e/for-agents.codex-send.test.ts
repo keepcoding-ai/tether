@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
+import { USER_QUIET_MS } from '../../src/daemon/door/user-presence.ts'
 import { HostClient } from '../../src/procd/client.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { pidAlive } from './daemon-driver.ts'
@@ -167,7 +168,8 @@ test('send with the owner envelope, by the terminal, starts the turn of an idle 
   const pane = String(opened.data.pane)
   rig.seen.add((await rig.waitFor('the pane has a pid', async () => (await rig.state(pane))?.pid ? await rig.state(pane) : undefined))!.pid!)
   await rig.map([pane], [owner])
-  await client.request({ t: 'attach', slotId: pane, cols: 120, rows: 40 })
+  // 80 columns: the envelope line wraps in the composer, as on the owner's narrower terminal.
+  await client.request({ t: 'attach', slotId: pane, cols: 80, rows: 40 })
   await rig.waitFor('the agent at its prompt', async () => {
     const v = await rig.verb('read-screen', pane)
     return v.ok && v.data.state === 'idle' ? v : undefined
@@ -177,7 +179,8 @@ test('send with the owner envelope, by the terminal, starts the turn of an idle 
   // The envelope's header has the `·` separators; the line is long, as the owner's real one was.
   const sent = await rig.verb('send', pane, 'Sem usar ferramentas nem criar arquivos nesta pasta, responda só com a palavra: alfa-ok')
   assert.ok(sent.ok, `send: ${sent.err}`)
-  const st = await rig.state(pane)
+  const sentAt = Date.now()
+  const st =await rig.state(pane)
   assert.equal(sent.data.state, 'typed', `send: ${JSON.stringify(sent.data)} slot: ${JSON.stringify({ ...st, env: undefined })}`)
   const finished = new RegExp(`terminou · guia ${pane}`, 'g')
   const told = await rig.waitFor('the finish notice', () => ((rig.told().match(finished) ?? []).length >= 1 ? rig.told() : undefined), 90_000)
@@ -185,6 +188,30 @@ test('send with the owner envelope, by the terminal, starts the turn of an idle 
   assert.match(told.slice(told.lastIndexOf(`terminou · guia ${pane}`)), /alfa-ok/, 'the turn ran and the notice carries the answer')
   const la = await rig.verb('last-answer', pane)
   assert.match(String(la.data.text), /alfa-ok/)
+
+  // The second send in the SAME session: the first turn's history is on the screen above the composer, and the line wraps at 80 columns.
+  await rig.waitFor('the agent idle again', async () => {
+    const v = await rig.verb('read-screen', pane)
+    return v.ok && v.data.state === 'idle' && (await rig.state(pane))?.turn !== 'busy' ? v : undefined
+  })
+  // As in the owner's scene: the session RESUMED (restart), the first turn's history redrawn above the composer.
+  const oldPid = (await rig.state(pane))!.pid
+  await client.request({ t: 'restart', slotId: pane })
+  rig.seen.add(await rig.waitFor('the resumed pid', async () => { const s = await rig.state(pane); return s?.pid && s.pid !== oldPid && s.status === 'running' ? s.pid : undefined }))
+  await client.request({ t: 'attach', slotId: pane, cols: 80, rows: 40 })
+  await rig.waitFor('the resumed agent idle, with the history', async () => { const v = await rig.verb('read-screen', pane); return v.ok && v.data.state === 'idle' && /alfa-ok/.test(String(v.data.text)) ? v : undefined })
+  // The conductor's own keys count as the holder's typing: the terminal path opens again after USER_QUIET_MS of quiet since them.
+  await rig.waitFor('the holder quiet since the first send', () => (Date.now() >= sentAt + USER_QUIET_MS + 1000 ? true : undefined), 60_000)
+  const firstNotices = (rig.told().match(finished) ?? []).length
+  const second = await rig.verb('send', pane, 'Sem usar ferramentas nem criar arquivos nesta pasta, responda agora só com a palavra: beta-ok')
+  assert.ok(second.ok, `second send: ${second.err}`)
+  const st2 = await rig.state(pane)
+  assert.equal(second.data.state, 'typed', `second send: ${JSON.stringify(second.data)} slot: ${JSON.stringify({ ...st2, env: undefined })}`)
+  const told2 = await rig.waitFor('the second finish notice', () => ((rig.told().match(finished) ?? []).length > firstNotices ? rig.told() : undefined), 90_000)
+    .catch(async (e: Error) => { throw new Error(`${e.message.split('\n')[0]}\n--- screen ---\n${String((await rig.verb('read-screen', pane)).data.text)}\n--- told ---\n${rig.told().slice(-800)}\n--- conductor log ---\n${rig.daemonLog().split('\n').filter(l => /condutor /.test(l)).join('\n')}`) })
+  const secondNotice = told2.split(`terminou · guia ${pane}`)[firstNotices + 1] ?? ''
+  assert.match(secondNotice, /beta-ok/, 'the first notice after the second send is its turn with its answer: no "finished" without a turn')
+  assert.match(String((await rig.verb('last-answer', pane)).data.text), /beta-ok/)
   const log = rig.daemonLog().split('\n').filter(l => /condutor /.test(l)).join('\n')
   console.log(`# conductor log:\n${log}`)
   assert.deepEqual(await rig.teardown(), [], 'no process left behind')

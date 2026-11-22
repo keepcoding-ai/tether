@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { codexConductor, sendChunks } from '../../extensions/conductor-codex/conductor.ts'
 import { manifest } from '../../extensions/conductor-codex/daemon.ts'
-import { composerDraft, readCodexScreen } from '../../extensions/conductor-codex/screen.ts'
+import { alnum, composerDraft, echoedAbove, readCodexScreen } from '../../extensions/conductor-codex/screen.ts'
 import type { ConductorContext, ScreenText } from '../../extensions/for-agents/conductor-api.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 
@@ -134,7 +134,7 @@ describe('conductor-codex: the acts', () => {
     assert.deepEqual(sendChunks('a\nb\n'), [{ data: '\x1b[200~a\rb\x1b[201~' }, { data: '\r', waitMs: 400 }])
     assert.deepEqual(sendChunks('x\x1b[201~y'), [{ data: 'x[201~y' }, { data: '\r', waitMs: 300 }], 'an escape in the text never reaches the terminal')
     assert.throws(() => sendChunks('  \n'), { code: 'bad-request' })
-    const f = fakeCtx([IDLE])
+    const f = fakeCtx([[...HEAD, '› um', '  dois', '', '• Working (0s • esc to interrupt)', '', ...composer()]])
     const r = await codexConductor.send!(f.ctx, 'um\ndois')
     assert.equal(r.proven, true)
     assert.equal(f.writes.length, 2)
@@ -170,6 +170,66 @@ describe('conductor-codex: the acts', () => {
     f.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') stuck = false }
     await codexConductor.send!(f.ctx, envelope)
     assert.deepEqual(f.writes.map((w) => w.data), [envelope, '\r', '\r'])
+  })
+
+  // The screen of the owner's scene (22/11, Codex 0.169.0, resumed session, narrow terminal), read right after a `send` that answered
+  // `typed`: the envelope wrapped over two rows in the box, no Enter taken, the previous turn's history above.
+  const SCENE_ENVELOPE = '[tether · for-agents · de atrium (owner) · m_mws4vas17f453fcf58] Crie um arquivo ola2.txt com a palavra ola nesta pasta.'
+  const SCENE = [
+    '• Arquivo criado com sucesso: ola.txt (ola.txt) contendo ola.                   ',
+    '',
+    '  Worked for 34s • 13:58                                                        ',
+    '',
+    '                                                                                ',
+    '› [tether  for-agents  de atrium (owner)  m_mws4vas17f453fcf58] Crie um arquivo',
+    '  ola2.txt com a palavra ola nesta pasta.',
+    '',
+    '',
+    '  GPT-5.6-Luna low · ~\\AppData\\Local\\Temp\\tether-cena-J3ZmtN\\c3',
+    '                                                      ⚠ 3 warnings · f2 to view ',
+  ]
+  // Earlier in the scrollback: the previous message of the same owner (another id), which is not this one's echo.
+  const SCENE_HISTORY = ['› [tether  for-agents  de atrium (owner)  m_mws4old000000000000] Crie um arquivo', '  ola.txt com a palavra ola nesta pasta.', '']
+  const SCENE_TAKEN = [
+    ...SCENE.slice(0, 4),
+    '› [tether  for-agents  de atrium (owner)  m_mws4vas17f453fcf58] Crie um arquivo',
+    '  ola2.txt com a palavra ola nesta pasta.',
+    '',
+    '› Ask Codex to do anything',
+    '',
+    '  GPT-5.6-Luna low · ~\\AppData\\Local\\Temp\\tether-cena-J3ZmtN\\c3',
+  ]
+
+  test('the scene: the envelope wrapped over two rows is still in the box; the message is not echoed above the composer', () => {
+    assert.match(composerDraft(SCENE) ?? '', /^\[tether {2}for-agents {2}de atrium \(owner\) {2}m_mws4vas17f453fcf58\] Crie um arquivo$/)
+    assert.equal(echoedAbove(SCENE, SCENE_HISTORY, alnum(SCENE_ENVELOPE).slice(0, 60)), false, 'the draft and an older message are not the echo')
+    assert.equal(echoedAbove(SCENE_TAKEN, SCENE_HISTORY, alnum(SCENE_ENVELOPE).slice(0, 60)), true)
+  })
+
+  test('the scene: the stuck envelope gets its Enter again and the send ends only when the message shows taken', async () => {
+    const f = fakeCtx([SCENE])
+    const original = f.ctx.write
+    let stuck = true
+    f.ctx.screen = async (): Promise<ScreenText> => ({ screen: stuck ? SCENE : SCENE_TAKEN, history: SCENE_HISTORY, cols: 80, rows: 40, end: 0 })
+    f.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') stuck = false }
+    await codexConductor.send!(f.ctx, SCENE_ENVELOPE)
+    assert.deepEqual(f.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r', '\r'])
+  })
+
+  test('send: an empty box with no sign of the turn is not a sent message: it waits for one, and fails `unsent` past the deadline', async () => {
+    // The box looks empty first (the text not drawn yet), then shows the stuck text: the Enter is pressed then, and the turn shows.
+    const late = fakeCtx([IDLE])
+    let phase = 0
+    late.ctx.screen = async (): Promise<ScreenText> => ({ screen: phase === 0 ? IDLE : phase === 1 ? SCENE : SCENE_TAKEN, history: [], cols: 80, rows: 40, end: 0 })
+    const original = late.ctx.write
+    late.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') phase = 2 }
+    setTimeout(() => { if (phase === 0) phase = 1 }, 1000)
+    await codexConductor.send!(late.ctx, SCENE_ENVELOPE)
+    assert.deepEqual(late.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r', '\r'], 'the late draft got its Enter')
+    // Never a sign: `unsent`, never `typed`, and no Enter pressed into an empty box.
+    const never = fakeCtx([IDLE])
+    assert.equal(await codeOf(codexConductor.send!(never.ctx, SCENE_ENVELOPE)), 'unsent')
+    assert.deepEqual(never.writes.map((w) => w.data), [SCENE_ENVELOPE, '\r'])
   })
 
   test('send and command write nothing over a card (a `y` in the text would approve)', async () => {
