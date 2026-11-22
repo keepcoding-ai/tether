@@ -277,6 +277,7 @@ function connectDaemon(): Promise<void> {
       // Agent door: the desk map and the extensions' object data reach the renderer as they come; main's own mirror of the
       // object data is the extension host's (TetherMain.objects).
       client.on('desks', map => win?.webContents.send('tether:event', { t: 'desks', map }))
+      client.on('ext-event', e => win?.webContents.send('tether:event', { t: 'ext-event', ...e }))
       client.on('object', e => { extensionHost.objectEvent(e); win?.webContents.send('tether:event', { t: 'object', ...e }) })
       client.on('close', () => {
         if (daemon !== client) return
