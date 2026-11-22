@@ -47,16 +47,19 @@ function refuseOverCard(s: Seen, what: string): void {
   if (hasCard(s)) throw new ConductError('busy', `há um pedido na tela desta guia (${s.card.title || s.kind}): responda com \`answer\` antes de ${what}`)
 }
 
+/** Letters and digits only: the screen may show a typed separator (the envelope's `·`) as blank, so the match skips punctuation and spacing. */
+const alnum = (s: string): string => s.replace(/[^\p{L}\p{N}]+/gu, '')
+
 /**
  * After the text and its Enter: when the composer still holds the start of the text, Codex did not take the Enter; press it again
  * (only then, so a message is never sent twice). Returns how many extra Enters it took; throws `unsent` if the text stays.
  */
 async function ensureSubmitted(ctx: ConductorContext, text: string): Promise<number> {
-  const head = text.replace(/\s+/g, ' ').trim().slice(0, 24)
+  const head = alnum(text).slice(0, 20)
   for (let n = 0; n <= SUBMIT_RETRIES; n++) {
     await sleep(SUBMIT_CHECK_MS)
     const draft = composerDraft((await ctx.screen()).screen)
-    if (draft === undefined || !draft.replace(/\s+/g, ' ').startsWith(head)) return n
+    if (draft === undefined || !alnum(draft).startsWith(head)) return n
     if (n < SUBMIT_RETRIES) await ctx.write([{ data: '\r' }])
   }
   throw new ConductError('unsent', 'o texto ficou na caixa do Codex: o Enter não foi aceito')
