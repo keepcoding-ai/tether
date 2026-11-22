@@ -46,7 +46,7 @@ export class DoorHost implements DoorSeams {
   constructor(opts: DoorHostOptions) {
     this.opts = opts
     this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
-    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user') }))
+    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user'), typedAt: (slotId) => this.delivery.presence.typedAt(slotId, 'user') }))
     this.requests.register('read-screen', this.slotsService.handleReadScreen)
     this.desks = new DeskService({ log: (msg) => this.log(msg) })
     this.requests.register('desk-map', this.desks.handleMap)

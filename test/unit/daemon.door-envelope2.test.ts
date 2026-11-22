@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { deliveryMeta } from '../../src/daemon/door/channel-meta.ts'
 import { terminalHeader, terminalText } from '../../src/daemon/door/terminal-text.ts'
 import { checkMessage } from '../../src/daemon/door/delivery.ts'
+import { UserPresence } from '../../src/daemon/door/user-presence.ts'
 import { SlotsService } from '../../src/daemon/door/slots.ts'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
 import type { DeliveryMessage } from '../../src/daemon/door/types.ts'
@@ -44,6 +45,23 @@ test('checkMessage keeps to and ref and refuses a to that is not a list of text'
     assert.throws(() => checkMessage({ ...base, to: bad }), (e: unknown) => (e as { code?: string }).code === 'bad-request')
   }
   assert.throws(() => checkMessage({ ...base, ref: 5 }), (e: unknown) => (e as { code?: string }).code === 'bad-request')
+})
+
+test('UserPresence.typedAt: the person\'s key moves it, the agent\'s does not, a draft does not make it Infinity', () => {
+  const p = new UserPresence()
+  assert.equal(p.typedAt('s1'), undefined)
+  p.input('s1', 'ab', 1000, 'agent')
+  assert.equal(p.typedAt('s1'), undefined)
+  assert.equal(p.typedAt('s1', 'agent'), 1000)
+  p.input('s1', 'abc', 2000, 'user')
+  assert.equal(p.draft('s1', 'user'), true)
+  assert.equal(p.typedAt('s1'), 2000)
+  p.input('s1', 'd', 3000, 'agent')
+  assert.equal(p.typedAt('s1'), 2000)
+  p.input('s1', 'e', 4000, 'user')
+  assert.equal(p.typedAt('s1'), 4000)
+  p.input('s1', '\x1b[I', 5000, 'user')
+  assert.equal(p.typedAt('s1'), 4000)
 })
 
 test('userTypedAt reads the presence: the person\'s key only, undefined when never or without presence', () => {
