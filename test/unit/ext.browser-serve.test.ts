@@ -11,7 +11,7 @@ const profile = (id: string, browser?: unknown): Profile => ({ id, name: id, age
 const profiles = [profile('marked', true), profile('unmarked'), profile('off-flag', false)]
 const api = (serveToAgents?: unknown) => ({
   settings: { get: <T,>(key: string) => (key === 'extensions' && serveToAgents !== undefined ? ({ browser: { serveToAgents } } as T) : undefined) },
-  profiles: { get: (id: string) => profiles.find(p => p.id === id) },
+  profiles: { get: (id: string) => profiles.find(p => p.id === id), defaultFor: () => undefined },
 })
 const marked = { profileId: 'marked' }
 const unmarked = { profileId: 'unmarked' }

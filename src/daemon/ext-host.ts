@@ -11,7 +11,7 @@ import { agentRegistry, type AgentRegistry } from '../agents/registry.ts'
 import type { LaunchPlan } from '../agents/types.ts'
 import type { SlotMeta } from '../core/event.ts'
 import { perf } from '../core/perf.ts'
-import type { Profile } from '../core/profile.ts'
+import { defaultProfileFor, type Profile } from '../core/profile.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import type { SlotState } from './protocol.ts'
 import { BRAND } from '../../app/shared/brand.ts'
@@ -182,7 +182,10 @@ export class DaemonExtensionHost implements IDisposable {
       doctor: { register: (check) => { this.checks.push(check); return own.add(removing(this.checks, check)) } },
       traces: { register: (source) => { this.traceSources.push(source); return own.add(removing(this.traceSources, source)) } },
       settings: { get: <T>(key: string): T | undefined => treeValueAt(this.userSettings.get(), key) as T | undefined },
-      profiles: { get: (pid) => this.profileStore.profiles().find((p) => p.id === pid) },
+      profiles: {
+        get: (pid) => this.profileStore.profiles().find((p) => p.id === pid),
+        defaultFor: (agent) => defaultProfileFor(this.profileStore.profiles(), agent),
+      },
       io,
       log: (msg) => log(`[${id}] ${msg}`),
       onSlot: (l) => {

@@ -84,7 +84,11 @@ export interface TetherDaemon extends DoorApi {
   /** Reads a key of <home>/settings.json (undefined when absent or unreadable). */
   settings: { get<T>(key: string): T | undefined }
   /** The launch profiles (<home>/profiles.json, re-read when it changes on disk). */
-  profiles: { get(id: string): Profile | undefined }
+  profiles: {
+    get(id: string): Profile | undefined
+    /** The launch profile marked default for an engine (what opening a pane of that engine from the app uses). */
+    defaultFor(agent: string): Profile | undefined
+  }
   /** The disk facade: the only way a daemon extension reads or writes files. */
   io: DaemonIo
   /** tetherd.log, prefixed with the extension's id. */

@@ -433,7 +433,7 @@ describe('web-bridge: daemon host (real vendored bundle, temp home)', () => {
       traces: { register: () => toDisposable(() => {}) },
       onStarted: l => { started.push(l); return toDisposable(() => {}) },
       settings: { get: () => undefined },
-      profiles: { get: () => undefined },
+      profiles: { get: () => undefined, defaultFor: () => undefined },
       io: fsIo,
       log: m => log.push(m),
       onSlot: () => toDisposable(() => {}),
