@@ -235,6 +235,46 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
     assert.equal(w.delivered.length, 1)
   })
 
+  // The core's silence heuristic can say `done` for a Codex whose Enter did not take (the box redraws, nothing ran). The
+  // `done` lands while the send is still being checked; it is told only if that send did not fail.
+  test('a send left unsent, then the heuristic done: nothing is told, and a line says why', async () => {
+    const end = store.beginSend('p1')
+    w.raise('p1', 'done', { idleSince: 'T1' })
+    await settle()
+    assert.equal(w.delivered.length, 0, 'held while the send is checked')
+    end(true)
+    await settle()
+    assert.equal(w.delivered.length, 0)
+    assert.ok(w.events.some((e) => e.startsWith('log:aviso de p1 descartado')))
+  })
+
+  test('a send that worked, then done: the "terminou" goes out', async () => {
+    const end = store.beginSend('p1')
+    w.raise('p1', 'done', { idleSince: 'T1' })
+    end(false)
+    await settle()
+    assert.equal(w.delivered.length, 1)
+    assert.match(w.delivered[0]!.msg.body, /^terminou · guia p1/)
+  })
+
+  test('an unsent send, then a send that worked, then done: the "terminou" goes out', async () => {
+    store.beginSend('p1')(true)
+    store.beginSend('p1')(false)
+    w.raise('p1', 'done', { idleSince: 'T1' })
+    await settle()
+    assert.equal(w.delivered.length, 1)
+  })
+
+  test('a failed send explains one done only: the next turn is told', async () => {
+    store.beginSend('p1')(true)
+    w.raise('p1', 'done', { idleSince: 'T1' })
+    await settle()
+    assert.equal(w.delivered.length, 0)
+    w.raise('p1', 'done', { idleSince: 'T2' })
+    await settle()
+    assert.equal(w.delivered.length, 1)
+  })
+
   test('a new turn is a new edge; the owner acting and the attention coming back is one too', async () => {
     w.raise('p1', 'done', { idleSince: 'T1' })
     await settle()

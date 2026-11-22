@@ -21,6 +21,8 @@ describe('for-agents: send with the envelope (X5)', () => {
   let delivered: string[]
   let receipt: Record<string, unknown>
   let logs: string[]
+  /** What the verb told the store about each send: true = failed (the text may be left in the box). */
+  let outcomes: boolean[]
 
   const fake: Conductor = {
     id: 'fake',
@@ -48,6 +50,7 @@ describe('for-agents: send with the envelope (X5)', () => {
       effectiveOf: () => ({ commander: OWNER, via: 'pane', hand }),
       inventoryOf: () => ({}),
       recordLast: async () => ({}),
+      beginSend: () => (failed: boolean) => { outcomes.push(failed) },
     },
     gate: {},
     readers: {},
@@ -69,7 +72,7 @@ describe('for-agents: send with the envelope (X5)', () => {
     ;(conductorRegistry as unknown as { list: Conductor[] }).list.push(...setAside)
   })
   beforeEach(() => {
-    path = 'terminal'; hand = 'owner'; detected = { state: 'idle' }; typed = []; delivered = []; logs = []
+    path = 'terminal'; hand = 'owner'; detected = { state: 'idle' }; typed = []; delivered = []; logs = []; outcomes = []
     sendImpl = async () => {}
     receipt = { id: 'm_x', slotId: PANE, state: 'typed', at: '' }
   })
@@ -134,5 +137,18 @@ describe('for-agents: send with the envelope (X5)', () => {
     assert.equal(r.isError, true)
     assert.equal(codeOf(r), 'unsent')
     assert.equal((r.data as { id?: string }).id, 'm_5')
+    assert.deepEqual(outcomes, [true])
+  })
+
+  test('the store is told whether each send failed: success no, unsent and unconfirmed yes, busy and with-user no', async () => {
+    await run()
+    sendImpl = async () => { throw new Error('o texto continua na caixa') }
+    await run()
+    sendImpl = async () => { throw new ConductError('busy', 'o motor está em turno') }
+    await run()
+    sendImpl = async () => { throw new ConductError('with-user', 'com a pessoa') }
+    receipt = { id: 'm_6', slotId: PANE, state: 'queued', at: '' }
+    await run()
+    assert.deepEqual(outcomes, [false, true, false, false])
   })
 })
