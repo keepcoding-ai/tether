@@ -1,11 +1,13 @@
 // The channels' record (extensions/channels/daemon/store.ts) over the real `api.io` (fsIo, node's async file API) in a
-// temporary home: the index written atomically at every change of structure, and the reverse index agent -> channels.
+// temporary home: the index written atomically at every change of structure, the reverse index agent -> channels, and
+// the lines (rotation every 500, seq recovered on reopen, history across files, the tail in memory).
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fsIo } from '../../src/daemon/ext-io.ts'
+import type { DaemonIo } from '../../src/daemon/ext-api.ts'
 import { openStore, type ChannelStore } from '../../extensions/channels/daemon/store.ts'
 import { agentOwnerOf, isMember, isMuted, isRemoved, ownerOf, USER, type Channel } from '../../extensions/channels/rules.ts'
 
@@ -243,5 +245,201 @@ describe('index and structure', () => {
     assert.deepEqual(Object.keys(disk.members).sort(), [A, B, C].sort())
     assert.ok(disk.members[A]!.muted)
     assert.equal(disk.title, 'T')
+  })
+})
+
+/** The real io, counting what reads from disk and able to fail the next append. */
+function counting(real: DaemonIo): { io: DaemonIo; reads: () => number; failNextAppend: () => void } {
+  let n = 0
+  let fail = false
+  const io: DaemonIo = {
+    ...real,
+    readText: (p) => (n++, real.readText(p)),
+    tryReadText: (p) => (n++, real.tryReadText(p)),
+    readdir: (p) => (n++, real.readdir(p)),
+    appendText: (p, t) => {
+      if (fail) {
+        fail = false
+        return Promise.reject(new Error('disk full'))
+      }
+      return real.appendText(p, t)
+    },
+  }
+  return { io, reads: () => n, failNextAppend: () => { fail = true } }
+}
+
+const say = (n: number): { kind: 'message'; from: { id: string; name: string; role: 'member' }; body: string } => ({
+  kind: 'message', from: { id: A, name: 'claude · conferente', role: 'member' }, body: `fala ${n}`,
+})
+
+async function fill(store: ChannelStore, id: string, count: number): Promise<void> {
+  for (let n = 1; n <= count; n++) await store.append(id, say(n))
+}
+
+async function linesIn(home: string, id: string, file: string): Promise<string[]> {
+  return (await fsIo.readText(join(home, 'channels', id, file))).split('\n').filter(Boolean)
+}
+
+describe('lines, files and the tail', () => {
+  test('append numbers the lines and writes 500 per file, the 501st opening the next', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    const first = await store.append('c_1', say(1))
+    assert.equal(first.seq, 1)
+    assert.match(first.at, /^2026-11-22T/)
+    await fill(store, 'c_1', 499) // 500 lines now
+    assert.deepEqual((await fsIo.readdir(join(home, 'channels', 'c_1'))).map((e) => e.name), ['000001.jsonl'])
+    const last = await store.append('c_1', { ...say(501), at: '2026-01-01T00:00:00.000Z', replyTo: 3, to: ['soul · bancada'] })
+    assert.equal(last.seq, 501)
+    assert.equal(last.at, '2026-01-01T00:00:00.000Z')
+    assert.deepEqual((await fsIo.readdir(join(home, 'channels', 'c_1'))).map((e) => e.name).sort(), ['000001.jsonl', '000002.jsonl'])
+    const one = await linesIn(home, 'c_1', '000001.jsonl')
+    const two = await linesIn(home, 'c_1', '000002.jsonl')
+    assert.equal(one.length, 500)
+    assert.equal(JSON.parse(one[499]!).seq, 500)
+    assert.deepEqual(two.map((l) => JSON.parse(l).seq), [501])
+    assert.deepEqual(JSON.parse(two[0]!).to, ['soul · bancada'])
+  })
+
+  test('seq is recovered from the last line when the store is reopened, in the next file when the last is full', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    await fill(store, 'c_1', 230)
+    await fill(store, 'c_2', 500)
+    const again = await openStore(fsIo, home, options)
+    assert.equal(await again.lastSeq('c_1'), 230)
+    assert.equal((await again.append('c_1', say(231))).seq, 231)
+    assert.equal(await again.lastSeq('c_unknown'), 0)
+    assert.equal((await again.append('c_2', say(501))).seq, 501)
+    assert.deepEqual((await linesIn(home, 'c_2', '000002.jsonl')).map((l) => JSON.parse(l).seq), [501])
+    assert.equal((await linesIn(home, 'c_1', '000001.jsonl')).length, 231)
+  })
+
+  test('a torn last line is skipped on reading and the next append starts on a line of its own', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    await fill(store, 'c_1', 3)
+    await fsIo.appendText(join(home, 'channels', 'c_1', '000001.jsonl'), '{"seq":4,"at":"2026')
+    const again = await openStore(fsIo, home, options)
+    assert.equal(await again.lastSeq('c_1'), 3)
+    const line = await again.append('c_1', say(4))
+    assert.equal(line.seq, 4)
+    assert.deepEqual((await again.history('c_1')).map((l) => l.seq), [1, 2, 3, 4])
+    const fresh = await openStore(fsIo, home, options)
+    assert.deepEqual((await fresh.history('c_1')).map((l) => l.seq), [1, 2, 3, 4])
+  })
+
+  test('history(before, limit) crosses two files, from disk', async () => {
+    const home = await newHome()
+    await fill(await openStore(fsIo, home, options), 'c_1', 600)
+    const store = await openStore(fsIo, home, options)
+    const page = await store.history('c_1', 531, 200) // 331..530: the tail (401..600) does not cover it
+    assert.equal(page.length, 200)
+    assert.equal(page[0]!.seq, 331)
+    assert.equal(page[199]!.seq, 530)
+    assert.deepEqual(page.map((l) => l.seq), Array.from({ length: 200 }, (_, i) => 331 + i))
+    // the page before that one goes back through the first file only, and before 1 is empty
+    assert.deepEqual((await store.history('c_1', 331, 5)).map((l) => l.seq), [326, 327, 328, 329, 330])
+    assert.deepEqual(await store.history('c_1', 1), [])
+    assert.deepEqual((await store.history('c_1', 1000, 2)).map((l) => l.seq), [599, 600])
+    assert.equal((await store.history('c_1')).length, 200)
+    assert.equal((await store.history('c_nothing')).length, 0)
+  })
+
+  test('since(seq) reads forward, from the tail and across files', async () => {
+    const home = await newHome()
+    await fill(await openStore(fsIo, home, options), 'c_1', 600)
+    const store = await openStore(fsIo, home, options)
+    assert.deepEqual((await store.since('c_1', 596)).map((l) => l.seq), [597, 598, 599, 600])
+    assert.deepEqual((await store.since('c_1', 600)), [])
+    const old = await store.since('c_1', 490, 20)
+    assert.deepEqual(old.map((l) => l.seq), Array.from({ length: 20 }, (_, i) => 491 + i))
+    assert.equal((await store.since('c_1', 0, 3)).length, 3)
+  })
+
+  test('the tail serves history and since without touching the disk', async () => {
+    const home = await newHome()
+    const c = counting(fsIo)
+    const store = await openStore(c.io, home, options)
+    await fill(store, 'c_1', 40)
+    const before = c.reads()
+    assert.equal((await store.history('c_1')).length, 40)
+    assert.deepEqual((await store.since('c_1', 35)).map((l) => l.seq), [36, 37, 38, 39, 40])
+    assert.equal(await store.lastSeq('c_1'), 40)
+    assert.deepEqual((await store.history('c_1', 5)).map((l) => l.seq), [1, 2, 3, 4])
+    assert.equal(c.reads(), before)
+    // the tail keeps only the last 200, and appending keeps it in step
+    await fill(store, 'c_1', 300)
+    const latest = await store.history('c_1')
+    assert.equal(latest[0]!.seq, 141)
+    assert.equal(latest[199]!.seq, 340)
+    assert.equal(c.reads(), before, 'appending to a cached channel reads nothing either')
+  })
+
+  test('at most 16 channels keep a tail; the least recently used leaves, and reading it goes back to the disk', async () => {
+    const home = await newHome()
+    const c = counting(fsIo)
+    const store = await openStore(c.io, home, options)
+    const ids = Array.from({ length: 17 }, (_, i) => `c_${i + 1}`)
+    for (const id of ids) await fill(store, id, 3)
+    assert.equal(store.cachedChannels().length, 16)
+    assert.ok(!store.cachedChannels().includes('c_1'))
+    assert.equal(store.cachedChannels()[0], 'c_2')
+
+    // using c_2 makes c_3 the least used
+    await store.history('c_2')
+    await fill(store, 'c_18', 1)
+    assert.ok(store.cachedChannels().includes('c_2'))
+    assert.ok(!store.cachedChannels().includes('c_3'))
+    assert.equal(store.cachedChannels().length, 16)
+
+    const before = c.reads()
+    await store.history('c_2')
+    assert.equal(c.reads(), before, 'a cached channel reads nothing')
+    const cold = await store.history('c_1')
+    assert.deepEqual(cold.map((l) => l.seq), [1, 2, 3])
+    assert.ok(c.reads() > before, 'an evicted channel is read back from disk')
+    assert.equal(store.cachedChannels().length, 16)
+  })
+
+  test('an evicted channel keeps its seq: appending to it does not read the disk and the numbering goes on', async () => {
+    const home = await newHome()
+    const c = counting(fsIo)
+    const store = await openStore(c.io, home, { ...options, tailChannels: 1 })
+    await fill(store, 'c_1', 5)
+    await fill(store, 'c_2', 2) // c_1 leaves the tail
+    assert.deepEqual(store.cachedChannels(), ['c_2'])
+    const before = c.reads()
+    assert.equal((await store.append('c_1', say(6))).seq, 6)
+    assert.equal(c.reads(), before)
+    assert.deepEqual((await store.history('c_1')).map((l) => l.seq), [1, 2, 3, 4, 5, 6])
+  })
+
+  test('concurrent appends to one channel get distinct, ordered seqs', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    const lines = await Promise.all(Array.from({ length: 60 }, (_, i) => store.append('c_1', say(i + 1))))
+    assert.deepEqual(lines.map((l) => l.seq), Array.from({ length: 60 }, (_, i) => i + 1))
+    assert.deepEqual(lines.map((l) => l.body), Array.from({ length: 60 }, (_, i) => `fala ${i + 1}`))
+    assert.equal((await linesIn(home, 'c_1', '000001.jsonl')).length, 60)
+  })
+
+  test('a failed write consumes no seq and leaves the channel usable', async () => {
+    const home = await newHome()
+    const c = counting(fsIo)
+    const store = await openStore(c.io, home, options)
+    await fill(store, 'c_1', 2)
+    c.failNextAppend()
+    await assert.rejects(() => store.append('c_1', say(3)), /disk full/)
+    assert.equal((await store.append('c_1', say(3))).seq, 3)
+    assert.deepEqual((await store.history('c_1')).map((l) => l.seq), [1, 2, 3])
+  })
+
+  test('a line with a multi-line body stays one line on disk', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    await store.append('c_1', { ...say(1), body: 'a\nb\r\nc' })
+    assert.equal((await linesIn(home, 'c_1', '000001.jsonl')).length, 1)
+    assert.equal((await openStore(fsIo, home, options).then((s) => s.history('c_1')))[0]!.body, 'a\nb\r\nc')
   })
 })

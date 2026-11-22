@@ -4,25 +4,40 @@
 //   <home>/channels/index.json           { version: 1, channels }   atomic, rewritten only when the structure changes
 //   <home>/channels/<channelId>/000001.jsonl   lines 1..500; 000002.jsonl lines 501..1000, and so on
 //
-// Memory is bounded by the number of channels, never by the number of lines: the index (small) and the reverse index
-// agent -> channels. No timer lives here.
+// Memory is bounded by the number of channels, never by the number of lines: the index (small), the reverse index agent ->
+// channels, one `{ seq, needsNewline }` per channel that was touched, and the tail (the last TAIL_LINES lines) of at most
+// TAIL_CHANNELS channels, the least recently used one leaving when a 17th arrives. No timer lives here.
 import { randomInt } from 'node:crypto'
 import type { DaemonIo } from '../../../src/daemon/ext-api.ts'
 import {
-  endsOwnership, isRoomName, type AgentId, type Channel, type ChannelId, type ChannelOwner, type Member, type Who, USER, deskChannelId,
+  endsOwnership, isRoomName, type AgentId, type Channel, type ChannelId, type ChannelOwner, type Line, type Member, type Who, USER, deskChannelId,
 } from '../rules.ts'
 
 export const INDEX_VERSION = 1
+/** Lines per file: the 501st opens the next one. */
+export const LINES_PER_FILE = 500
+/** Lines of a channel kept in memory. */
+export const TAIL_LINES = 200
+/** Channels whose tail is kept in memory. */
+export const TAIL_CHANNELS = 16
+/** The default page of `history` and `since`. */
+export const PAGE = 200
 
 export type StoreError = 'unknown-channel' | 'name-taken' | 'bad-name' | 'exists' | 'not-member'
 export type Failure = { ok: false; error: StoreError }
 export type Done<T> = ({ ok: true } & T) | Failure
+
+/** A line to append: the store gives it `seq` and, unless given, `at`. */
+export type NewLine = Omit<Line, 'seq' | 'at'> & { at?: string }
 
 export interface StoreOptions {
   now?: () => Date
   /** A fresh channel id; tests make it predictable. Default 'c_<base36>'. */
   newId?: () => ChannelId
   log?: (msg: string) => void
+  linesPerFile?: number
+  tailLines?: number
+  tailChannels?: number
 }
 
 export interface CreateInput {
@@ -69,6 +84,16 @@ export interface ChannelStore {
   /** Writes the index when `markSeen` left it dirty. */
   flush(): Promise<void>
 
+  /** Appends one line (the next `seq`), after it is on disk it is in the tail. */
+  append(id: ChannelId, line: NewLine): Promise<Line>
+  /** The last seq of the channel (0: no line yet). */
+  lastSeq(id: ChannelId): Promise<number>
+  /** Up to `limit` lines with seq < `before` (the latest ones when absent), ascending. Crosses files. */
+  history(id: ChannelId, before?: number, limit?: number): Promise<Line[]>
+  /** Up to `limit` lines with seq > `since`, ascending (`channels read --since`). */
+  since(id: ChannelId, since: number, limit?: number): Promise<Line[]>
+  /** Channels whose tail is in memory, least recently used first. */
+  cachedChannels(): ChannelId[]
 }
 
 interface IndexFile {
@@ -76,11 +101,41 @@ interface IndexFile {
   channels: Record<ChannelId, Channel>
 }
 
+interface Cold {
+  seq: number
+  /** The newest file does not end with a newline (a torn write): the next append starts one. */
+  needsNewline: boolean
+}
+
+const fileName = (n: number): string => `${String(n).padStart(6, '0')}.jsonl`
+const FILE_RE = /^(\d{6})\.jsonl$/
+
+function parseLines(text: string): Line[] {
+  const out: Line[] = []
+  for (const raw of text.split('\n')) {
+    if (!raw) continue
+    try {
+      const v = JSON.parse(raw) as Line
+      if (v && typeof v.seq === 'number') out.push(v)
+    } catch {
+      // a torn line: it is skipped, never repaired
+    }
+  }
+  return out
+}
+
+const missing = (e: unknown): boolean => (e as { code?: string } | undefined)?.code === 'ENOENT'
+
 export async function openStore(io: DaemonIo, home: string, options: StoreOptions = {}): Promise<ChannelStore> {
   const now = options.now ?? (() => new Date())
+  const perFile = options.linesPerFile ?? LINES_PER_FILE
+  const tailLines = options.tailLines ?? TAIL_LINES
+  const tailChannels = options.tailChannels ?? TAIL_CHANNELS
   const log = options.log ?? (() => {})
   const root = `${home.replace(/[\\/]+$/, '')}/channels`
   const indexPath = `${root}/index.json`
+  const dirOf = (id: ChannelId): string => `${root}/${id}`
+  const fileNo = (seq: number): number => Math.floor((seq - 1) / perFile) + 1
 
   // ---- the index ----
   const channels = new Map<ChannelId, Channel>()
@@ -144,6 +199,87 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
   const findOpen = (name: string): Channel | undefined => {
     for (const ch of channels.values()) if (!ch.closed && ch.name === name) return ch
     return undefined
+  }
+
+  // ---- the lines ----
+  const lanes = new Map<ChannelId, Promise<void>>()
+  /** One at a time per channel: an append never races a tail load of the same channel. */
+  function lane<T>(id: ChannelId, fn: () => Promise<T>): Promise<T> {
+    const run = (lanes.get(id) ?? Promise.resolve()).then(fn)
+    const settled = run.then(() => {}, () => {})
+    lanes.set(id, settled)
+    void settled.then(() => { if (lanes.get(id) === settled) lanes.delete(id) })
+    return run
+  }
+
+  const colds = new Map<ChannelId, Cold>()
+  /** Map order is the use order: first is the least recently used. */
+  const tails = new Map<ChannelId, Line[]>()
+  const touch = (id: ChannelId, lines: Line[]): void => {
+    tails.delete(id)
+    tails.set(id, lines)
+    while (tails.size > tailChannels) tails.delete(tails.keys().next().value as ChannelId)
+  }
+
+  async function fileNumbers(id: ChannelId): Promise<number[]> {
+    let entries: Array<{ name: string; isFile: boolean }>
+    try {
+      entries = await io.readdir(dirOf(id))
+    } catch (e) {
+      if (missing(e)) return []
+      throw e
+    }
+    const nums: number[] = []
+    for (const e of entries) {
+      const m = e.isFile ? FILE_RE.exec(e.name) : null
+      if (m) nums.push(Number(m[1]))
+    }
+    return nums.sort((a, b) => a - b)
+  }
+
+  /** The last lines of the channel from disk (newest files first until enough), and what the newest file needs. */
+  async function loadTail(id: ChannelId): Promise<{ lines: Line[]; cold: Cold }> {
+    const nums = await fileNumbers(id)
+    let lines: Line[] = []
+    let needsNewline = false
+    for (let i = nums.length - 1; i >= 0 && lines.length < tailLines; i--) {
+      const body = (await io.tryReadText(`${dirOf(id)}/${fileName(nums[i]!)}`)) ?? ''
+      if (i === nums.length - 1) needsNewline = body.length > 0 && !body.endsWith('\n')
+      lines = parseLines(body).concat(lines)
+    }
+    if (lines.length > tailLines) lines = lines.slice(lines.length - tailLines)
+    return { lines, cold: { seq: lines.length ? lines[lines.length - 1]!.seq : 0, needsNewline } }
+  }
+
+  /** The channel's tail: from memory, or read once and kept. Inside the lane. */
+  async function warm(id: ChannelId): Promise<Line[]> {
+    const have = tails.get(id)
+    if (have) {
+      touch(id, have)
+      return have
+    }
+    const { lines, cold } = await loadTail(id)
+    colds.set(id, cold)
+    touch(id, lines)
+    return lines
+  }
+
+  /** Lines lo..hi from the files they live in. Inside the lane. */
+  async function range(id: ChannelId, lo: number, hi: number): Promise<Line[]> {
+    const out: Line[] = []
+    for (let n = fileNo(lo); n <= fileNo(hi); n++) {
+      const body = await io.tryReadText(`${dirOf(id)}/${fileName(n)}`)
+      if (body) for (const l of parseLines(body)) if (l.seq >= lo && l.seq <= hi) out.push(l)
+    }
+    return out.sort((a, b) => a.seq - b.seq)
+  }
+
+  async function slice(id: ChannelId, lo: number, hi: number): Promise<Line[]> {
+    if (hi < lo || hi < 1) return []
+    const tail = await warm(id)
+    const first = tail.length ? tail[0]!.seq : 1
+    if (lo >= first || first === 1) return tail.filter((l) => l.seq >= lo && l.seq <= hi)
+    return range(id, lo, hi)
   }
 
   // ---- structure ----
@@ -310,6 +446,55 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
       if (dirty) await persist()
     },
 
+    append(id, input) {
+      return lane(id, async () => {
+        let cold = colds.get(id)
+        if (!cold) {
+          await io.mkdirp(dirOf(id))
+          await warm(id)
+          cold = colds.get(id)!
+        }
+        const line: Line = { ...input, seq: cold.seq + 1, at: input.at ?? stamp() }
+        const prefix = cold.needsNewline ? '\n' : ''
+        await io.appendText(`${dirOf(id)}/${fileName(fileNo(line.seq))}`, `${prefix}${JSON.stringify(line)}\n`)
+        cold.seq = line.seq
+        cold.needsNewline = false
+        const tail = tails.get(id)
+        if (tail) {
+          tail.push(line)
+          if (tail.length > tailLines) tail.splice(0, tail.length - tailLines)
+          touch(id, tail)
+        }
+        return line
+      })
+    },
+
+    lastSeq(id) {
+      return lane(id, async () => {
+        if (!colds.has(id)) await warm(id)
+        return colds.get(id)!.seq
+      })
+    },
+
+    history(id, before, limit = PAGE) {
+      return lane(id, async () => {
+        await warm(id)
+        const last = colds.get(id)!.seq
+        const hi = before === undefined ? last : Math.min(before - 1, last)
+        return slice(id, Math.max(1, hi - limit + 1), hi)
+      })
+    },
+
+    since(id, since, limit = PAGE) {
+      return lane(id, async () => {
+        await warm(id)
+        const last = colds.get(id)!.seq
+        const lo = Math.max(1, since + 1)
+        return slice(id, lo, Math.min(last, lo + limit - 1))
+      })
+    },
+
+    cachedChannels: () => [...tails.keys()],
   }
   return store
 }
