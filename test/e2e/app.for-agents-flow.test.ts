@@ -93,6 +93,11 @@ function fakeConductor(): Conductor {
       return { state: ctx.slot()?.turn === 'busy' ? 'busy' : 'idle' }
     },
     answer: async (ctx, choice) => { await ctx.write([{ data: ({ yes: '1', always: '2', no: '3' } as Record<string, string>)[choice] ?? choice }]); return { value: undefined, proven: true } },
+    read: async (ctx, opts) => {
+      const t = await ctx.screen()
+      const lines = t.screen.join('\n').trimEnd().split('\n')
+      return { text: (opts.lines ? lines.slice(-opts.lines) : lines).join('\n'), meta: { cols: t.cols, rows: t.rows, end: t.end } }
+    },
     lastAnswer: async ctx => {
       const lines = (await textOf(ctx)).split('\n').filter(l => /^RESP/.test(l))
       const last = lines.at(-1)
@@ -212,6 +217,13 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     /** The engine's report of the end of a turn (a fake has none): the same signal the engines' reports give. */
     const endTurn = (id: string): void => api.attention.signal(id, 'done')
 
+    /** The owner is a fake with no report of its own: a notice typed into it opens its turn, and the next one waits for that turn to end. The test ends it, as the engine's report would. */
+    const noticed = (re: RegExp, what: string, ms = 30_000): Promise<void> => until(() => {
+      if (re.test(told())) return true
+      if (api.slots.get(A)?.turn === 'busy') endTurn(A)
+      return false
+    }, what, ms)
+
     // ---- 1. give the desk `cena` to Atrium: the gesture of the pill menu ----
     const startView = await view()
     await page.locator(`#desk-switch .seg[data-desk="${D2}"]`).click({ button: 'right' })
@@ -226,7 +238,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     assert.deepEqual(await view(), startView, 'giving the desk changed neither the visible desk nor the active pane')
     // The notices reach the owner by its own pane ("de si").
     await api.objects.set('pane', A, 'owner', { owner: A, since: new Date().toISOString(), givenBy: 'user' })
-    await until(() => /você recebeu a mesa/.test(told()), 'the owner told it received the desk')
+    await noticed(/você recebeu a mesa/, 'the owner told it received the desk')
     await bellClean('1')
 
     // ---- 2. list: the desk is there, with no guias yet ----
@@ -259,7 +271,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     await until(() => /RESP 1: .*pedido um/.test(screenOf(P1)), 'the fake answered')
     assert.match(screenOf(P1), /de Atrium \(owner\)|pedido um/, 'the request reached the guia')
     endTurn(P1)
-    await until(() => count(new RegExp(`terminou · guia ${P1}`, 'g')) >= 1, 'the finish notice at the owner')
+    await noticed(new RegExp(`terminou · guia ${P1}`), 'the finish notice at the owner')
     await bellClean('4')
 
     // ---- 5. last-answer and read-screen ----
@@ -275,7 +287,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     // ---- 6. the permission card: the owner is told, answers ----
     const s3 = await verb('send', P3, 'cria o arquivo')
     assert.ok(s3.ok, s3.err)
-    await until(() => count(new RegExp(`pede permissão · guia ${P3}`, 'g')) >= 1, 'the permission request at the owner', 45_000)
+    await noticed(new RegExp(`pede permissão · guia ${P3}`), 'the permission request at the owner', 45_000)
     assert.match(told(), /Opções: yes · always · no/)
     const card = await verb('read-screen', P3)
     assert.equal(card.data.state, 'permission')
@@ -283,7 +295,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     assert.ok(yes.ok, yes.err)
     await until(() => /CARD CLOSED: yes/.test(screenOf(P3)), 'the card closed by the answer')
     endTurn(P3)
-    await until(() => count(new RegExp(`terminou · guia ${P3}`, 'g')) >= 1, 'the finish notice of the card guia')
+    await noticed(new RegExp(`terminou · guia ${P3}`), 'the finish notice of the card guia')
     await bellClean('6')
 
     // ---- 7. the person takes `fake · bancada` by typing; the owner's send is queued; she gives it back ----
@@ -294,7 +306,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     await page.keyboard.type('x')
     await until(() => (api.objects.get<{ with: string; by: string }>('pane', P2, 'hand')?.with) === 'user', 'the hand with the user')
     assert.equal(api.objects.get<{ by: string }>('pane', P2, 'hand')!.by, 'typing')
-    await until(() => /o usuário tomou a guia fake · bancada/.test(told()), 'the owner told the guia was taken')
+    await noticed(/o usuário tomou a guia fake · bancada/, 'the owner told the guia was taken')
     const taken = await view()
     const offset = screenOf(P2).length
     const q = await verb('send', P2, 'pedido depois')
@@ -310,11 +322,11 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     await page.waitForSelector('#ctx-menu li')
     await page.locator('#ctx-menu > li', { hasText: /^\s*Devolver a Atrium\s*$/ }).click()
     await until(() => api.objects.get('pane', P2, 'hand') === undefined, 'the hand given back')
-    await until(() => /o usuário devolveu a guia fake · bancada/.test(told()), 'the owner told the guia was given back')
+    await noticed(/o usuário devolveu a guia fake · bancada/, 'the owner told the guia was given back')
     await until(() => /RESP 1: pedido depois|pedido depois/.test(screenOf(P2)), 'the queued message typed after the give back', 45_000)
     await until(() => /RESP 1: .*pedido depois/.test(screenOf(P2)), 'the fake answered the message that waited')
     endTurn(P2)
-    await until(() => count(new RegExp(`terminou · guia ${P2}`, 'g')) >= 1, 'the finish notice of the guia that waited')
+    await noticed(new RegExp(`terminou · guia ${P2}`), 'the finish notice of the guia that waited')
     await page.evaluate(id => window.__tether.switchDesk(id), D1)
     await bellClean('7')
 
