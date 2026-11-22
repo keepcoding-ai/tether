@@ -9,7 +9,7 @@
 import { slotAnswerPath } from '../../src/core/paths.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { ConductError, type Conductor, type ConductorContext, type ConductorTarget, type Detected, type LastAnswer, type Proven } from '../for-agents/conductor-api.ts'
-import { composerDraft, hasAll, NEW_CONVERSATION_DIALOG, readCodexScreen, UPDATE_DIALOG, type ParsedOption, type Seen } from './screen.ts'
+import { alnum, composerDraft, echoedAbove, hasAll, NEW_CONVERSATION_DIALOG, readCodexScreen, UPDATE_DIALOG, type ParsedOption, type Seen } from './screen.ts'
 
 export const CODEX_CONDUCTOR_ID = 'codex'
 
@@ -27,6 +27,8 @@ const NEW_DIALOG_MAX_MS = 3000
 /** An Enter that Codex did not take leaves the text in the box (seen with a 137-character line): look after this long, press Enter again, at most this many times. */
 const SUBMIT_CHECK_MS = 800
 const SUBMIT_RETRIES = 3
+const SUBMIT_POLL_MS = 200
+const SUBMIT_MAX_MS = 8000
 
 /** A TOML basic string (JSON's escapes are valid TOML), the value of a `-c key=value`. */
 const tomlString = (s: string): string => JSON.stringify(s)
@@ -47,22 +49,35 @@ function refuseOverCard(s: Seen, what: string): void {
   if (hasCard(s)) throw new ConductError('busy', `há um pedido na tela desta guia (${s.card.title || s.kind}): responda com \`answer\` antes de ${what}`)
 }
 
-/** Letters and digits only: the screen may show a typed separator (the envelope's `·`) as blank, so the match skips punctuation and spacing. */
-const alnum = (s: string): string => s.replace(/[^\p{L}\p{N}]+/gu, '')
-
 /**
- * After the text and its Enter: when the composer still holds the start of the text, Codex did not take the Enter; press it again
- * (only then, so a message is never sent twice). Returns how many extra Enters it took; throws `unsent` if the text stays.
+ * After the text and its Enter, the send counts only on evidence that Codex took it: the composer no longer holds the text AND the
+ * screen shows the turn (the "esc to interrupt" line) or the message echoed in the transcript above the composer. An empty box
+ * alone is not evidence (the text may not be drawn yet). While the text stays in the box the Enter was not taken: it is pressed
+ * again (only then, so a message is never sent twice), SUBMIT_CHECK_MS apart, at most SUBMIT_RETRIES times. No evidence by
+ * SUBMIT_MAX_MS, or the text still in the box after the last Enter: `unsent`. Returns how many extra Enters it took.
  */
 async function ensureSubmitted(ctx: ConductorContext, text: string): Promise<number> {
-  const head = alnum(text).slice(0, 20)
-  for (let n = 0; n <= SUBMIT_RETRIES; n++) {
-    await sleep(SUBMIT_CHECK_MS)
-    const draft = composerDraft((await ctx.screen()).screen)
-    if (draft === undefined || !alnum(draft).startsWith(head)) return n
-    if (n < SUBMIT_RETRIES) await ctx.write([{ data: '\r' }])
+  const all = alnum(text)
+  const head = all.slice(0, 20)
+  // Long enough to carry the envelope's message id: an earlier message of the same owner in the history is not this one.
+  const echo = all.slice(0, 60)
+  const deadline = Date.now() + SUBMIT_MAX_MS
+  let retries = 0
+  let enterAt = Date.now()
+  for (;;) {
+    await sleep(SUBMIT_POLL_MS)
+    const { screen, history } = await ctx.screen()
+    const draft = composerDraft(screen)
+    const stuck = draft !== undefined && alnum(draft).startsWith(head)
+    if (!stuck && (readCodexScreen(screen).kind === 'busy' || echoedAbove(screen, history, echo))) return retries
+    if (stuck && Date.now() - enterAt >= SUBMIT_CHECK_MS) {
+      if (retries >= SUBMIT_RETRIES) throw new ConductError('unsent', 'o texto ficou na caixa do Codex: o Enter não foi aceito')
+      await ctx.write([{ data: '\r' }])
+      retries++
+      enterAt = Date.now()
+    }
+    if (Date.now() >= deadline) throw new ConductError('unsent', stuck ? 'o texto ficou na caixa do Codex: o Enter não foi aceito' : 'o Codex não mostrou o turno começando depois do Enter')
   }
-  throw new ConductError('unsent', 'o texto ficou na caixa do Codex: o Enter não foi aceito')
 }
 
 /** The text of one line, or the lines as a bracketed paste; the escape characters of the text never reach the terminal. */

@@ -143,6 +143,28 @@ export function composerDraft(screen: readonly string[]): string | undefined {
   return undefined
 }
 
+/** Letters and digits only: the screen may show a typed separator (the envelope's `·`) as blank, so matches skip punctuation and spacing. */
+export const alnum = (s: string): string => s.replace(/[^\p{L}\p{N}]+/gu, '')
+
+/**
+ * Whether `head` (already `alnum`) shows in the transcript ABOVE the composer: the rows of the history and of the screen up to
+ * the composer row (the bottom `›` row among the last rows), glued so a wrapped message still matches. A message Codex took is
+ * echoed there; the draft in the composer itself never counts.
+ */
+export function echoedAbove(screen: readonly string[], history: readonly string[], head: string): boolean {
+  const rows = screen.map((l) => l.replace(/\s+$/, ''))
+  let last = rows.length - 1
+  while (last >= 0 && isBlank(rows[last]!)) last--
+  let cut = last + 1
+  let seen = 0
+  for (let i = last; i >= 0 && seen < TAIL_ROWS; i--) {
+    if (isBlank(rows[i]!)) continue
+    seen++
+    if (COMPOSER.test(rows[i]!)) { cut = i; break }
+  }
+  return alnum([...history, ...rows.slice(0, cut)].join('')).includes(head)
+}
+
 /** Whether every fragment is on the screen, compared without whitespace (the rule of the core's channel confirmation). */
 export function hasAll(screen: readonly string[], fragments: readonly string[]): boolean {
   const flat = screen.join('').replace(/\s+/g, '')
