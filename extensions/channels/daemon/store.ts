@@ -79,6 +79,8 @@ export interface ChannelStore {
   /** A desk channel's new owner (from the desk): clears `ownerEnded`. */
   setOwner(id: ChannelId, owner: ChannelOwner): Promise<Done<{ channel: Channel }>>
   setTitle(id: ChannelId, title: string): Promise<Done<{ channel: Channel; changed: boolean }>>
+  /** A new room name (a desk channel reopening while another open channel took its name). `name-taken` when an open one has it. */
+  rename(id: ChannelId, name: string): Promise<Done<{ channel: Channel; changed: boolean }>>
   /** Raises `seenByUser` in memory; `flush` writes it. */
   markSeen(id: ChannelId, seq: number): void
   /** Writes the index when `markSeen` left it dirty. */
@@ -430,6 +432,17 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
       if (!ch) return failure('unknown-channel')
       if (ch.title === title) return { ok: true, channel: ch, changed: false }
       ch.title = title
+      await persist()
+      return { ok: true, channel: ch, changed: true }
+    },
+
+    async rename(id, name) {
+      const ch = need(id)
+      if (!ch) return failure('unknown-channel')
+      if (ch.name === name) return { ok: true, channel: ch, changed: false }
+      if (!isRoomName(name)) return failure('bad-name')
+      if (findOpen(name)) return failure('name-taken')
+      ch.name = name
       await persist()
       return { ok: true, channel: ch, changed: true }
     },

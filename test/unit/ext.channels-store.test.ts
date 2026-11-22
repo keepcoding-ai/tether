@@ -191,6 +191,28 @@ describe('index and structure', () => {
     assert.equal(store.findOpen('obra')?.id, ch.id)
   })
 
+  test('rename: a closed desk channel whose name was taken takes a free one and reopens with it', async () => {
+    const home = await newHome()
+    const store = await openStore(fsIo, home, options)
+    const made = await store.create({ name: 'obra', owner: { kind: 'user' }, createdBy: USER, desk: 'd1' })
+    assert.ok(made.ok)
+    const ch = made.channel
+    await store.close(ch.id, USER)
+    await agentChannel(store)
+    assert.deepEqual(await store.rename(ch.id, 'obra'), { ok: true, channel: ch, changed: false }, 'the same name is no change')
+    // Closed, its own name is not open: but the other open one has it.
+    assert.deepEqual(await store.reopen(ch.id), { ok: false, error: 'name-taken' })
+    assert.deepEqual(await store.rename('desk_nada', 'x'), { ok: false, error: 'unknown-channel' })
+    assert.deepEqual(await store.rename(ch.id, 'Obra!'), { ok: false, error: 'bad-name' })
+    const r = await store.rename(ch.id, 'obra-2')
+    assert.ok(r.ok && r.changed)
+    assert.equal((await indexOf(home)).channels[ch.id]!.name, 'obra-2')
+    assert.ok((await store.reopen(ch.id)).ok)
+    assert.equal(store.findOpen('obra-2')?.id, ch.id)
+    const other = await agentChannel(store, 'outra')
+    assert.deepEqual(await store.rename(other.id, 'obra-2'), { ok: false, error: 'name-taken' })
+  })
+
   test('setOwner clears the abdication; setTitle; markSeen and flush', async () => {
     const home = await newHome()
     const store = await openStore(fsIo, home, options)

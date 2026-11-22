@@ -18,14 +18,14 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../../app/sh
 import type { DeliveryMessage, DeliveryReceipt, TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../src/daemon/protocol.ts'
 import {
-  closeRefusal, deliveryRoleOf, joinRefusal, mayModerate, reopenRefusal, roleIn, sayRefusal, USER,
-  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Who,
+  closeRefusal, deliveryRoleOf, deskChannelId, isDeskChannel, isMember, joinRefusal, joinsByDesk, mayModerate, reopenRefusal,
+  roleIn, sayRefusal, slugOf, USER, type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Who,
 } from '../rules.ts'
 import type { ChannelStore, NewLine, StoreError } from './store.ts'
 import {
-  closedLine, createdLine, createdNotice, forgottenLine, joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME,
-  mutedLine, mutedNotice, ownerEndedLine, removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine,
-  unmutedNotice, type Tally,
+  closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
+  joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
+  removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, type DeskClosedWhy, type Tally,
 } from './notices.ts'
 
 /** What the fan-out uses of the daemon API. */
@@ -73,7 +73,42 @@ export interface Channels {
   spawned(agent: AgentId): Promise<void>
   /** The display name of `who`: the moderator's setting, or the pane's tab. */
   nameOf(who: Who): string
+  /** The desk channel's own gestures (desk-channel.ts calls them). */
+  readonly desk: DeskGestures
   dispose(): void
+}
+
+/**
+ * What only the desk does to its channel: it skips the rules' 'desk' refusals (a desk channel is never closed or reopened by
+ * hand) and joins with by 'desk'. Each runs in the channel's lane, like every gesture. Who calls decides WHEN (desk-channel.ts);
+ * these only do. On a channel that is not a desk's: 'bad-request'.
+ */
+export interface DeskGestures {
+  /**
+   * Born as `desk_<deskId>` (name and title given, the person its creator) or, when it exists closed, reopened with the same
+   * history: renamed by slugOf with a suffix when an open channel took its name meanwhile. `owner` becomes the owner and joins
+   * (out of `removed`, it is the person's new act); every pane of `panes` that is an agent and joinsByDesk joins, by 'desk'. One
+   * line (`create` or `reopen`); each joiner gets its join notice. An open channel: 'exists'.
+   */
+  open(deskId: string, input: { name: string; title: string; owner: AgentId; panes: readonly AgentId[] }):
+    Promise<Outcome<{ channel: Channel; created: boolean; reopened: boolean; line: Line }>>
+  /**
+   * The desk has `owner` (another one, or the same given again after it gave the channel up): it owns the channel, joins by
+   * 'desk' when not a member (out of `removed`), the old owner stays a member. Line `owner-changed`. `changed: false` (no line)
+   * when it owns it already.
+   */
+  setOwner(id: ChannelId, owner: AgentId): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
+  /** A pane came into the desk: joins by 'desk' when it is an agent and joinsByDesk; `joined: false` (no line) otherwise. */
+  enter(id: ChannelId, agent: AgentId): Promise<Outcome<{ channel: Channel; joined: boolean; line?: Line }>>
+  /**
+   * A pane left the desk: out of `removed` always; out of the channel when it joined by 'desk' and is not the desk's owner (the
+   * owner leaves only by its own leave, a removal or the forgotten pane). It gets the line apart.
+   */
+  exit(id: ChannelId, agent: AgentId): Promise<Outcome<{ channel: Channel; left: boolean; line?: Line }>>
+  /** The desk lost its owner or is gone: closed by the person, what waited is cancelled, one `close` line. `changed: false` when closed already. */
+  close(id: ChannelId, why: DeskClosedWhy): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
+  /** The desk was renamed: the title follows (no line, the `channel` event); the name stays. */
+  retitle(id: ChannelId, title: string): Promise<Outcome<{ channel: Channel; changed: boolean }>>
 }
 
 /** Event `channel`: the channel after a structure change (create, join, leave, remove, mute, unmute, close, reopen, forget). */
@@ -276,9 +311,148 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
 
   const fail = (error: Refusal): { ok: false; error: Refusal } => ({ ok: false, error })
 
+  // ---- the desk channel (DeskGestures) ----
+  /** The desk channel `id`, or the refusal. Inside the lane. */
+  const deskChannel = (id: ChannelId): Channel | { ok: false; error: Refusal } => {
+    const ch = store.get(id)
+    if (!ch) return fail('unknown-channel')
+    return isDeskChannel(ch) ? ch : fail('bad-request')
+  }
+  const refused = (v: Channel | { ok: false; error: Refusal }): v is { ok: false; error: Refusal } => 'ok' in v
+  /** The join notice of each joiner, for the fan-out of the line that brought them. */
+  const joinNotices = (ch: Channel, joined: readonly AgentId[]): Map<AgentId, string> =>
+    new Map(joined.map((a) => [a, joinedNotice(ch.name, DESK_JOINER, Object.keys(ch.members).filter((m) => m !== a).map(nameOf), api.delivery.pathOf(a))]))
+  /** Joins `agent` by 'desk' in the store; whether it is new. Inside the lane. */
+  async function deskJoin(ch: Channel, agent: AgentId): Promise<boolean> {
+    const done = await store.join(ch.id, agent, nameOf(agent), 'desk')
+    if (!done.ok || done.already) return false
+    forgetMissed(agent, ch.id)
+    return true
+  }
+
+  const desk: DeskGestures = {
+    open(deskId, input) {
+      const id = deskChannelId(deskId)
+      return lane(id, async () => {
+        if (!isAgent(input.owner)) return fail('unknown-agent')
+        let ch = store.get(id)
+        let was: string | undefined
+        const created = ch === undefined
+        if (!ch) {
+          const made = await store.create({ name: input.name, title: input.title, owner: { kind: 'user' }, createdBy: USER, desk: deskId })
+          if (!made.ok) return made
+          ch = made.channel
+        } else {
+          if (!isDeskChannel(ch)) return fail('bad-request')
+          if (!ch.closed) return fail('exists')
+          if (store.findOpen(ch.name)) {
+            was = ch.name
+            const renamed = await store.rename(id, slugOf(ch.name, store.openNames()))
+            if (!renamed.ok) return renamed
+          }
+          const reopened = await store.reopen(id)
+          if (!reopened.ok) return reopened
+          await store.setTitle(id, input.title)
+        }
+        await store.setOwner(id, { kind: 'agent', id: input.owner, name: nameOf(input.owner) })
+        const joined: AgentId[] = []
+        if (await deskJoin(ch, input.owner)) joined.push(input.owner)
+        for (const a of input.panes) if (a !== input.owner && isAgent(a) && joinsByDesk(ch, a) && await deskJoin(ch, a)) joined.push(a)
+        const owner = nameOf(input.owner)
+        const line = created
+          ? await notice(ch, deskCreatedLine(ch.name, owner), 'create', input.owner)
+          : await notice(ch, deskReopenedLine(ch.name, owner, was), 'reopen', input.owner)
+        emitChannel(ch)
+        await fanout(ch, line, undefined, joinNotices(ch, joined))
+        return { ok: true as const, channel: ch, created, reopened: !created, line }
+      })
+    },
+
+    setOwner(id, owner) {
+      return lane(id, async () => {
+        const ch = deskChannel(id)
+        if (refused(ch)) return ch
+        if (ch.closed) return fail('closed')
+        if (!isAgent(owner)) return fail('unknown-agent')
+        if (ch.owner.kind === 'agent' && ch.owner.id === owner && !ch.ownerEnded && isMember(ch, owner)) return { ok: true as const, channel: ch, changed: false }
+        await store.setOwner(id, { kind: 'agent', id: owner, name: nameOf(owner) })
+        const joined = await deskJoin(ch, owner)
+        const line = await notice(ch, ownerChangedLine(ch.name, nameOf(owner)), 'owner-changed', owner)
+        emitChannel(ch)
+        await fanout(ch, line, undefined, joinNotices(ch, joined ? [owner] : []))
+        return { ok: true as const, channel: ch, changed: true, line }
+      })
+    },
+
+    enter(id, agent) {
+      return lane(id, async () => {
+        const ch = deskChannel(id)
+        if (refused(ch)) return ch
+        if (ch.closed) return fail('closed')
+        if (!isAgent(agent) || !joinsByDesk(ch, agent) || !(await deskJoin(ch, agent))) return { ok: true as const, channel: ch, joined: false }
+        const line = await notice(ch, joinedLine(ch.name, nameOf(agent)), 'join', agent)
+        emitChannel(ch)
+        await fanout(ch, line, undefined, joinNotices(ch, [agent]))
+        return { ok: true as const, channel: ch, joined: true, line }
+      })
+    },
+
+    exit(id, agent) {
+      return lane(id, async () => {
+        const ch = deskChannel(id)
+        if (refused(ch)) return ch
+        const cleared = await store.clearRemoved(id, agent)
+        if (!cleared.ok) return cleared
+        const isOwner = ch.owner.kind === 'agent' && ch.owner.id === agent
+        if (isOwner || ch.members[agent]?.by !== 'desk' || !isMember(ch, agent)) {
+          if (cleared.changed) emitChannel(ch)
+          return { ok: true as const, channel: ch, left: false }
+        }
+        const name = nameOf(agent)
+        const done = await store.leave(id, agent)
+        if (!done.ok) return done
+        cancelWaiting(agent, id)
+        forgetMissed(agent, id)
+        const line = await notice(ch, leftLine(ch.name, name), 'leave', agent)
+        emitChannel(ch)
+        // No longer a member: the desk took it out, so it is told apart.
+        if (!ch.closed && !isAway(agent)) await send(agent, noticeOf(ch, line.body, line.seq))
+        await fanout(ch, line)
+        return { ok: true as const, channel: ch, left: true, line }
+      })
+    },
+
+    close(id, why) {
+      return lane(id, async () => {
+        const ch = deskChannel(id)
+        if (refused(ch)) return ch
+        const done = await store.close(id, USER)
+        if (!done.ok) return done
+        if (!done.changed) return { ok: true as const, channel: ch, changed: false }
+        for (const agent of Object.keys(ch.members)) { cancelWaiting(agent, id); forgetMissed(agent, id) }
+        const line = await notice(ch, deskClosedLine(ch.name, why), 'close', undefined, USER)
+        emitChannel(ch)
+        await fanout(ch, line)
+        return { ok: true as const, channel: ch, changed: true, line }
+      })
+    },
+
+    retitle(id, title) {
+      return lane(id, async () => {
+        const ch = deskChannel(id)
+        if (refused(ch)) return ch
+        const done = await store.setTitle(id, title)
+        if (!done.ok) return done
+        if (done.changed) emitChannel(ch)
+        return { ok: true as const, channel: ch, changed: done.changed }
+      })
+    },
+  }
+
   const channels: Channels = {
     store,
     nameOf,
+    desk,
 
     async create(who, input) {
       if (who !== USER && !isAgent(who)) return fail('unknown-agent')

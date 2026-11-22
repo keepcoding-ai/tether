@@ -39,7 +39,20 @@ export const mutedLine = (room: string, who: string, by: string): string => `${w
 export const unmutedLine = (room: string, who: string): string => `${who} pode falar de novo em #${room}`
 export const closedLine = (room: string, by: string): string => `#${room} foi encerrado por ${by}`
 export const reopenedLine = (room: string, by: string): string => `#${room} foi reaberto por ${by}`
-export const ownerEndedLine = (room: string, who: string, moderator: string): string => `${who} deixou de ser o owner de #${room}; quem o comanda agora é ${moderator}`
+// The desk channel's own lines: it follows its desk, nobody opens or closes it by hand. The desk's name is the person's text
+// and never goes in a notice: the room says which desk.
+export const deskCreatedLine = (room: string, owner: string): string => `#${room} nasceu com a mesa · owner: ${owner}`
+/** `was`: the room it had, when another open channel took it while this one was closed. */
+export const deskReopenedLine = (room: string, owner: string, was?: string): string =>
+  `#${room} foi reaberto: a mesa é de ${owner}${was ? ` (antes #${was}; o nome estava tomado)` : ''}`
+export const ownerChangedLine = (room: string, owner: string): string => `#${room} agora é de ${owner}`
+const DESK_CLOSED_WHY = { revoked: 'a mesa ficou sem dono', ended: 'a guia dona da mesa foi fechada', gone: 'a mesa foi fechada' } as const
+export type DeskClosedWhy = keyof typeof DESK_CLOSED_WHY
+export const deskClosedLine = (room: string, why: DeskClosedWhy): string => `#${room} foi encerrado: ${DESK_CLOSED_WHY[why]}`
+/** Who joins a pane to the desk channel, as the join notice names it. */
+export const DESK_JOINER = 'a mesa'
+
+export const ownerEndedLine =(room: string, who: string, moderator: string): string => `${who} deixou de ser o owner de #${room}; quem o comanda agora é ${moderator}`
 
 // ---- the notices to the agent it is about -------------------------------------------------------
 

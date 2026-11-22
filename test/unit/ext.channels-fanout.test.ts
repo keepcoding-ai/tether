@@ -22,7 +22,7 @@ import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
 import { mergedNotice, returnNotice } from '../../extensions/channels/daemon/notices.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
-import { USER } from '../../extensions/channels/rules.ts'
+import { isMember, USER } from '../../extensions/channels/rules.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const AGENT = fileURLToPath(new URL('../fixtures/channels/agent.cjs', import.meta.url))
@@ -373,6 +373,75 @@ describe('channels fan-out (H2)', () => {
     assert.equal(doorApi.slots.get(g)?.attention, 'done', 'the person typed: the done stays')
     doorApi.attention.seen(g)
     await doorApi.slots.forget(g)
+  })
+
+  test('the desk gestures (F1): open by the desk, owner changes, panes in and out, closed and reopened with the history; no hand close', async () => {
+    const p = await running('fora-mesa')
+    const shell = (await doorApi.slots.create({ kind: 'shell', cwd: home, start: false })).slotId
+    const opened = await ch.desk.open('m1', { name: 'mesa1', title: 'Mesa 1', owner, panes: [owner, p, shell] })
+    assert.ok(opened.ok && opened.created && !opened.reopened, JSON.stringify(opened))
+    const id = opened.channel.id
+    assert.equal(id, 'desk_m1')
+    assert.equal(opened.channel.desk, 'm1')
+    assert.equal(opened.channel.title, 'Mesa 1')
+    assert.deepEqual(opened.channel.owner, { kind: 'agent', id: owner, name: 'dentro-dono' })
+    assert.deepEqual(Object.keys(opened.channel.members).sort(), [owner, p].sort(), 'the shell is not a member')
+    assert.equal(opened.channel.members[owner]!.by, 'desk')
+    assert.equal(opened.channel.members[p]!.by, 'desk')
+    assert.equal(opened.line.body, '#mesa1 nasceu com a mesa · owner: dentro-dono')
+    assert.ok((await inbox(p)).some((m) => m.room === 'mesa1' && m.body.startsWith('você entrou em #mesa1 (por a mesa) · members: dentro-dono')))
+    await waitUntil(() => notes(owner).some((n) => n.params!.content.startsWith('você entrou em #mesa1 (por a mesa)')), 10_000, 'the owner told')
+    assert.deepEqual(await ch.desk.open('m1', { name: 'x', title: 'x', owner, panes: [] }), { ok: false, error: 'exists' })
+    assert.deepEqual(await ch.close(USER, id), { ok: false, error: 'desk' }, 'never closed by hand')
+    assert.deepEqual(await ch.reopen(USER, id), { ok: false, error: 'desk' })
+
+    // Removed: the desk does not bring it back; leaving the desk clears it; coming back joins it.
+    assert.ok((await ch.remove(USER, id, p)).ok)
+    assert.deepEqual(await ch.desk.enter(id, p), { ok: true, channel: ch.store.get(id), joined: false })
+    const out = await ch.desk.exit(id, p)
+    assert.ok(out.ok && !out.left)
+    assert.equal(ch.store.get(id)!.removed, undefined)
+    const back = await ch.desk.enter(id, p)
+    assert.ok(back.ok && back.joined && back.line?.body === 'fora-mesa entrou em #mesa1')
+    assert.deepEqual(await ch.desk.enter(id, shell), { ok: true, channel: ch.store.get(id), joined: false }, 'a shell never joins')
+
+    // Another owner: it joins and owns; the old one stays a member; the same again is no change.
+    const changed = await ch.desk.setOwner(id, inside)
+    assert.ok(changed.ok && changed.changed && changed.line?.body === '#mesa1 agora é de dentro-par')
+    assert.equal(changed.line.event?.type, 'owner-changed')
+    assert.ok(isMember(ch.store.get(id)!, owner) && isMember(ch.store.get(id)!, inside))
+    assert.equal(ch.store.get(id)!.owner.kind === 'agent' && (ch.store.get(id)!.owner as { id: string }).id, inside)
+    const again = await ch.desk.setOwner(id, inside)
+    assert.ok(again.ok && !again.changed && again.line === undefined)
+    // The owner never leaves by the desk; a member the desk brought does.
+    assert.ok((await ch.desk.exit(id, inside)).ok && isMember(ch.store.get(id)!, inside))
+    const oldOut = await ch.desk.exit(id, owner)
+    assert.ok(oldOut.ok && oldOut.left && oldOut.line?.body === 'dentro-dono saiu de #mesa1')
+
+    const t = await ch.desk.retitle(id, 'Mesa Um')
+    assert.ok(t.ok && t.changed)
+    assert.equal(ch.store.get(id)!.name, 'mesa1', 'the name never follows the title')
+
+    // The desk lost its owner: closed by the person, readable; a common channel takes the name; the desk reopens renamed.
+    const closed = await ch.desk.close(id, 'revoked')
+    assert.ok(closed.ok && closed.changed && closed.line?.body === '#mesa1 foi encerrado: a mesa ficou sem dono')
+    assert.equal(ch.store.get(id)!.closed?.by, USER)
+    assert.deepEqual(await ch.say(USER, id, { body: 'x' }), { ok: false, error: 'closed' })
+    const twice = await ch.desk.close(id, 'gone')
+    assert.ok(twice.ok && !twice.changed)
+    const lastBefore = await ch.store.lastSeq(id)
+    const common = await channel(owner, 'mesa1')
+    const re = await ch.desk.open('m1', { name: 'ignored', title: 'Mesa Um', owner, panes: [p] })
+    assert.ok(re.ok && re.reopened && !re.created, JSON.stringify(re))
+    assert.equal(re.channel.name, 'mesa1-2')
+    assert.equal(re.line.body, '#mesa1-2 foi reaberto: a mesa é de dentro-dono (antes #mesa1; o nome estava tomado)')
+    assert.ok(re.line.seq > lastBefore, 'the same history goes on')
+    assert.ok((await ch.store.history(id)).some((l) => l.body === '#mesa1 nasceu com a mesa · owner: dentro-dono'))
+    assert.ok(isMember(re.channel, owner) && isMember(re.channel, p))
+    assert.equal(re.channel.ownerEnded, undefined)
+    assert.deepEqual(await ch.desk.setOwner(common, owner), { ok: false, error: 'bad-request' }, 'only a desk channel')
+    await doorApi.slots.forget(p)
+    await doorApi.slots.forget(shell)
   })
 
   test('a commanded pane (attentionFor) is not touched', async () => {
