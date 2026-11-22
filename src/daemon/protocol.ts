@@ -177,6 +177,7 @@ export type ErrorCode =
   | 'door-no-pty'       // a door write to a slot with no process
   | 'door-denied'       // the caller's identity does not match
   | 'unknown-verb'      // no contributed verb by that namespace and name
+  | 'unknown-request'   // ext-request: no handler by that extension and name
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -245,6 +246,11 @@ export type Request =
   | { t: 'object-get'; id: number; ext: string }
   /** Agent door: sets (or, without `value`, deletes) one key of an object of an extension. */
   | { t: 'object-set'; id: number; ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }
+  /**
+   * Agent door: a request to the daemon half of extension `ext` (its `requests.handle(name, …)`). Reply: `result` (absent
+   * when the handler returned nothing); `unknown-request` when no handler answers that pair.
+   */
+  | { t: 'ext-request'; id: number; ext: string; name: string; args?: unknown }
   /**
    * Politely ask agents to stop at a safe point (one batch at a time; `pause-active` otherwise). `slotIds`: those
    * slots; omitted = every slot whose agent is mid-turn (`turn === 'busy'`). Reply: `pause` (the new batch).
@@ -365,6 +371,8 @@ export type Reply =
       verb?: { text: string; data?: unknown; isError?: boolean }
       /** object-get. */
       objects?: { desk: Record<string, Record<string, unknown>>; pane: Record<string, Record<string, unknown>> }
+      /** ext-request: what the extension's handler returned (any JSON). */
+      result?: unknown
     }
   | { t: 'error'; id: number; code: ErrorCode; message: string }
 

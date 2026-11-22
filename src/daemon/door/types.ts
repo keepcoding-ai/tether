@@ -210,6 +210,25 @@ export interface DoorObjects {
   onDidDrop(listener: (e: { kind: ObjectKind; id: string; data: Record<string, unknown> }) => void): IDisposable
 }
 
+// ---- 8. extension requests and events (the pipe between an extension's two halves) -----------
+
+/** Who asked, as the handler sees it: the asking client's kind from its hello ('app' | 'cli' | 'test'). */
+export interface ExtRequestContext {
+  client: string | undefined
+}
+
+/** The answer of `ext-request`: any JSON (it goes back as the reply's `result`); `undefined` sends no `result`. */
+export type ExtRequestHandler<A = unknown> = (args: A, ctx: ExtRequestContext) => unknown | Promise<unknown>
+
+export interface DoorRequests {
+  /**
+   * Answers the pipe's `{ t: 'ext-request', ext, name, args }` for this extension (`ext` is set by the core: one extension
+   * never answers for another). One handler per name per extension: a repeated name throws. A handler that throws becomes
+   * the request's error (a DoorError keeps its code, anything else is `bad-request`); the daemon carries on.
+   */
+  handle<A = unknown>(name: string, handler: ExtRequestHandler<A>): IDisposable
+}
+
 /** What one daemon extension gets of the door (spread into TetherDaemon). */
 export interface DoorApi {
   slots: DoorSlots
@@ -218,4 +237,5 @@ export interface DoorApi {
   delivery: DoorDelivery
   attention: DoorAttention
   objects: DoorObjects
+  requests: DoorRequests
 }
