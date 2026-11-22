@@ -81,7 +81,8 @@ async function ensureSubmitted(ctx: ConductorContext, text: string): Promise<num
 }
 
 /** The text of one line, or the lines as a bracketed paste; the escape characters of the text never reach the terminal. */
-export function sendChunks(text: string): { data: string; waitMs?: number }[] {
+export function sendChunks(text: string, platform: NodeJS.Platform = process.platform): { data: string; waitMs?: number }[] {
+  const asKeyEvents = platform === 'win32' ? winKeyEvents : (s: string): string => s
   const clean = text.replace(/\x1b/g, '').replace(/\r\n?/g, '\n').replace(/\n$/, '')
   if (clean.trim() === '') throw new ConductError('bad-request', 'send: texto vazio')
   const lines = clean.split('\n')
@@ -92,9 +93,9 @@ export function sendChunks(text: string): { data: string; waitMs?: number }[] {
 /**
  * Codex reads the console as key events, and the ConPTY turns UTF-8 input into them by the keyboard layout: a character that is
  * not on the layout (`·`, `«`, `¿`, `—`, `€`) arrives as nothing (measured on Codex 0.169.0, pt-BR layout). Every non-ASCII
- * UTF-16 unit goes as a win32-input-mode key press (`CSI Vk;Sc;Uc;Kd;Cs;Rc _`, Vk and Sc 0), which carries the character itself.
+ * UTF-16 unit goes (on Windows only; other platforms keep the raw text) as a win32-input-mode key press (`CSI Vk;Sc;Uc;Kd;Cs;Rc _`, Vk and Sc 0), which carries the character itself.
  */
-function asKeyEvents(text: string): string {
+function winKeyEvents(text: string): string {
   let out = ''
   for (let i = 0; i < text.length; i++) {
     const unit = text.charCodeAt(i)

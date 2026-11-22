@@ -130,13 +130,15 @@ describe('conductor-codex: the acts', () => {
   })
 
   /** The text as the conductor types it: the envelope's `·` is a win32-input-mode key press. */
-  const keyed = (s: string): string => s.replaceAll('·', '\x1b[0;0;183;1;0;1_')
+  const keyed = (s: string): string => (process.platform === 'win32' ? s.replaceAll('·', '\x1b[0;0;183;1;0;1_') : s)
 
   test('send: non-ASCII goes as win32-input-mode key presses (the ConPTY drops what the layout lacks, as `·`), one per UTF-16 unit', () => {
     const key = (u: number) => `\x1b[0;0;${u};1;0;1_`
-    assert.deepEqual(sendChunks('a · b'), [{ data: `a ${key(0xb7)} b` }, { data: '\r', waitMs: 300 }])
-    assert.deepEqual(sendChunks('ç\n€'), [{ data: `\x1b[200~${key(0xe7)}\r${key(0x20ac)}\x1b[201~` }, { data: '\r', waitMs: 400 }])
-    assert.deepEqual(sendChunks('😀')[0], { data: `${key(0xd83d)}${key(0xde00)}` }, 'a surrogate pair is two events')
+    assert.deepEqual(sendChunks('a · b', 'win32'), [{ data: `a ${key(0xb7)} b` }, { data: '\r', waitMs: 300 }])
+    assert.deepEqual(sendChunks('ç\n€', 'win32'), [{ data: `\x1b[200~${key(0xe7)}\r${key(0x20ac)}\x1b[201~` }, { data: '\r', waitMs: 400 }])
+    assert.deepEqual(sendChunks('😀', 'win32')[0], { data: `${key(0xd83d)}${key(0xde00)}` }, 'a surrogate pair is two events')
+    assert.deepEqual(sendChunks('a · ç', 'linux'), [{ data: 'a · ç' }, { data: '\r', waitMs: 300 }], 'not Windows: the text is intact')
+    assert.deepEqual(sendChunks('ç\n€', 'darwin')[0], { data: '\x1b[200~ç\r€\x1b[201~' })
   })
 
   test('send: one line is the text, then Enter 300 ms later in its own write; several lines are a bracketed paste, 400 ms, Enter', async () => {
