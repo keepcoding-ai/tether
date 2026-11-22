@@ -4,8 +4,9 @@
 // without pulling anything of one into the other, and nothing runs at load beyond declarations.
 //
 // Roles are derived, never stored. The moderator is the person, always, in every channel: never in `members`, never muted,
-// never removed. The owner commands the channel (join, remove, mute, close, reopen) and speaks as a member. A channel whose
-// agent owner is gone (its pane forgotten, or it left) falls to the person: the moderator is then its only owner.
+// never removed. The owner commands the channel (join, remove, mute, close, reopen) and speaks as a member. An agent owner
+// whose pane is forgotten, who leaves or who is removed gives the channel up for good (`ownerEnded`): coming back, it is only
+// a member, and the channel falls to the person, the moderator then being its only owner. A desk channel follows its desk.
 
 /** Who is a member or an owner: the slotId of the PANE the agent runs in, never its session. */
 export type AgentId = string
@@ -35,16 +36,23 @@ export interface Channel {
   title: string
   /** Who created it and commands it: the person, or an agent's pane. On a desk channel, the desk's owner. */
   owner: ChannelOwner
-  /** The owner's pane was forgotten: the channel goes on and only the moderator has the owner's power in it. */
-  ownerEnded?: { at: string; name: string }
+  /**
+   * The agent owner gave the channel up for good: its pane was forgotten, it left, or it was removed (endsOwnership). The
+   * channel goes on and only the moderator has the owner's power in it; the agent, joined again, is a member. Cleared only
+   * when a desk channel gets a new owner from its desk.
+   */
+  ownerEnded?: { at: string; name: string; why: 'forgotten' | 'left' | 'removed' }
   /** Only on a desk channel: the desk's id in the layout. This, not the name, is what makes it the desk's. */
   desk?: string
   createdAt: string
   createdBy: Who
-  /** Closed: nobody speaks; the history stays readable and the owner or the moderator may reopen it (a desk channel follows its desk). */
+  /** Closed: nobody speaks; the history stays readable and the owner or the moderator may reopen it (a desk channel only follows its desk). */
   closed?: { at: string; by: Who }
   members: Record<AgentId, Member>
-  /** Only on a desk channel: agents of the desk the owner or the moderator removed. They leave the list when the pane leaves the desk. */
+  /**
+   * Agents the owner or the moderator removed: they do not join themselves again, and the desk does not bring them back. They
+   * leave the list when the owner or the moderator joins them again, and, on a desk channel, when the pane leaves the desk.
+   */
   removed?: AgentId[]
   /** The last `seq` the person saw (the channel's pane visible): what she has not read is counted from here. */
   seenByUser: number
@@ -102,9 +110,13 @@ export function deskChannelId(deskId: string): ChannelId {
   return DESK_CHANNEL_PREFIX + deskId
 }
 
+export function isRemoved(ch: Channel, id: AgentId): boolean {
+  return (ch.removed ?? []).includes(id)
+}
+
 /**
- * Who commands the channel now. The agent owner while its pane lives (not `ownerEnded`) and it is still a member; otherwise,
- * and when the person created it, the person. An owner who leaves, is removed or is forgotten leaves no agent owner behind.
+ * Who commands the channel now. The agent owner until it gives the channel up (`ownerEnded`), and only while a member;
+ * otherwise, and when the person created it, the person.
  */
 export function ownerOf(ch: Channel): ChannelOwner {
   const o = ch.owner
@@ -116,6 +128,11 @@ export function ownerOf(ch: Channel): ChannelOwner {
 export function agentOwnerOf(ch: Channel): AgentId | undefined {
   const o = ownerOf(ch)
   return o.kind === 'agent' ? o.id : undefined
+}
+
+/** Whether `id` leaving, being removed or being forgotten gives the channel up: it is the agent owner now. The caller then writes `ownerEnded`. */
+export function endsOwnership(ch: Channel, id: AgentId): boolean {
+  return agentOwnerOf(ch) === id
 }
 
 /** Who may join another agent, remove, mute, unmute and close: the owner and the moderator. Says nothing about open or closed. */
@@ -143,33 +160,35 @@ export function maySay(who: Who, ch: Channel): boolean {
 
 /**
  * Why `who` may not join `agent` (itself when absent) to the channel, or undefined when it may. An agent joins itself to any
- * open channel, a removed one included; joining another takes the owner or the moderator.
+ * open channel it was not removed from; joining another, a removed one included, takes the owner or the moderator.
  */
-export function joinRefusal(who: Who, ch: Channel, agent?: AgentId): 'closed' | 'not-owner' | undefined {
+export function joinRefusal(who: Who, ch: Channel, agent?: AgentId): 'closed' | 'not-owner' | 'removed' | undefined {
   if (ch.closed) return 'closed'
   const self = agent === undefined || agent === who
-  if (self && !isModerator(who)) return undefined
+  if (self && !isModerator(who)) return isRemoved(ch, who) ? 'removed' : undefined
   return mayModerate(who, ch) ? undefined : 'not-owner'
 }
 
 /** The desk brings this pane of its desk into the desk channel: not already a member and not removed from it. */
 export function joinsByDesk(ch: Channel, id: AgentId): boolean {
-  return isDeskChannel(ch) && !isMember(ch, id) && !(ch.removed ?? []).includes(id)
+  return isDeskChannel(ch) && !isMember(ch, id) && !isRemoved(ch, id)
 }
 
-/** Why `who` may not close the channel, or undefined when it may. */
-export function closeRefusal(who: Who, ch: Channel): 'closed' | 'not-owner' | undefined {
+/** Why `who` may not close the channel, or undefined when it may. A desk channel is never closed by hand ('desk'): it follows its desk. */
+export function closeRefusal(who: Who, ch: Channel): 'desk' | 'closed' | 'not-owner' | undefined {
+  if (isDeskChannel(ch)) return 'desk'
   if (ch.closed) return 'closed'
   return mayModerate(who, ch) ? undefined : 'not-owner'
 }
 
 /**
  * Why `who` may not reopen the channel, or undefined when it may. A common channel: the owner (as `ownerOf` reads it while
- * closed) or the moderator. A desk channel reopens only with its desk getting an owner again ('desk'), never by hand.
+ * closed) or the moderator. A desk channel is never reopened by hand ('desk', the moderator included): it reopens with its
+ * desk getting an owner again.
  */
-export function reopenRefusal(who: Who, ch: Channel): 'not-closed' | 'not-owner' | 'desk' | undefined {
-  if (!ch.closed) return 'not-closed'
+export function reopenRefusal(who: Who, ch: Channel): 'desk' | 'not-closed' | 'not-owner' | undefined {
   if (isDeskChannel(ch)) return 'desk'
+  if (!ch.closed) return 'not-closed'
   return mayModerate(who, ch) ? undefined : 'not-owner'
 }
 

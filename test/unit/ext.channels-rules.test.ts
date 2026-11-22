@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  agentOwnerOf, closeRefusal, deliveryRoleOf, deskChannelId, isDeskChannel, isMember, isModerator, isMuted, isRoomName, joinRefusal,
+  agentOwnerOf, closeRefusal, deliveryRoleOf, deskChannelId, endsOwnership, isDeskChannel, isMember, isModerator, isMuted, isRemoved, isRoomName, joinRefusal,
   joinsByDesk, mayModerate, mayRead, maySay, ownerOf, reopenRefusal, roleIn, sayRefusal, slugOf, USER, type Channel, type Member,
 } from '../../extensions/channels/rules.ts'
 
@@ -23,8 +23,15 @@ function channel(over: Partial<Channel> = {}): Channel {
 }
 
 const live = channel()
-const forgotten = channel({ ownerEnded: { at: AT, name: 'claude · conferente' } })
-const left = channel({ members: { b2: member('soul · bancada'), c3: member('codex · conferência', { muted: { since: AT, by: USER } }) } })
+const ended = (why: 'forgotten' | 'left' | 'removed') => ({ at: AT, name: 'claude · conferente', why })
+const withoutA1 = { b2: member('soul · bancada'), c3: member('codex · conferência', { muted: { since: AT, by: USER } }) }
+const forgotten = channel({ ownerEnded: ended('forgotten') })
+const left = channel({ ownerEnded: ended('left'), members: withoutA1 })
+/** The owner that left joined itself again: a member, never the owner again. */
+const rejoined = channel({ ownerEnded: ended('left'), members: { ...withoutA1, a1: member('claude · conferente') } })
+const removedOwner = channel({ ownerEnded: ended('removed'), members: withoutA1, removed: ['a1'] })
+/** An invalid state (the owner gone with no mark): the person commands, all the same. */
+const unmarked = channel({ members: withoutA1 })
 const byUser = channel({ owner: { kind: 'user' }, createdBy: USER, members: { b2: member('soul · bancada', { by: USER }) } })
 const closed = channel({ closed: { at: AT, by: 'a1' } })
 const desk = channel({ id: deskChannelId('d1'), desk: 'd1', removed: ['e5'] })
@@ -41,6 +48,9 @@ describe('channels: roles', () => {
     ['forgotten owner: moderator', forgotten, USER, 'moderator', true, true],
     ['owner left: not a member, not an owner', left, 'a1', undefined, false, false],
     ['owner left: moderator', left, USER, 'moderator', true, true],
+    ['owner left and joined itself again: only a member', rejoined, 'a1', 'member', false, true],
+    ['owner removed: not a member, not an owner', removedOwner, 'a1', undefined, false, false],
+    ['owner gone with no mark: not an owner', unmarked, 'a1', undefined, false, false],
     ['user owner: member', byUser, 'b2', 'member', false, true],
     ['user owner: moderator', byUser, USER, 'moderator', true, true],
     ['closed: owner still moderates, nobody speaks', closed, 'a1', 'owner', true, false],
@@ -58,14 +68,24 @@ describe('channels: roles', () => {
     })
   }
 
-  test('ownerOf: the live agent; the person when the owner was forgotten, left, or never was an agent', () => {
+  test('ownerOf: the live agent; the person when the owner was forgotten, left, was removed, or never was an agent', () => {
     assert.deepEqual(ownerOf(live), { kind: 'agent', id: 'a1', name: 'claude · conferente' })
     assert.deepEqual(ownerOf(forgotten), { kind: 'user' })
     assert.deepEqual(ownerOf(left), { kind: 'user' })
+    assert.deepEqual(ownerOf(rejoined), { kind: 'user' })
+    assert.deepEqual(ownerOf(removedOwner), { kind: 'user' })
+    assert.deepEqual(ownerOf(unmarked), { kind: 'user' })
     assert.deepEqual(ownerOf(byUser), { kind: 'user' })
     assert.deepEqual(ownerOf(closed), { kind: 'agent', id: 'a1', name: 'claude · conferente' })
     assert.equal(agentOwnerOf(live), 'a1')
     assert.equal(agentOwnerOf(forgotten), undefined)
+  })
+
+  test('endsOwnership: only the agent owner gives the channel up by leaving, being removed or forgotten', () => {
+    assert.equal(endsOwnership(live, 'a1'), true)
+    assert.equal(endsOwnership(live, 'b2'), false)
+    assert.equal(endsOwnership(rejoined, 'a1'), false, 'given up already')
+    assert.equal(endsOwnership(byUser, 'b2'), false)
   })
 
   test('the moderator is the person in every channel and never a member', () => {
@@ -106,17 +126,33 @@ describe('channels: joining, closing and reopening', () => {
     assert.equal(joinRefusal(USER, live, 'd4'), undefined)
     assert.equal(joinRefusal('a1', forgotten, 'd4'), 'not-owner')
     assert.equal(joinRefusal(USER, forgotten, 'd4'), undefined)
-    assert.equal(joinRefusal('e5', desk), undefined, 'a removed agent may join itself again')
     assert.equal(joinRefusal('d4', closed), 'closed')
     assert.equal(joinRefusal(USER, closed, 'd4'), 'closed')
   })
 
-  test('close: the owner or the moderator, once', () => {
+  test('a removed agent does not join itself again; the owner or the moderator joins it', () => {
+    const removedCommon = channel({ removed: ['d4'] })
+    for (const ch of [removedCommon, desk]) {
+      const id = ch === desk ? 'e5' : 'd4'
+      assert.equal(isRemoved(ch, id), true)
+      assert.equal(joinRefusal(id, ch), 'removed')
+      assert.equal(joinRefusal(id, ch, id), 'removed')
+      assert.equal(joinRefusal('a1', ch, id), undefined)
+      assert.equal(joinRefusal(USER, ch, id), undefined)
+      assert.equal(joinRefusal('b2', ch, id), 'not-owner')
+    }
+    assert.equal(isRemoved(live, 'd4'), false)
+    assert.equal(joinRefusal('a1', removedOwner), 'removed', 'the owner removed is removed like anyone')
+  })
+
+  test('close: the owner or the moderator, once; a desk channel never by hand', () => {
     assert.equal(closeRefusal('a1', live), undefined)
     assert.equal(closeRefusal(USER, live), undefined)
     assert.equal(closeRefusal('b2', live), 'not-owner')
     assert.equal(closeRefusal('a1', forgotten), 'not-owner')
     assert.equal(closeRefusal(USER, closed), 'closed')
+    assert.equal(closeRefusal(USER, desk), 'desk')
+    assert.equal(closeRefusal('a1', desk), 'desk')
   })
 
   test('reopen: a closed common channel by its owner or the moderator; a desk channel only follows its desk', () => {
@@ -124,12 +160,13 @@ describe('channels: joining, closing and reopening', () => {
     assert.equal(reopenRefusal(USER, closed), undefined)
     assert.equal(reopenRefusal('b2', closed), 'not-owner')
     assert.equal(reopenRefusal(USER, live), 'not-closed')
-    const closedForgotten = channel({ closed: { at: AT, by: USER }, ownerEnded: { at: AT, name: 'claude · conferente' } })
+    const closedForgotten = channel({ closed: { at: AT, by: USER }, ownerEnded: ended('forgotten') })
     assert.equal(reopenRefusal('a1', closedForgotten), 'not-owner')
     assert.equal(reopenRefusal(USER, closedForgotten), undefined)
     const closedDesk = channel({ id: deskChannelId('d1'), desk: 'd1', closed: { at: AT, by: USER } })
     assert.equal(reopenRefusal(USER, closedDesk), 'desk')
     assert.equal(reopenRefusal('a1', closedDesk), 'desk')
+    assert.equal(reopenRefusal(USER, desk), 'desk', 'open or closed, a desk channel follows its desk')
   })
 
   test('the desk channel: marked by `desk`, id desk_<deskId>; the desk brings in its panes, except the removed', () => {
