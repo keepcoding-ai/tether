@@ -303,7 +303,12 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
     const tab = page.locator(`.tether-tab[data-slot="${P2}"]`)
     await tab.click()
-    await page.keyboard.type('x')
+    const term = page.locator(`.panel[data-slot-id="${P2}"] .panel-term`)
+    for (let i = 1; api.objects.get('pane', P2, 'hand') === undefined; i++) {
+      await term.click()
+      await page.keyboard.type('x')
+      try { await until(() => api.objects.get('pane', P2, 'hand') !== undefined, 'the hand with the user', 4_000) } catch (e) { if (i === 3) throw e }
+    }
     await until(() => (api.objects.get<{ with: string; by: string }>('pane', P2, 'hand')?.with) === 'user', 'the hand with the user')
     assert.equal(api.objects.get<{ by: string }>('pane', P2, 'hand')!.by, 'typing')
     await noticed(/o usuário tomou a guia fake · bancada/, 'the owner told the guia was taken')
