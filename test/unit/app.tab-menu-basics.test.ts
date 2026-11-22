@@ -3,9 +3,10 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from '../../app/renderer/tab-menu-basics.ts'
 
-type E = { label: string } | 'sep'
-const SEP: E = 'sep'
-const basics = { link: { label: LINK_LABEL }, close: { label: CLOSE_LABEL } }
+type Item = { label: string }
+type E = Item | 'sep'
+const SEP = 'sep' as E
+const basics: { link: Item; close: Item } = { link: { label: LINK_LABEL }, close: { label: CLOSE_LABEL } }
 const labels = (es: E[]): string[] => es.map(e => (e === 'sep' ? '—' : e.label))
 
 /** The menus the registered pane types draw today, reduced to labels (the core's empty/slot menus have their own). */

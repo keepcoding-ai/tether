@@ -18,7 +18,7 @@ function stubHost(calls: string[]): CommandHost {
     renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), hibernatePane: log('hibernatePane'), toggleDetails: log('toggleDetails'),
     copyLink: log('copyLink'), copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
-    toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'),
+    toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'), asleepMenu: log('asleepMenu'),
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), toggleTabBorder: log('toggleTabBorder'), toggleDimUnfocused: log('toggleDimUnfocused'), toggleTabClose: log('toggleTabClose'), setDimLevel: log('setDimLevel'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), sessionsManage: log('sessionsManage'), sessionSearch: log('sessionSearch'), sessionsMenu: log('sessionsMenu'), restoreConfirmations: log('restoreConfirmations'), associateLinks: log('associateLinks'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
