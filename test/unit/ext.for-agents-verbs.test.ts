@@ -434,13 +434,23 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     // A is "de si" now, so what waited for it (the notices of the cases before) is typed into it, one at a time; the deferred
     // command is measured from when that queue is empty and the pane is quiet.
     await drainInto(A, "the owner's queue to empty into its own pane")
-    await quiet() // a notice still being composed lands after the first look at the queue: look again
-    await drainInto(A, 'the notices that came late to empty into its own pane')
-    await quiet()
+    // A notice still being composed may land in A at any moment, and the machine's load decides when. The case does not wait for
+    // a silence: it asks for the command, and then waits for the CONDITION (the command typed in A), closing each turn that
+    // others opened in A on the way. The command may leave only at the end of a turn, never inside one.
     const own = await call(A, 'command', { name: 'clear' })
     assert.equal(data(own).deferred, true)
     assert.equal(seen.commands.includes('clear'), false, 'not run inside the call')
-    await waitUntil(() => screenOf(A).includes('IN:"/clear"'), 15_000, 'the deferred command typed in its own pane')
+    const deadline = Date.now() + 90_000
+    while (!screenOf(A).includes('IN:"/clear"')) {
+      if (Date.now() > deadline) throw new Error('timeout (90000 ms) waiting for the deferred command typed in its own pane')
+      // While the command has not left, an open turn in A is another message's: it is what holds the command back, and closing
+      // it is what lets it go. Once the conductor has it, the turn that shows is the command's own: it only has to be typed.
+      if (slots.get(A)?.turn === 'busy' && !seen.commands.includes('clear')) attention.signal(A, 'done')
+      await sleep(300)
+    }
+    // Whatever is left (the command itself opens a turn, late notices may follow): empty it, so the case leaves A idle.
+    await drainInto(A, 'the turn of the deferred command and any late notice to end')
+    attention.seen(A)
     const mine = ((data(await call(A, 'list')).desks as { panes: unknown[] }[])[0]!.panes as { id: string; relation: string; pending: number }[]).find((p) => p.id === A)
     assert.equal(mine?.relation, 'self')
     assert.equal(mine?.pending, 0)
@@ -547,6 +557,8 @@ describe('for-agents: the verbs of the owner (X3)', () => {
   })
 
   test('close and restart: stop keeps the pane, forget removes it, fresh restarts; never its own pane', async () => {
+    // The case starts from a state of its own: the turn of A that an earlier case left open is closed here, not inherited.
+    if (slots.get(A)?.turn === 'busy') attention.signal(A, 'done')
     const id = (await slots.create({ kind: 'soul', cwd: home, name: 'efemera' })).slotId
     await waitUntil(() => screenOf(id).includes('READY'), 30_000, 'efemera')
     await sendMap(map([A, p1, p2, id], [K, p3]))
