@@ -1176,8 +1176,12 @@ function showDeskMenu(id: string, x: number, y: number): void {
 }
 
 /** The queue desks as an extension sees them (TetherUi.desks.list). */
+/** The panes a desk holds: its own panels, those of its desk pads, and those of the panel pads of its panels (a pad's guide belongs to the desk of its panel). */
 function deskViews(): DeskView[] {
-  return desks.desks.map(d => ({ id: d.id, name: d.name, color: d.color, asleep: d.asleep === true, panes: (desks.desk(d.id)?.panels ?? []).map(p => p.id) }))
+  return desks.desks.map(d => {
+    const padPanes = [...framePads].filter(p => p.deskId === d.id || (p.panelId !== undefined && desks.deskOf(p.panelId) === d.id)).flatMap(p => p.desk.panels.map(x => x.id))
+    return { id: d.id, name: d.name, color: d.color, asleep: d.asleep === true, panes: [...(desks.desk(d.id)?.panels ?? []).map(p => p.id), ...padPanes] }
+  })
 }
 
 /** Where the extensions' group goes in a desk pill's menu: before the first of these that is there. */
@@ -2778,7 +2782,7 @@ const CLOSE_GUIDE_LABEL = 'Fechar guia'
  */
 function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
   if (!findPanel(id)) return []
-  const base = basePaneEntries(id)
+  const base = basePaneEntries(id, opts.from === 'manager')
   if (opts.from !== 'manager') return base
   const owner = framePadOf(id)?.panelId
   const canFocus = !owner || !!findPanel(owner) || !!liveTypeOf(paneTypes, owner)?.closedEntry?.(owner)
@@ -2796,12 +2800,14 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
  * A pane's own menu as its tab shows it: the slot's, the empty pane's or the pane type's, with the extensions' rows
  * (TetherUi.panes.tabMenu) before its floor.
  */
-function basePaneEntries(id: string): MenuEntry[] {
+function basePaneEntries(id: string, forManager = false): MenuEntry[] {
   const slot = slots.get(id)
   const own = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
   const pane = describePane(id)
-  const withFloor = withPaneMenuItems<MenuEntry>(own, fromExtMenu(door.paneMenuItems(pane)), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
-  return withPaneMenuTop<MenuEntry>(withFloor, fromExtMenu(door.paneMenuTop(pane)), SEP)
+  // In a manager an extension's `primary` is an icon: the two primaries of its bar are the guide's own (and a `highlight`).
+  const ext = (rows: ContextMenuRow[]): MenuEntry[] => fromExtMenu(forManager ? rows.map(r => (r !== 'sep' && !('heading' in r) && r.pin === 'primary' ? { ...r, pin: 'icon' as const } : r)) : rows)
+  const withFloor = withPaneMenuItems<MenuEntry>(own, ext(door.paneMenuItems(pane)), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
+  return withPaneMenuTop<MenuEntry>(withFloor, ext(door.paneMenuTop(pane)), SEP)
 }
 
 /** An extension's menu rows (items, separators, headings, one level of submenu) as the core's menu entries. */
@@ -4351,6 +4357,7 @@ function activateRendererExtensions(): void {
         setHeadItem: (paneId, item) => door.setHeadItem(id, paneId, item),
         headItems: paneId => door.headItems(paneId),
         emblems: paneId => door.emblemsOf(paneId),
+        tabLine: paneId => door.tabLineOf(paneId),
         onDidChangeMarks: listener => add(door.onMarksChange(listener)),
         slotFacts: paneId => door.slotFacts(paneId),
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),

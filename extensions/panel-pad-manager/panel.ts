@@ -14,6 +14,7 @@ import { ICON_NAMES, icon, type IconName } from '../../app/renderer/icons.ts'
 import { emblemNode } from '../../app/renderer/door/tab-emblem-rules.ts'
 import type { AgentPane, ContextMenuEntry, FrameFilter, FramePane, PaneHeadItem, PaneInfo, PanelFrameRow, PanelFrameTree, TabEmblem } from '../../app/renderer/ext-api.ts'
 import { guideGroups, visibleRows, type FrameGuideGroup } from '../../app/renderer/panel-frames.ts'
+import { CLOSE_LABEL, FOCUS_LABEL, mainActions, type MenuItem } from './bar-rules.ts'
 import type { ManagerView } from '../frame-pads/manager-slot.ts'
 
 export const MANAGER_TITLE = 'Painéis da mesa'
@@ -25,6 +26,8 @@ export const MANAGER_TITLE = 'Painéis da mesa'
 export interface GuideMarks {
   emblems: readonly TabEmblem[]
   head: readonly PaneHeadItem[]
+  /** The hue of the line under the guide's tab (an owner commands it through its desk). */
+  line?: number
   routed?: { owner: string; value: 'done' | 'waiting'; since: string; hue: number; tooltip: string }
 }
 
@@ -54,16 +57,9 @@ export interface ManagerHost {
 
 const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'file-md', 'html-preview': 'file-html', 'browser-web': 'globe-simple' }
 const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand' }
-/** The bar's limit of primaries. */
-const MAX_PRIMARY = 2
-
-type MenuItem = Exclude<ContextMenuEntry, 'sep'>
 const items = (entries: readonly ContextMenuEntry[]): MenuItem[] => entries.filter((e): e is MenuItem => e !== 'sep')
 /** The item a key or gesture runs, found by what it says (the menu is the only definition). */
 const itemOf = (entries: readonly ContextMenuEntry[], label: string): MenuItem | undefined => items(entries).find(e => e.label === label)
-const FOCUS_LABEL = 'Focar guia'
-const CLOSE_LABEL = 'Fechar guia'
-
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
   if (cls) e.className = cls
@@ -118,6 +114,8 @@ export interface GuideSnapshot {
   emblems: { cls: string; text: string; title: string }[]
   /** The hue of the diamond, null when there is none. */
   routed: string | null
+  /** The hue of the line under the card, null when there is none. */
+  underline: string | null
   line: string
   bar: { label: string; pin: string; hidden: boolean }[]
 }
@@ -282,6 +280,7 @@ export class PanelPadManager implements ManagerView {
     const name = el('span', 'pf-r-title', paneLabel(p, agent) || '(sem nome)')
     const detail = paneDetail(p, info)
     const marks = this.host.marks(p.id)
+    if (marks.line !== undefined) { b.classList.add('ext-line'); b.style.setProperty('--line-hue', String(marks.line)) }
     const routed = marks.routed
     const waits = routed ? waitsText(this.host.agent(routed.owner)?.name ?? routed.owner, routed.value, routed.since) : ''
     const sub = el('span', 'pf-r-kind', routed ? waits : detail)
@@ -336,11 +335,9 @@ ${detail}`.trim() : detail
     bar.setAttribute('role', 'toolbar')
     bar.setAttribute('aria-label', 'Ações da guia')
     const all = items(this.host.menuEntries(p.id))
-    const primary = all.filter(e => e.pin === 'primary' || e.pin === 'highlight').slice(0, MAX_PRIMARY)
-    // "Focar guia" first, "Fechar guia" after. Icons follow the menu's order.
-    primary.sort((x, y) => Number(x.label === CLOSE_LABEL) - Number(y.label === CLOSE_LABEL))
+    const primary = mainActions(all)
     const icons = all.filter(e => e.pin === 'icon')
-    const button = (e: MenuItem, level: 'primary' | 'icon'): HTMLButtonElement => {
+    const button = (e: MenuItem, level: 'primary' | 'highlight' | 'icon'): HTMLButtonElement => {
       const btn = el('button', `pf-act pin-${level}`)
       btn.type = 'button'
       btn.draggable = false
@@ -359,7 +356,7 @@ ${detail}`.trim() : detail
       })
       return btn
     }
-    for (const e of primary) bar.append(button(e, 'primary'))
+    for (const e of primary) bar.append(button(e, e.pin === 'highlight' ? 'highlight' : 'primary'))
     bar.append(el('span', 'sp'))
     for (const e of icons) bar.append(button(e, 'icon'))
     const more = el('button', 'pf-act more')
@@ -429,6 +426,7 @@ ${detail}`.trim() : detail
       title: c?.querySelector('.pf-r-title')?.textContent ?? '',
       detail: c?.querySelector('.pf-r-kind')?.textContent ?? '',
       emblems: [...(c?.querySelectorAll<HTMLElement>('.pf-r-head .ext-emblem') ?? [])].map(e => ({ cls: e.className.replace('ext-emblem', '').trim(), text: e.textContent?.trim() ?? '', title: e.getAttribute('title') ?? '' })),
+      underline: c?.classList.contains('ext-line') ? c.style.getPropertyValue('--line-hue') : null,
       routed: c?.querySelector<HTMLElement>('.pf-r-head .attn.routed')?.style.getPropertyValue('--attn-hue') || null,
       line: c?.querySelector('.pf-r-line')?.textContent ?? '',
       bar: [...(c?.querySelectorAll<HTMLButtonElement>('.pf-r-bar .pf-act[data-label]') ?? [])].map(b => ({ label: b.dataset.label ?? '', pin: b.dataset.pin ?? '', hidden: b.hidden })),

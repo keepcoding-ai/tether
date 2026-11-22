@@ -87,3 +87,19 @@ describe('when the map goes', () => {
     assert.equal(sent.length, 4)
   })
 })
+
+describe('deskMapOf: the panes of pads', () => {
+  const padState = (panes: Record<string, string>): unknown => ({ frames: { grid: {}, views: { f: { grid: {}, panels: Object.fromEntries(Object.entries(panes).map(([id, contentComponent]) => [id, { id, contentComponent }])) } } } })
+  test('the guides of a panel pad belong to the desk of their panel; those of a desk pad, to their desk', () => {
+    const d1 = { ...desk('d1', 'Mesa 1', { f1: { A: 'terminal' } }), pads: { 'x.desk-pad': padState({ dp: 'terminal' }) } } as DeskLayout
+    const d2 = desk('d2', 'Mesa 2', { f1: { B: 'terminal' } })
+    const layout = layoutOf([d1, d2], { sidebars: { ...emptyLayout().sidebars, pads: { 'frame-pads.panel@A': padState({ c1: 'terminal', n1: 'note-pane' }), 'frame-pads.panel@B': padState({ c2: 'terminal' }), 'frame-pads.panel@gone': padState({ z: 'terminal' }) } } })
+    const map = deskMapOf(layout, typeOf)
+    assert.deepEqual(map.desks[0]!.panes.map(p => p.id), ['A', 'c1', 'dp', 'n1'])
+    assert.deepEqual(map.desks[1]!.panes.map(p => p.id), ['B', 'c2'])
+    assert.deepEqual(map.desks.flatMap(d => d.panes).filter(p => p.id === 'z'), [], 'a pad whose panel is on no desk adds nothing')
+  })
+  test('a layout with no pad state makes the map it always made', () => {
+    assert.deepEqual(deskMapOf(layoutOf([desk('d1', 'A', { f: { a: 'terminal' } })]), typeOf).desks[0]!.panes, [{ id: 'a', type: 'terminal' }])
+  })
+})

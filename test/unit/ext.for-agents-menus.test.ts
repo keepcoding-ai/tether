@@ -106,7 +106,7 @@ describe('the tab menu (section 3)', () => {
   })
   test('(3) given to another: Atrium sees', () => {
     assert.deepEqual(labels(paneMenu(facts(base), 'g')), [
-      '# Dada a Kai · Atrium vê', 'Tomar [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…',
+      '# Dada a Kai · Atrium vê', 'Tomar [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai [icon]', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…',
     ])
   })
   test('(4) the agent\'s own pane that also owns another: the owner\'s section, then the pane\'s own rows', () => {
@@ -122,10 +122,10 @@ describe('the tab menu (section 3)', () => {
   test('(5) waiting for the owner: "Ir para" and "Tomar e responder eu" first', () => {
     const w = { c1: { kind: 'waiting' as const, at: '2026-11-21T14:05:00' } }
     assert.deepEqual(labels(paneMenu(facts({ ...base, waiting: w }), 'c1')), [
-      '# Espera Atrium: pediu permissão às 14:05', 'Ir para Atrium', 'Tomar e responder eu [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
+      '# Espera Atrium: pediu permissão às 14:05', 'Ir para Atrium [icon]', 'Tomar e responder eu [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
     ])
     assert.deepEqual(labels(paneMenu(facts({ ...base, waiting: { g: { kind: 'waiting', at: '2026-11-21T14:05:00' } } }), 'g')).slice(0, 4), [
-      '# Espera Kai: pediu permissão às 14:05', 'Ir para Kai', 'Tomar e responder eu [icon]', 'Pausar Kai nesta guia [icon]',
+      '# Espera Kai: pediu permissão às 14:05', 'Ir para Kai [icon]', 'Tomar e responder eu [icon]', 'Pausar Kai nesta guia [icon]',
     ])
   })
   test('(6) waiting for the person: the owner ended, the pane came back', () => {

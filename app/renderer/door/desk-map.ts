@@ -8,14 +8,36 @@ export type PaneTypeOf = (component: string) => string
 
 interface FramePanels { panels?: Record<string, { contentComponent?: string } | undefined> }
 
+const byId = (a: { id: string }, b: { id: string }): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+
 /** Every pane of a desk's (or the drawer's) frames, in a stable order (by id), so the same panes always make the same text. */
-function panesOf(frames: DeskLayout['frames'] | DrawerLayout['frames'], typeOf: PaneTypeOf): { id: string; type: string }[] {
+function panesOf(frames: DeskLayout['frames'] | DrawerLayout['frames'] | undefined, typeOf: PaneTypeOf): { id: string; type: string }[] {
   const out: { id: string; type: string }[] = []
   for (const view of Object.values(frames?.views ?? {})) {
     const panels = (view as FramePanels | undefined)?.panels ?? {}
     for (const [id, p] of Object.entries(panels)) out.push({ id, type: typeOf(p?.contentComponent ?? 'terminal') })
   }
   return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/** The frames a saved pad state holds (what a frames pad serializes), or none. */
+function padFrames(state: unknown): DrawerLayout['frames'] | undefined {
+  const frames = (state as { frames?: DrawerLayout['frames'] } | null | undefined)?.frames
+  return frames && typeof frames === 'object' ? frames : undefined
+}
+
+/**
+ * The panes a desk holds in its pads: those of its desk pads, and those of the panel pads of its panels (a guide of a pad belongs to
+ * the desk of its panel). Panel pads are saved with the side bars, under `<pad id>@<panel id>`.
+ */
+function padPanesOf(desk: { pads?: Record<string, unknown>; frames?: DeskLayout['frames'] }, layout: Layout, typeOf: PaneTypeOf): { id: string; type: string }[] {
+  const out = Object.values(desk.pads ?? {}).flatMap(state => panesOf(padFrames(state), typeOf))
+  const own = new Set(panesOf(desk.frames, typeOf).map(p => p.id))
+  for (const [key, state] of Object.entries(layout.sidebars?.pads ?? {})) {
+    const at = key.lastIndexOf('@')
+    if (at > 0 && own.has(key.slice(at + 1))) out.push(...panesOf(padFrames(state), typeOf))
+  }
+  return out
 }
 
 /**
@@ -28,10 +50,10 @@ export function deskMapOf(layout: Layout, typeOf: PaneTypeOf, nameOf: (systemDes
     name: d.name || d.id,
     kind: 'queue' as const,
     ...(d.asleep === true ? { asleep: true as const } : {}),
-    panes: panesOf(d.frames, typeOf),
+    panes: [...panesOf(d.frames, typeOf), ...padPanesOf(d, layout, typeOf)].sort(byId),
   }))
   for (const [id, sd] of Object.entries(layout.systemDesks ?? {})) {
-    desks.push({ id, name: nameOf(id) || id, kind: 'system', panes: panesOf(sd.frames, typeOf) })
+    desks.push({ id, name: nameOf(id) || id, kind: 'system', panes: [...panesOf(sd.frames, typeOf), ...padPanesOf(sd, layout, typeOf)].sort(byId) })
   }
   return { desks, drawer: layout.drawer ? panesOf(layout.drawer.frames, typeOf) : [] }
 }

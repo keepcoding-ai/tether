@@ -190,6 +190,9 @@ export class DoorHost {
   /** Every extension's emblems on a pane's tab, in stable order. */
   emblemsOf(paneId: string): readonly TabEmblem[] { return this.emblems.of(paneId).map(p => p.emblem) }
 
+  /** The hue of the line under a pane's tab. */
+  tabLineOf(paneId: string): number | undefined { return this.emblems.lineOf(paneId) }
+
   /** A mark of a pane changed (an emblem, a line, a status-bar line, an attention that waits for an owner). */
   onMarksChange(listener: (paneId: string | undefined) => void): IDisposable {
     this.markListeners.add(listener)

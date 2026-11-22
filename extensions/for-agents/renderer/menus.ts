@@ -215,7 +215,7 @@ export function paneMenu(f: MenuFacts, paneId: string): Row[] {
       pane1.push(inventory)
     } else {
       const w = f.waiting?.(paneId)
-      const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: cmd })
+      const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: cmd }, { pin: 'icon' })
       const pause = item('pause', eff.via === 'self' ? L.pauseSelf(n) : L.pausePane(n), { do: 'pause', target: t }, eff.via === 'self' ? {} : { pin: 'icon' })
       if (eff.via === 'desk') {
         const take = item('hand-grabbing', w ? L.takeAndAnswer : L.take, { do: 'take', target: t }, { pin: 'icon' })

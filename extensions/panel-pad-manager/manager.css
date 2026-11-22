@@ -52,7 +52,13 @@
 .pf-act:hover:not(:disabled), .pf-act[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
 .pf-act:disabled { opacity: .45; cursor: default; }
 .pf-act.pin-primary, .pf-act.pin-highlight { padding: 0 8px 0 6px; }
+/* The one item with text and accent (an extension's `highlight`: "Devolver a Atrium"). */
+.pf-act.pin-highlight { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+.pf-act.pin-highlight:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--accent); }
 /* The extensions' marks on a card (emblems and the diamond: door.css draws them like the tab's) and the line of the status bar under the head. */
+/* The thin line under the card, as under the tab: the guide is commanded by its desk's owner (--line-hue). */
+.pf-row.ext-line { position: relative; }
+.pf-row.ext-line::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 1px; pointer-events: none; background: hsl(var(--line-hue, 0) var(--mark-solid-s) var(--mark-solid-l) / .6); }
 .pf-r-line { padding-left: 20px; font-size: 12px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The switch's warning dot: a loose frame has content. */
 .pad-frames .tab-act[data-action="frames-manager"].attention::after { content: ''; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }

@@ -368,7 +368,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     await pill(D1).locator('.desk-seal.struck').waitFor()
     const ended = await openPill(D1)
     const endedRows = ['# Atrium encerrou às 13:40 · as guias voltaram para você', 'Dar a mesa a um agente…', 'Ficar com a mesa (tira o selo)']
-    assert.deepEqual(sliceAt(ended, endedRows), endedRows, 'the preview\'s third row (guias que abriu) is not drawn: the app does not know them yet')
+    assert.deepEqual(sliceAt(ended, endedRows), endedRows, 'no guia was opened by Atrium here, so the row of the guias it opened is not drawn (the manager E2E covers it)')
     await shot('pilula-encerrou', '#ctx-menu', pillStrip)
     await choose('Ficar com a mesa (tira o selo)')
     await until(() => obj('desk', D1, 'owner') === undefined, 'the struck mark taken away')

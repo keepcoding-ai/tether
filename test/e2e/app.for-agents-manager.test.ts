@@ -28,7 +28,7 @@ import { removeHome, tempHome, uniquePipe, waitUntil } from '../unit/daemon.help
 import { killElectron } from './electron.ts'
 
 type Card = {
-  id: string; title: string; detail: string; line: string; routed: string | null
+  id: string; title: string; detail: string; line: string; routed: string | null; underline: string | null
   emblems: { cls: string; text: string; title: string }[]
   bar: { label: string; pin: string; hidden: boolean }[]
 }
@@ -126,8 +126,8 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     await page.evaluate(() => { window.__tether.renameDesk('desk-1', 'kai-aware'); window.__tether.renameDesk('desk-2', 'bancada') })
     const slot = async (name: string, onBehalfOf?: string): Promise<string> => (await api.slots.create({ kind: 'soul', cwd: home, name, ...(onBehalfOf ? { onBehalfOf } : {}) })).slotId
     const A = await slot('Atrium'), C1 = await slot('soul · testes'), G = await slot('codex · conferência'), K = await slot('Kai')
-    const T1 = await slot('browser · admin'), X = await slot('codex · migração'), PLAIN = await slot('soul comum')
-    for (const id of [A, C1, G, K, T1, X, PLAIN]) await waitUntil(() => api.slots.get(id)?.status === 'running', 30_000, `running ${id}`)
+    const T1 = await slot('browser · admin'), P = await slot('soul · pausada'), X = await slot('codex · migração'), PLAIN = await slot('soul comum')
+    for (const id of [A, C1, G, K, T1, P, X, PLAIN]) await waitUntil(() => api.slots.get(id)?.status === 'running', 30_000, `running ${id}`)
     const O1 = await slot('soul · aberta 1', A), O2 = await slot('soul · aberta 2', A)
     for (const id of [O1, O2]) await waitUntil(() => api.slots.get(id)?.status === 'running', 30_000, `running ${id}`)
     assert.deepEqual(api.slots.get(O1)?.createdBy, { ext: EXT_ID, slotId: A }, 'the daemon says who opened it')
@@ -144,7 +144,7 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
 
     // The guides live in the panel pad of the Atrium's pane (the pad of the focused panel): that is what the manager lists.
     await page.click(`.sb-icon[data-pad="${PANEL}"]`)
-    const guides = [C1, G, T1, X, PLAIN]
+    const guides = [C1, G, T1, P, X, PLAIN]
     for (const id of guides) {
       await page.waitForFunction(id => window.__tether.slots().some(s => s.slotId === id), id)
       await page.evaluate(([id, pad]) => window.__tether.openSlotInPad(id!, pad!), [id, PANEL])
@@ -153,15 +153,16 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     const K_NAMES = { A: 'Atrium', K: 'Kai' }
     const T = new Date(2026, 10, 21, 14, 2).toISOString()
     const own = (owner: string, extra: Record<string, unknown> = {}) => ({ owner, since: T, givenBy: 'user', ...extra })
-    await api.objects.set('pane', C1, 'owner', own(A))
+    // The desk is given to the Atrium: the guides of her panel pad inherit it (C1, T1, P, PLAIN); G was given to Kai; X's owner ended.
+    await api.objects.set('desk', D1, 'owner', own(A))
     await api.objects.set('pane', C1, 'last', { by: A, verb: 'send', at: T })
     await api.objects.set('pane', G, 'owner', own(K))
-    await api.objects.set('pane', T1, 'owner', own(A))
     await api.objects.set('pane', T1, 'hand', { with: 'user', why: 'taken', by: 'gesture', since: T })
+    await api.objects.set('pane', P, 'hand', { with: 'user', why: 'paused', by: 'gesture', since: T })
     await api.objects.set('pane', X, 'owner', own(A, { ended: { at: T, name: K_NAMES.A } }))
     await api.objects.set('desk', D2, 'owner', own(A, { ended: { at: T, name: K_NAMES.A } }))
-    // The Atrium waits on C1 (the daemon routes it to her), the person waits on X (its owner ended: nobody routes it).
-    await waitUntil(() => api.attention.routeOf(C1) === A, 15_000, 'the reconciler routed C1 to the Atrium')
+    // The Atrium waits on C1 (the daemon routes it to her through the desk), the person waits on X (its owner ended: nobody routes it).
+    await waitUntil(() => api.attention.routeOf(C1) === A, 15_000, `the reconciler routed C1 to the Atrium by the desk (route ${api.attention.routeOf(C1)}, held ${JSON.stringify(api.slots.get(C1)?.held)})`)
     api.attention.signal(C1, 'waiting')
     api.attention.signal(X, 'waiting')
     await waitUntil(() => api.slots.get(C1)?.attentionFor?.slotId === A && api.slots.get(X)?.attention === 'waiting', 15_000, `attentions (${JSON.stringify([api.slots.get(C1)?.attentionFor, api.slots.get(X)?.attention])})`)
@@ -177,33 +178,40 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     await page.waitForSelector(`${card(C1)} .attn.routed`)
     const cs = await cards()
 
-    // ---- 1. the card: the emblems, the diamond, the line ----
+    // ---- 1. the card, with the desk ownership (the guides live in a panel pad): emblems, diamond, underline, line ----
     const c1 = cs.get(C1)!
-    assert.deepEqual(c1.emblems.map(e => [e.cls, e.text, e.title]), [['hued letter', 'A', 'Dono: Atrium']], 'C1: the letter of its owner, as on the tab')
-    assert.equal(c1.routed, String(agentHue(A)), 'C1: the diamond in the owner\'s hue')
+    assert.deepEqual(c1.emblems, [], 'C1 inherits from the desk: no letter of its own, as on the tab')
+    assert.equal(c1.underline, String(agentHue(A)), 'C1: the thin line in the owner hue, as under the tab')
+    assert.equal(c1.routed, String(agentHue(A)), 'C1: the diamond in the owner hue')
     assert.match(c1.detail, /^espera a Atrium · permissão \d\d:\d\d$/, 'C1: what it waits for, and since when')
-    assert.match(c1.line, /^.+ · Atrium · enviou pedido \d\d:\d\d$/, `C1: the folder, then "quem comanda · última ação": ${c1.line}`)
+    assert.match(c1.line, /^.+ · Atrium pela mesa · enviou pedido \d\d:\d\d$/, `C1: the folder, then "quem comanda · última ação": ${c1.line}`)
     assert.equal(await page.locator(`${card(C1)} .pf-r-head .attn.routed`).evaluate(el => getComputedStyle(el).transform !== 'none'), true, 'the mark is a diamond')
     const g = cs.get(G)!
-    assert.deepEqual(g.emblems.map(e => [e.text, e.title]), [['K', 'Dono: Kai']], 'G: given to Kai')
-    assert.equal(g.routed, null)
-    assert.equal(g.line, 'Kai', 'G: who commands, no last act yet')
+    assert.deepEqual(g.emblems.map(e => [e.text, e.title]), [['K', 'Dono: Kai'], ['', 'Atrium vê']], 'G: given to Kai; the desk owner only sees (the eye)')
+    assert.deepEqual([g.routed, g.underline, g.line], [null, null, 'Kai'], 'G: no diamond, no underline (Kai commands it), who commands')
     const t1 = cs.get(T1)!
-    assert.deepEqual(t1.emblems.map(e => e.title), ['Dono: Atrium', 'Com você: Atrium só volta a comandar quando você devolver'], 'T1: the letter and the hand')
+    assert.deepEqual(t1.emblems.map(e => e.title), ['Com você: Atrium só volta a comandar quando você devolver'], 'T1: the hand')
+    assert.equal(t1.line, 'com você')
+    assert.equal(t1.underline, null, 'the underline goes while the hand is with the person')
+    const p = cs.get(P)!
+    assert.deepEqual(p.emblems.map(e => e.title), ['Pausada: Atrium não age aqui até você retomar'], 'P: paused')
     const x = cs.get(X)!
     assert.deepEqual(x.emblems.map(e => [e.cls, e.text]), [['hued letter struck', 'A']], 'X: the struck letter of the owner that ended')
     assert.equal(x.routed, null, 'X waits for the person, not for an owner: no diamond')
-    const plain = cs.get(PLAIN)!
-    assert.deepEqual([plain.emblems.length, plain.routed, plain.line], [0, null, ''], 'a guide of nobody looks as it always did')
-    assert.equal(await page.locator(`${inPad} .pf-owner .ext-emblem, ${inPad} .pf-owner .attn.routed`).count(), 0, 'the owner\'s header has none of it')
+    assert.equal(await page.locator(`${inPad} .pf-owner .ext-emblem, ${inPad} .pf-owner .attn.routed`).count(), 0, 'the owner header has none of it')
 
     // ---- 2. the bar: the pins of the menu, per state ----
     const pinned = (c: Card): string[] => c.bar.filter(b => !b.hidden).map(b => `${b.pin}:${b.label}`)
-    assert.deepEqual(pinned(c1).filter(l => l.startsWith('icon:')).slice(0, 2), ['icon:Tomar e responder eu', 'icon:Pausar Atrium nesta guia'], 'C1: Tomar and Pausar as icons (it waits for Atrium: "Tomar e responder eu")')
-    assert.deepEqual(pinned(g).filter(l => l.startsWith('icon:')).slice(0, 2), ['icon:Tomar', 'icon:Pausar Kai nesta guia'], 'G: the same two, in their quiet words')
-    assert.ok(pinned(c1).includes('primary:Focar guia'), 'and the guide\'s own "Focar guia"')
-    assert.equal(pinned(plain).some(l => /Tomar|Pausar|Devolver/.test(l)), false, 'a guide of nobody has no ownership item in its bar')
-    assert.equal(await page.locator(`${inPad} .pf-r-bar`).count(), 5, 'one bar per card, no other bar')
+    assert.deepEqual(pinned(c1).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Ir para Atrium', 'icon:Tomar e responder eu', 'icon:Pausar Atrium nesta guia'], 'C1: "Ir para", Tomar and Pausar as icons')
+    assert.deepEqual(pinned(c1).filter(l => !l.startsWith('icon:')), ['primary:Focar guia', 'primary:Fechar guia'], 'C1: with no highlight the bar keeps its two primaries, as today')
+    assert.deepEqual(pinned(g).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Tomar', 'icon:Pausar Kai nesta guia', 'icon:Ir para Kai'], 'G: the same, in their quiet words')
+    assert.deepEqual(pinned(t1).filter(l => !l.startsWith('icon:')), ['highlight:Devolver a Atrium', 'primary:Focar guia'], 'T1: "Devolver a Atrium" is the one with text and accent, and takes the place of "Fechar guia"')
+    const hl = page.locator(`${card(T1)} .pf-act.pin-highlight`), ic = page.locator(`${card(T1)} .pf-act.pin-icon`).first()
+    assert.notEqual(await hl.evaluate(b => getComputedStyle(b).color), await ic.evaluate(b => getComputedStyle(b).color), 'the highlight has the accent colour')
+    assert.equal(await page.locator(`${inPad} .pf-act.pin-highlight`).count(), 1, 'it is the only one with accent')
+    assert.deepEqual(pinned(p).filter(l => !l.startsWith('icon:') && !l.startsWith('more')), ['primary:Focar guia', 'primary:Fechar guia'])
+    assert.ok(pinned(p).includes('icon:Retomar Atrium nesta guia'), `P: "Retomar" (a primary of the extension) reaches the bar as an icon: ${JSON.stringify(pinned(p))}`)
+    assert.equal(await page.locator(`${inPad} .pf-r-bar`).count(), 6, 'one bar per card, no other bar')
     assert.equal(await page.locator(`${inPad} .pf-chip`).count(), 2, 'the filter chips are the two it had: no chip of ownership')
     assert.deepEqual(await state(), before, 'drawing the manager activated nothing and kept the desk')
 
@@ -318,7 +326,8 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     for (const id of guides.filter(id => id !== C1)) assert.equal(bare.get(id)!.line, '', `${id}: no line of the status bar without the extension`)
     assert.ok(!/ · Atrium · /.test(bare.get(C1)!.line) && !bare.get(C1)!.line.includes('enviou pedido'), `C1: the line keeps only the folder (the diamond's own, kept while tetherd routes): ${bare.get(C1)!.line}`)
     assert.equal(bare.get(C1)!.bar.some(b => /Tomar|Pausar|Devolver/.test(b.label)), false, 'back to the pane own bar')
-    assert.deepEqual(bare.get(C1)!.bar.filter(b => b.pin === 'primary').map(b => b.label), ['Focar guia', 'Fechar guia'])
+    for (const id of guides) assert.deepEqual(bare.get(id)!.bar.filter(b => b.pin !== 'icon').map(b => [b.pin, b.label]), [['primary', 'Focar guia'], ['primary', 'Fechar guia']], `${id}: with no extension that pins a highlight the bar is today's`)
+    for (const id of guides) assert.equal(bare.get(id)!.underline, null, `${id}: no underline without the extension`)
     assert.deepEqual(bare.get(PLAIN)!.bar.map(b => [b.pin, b.label]), (await cards()).get(PLAIN)!.bar.map(b => [b.pin, b.label]))
   } catch (e) {
     console.error(`daemon log:\n${logs.slice(-25).join('\n')}`)

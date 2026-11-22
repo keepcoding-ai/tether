@@ -27,7 +27,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     mount: key => ui.pads.panelFrames.mount(key),
     marks: paneId => {
       const routed = ui.panes.slotFacts(paneId)?.routed
-      return { emblems: ui.panes.emblems(paneId), head: ui.panes.headItems(paneId), ...(routed ? { routed } : {}) }
+      const line = ui.panes.tabLine(paneId)
+      return { emblems: ui.panes.emblems(paneId), head: ui.panes.headItems(paneId), ...(line !== undefined ? { line } : {}), ...(routed ? { routed } : {}) }
     },
     menuEntries: paneId => ui.panes.tabMenuEntries(paneId, { from: 'manager' }),
     tabMenu: (paneId, x, y, opener) => ui.panes.showTabMenu(paneId, x, y, opener, { from: 'manager' }),

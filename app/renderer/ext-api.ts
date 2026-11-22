@@ -364,6 +364,8 @@ export interface TetherUi {
     headItems(paneId: string): readonly PaneHeadItem[]
     /** Every extension's emblems on a pane's tab, in a stable order (by extension id, each in the order it gave them): for a view that shows the same marks. */
     emblems(paneId: string): readonly TabEmblem[]
+    /** The hue of the thin line under a pane's tab (`setTabLine`; with two extensions the first by id), undefined for none. */
+    tabLine(paneId: string): number | undefined
     /**
      * A mark of a pane changed: an emblem, its status-bar line, its tab line, or the diamond of an attention that waits for an
      * owner (`slotFacts().routed`). The pane's id; undefined when any pane may have changed.
