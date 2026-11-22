@@ -10,14 +10,16 @@
 //   desk renamed         -> the title follows, the name stays
 //   for-agents off       -> nothing follows (the feed is inactive: the channels stay as they are); on again, one pass
 //   system desk          -> no channel
+//   a pane in / out      -> joins by 'desk' unless removed / leaves if the desk brought it, and out of `removed` (P5, C18)
 //
 // Work is serialized in one queue. What changes per event is looked at only for the desks with an open desk channel and the
-// desks with an owner, never every channel. Memory: the set of desks with an open channel (bounded by desks).
+// desks with an owner, never every channel. Memory: the set of desks with an open channel and, per desk with a channel, its
+// panes at the last look (bounded by desks and panes).
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { DeskMap, DeskMapDesk } from '../../../src/daemon/protocol.ts'
 import { deskOwnerFeed, type DeskOwnerFact, type DeskOwnerFeed } from '../../for-agents/desk-owners.ts'
-import { deskChannelId, isDeskChannel, slugOf, type AgentId, type Channel } from '../rules.ts'
+import { deskChannelId, isDeskChannel, joinsByDesk, slugOf, type AgentId, type Channel } from '../rules.ts'
 import type { Channels } from './fanout.ts'
 
 /** What the desk channel uses of the daemon API. */
@@ -40,6 +42,8 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
   let disposed = false
   /** Desks whose desk channel is open. */
   const open = new Set<string>()
+  /** Per desk with a channel, the terminal panes it had when its members last followed it (kept while closed, for the reopening). */
+  const seen = new Map<string, Set<AgentId>>()
   /** The feed activation already passed over (a new `ready` is for-agents on again). */
   let passed: Promise<void> | undefined
 
@@ -70,17 +74,40 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
     if (!owner || gone) {
       if (ch && !ch.closed) refused(`encerrar ${id}`, await c.desk.close(id, gone ? 'gone' : fact?.ended ? 'ended' : 'revoked'))
       open.delete(deskId)
+      if (gone) seen.delete(deskId)
       return
     }
     if (!desk) return // no map yet: the desk's name is not known
     if (!ch || ch.closed) {
       const r = await c.desk.open(deskId, { name: ch?.name ?? slugOf(desk.name, c.store.openNames()), title: desk.name, owner, panes: agentPanes(desk) })
-      if (!refused(`abrir ${id}`, r)) open.add(deskId)
-      return
+      if (refused(`abrir ${id}`, r)) return
+      open.add(deskId)
+    } else {
+      open.add(deskId)
+      if (ch.title !== desk.name) refused(`título ${id}`, await c.desk.retitle(id, desk.name))
+      if (ownerMoved(ch, fact!)) refused(`owner ${id}`, await c.desk.setOwner(id, owner))
     }
-    open.add(deskId)
-    if (ch.title !== desk.name) refused(`título ${id}`, await c.desk.retitle(id, desk.name))
-    if (ownerMoved(ch, fact!)) refused(`owner ${id}`, await c.desk.setOwner(id, owner))
+    await followPanes(c, deskId, desk)
+  }
+
+  /**
+   * The members follow the desk's panes. A pane that left the desk (against the last panes followed) leaves the channel if
+   * the desk brought it and out of `removed`; one in the desk joins unless removed. Without a last look (tetherd started,
+   * the channel open or reopening), every member the desk brought that is not in the desk leaves, the owner apart.
+   */
+  async function followPanes(c: Channels, deskId: string, desk: DeskMapDesk): Promise<void> {
+    const id = deskChannelId(deskId)
+    const ch = c.store.get(id)
+    if (!ch || ch.closed) return
+    const inDesk = new Set(desk.panes.filter((p) => p.type === 'terminal').map((p) => p.id))
+    const prev = seen.get(deskId)
+    const left = new Set(prev
+      ? [...prev].filter((a) => !inDesk.has(a))
+      : Object.entries(ch.members).filter(([a, m]) => m.by === 'desk' && !inDesk.has(a)).map(([a]) => a))
+    for (const a of ch.removed ?? []) if (!inDesk.has(a)) left.add(a)
+    for (const a of left) refused(`saída de ${a} de ${id}`, await c.desk.exit(id, a))
+    for (const a of agentPanes(desk)) if (joinsByDesk(ch, a)) refused(`entrada de ${a} em ${id}`, await c.desk.enter(id, a))
+    seen.set(deskId, inDesk)
   }
 
   /** The desks to look at: those with an open desk channel and those with an owner. */

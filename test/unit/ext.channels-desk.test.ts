@@ -267,9 +267,86 @@ describe('the desk channel (F1)', () => {
     assert.equal(channelOf('sys'), undefined)
   })
 
+  test('the panes follow the desk: in joins, out leaves if the desk brought it; removed stays out until it leaves the desk; by hand stays', async () => {
+    const outsider = await running('de-fora')
+    const a = await running('movel')
+    const b = await running('tirada')
+    const hand = await running('a-mao')
+    const id = deskChannelId('d5')
+    desks.d5 = deskOf('d5', 'Quinta', [a])
+    await sendMap()
+    await give('d5', outsider)
+    await said('#quinta nasceu com a mesa · owner: de-fora', 'd5')
+    assert.deepEqual(Object.keys(channelOf('d5')!.members).sort(), [outsider, a].sort(), 'the owner from outside the desk joins too')
+
+    desks.d5 = deskOf('d5', 'Quinta', [a, b])
+    await sendMap()
+    await said('tirada entrou em #quinta', 'd5')
+    assert.equal(channelOf('d5')!.members[b]!.by, 'desk')
+
+    desks.d5 = deskOf('d5', 'Quinta', [b])
+    await sendMap()
+    await said('movel saiu de #quinta', 'd5')
+    assert.ok(!isMember(channelOf('d5')!, a))
+    assert.ok(isMember(channelOf('d5')!, outsider), 'the owner never leaves by the desk')
+
+    // Joined by hand: it stays whatever the desk does.
+    assert.ok((await ch.join(USER, id, hand)).ok)
+    desks.d5 = deskOf('d5', 'Quinta', [b, hand])
+    await sendMap()
+    desks.d5 = deskOf('d5', 'Quinta', [b])
+    await sendMap()
+    await sleep(200)
+    assert.equal(channelOf('d5')!.members[hand]?.by, USER, 'by hand stays')
+
+    // Removed: the desk does not bring it back; out of the desk and in again, it joins.
+    assert.ok((await ch.remove(USER, id, b)).ok)
+    desks.d5 = deskOf('d5', 'Quinta Feira', [b])
+    await sendMap()
+    await until('title', (x) => x!.title === 'Quinta Feira', 'd5')
+    await sleep(200)
+    assert.ok(!isMember(channelOf('d5')!, b) && channelOf('d5')!.removed?.includes(b))
+    desks.d5 = deskOf('d5', 'Quinta Feira', [])
+    await sendMap()
+    await until('out of removed', (x) => !x!.removed?.includes(b), 'd5')
+    const from = await lastSeq('d5')
+    desks.d5 = deskOf('d5', 'Quinta Feira', [b])
+    await sendMap()
+    await said('tirada entrou em #quinta', 'd5', from)
+
+    // Another owner: the old one, outside the desk, stays a member.
+    await give('d5', b)
+    await said('#quinta agora é de tirada', 'd5')
+    desks.d5 = deskOf('d5', 'Quinta Feira', [b, hand])
+    await sendMap()
+    await sleep(200)
+    assert.ok(isMember(channelOf('d5')!, outsider))
+
+    // for-agents off: a pane coming in is not followed; on again, the pass brings it.
+    unbind()
+    desks.d5 = deskOf('d5', 'Quinta Feira', [b, hand, a])
+    await sendMap()
+    await sleep(300)
+    assert.ok(!isMember(channelOf('d5')!, a), 'nothing follows while off')
+    const off = await lastSeq('d5')
+    bind()
+    await said('movel entrou em #quinta', 'd5', off)
+
+    // Closed, a pane leaves the desk; reopened, the members are the desk's then.
+    await revoke('d5')
+    await said('#quinta foi encerrado: a mesa ficou sem dono', 'd5')
+    desks.d5 = deskOf('d5', 'Quinta Feira', [b, hand])
+    await sendMap()
+    const closed = await lastSeq('d5')
+    await give('d5', b)
+    await said('#quinta foi reaberto: a mesa é de tirada', 'd5', closed)
+    await said('movel saiu de #quinta', 'd5', closed)
+    assert.ok(isMember(channelOf('d5')!, b) && isMember(channelOf('d5')!, hand))
+  })
+
   test('no sweep: only the channels of desks with an owner or an open desk channel are looked at, every channel listed once', async () => {
     const desksSeen = new Set([...asked].map((id) => id.replace(/^desk_/, '')))
-    for (const d of desksSeen) assert.ok(['d1', 'd2', 'd3', 'd4', 'sys'].includes(d), d)
+    for (const d of desksSeen) assert.ok(['d1', 'd2', 'd3', 'd4', 'd5', 'sys'].includes(d), d)
     assert.ok(![...asked].some((id) => id.startsWith('c_')), 'no common channel is looked at')
     assert.equal(listed, 1, 'every channel listed only at the start')
     // A desk with no owner and no channel: a map change does not look at it.
