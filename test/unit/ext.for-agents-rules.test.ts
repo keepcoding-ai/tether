@@ -12,7 +12,7 @@ import { extensions as daemonIndex } from '../../extensions/index.daemon.ts'
 import { AGENT_VERBS } from '../../extensions/for-agents/daemon/verbs.ts'
 import { ConductorRegistry, type Conductor, type ConductorTarget } from '../../extensions/for-agents/conductor-api.ts'
 import {
-  capabilityOn, deskAcceptsOwner, effective, mayGiveOrRevoke, paneCapabilityState, portOf, relationOf,
+  capabilityOn, deskAcceptsOwner, effective, liveOwnersOf, mayGiveOrRevoke, ownPanePort, paneCapabilityState, portOf, relationOf,
   type DeskFacts, type Effective, type Hand, type Ownership, type PaneFacts,
 } from '../../extensions/for-agents/rules.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
@@ -77,6 +77,26 @@ describe('for-agents rules: effective ownership', () => {
     assert.deepEqual(portOf({ commander: 'A', via: 'desk', hand: 'user', handWhy: 'taken' }), {})
     assert.deepEqual(portOf({ commander: 'A', via: 'desk', hand: 'user', handWhy: 'paused' }), {})
     assert.deepEqual(portOf({ viewer: 'A', hand: 'user' }), {})
+  })
+
+  test('ownPanePort: a live owner\'s own pane nobody commands is held by it, never routed; nothing else changes', () => {
+    const owners: ReadonlySet<string> = new Set(['A'])
+    const deskA: DeskFacts = { id: 'cena', owner: own('A') }
+    const eff = (pane: PaneFacts, desk?: DeskFacts, frozen: ReadonlySet<string> = NONE): Effective => effective(pane, desk, frozen)
+    assert.deepEqual(ownPanePort({ id: 'A' }, eff({ id: 'A' }, deskA), owners, NONE), { heldBy: 'A' }, 'its pane in the desk it owns')
+    assert.deepEqual(ownPanePort({ id: 'A' }, eff({ id: 'A' }), owners, NONE), { heldBy: 'A' }, 'its pane outside what it owns')
+    assert.deepEqual(ownPanePort({ id: 'A' }, eff({ id: 'A' }), NONE, NONE), {}, 'owns nothing: as before')
+    assert.deepEqual(ownPanePort({ id: 'p' }, eff({ id: 'p' }), owners, NONE), {}, 'not an owner\'s pane')
+    assert.deepEqual(ownPanePort({ id: 'A', hand: hand('taken') }, eff({ id: 'A', hand: hand('taken') }, deskA), owners, NONE), {}, 'the person\'s hand on it')
+    assert.deepEqual(ownPanePort({ id: 'A' }, eff({ id: 'A' }, deskA, new Set(['A'])), owners, new Set(['A'])), {}, 'paused everywhere')
+    const commanded = eff({ id: 'A' }, { id: 'casa', owner: own('K') })
+    assert.deepEqual(ownPanePort({ id: 'A' }, commanded, owners, NONE), {}, 'commanded by another: portOf decides')
+    assert.equal(eff({ id: 'A' }, deskA).commander, undefined, 'effective() is unchanged: still the person\'s')
+  })
+
+  test('liveOwnersOf: every live owner once; a forgotten one owns nothing', () => {
+    assert.deepEqual([...liveOwnersOf([own('A'), own('K'), own('A'), gone('X', 'Xis')])].sort(), ['A', 'K'])
+    assert.equal(liveOwnersOf([]).size, 0)
   })
 
   test('relationOf: the commander commands, the viewer sees, the rest nothing', () => {
