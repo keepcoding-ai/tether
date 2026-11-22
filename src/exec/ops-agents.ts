@@ -123,35 +123,6 @@ export function ensureSettingsFile(file: string, content: string): string {
   return file
 }
 
-/** True when a settings file defines a statusLine. Missing or malformed JSON counts as none. */
-function definesStatusLine(file: string, read: (path: string) => string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(read(file))
-    return typeof parsed === 'object' && parsed !== null && (parsed as { statusLine?: unknown }).statusLine != null
-  } catch {
-    return false
-  }
-}
-
-const statusLineCache = new Map<string, { sig: string; value: boolean }>()
-
-/** definesStatusLine on the real file system, parsed again only when the file's size or mtime changed (a missing file is not cached). */
-function definesStatusLineCached(file: string): boolean {
-  const sig = fileSig(file)
-  if (sig === undefined) { statusLineCache.delete(file); return false }
-  const hit = statusLineCache.get(file)
-  if (hit?.sig === sig) return hit.value
-  const value = definesStatusLine(file, (p) => readFileSync(p, 'utf8'))
-  if (statusLineCache.size >= 256) statusLineCache.clear() // per-project files: bounded
-  statusLineCache.set(file, { sig, value })
-  return value
-}
-
-/** Whether any of the settings files defines a status line (the user's own settings, the project's). */
-export function anyDefinesStatusLine(files: readonly string[], read?: (path: string) => string): boolean {
-  return files.some((p) => read ? definesStatusLine(p, read) : definesStatusLineCached(p))
-}
-
 // ---- codex ----
 
 const notifyCache = new Map<string, { sig: string; value: string[] | undefined }>()
@@ -483,7 +454,6 @@ export const agentOps = {
   resolveClaude: (env: EnvMap): string => resolveClaudeCommand(env),
   resolveCodex: (env: EnvMap): CodexCommand => resolveCodexCommand(env),
   ensureSettingsFile: (file: string, content: string): string => ensureSettingsFile(file, content),
-  hasStatusLine: (files: string[]): boolean => anyDefinesStatusLine(files),
   userNotify: (home: string): string[] | undefined => userNotify(home),
   resolveShell: (slotArgs: string[], profileArgs: string[] | undefined, env: EnvMap): Command => resolveShell(slotArgs, profileArgs, env),
   resolveSoul: (env: EnvMap): Command => resolveSoulCommand(env),

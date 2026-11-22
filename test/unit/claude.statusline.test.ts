@@ -1,8 +1,10 @@
 // The status line script tether injects into Claude: pure formatting, and the script as Claude runs it (stdin JSON).
-import { test, describe } from 'node:test'
+import { test, describe, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { resolve } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { tempDirs } from './tmp.helpers.ts'
 // @ts-expect-error plain .mjs without types
 import { formatStatusLine } from '../../src/report/claude-statusline.mjs'
 
@@ -49,5 +51,65 @@ describe('claude-statusline.mjs as Claude runs it', () => {
       assert.equal(r.status, 0, input)
       assert.equal(r.stderr, '', input)
     }
+  })
+})
+
+describe('chaining the user status line', () => {
+  const dirs = tempDirs('tether-chain-')
+  after(() => dirs.cleanup())
+  const payload = (cwd: string) => ({ model: { id: 'claude-fable-5-2', display_name: 'Fable 5.2' }, workspace: { current_dir: cwd } })
+  const run = (cwd: string, config: string, extra: Record<string, unknown> = {}) =>
+    spawnSync(process.execPath, [SCRIPT], { input: JSON.stringify({ ...payload(cwd), ...extra }), encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: config, TETHER_SLOT_ID: '' }, timeout: 8000 })
+  const withUser = (command: string, where: 'user' | 'project' | 'local' = 'project') => {
+    const config = dirs.make(), cwd = dirs.make()
+    const body = JSON.stringify({ statusLine: { type: 'command', command } })
+    if (where === 'user') writeFileSync(join(config, 'settings.json'), body)
+    else {
+      mkdirSync(join(cwd, '.claude'), { recursive: true })
+      writeFileSync(join(cwd, '.claude', where === 'project' ? 'settings.json' : 'settings.local.json'), body)
+    }
+    return { config, cwd }
+  }
+
+  test('(a) no user status line: only our ribbon', () => {
+    const r = run(dirs.make(), dirs.make())
+    assert.equal(r.status, 0)
+    assert.ok(!r.stdout.includes('\n'))
+    assert.match(r.stdout, /FABLE ATIVO/)
+  })
+
+  test('(b) user echo follows our ribbon on the next line, in user, project and local settings', () => {
+    for (const where of ['user', 'project', 'local'] as const) {
+      const { config, cwd } = withUser('echo USERLINE', where)
+      const lines = run(cwd, config).stdout.split('\n')
+      assert.match(lines[0]!, /FABLE ATIVO/, where)
+      assert.equal(lines[1]!.trim(), 'USERLINE', where)
+    }
+  })
+
+  test('the user command gets the same stdin; the last file wins', () => {
+    const { config, cwd } = withUser('echo LOCAL', 'local')
+    writeFileSync(join(config, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: 'echo USER' } }))
+    assert.equal(run(cwd, config).stdout.split('\n')[1]!.trim(), 'LOCAL')
+    const echoStdin = `node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).marker))"`
+    const w = withUser(echoStdin)
+    assert.equal(run(w.cwd, w.config, { marker: 'SAME' }).stdout.split('\n')[1]!.trim(), 'SAME')
+  })
+
+  test('(c) failing, empty or hanging user command: only our ribbon, within the timeout', () => {
+    for (const cmd of ['exit 3', 'node -e "process.exit(0)"', `node -e "setTimeout(()=>{},30000)"`]) {
+      const { config, cwd } = withUser(cmd)
+      const t0 = Date.now()
+      const r = run(cwd, config)
+      assert.equal(r.status, 0, cmd)
+      assert.ok(!r.stdout.includes('\n'), cmd)
+      assert.match(r.stdout, /FABLE ATIVO/, cmd)
+      assert.ok(Date.now() - t0 < 5000, cmd)
+    }
+  })
+
+  test('a user command that is this very script is not run', () => {
+    const { config, cwd } = withUser(`node "${SCRIPT.split(String.fromCharCode(92)).join('/')}"`)
+    assert.ok(!run(cwd, config).stdout.includes('\n'))
   })
 })

@@ -44,6 +44,8 @@ export interface DeskHost {
   paneOptions?(panel: IDockviewPanel): AddPanelOptions
   /** A tab dragged from another frame (of this or another Desk) landed in this Desk as `id`: it is the active pane of its frame now. */
   onPaneDropped?(id: string): void
+  /** The pane is the blank view ("Vazio"): a place kept for what comes next, which gives way to a tab that arrives in its group. */
+  isBlankPane?(id: string): boolean
 }
 
 /**
@@ -175,6 +177,8 @@ export class Desk {
       if (source && source.frame !== frame && this.host.paneOptions) e.accept()
     })
     frame.dock.onDidDrop(e => this.dropFromFrame(frame, e))
+    // A tab moved into another group of this frame (dockview's own drop, on the content or on the tab bar).
+    frame.dock.onDidMovePanel(e => queueMicrotask(() => this.dropBlanksIn(frame, e.panel.id)))
     const view = this.pendingViews[frame.id]
     if (view) { delete this.pendingViews[frame.id]; this.loadView(frame, view) }
   }
@@ -204,6 +208,18 @@ export class Desk {
     const placements = dropPlacements(ids, e.position, e.group?.id, e.index)
     if (!placements) return
     this.movePanes(source, ids, () => frame, placements)
+  }
+
+  /**
+   * A group holding real content keeps no blank view: when `arrivedId` joined a group that also holds a blank pane
+   * ("Vazio"), the blank is removed, so what arrives takes its place (the same rule as opening something there).
+   */
+  private dropBlanksIn(frame: Frame, arrivedId: string): void {
+    const arrived = frame.dock.getPanel(arrivedId)
+    if (!arrived || !this.host.isBlankPane) return
+    const blanks = arrived.group.panels.filter(p => p.id !== arrivedId && this.host.isBlankPane!(p.id))
+    for (const blank of blanks) frame.dock.removePanel(blank)
+    if (blanks.length) arrived.api.setActive()
   }
 
   /**
@@ -238,6 +254,7 @@ export class Desk {
         }
       })
       if (!last) return
+      this.dropBlanksIn(frame, last.id)
       last.api.setActive()
       this.activeFrameId = frame.id
       this.host.onPaneDropped?.(last.id)
