@@ -9,6 +9,7 @@
 import { slotAnswerPath } from '../../src/core/paths.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { ConductError, type Conductor, type ConductorContext, type ConductorTarget, type Detected, type LastAnswer, type Proven } from '../for-agents/conductor-api.ts'
+import { winKeyEvents } from '../codex/typing.ts'
 import { alnum, composerDraft, echoedAbove, hasAll, NEW_CONVERSATION_DIALOG, readCodexScreen, UPDATE_DIALOG, type ParsedOption, type Seen } from './screen.ts'
 
 export const CODEX_CONDUCTOR_ID = 'codex'
@@ -88,20 +89,6 @@ export function sendChunks(text: string, platform: NodeJS.Platform = process.pla
   const lines = clean.split('\n')
   if (lines.length === 1) return [{ data: asKeyEvents(clean) }, { data: '\r', waitMs: ENTER_DELAY_MS }]
   return [{ data: `${PASTE_START}${asKeyEvents(lines.join('\r'))}${PASTE_END}` }, { data: '\r', waitMs: PASTE_ENTER_DELAY_MS }]
-}
-
-/**
- * Codex reads the console as key events, and the ConPTY turns UTF-8 input into them by the keyboard layout: a character that is
- * not on the layout (`·`, `«`, `¿`, `—`, `€`) arrives as nothing (measured on Codex 0.169.0, pt-BR layout). Every non-ASCII
- * UTF-16 unit goes (on Windows only; other platforms keep the raw text) as a win32-input-mode key press (`CSI Vk;Sc;Uc;Kd;Cs;Rc _`, Vk and Sc 0), which carries the character itself.
- */
-function winKeyEvents(text: string): string {
-  let out = ''
-  for (let i = 0; i < text.length; i++) {
-    const unit = text.charCodeAt(i)
-    out += unit < 0x80 ? text[i] : `\x1b[0;0;${unit};1;0;1_`
-  }
-  return out
 }
 
 /** What an `answer` choice does on this card: a key named on the screen (`y`, `p`) or Esc, with whether a probe proved it. */
