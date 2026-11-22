@@ -14,13 +14,22 @@ import type { Channels } from './fanout.ts'
 import { closeVerb } from './verbs/close.ts'
 import { failOf, type VerbApi, type VerbDef, type VerbDeps } from './verbs/common.ts'
 import { createVerb } from './verbs/create.ts'
+import { joinVerb } from './verbs/join.ts'
+import { leaveVerb } from './verbs/leave.ts'
 import { listVerb } from './verbs/list.ts'
 import { membersVerb } from './verbs/members.ts'
+import { muteVerb } from './verbs/mute.ts'
 import { readVerb } from './verbs/read.ts'
+import { removeVerb } from './verbs/remove.ts'
 import { reopenVerb } from './verbs/reopen.ts'
+import { sayVerb } from './verbs/say.ts'
+import { unmuteVerb } from './verbs/unmute.ts'
 
-/** The verbs, in the order of the contract's table 3.1 (H3b adds join, leave, remove, mute, unmute and say). */
-export const CHANNEL_VERBS: readonly VerbDef[] = [listVerb, createVerb, membersVerb, readVerb, closeVerb, reopenVerb]
+/** The verbs: those of the contract's table 3.1, then `reopen` (C7). */
+export const CHANNEL_VERBS: readonly VerbDef[] = [
+  listVerb, createVerb, membersVerb, readVerb, closeVerb, reopenVerb,
+  joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb,
+]
 
 export const INSTRUCTIONS = 'You may be in channels of the tether: rooms where agents of any engine and the person talk. Messages reach you as `<channel source="tether" origin="channels" room="…" …>`; `room` is the channel, `from` and `role` who spoke, `to` whom it addresses. Speak with `channels_say` naming the room; `channels_list` shows your channels and how to find your way again after compacting; `channels_read` shows what you missed. A muted member still hears. `role="moderator"` is the person; the owner of a channel speaks as a member.'
 

@@ -11,7 +11,7 @@ import '../../src/agents/load.ts'
 import { agentRegistry, type AgentContribution } from '../../src/agents/registry.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
-import type { DoorApi, VerbResult } from '../../src/daemon/door/types.ts'
+import type { DeliveryMessage, DoorApi, VerbResult } from '../../src/daemon/door/types.ts'
 import { fsIo } from '../../src/daemon/ext-io.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
@@ -34,6 +34,7 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
   let ch: Channels
   const own = new DisposableStore()
   const logs: string[] = []
+  const sent: { slotId: string; room: string | undefined; body: string }[] = []
 
   const fake: AgentAdapter = {
     name: 'claude',
@@ -66,7 +67,14 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
     doorApi = door.apiFor(EXT_ID, own)
     own.add(doorApi.delivery.enable())
     const api: ChannelsApi & Pick<DoorApi, 'verbs'> = {
-      slots: doorApi.slots, attention: doorApi.attention, delivery: doorApi.delivery, verbs: doorApi.verbs,
+      slots: doorApi.slots, attention: doorApi.attention, verbs: doorApi.verbs,
+      // Records what the fan-out hands to the core's delivery (the room and the body per slot), then delegates.
+      delivery: Object.assign(Object.create(doorApi.delivery) as DoorApi['delivery'], {
+        deliver: (slotId: string, msg: DeliveryMessage, opts?: { paths?: readonly ('inside' | 'terminal')[] }) => {
+          sent.push({ slotId, room: msg.room, body: msg.body })
+          return doorApi.delivery.deliver(slotId, msg, opts)
+        },
+      }),
       events: { emit: () => {} }, settings: { get: () => undefined }, log: (m) => logs.push(m),
     }
     ch = createChannels(api, await openStore(fsIo, home))
@@ -106,7 +114,7 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
     B = await running('fora-bravo')
     C = await running('fora-bravo')
     D = await running('fora-delta')
-    const names = ['list', 'create', 'members', 'read', 'close', 'reopen']
+    const names = ['list', 'create', 'members', 'read', 'close', 'reopen', 'join', 'leave', 'remove', 'mute', 'unmute', 'say']
     assert.deepEqual(CHANNEL_VERBS.map((v) => v.name), names)
     for (const exit of ['mcp', 'cli'] as const) {
       assert.deepEqual(door.verbs.list(exit).filter((v) => v.verb.ns === 'channels').map((v) => v.verb.name), names, exit)
@@ -290,5 +298,172 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
       assert.equal(codeOf(await call(shell, 'create', { name: 'da-concha' })), 'unknown-agent')
       assert.equal(ch.store.findOpen('da-concha'), undefined)
     } finally { await doorApi.slots.forget(shell) }
+  })
+
+  describe('channels verbs (H3b: join, leave, remove, mute, unmute, say)', () => {
+    let E: string, F: string, G: string
+
+    test('join: myself in an open channel; already; the owner joins another; not-owner, unknown-agent, ambiguous, closed, unknown-channel', async () => {
+      E = await running('h-dona')
+      F = await running('h-fala')
+      G = await running('h-terceiro')
+      const id = data(await call(E, 'create', { name: 'junta' })).channel.id
+      const self = await call(F, 'join', { canal: 'junta' })
+      assert.equal(self.isError, undefined, self.text)
+      assert.deepEqual(data(self).channel, { id, name: 'junta' })
+      assert.deepEqual(data(self).member, { id: F, name: 'h-fala' })
+      assert.equal(data(self).already, false)
+      assert.equal(ch.store.get(id)!.members[F]!.by, 'self')
+      assert.equal(data(await call(F, 'join', { canal: id })).already, true)
+
+      assert.equal(codeOf(await call(F, 'join', { canal: id, agent: G })), 'not-owner', 'a member that is not the owner cannot join another')
+      assert.equal(codeOf(await call(G, 'join', { canal: id, agent: 'h-fala' })), 'not-owner')
+      const other = await call(E, 'join', { canal: 'junta', agent: 'h-terceiro' })
+      assert.equal(other.isError, undefined, other.text)
+      assert.deepEqual(data(other).member, { id: G, name: 'h-terceiro' })
+      assert.equal(ch.store.get(id)!.members[G]!.by, E)
+      assert.equal(codeOf(await call(E, 'join', { canal: id, agent: 'ninguem' })), 'unknown-agent')
+      const amb = await call(E, 'join', { canal: id, agent: 'fora-bravo' })
+      assert.equal(codeOf(amb), 'ambiguous')
+      assert.deepEqual(data(amb).options.map((o: { id: string }) => o.id).sort(), [B, C].sort())
+      assert.equal(codeOf(await call(F, 'join', { canal: 'nada' })), 'unknown-channel')
+      assert.equal(codeOf(await call(F, 'join', {})), 'bad-request')
+
+      assert.equal((await call(E, 'close', { canal: id })).isError, undefined)
+      assert.equal(codeOf(await call(C, 'join', { canal: id })), 'closed')
+      assert.equal(codeOf(await call(E, 'join', { canal: id, agent: C })), 'closed')
+    })
+
+    test('leave: I leave; not-member; unknown-channel; the owner leaving passes the channel to the person (C16)', async () => {
+      const id = data(await call(E, 'create', { name: 'sai', members: [F, G] })).channel.id
+      const r = await call(F, 'leave', { canal: 'sai' })
+      assert.equal(r.isError, undefined, r.text)
+      assert.deepEqual(data(r), { channel: { id, name: 'sai' }, left: true })
+      assert.equal(ch.store.get(id)!.members[F], undefined)
+      assert.equal(codeOf(await call(F, 'leave', { canal: id })), 'not-member')
+      assert.equal(codeOf(await call(C, 'leave', { canal: id })), 'not-member', 'a stranger')
+      assert.equal(codeOf(await call(F, 'leave', { canal: 'nada' })), 'unknown-channel')
+      assert.equal((await call(E, 'leave', { canal: id })).isError, undefined)
+      assert.equal(data(await call(G, 'members', { canal: id })).owner.kind, 'user')
+      assert.equal(codeOf(await call(E, 'join', { canal: id, agent: F })), 'not-owner', 'the one that left no longer owns')
+    })
+
+    test('remove: the owner takes one out; the removed one cannot come back alone (removed, C18) and the owner joins it again', async () => {
+      const id = data(await call(E, 'create', { name: 'tira', members: [F, G] })).channel.id
+      assert.equal(codeOf(await call(F, 'remove', { canal: id, agent: G })), 'not-owner')
+      assert.equal(codeOf(await call(C, 'remove', { canal: id, agent: G })), 'not-owner')
+      assert.equal(codeOf(await call(E, 'remove', { canal: id, agent: 'ninguem' })), 'unknown-agent')
+      assert.equal(codeOf(await call(E, 'remove', { canal: id, agent: D })), 'not-member')
+      assert.equal(codeOf(await call(E, 'remove', { canal: 'nada', agent: G })), 'unknown-channel')
+      assert.equal(codeOf(await call(E, 'remove', { canal: id })), 'bad-request')
+      const r = await call(E, 'remove', { canal: 'tira', agent: 'h-terceiro' })
+      assert.equal(r.isError, undefined, r.text)
+      assert.deepEqual(data(r), { channel: { id, name: 'tira' }, removed: { id: G, name: 'h-terceiro' } })
+      assert.equal(ch.store.get(id)!.members[G], undefined)
+      assert.equal(codeOf(await call(G, 'join', { canal: id })), 'removed')
+      assert.equal(codeOf(await call(E, 'remove', { canal: id, agent: G })), 'not-member')
+      assert.equal((await call(E, 'join', { canal: id, agent: G })).isError, undefined, 'the owner joins it again')
+      assert.equal(ch.store.get(id)!.members[G] !== undefined, true)
+    })
+
+    test('mute and unmute: the owner silences and gives the voice back; already; the same errors as remove', async () => {
+      const id = data(await call(E, 'create', { name: 'cala', members: [F, G] })).channel.id
+      assert.equal(codeOf(await call(F, 'mute', { canal: id, agent: G })), 'not-owner')
+      assert.equal(codeOf(await call(F, 'unmute', { canal: id, agent: G })), 'not-owner')
+      for (const verb of ['mute', 'unmute']) {
+        assert.equal(codeOf(await call(E, verb, { canal: id, agent: 'ninguem' })), 'unknown-agent', verb)
+        assert.equal(codeOf(await call(E, verb, { canal: id, agent: D })), 'not-member', verb)
+        assert.equal(codeOf(await call(E, verb, { canal: 'nada', agent: G })), 'unknown-channel', verb)
+      }
+      const m = await call(E, 'mute', { canal: 'cala', agent: 'h-terceiro' })
+      assert.equal(m.isError, undefined, m.text)
+      assert.deepEqual(data(m), { channel: { id, name: 'cala' }, muted: { id: G, name: 'h-terceiro' }, already: false })
+      assert.equal(data(await call(E, 'mute', { canal: id, agent: G })).already, true)
+      assert.equal(codeOf(await call(G, 'say', { canal: id, text: 'oi' })), 'muted')
+      const u = await call(E, 'unmute', { canal: id, agent: G })
+      assert.deepEqual(data(u), { channel: { id, name: 'cala' }, unmuted: { id: G, name: 'h-terceiro' }, already: false })
+      assert.equal(data(await call(E, 'unmute', { canal: id, agent: G })).already, true)
+      assert.equal((await call(G, 'say', { canal: id, text: 'voltei' })).isError, undefined)
+    })
+
+    test('say: ref, seq and delivered; to by id, name and `usuário`; reply; muted, closed, not-member, unknown-member, bad-request', async () => {
+      const id = data(await call(E, 'create', { name: 'fala', members: [F, G] })).channel.id
+      const r = await call(E, 'say', { canal: 'fala', text: 'olá a todos' })
+      assert.equal(r.isError, undefined, r.text)
+      assert.equal(data(r).ref, `fala#${data(r).seq}`)
+      assert.equal(typeof data(r).seq, 'number')
+      assert.deepEqual(data(r).delivered.map((d: { id: string }) => d.id).sort(), [F, G].sort())
+      for (const d of data(r).delivered) assert.ok(['inside', 'typed', 'queued', 'away'].includes(d.state), d.state)
+      assert.deepEqual(data(r).delivered.map((d: { id: string; name: string }) => [d.id, d.name]).sort(), [[F, 'h-fala'], [G, 'h-terceiro']].sort())
+      const first = (await ch.store.history(id, undefined, 10)).find((l) => l.body === 'olá a todos')
+      assert.equal(first?.seq, data(r).seq)
+      assert.equal(first?.from.role, 'owner', 'the owner speaks as a member in the envelope, the line keeps owner')
+
+      const to = await call(F, 'say', { canal: id, text: 'para você', to: [G, 'usuário'], reply: data(r).seq })
+      assert.equal(to.isError, undefined, to.text)
+      const line = (await ch.store.history(id, undefined, 10)).find((l) => l.seq === data(to).seq)!
+      assert.deepEqual(line.to, ['h-terceiro', 'usuário'])
+      assert.equal(line.replyTo, data(r).seq)
+      const byName = await call(F, 'say', { canal: id, text: 'por nome', to: 'h-dona' })
+      assert.deepEqual((await ch.store.history(id, undefined, 10)).find((l) => l.seq === data(byName).seq)!.to, ['h-dona'])
+
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'x', to: ['ninguem'] })), 'unknown-member')
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'x', to: [D] })), 'unknown-member', 'a live agent that is not a member')
+      assert.equal(codeOf(await call(C, 'say', { canal: id, text: 'x' })), 'not-member')
+      assert.equal(codeOf(await call(C, 'say', { canal: id, text: 'x', to: ['ninguem'] })), 'not-member', 'who may speak is checked first')
+      assert.equal(codeOf(await call(F, 'say', { canal: 'nada', text: 'x' })), 'unknown-channel')
+      assert.equal(codeOf(await call(F, 'say', { canal: id })), 'bad-request')
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'x', reply: -2 })), 'bad-request')
+
+      assert.equal((await call(E, 'mute', { canal: id, agent: F })).isError, undefined)
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'calado' })), 'muted')
+      assert.equal((await call(E, 'close', { canal: id })).isError, undefined)
+      assert.equal(codeOf(await call(E, 'say', { canal: id, text: 'tarde' })), 'closed')
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'tarde', to: ['ninguem'] })), 'closed')
+    })
+
+    test('multichannel: one agent in two channels gets each line with the right room, and muting in one does not mute in the other', async () => {
+      const a = data(await call(E, 'create', { name: 'sala-um', members: [F] })).channel.id
+      const b = data(await call(G, 'create', { name: 'sala-dois', members: [F] })).channel.id
+      assert.equal((await call(E, 'say', { canal: a, text: 'um-chegou' })).isError, undefined)
+      assert.equal((await call(G, 'say', { canal: b, text: 'dois-chegou' })).isError, undefined)
+      const toF = (word: string) => sent.filter((s) => s.slotId === F && s.body === word)
+      assert.deepEqual(toF('um-chegou').map((s) => s.room), ['sala-um'])
+      assert.deepEqual(toF('dois-chegou').map((s) => s.room), ['sala-dois'])
+
+      assert.equal((await call(E, 'mute', { canal: a, agent: F })).isError, undefined)
+      assert.equal(codeOf(await call(F, 'say', { canal: a, text: 'calado aqui' })), 'muted')
+      assert.equal((await call(F, 'say', { canal: b, text: 'falo aqui' })).isError, undefined, 'still free in the other channel')
+      assert.equal(data(await call(F, 'members', { canal: b })).members.find((m: { id: string }) => m.id === F).muted, false)
+      assert.equal(data(await call(F, 'list')).channels.find((c: { id: string }) => c.id === a).muted, true)
+      assert.equal(data(await call(F, 'list')).channels.find((c: { id: string }) => c.id === b).muted, false)
+    })
+
+    test('proven: false runs and leaves marked; the CLI exit gives the same errors and results as the MCP exit', async () => {
+      const id = data(await call(E, 'create', { name: 'duas-saidas', members: [F] })).channel.id
+      const unproven = await call(F, 'say', { canal: id, text: 'sem prova' }, { proven: false })
+      assert.equal(unproven.isError, undefined)
+      assert.equal(data(unproven).proven, false)
+      assert.match(unproven.text, /sem prova de identidade/)
+      assert.equal(data(await call(F, 'say', { canal: id, text: 'com prova' })).proven, undefined)
+
+      const viaPipe = await cli(F, 'say', { canal: id, text: 'pelo pipe', to: ['h-dona'] })
+      assert.equal(viaPipe.isError, undefined, viaPipe.text)
+      assert.equal(data(viaPipe).proven, false)
+      assert.deepEqual(Object.keys(clean(viaPipe) as object).sort(), Object.keys(clean(await call(F, 'say', { canal: id, text: 'pelo mcp', to: ['h-dona'] })) as object).sort())
+
+      assert.equal(codeOf(await cli(F, 'say', { canal: id, text: 'x', to: ['ninguem'] })), 'unknown-member')
+      assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'x', to: ['ninguem'] })), 'unknown-member')
+      assert.equal(codeOf(await cli(F, 'remove', { canal: id, agent: E })), 'not-owner')
+      assert.equal(codeOf(await cli(F, 'mute', { canal: id, agent: E })), 'not-owner')
+      assert.equal(codeOf(await cli(F, 'join', { canal: id, agent: G })), 'not-owner')
+      const muted = await cli(E, 'mute', { canal: id, agent: F })
+      assert.equal(data(muted).already, false)
+      assert.deepEqual(clean(await cli(E, 'mute', { canal: id, agent: F })), { ...(clean(await call(E, 'mute', { canal: id, agent: F })) as object) })
+      assert.deepEqual(clean(await cli(E, 'unmute', { canal: id, agent: F })), { channel: { id, name: 'duas-saidas' }, unmuted: { id: F, name: 'h-fala' }, already: false, proven: undefined })
+      assert.deepEqual(clean(await cli(F, 'leave', { canal: id })), { channel: { id, name: 'duas-saidas' }, left: true, proven: undefined })
+      assert.equal(codeOf(await cli(F, 'leave', { canal: id })), 'not-member')
+      assert.equal(data(await cli(F, 'join', { canal: id })).already, false)
+    })
   })
 })
