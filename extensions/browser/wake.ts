@@ -4,7 +4,7 @@
 // carries no data and takes no argument: whoever connects can only ask for the browser to be up. No app listening (not open, or
 // the browser runs inside it): the connection fails at once and the call goes on to the tool, which says the app is not running.
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { readFile, rm } from 'node:fs/promises'
 import { createServer, connect, type Server } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 
@@ -64,9 +64,9 @@ export function wakePipeUp(endpointFile: string): Promise<boolean> {
 }
 
 /** The endpoint file's content when the gatekeeper of process `pid` wrote it. */
-export function endpointUp(endpointFile: string, pid: number | undefined): boolean {
-  if (pid === undefined || !existsSync(endpointFile)) return false
-  try { return (JSON.parse(readFileSync(endpointFile, 'utf8')) as { pid?: unknown }).pid === pid } catch { return false }
+export async function endpointUp(endpointFile: string, pid: number | undefined): Promise<boolean> {
+  if (pid === undefined) return false
+  try { return (JSON.parse(await readFile(endpointFile, 'utf8')) as { pid?: unknown }).pid === pid } catch { return false }
 }
 
 export interface WakeServer { close(): void }
@@ -77,15 +77,15 @@ export interface WakeServer { close(): void }
  */
 export function serveWake(endpointFile: string, bring: () => Promise<number | undefined>, o: { log(msg: string): void; endpointWaitMs?: number; pollMs?: number }): WakeServer {
   const path = wakePipeOf(endpointFile)
-  if (process.platform !== 'win32') rmSync(path, { force: true })
   const waitEndpoint = async (pid: number): Promise<boolean> => {
     const end = Date.now() + (o.endpointWaitMs ?? ENDPOINT_WAIT_MS)
-    while (!endpointUp(endpointFile, pid)) {
+    while (!await endpointUp(endpointFile, pid)) {
       if (Date.now() > end) return false
       await new Promise(r => setTimeout(r, o.pollMs ?? 50))
     }
     return true
   }
+  let closed = false
   const server: Server = createServer(socket => {
     socket.setEncoding('utf8')
     let asked = false
@@ -101,8 +101,9 @@ export function serveWake(endpointFile: string, bring: () => Promise<number | un
     })
   })
   server.on('error', e => o.log(`porta de acordar o navegador não abriu (${(e as Error).message})`))
-  server.listen(path)
-  return { close: () => { server.close() } }
+  // A socket file left by an app that died is removed first (a Windows pipe goes with its process).
+  void (process.platform === 'win32' ? Promise.resolve() : rm(path, { force: true }).catch(() => {})).then(() => { if (!closed) server.listen(path) })
+  return { close: () => { closed = true; server.close() } }
 }
 
 export interface ToolCallGate {

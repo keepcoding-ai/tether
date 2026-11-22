@@ -88,6 +88,8 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     log,
   })
   let downloadStore: DownloadStore | undefined
+  /** The gatekeeper's endpoint file goes when the process does: the agents' tool then fails at once instead of knocking on a dead port. */
+  const dropEndpoint = (): void => { try { rmSync(join(main.home, 'browser', 'endpoint.json'), { force: true }) } catch { /* the next start rewrites it */ } }
 
   // ---- the window, as the process needs it ----
   const windowState = (w: BrowserWindow): HostWindowState => {
@@ -354,7 +356,7 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     if (disposed) return
     if (kind === 'idle') {
       // Not a crash: no tab is marked, no repeat is counted. The gatekeeper's endpoint goes with the process.
-      try { rmSync(join(main.home, 'browser', 'endpoint.json'), { force: true }) } catch { /* the next start rewrites it */ }
+      dropEndpoint()
       onScreen.clear()
       asks.clear()
       log('processo do navegador encerrado (ocioso)')
@@ -362,7 +364,7 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     }
     log(`processo do navegador parou (código ${code ?? '—'}${signal ? `, sinal ${signal}` : ''})`)
     // The agents' tool reads the endpoint at every connection: without it they fail at once, and the next process writes a new one.
-    try { rmSync(join(main.home, 'browser', 'endpoint.json'), { force: true }) } catch { /* the next start rewrites it */ }
+    dropEndpoint()
     const now: BrowserCrash = {
       at: Date.now(),
       suspects: [...tabs.values()].filter(t => t.loading || onScreen.has(t.surfaceId)).map(t => t.tabId),

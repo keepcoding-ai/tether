@@ -138,7 +138,7 @@ test('wake pipe: the answer comes once the process is up and its endpoint writte
     assert.equal(await requestWake(endpoint, 2000), false, 'the process is up but no endpoint of its pid yet')
     const { writeFileSync } = await import('node:fs')
     writeFileSync(endpoint, JSON.stringify({ v: 1, port: 1, pid: process.pid, instance: 'x' }))
-    assert.equal(endpointUp(endpoint, process.pid), true)
+    assert.equal(await endpointUp(endpoint, process.pid), true)
     assert.equal(await requestWake(endpoint, 2000), true)
     assert.equal(brought.length, 2)
   } finally { server.close(); rmSync(home, { recursive: true, force: true }) }
@@ -235,7 +235,7 @@ test('process-host: nothing starts with the app; the first need starts it, idle 
     assert.equal(await requestWake(r.endpoint, 10_000), true)
     const second = r.pid()
     assert.ok(second && second !== first, 'a new process')
-    assert.equal(endpointUp(r.endpoint, second), true)
+    assert.equal(await endpointUp(r.endpoint, second), true)
   } finally { r.dispose() }
 })
 
