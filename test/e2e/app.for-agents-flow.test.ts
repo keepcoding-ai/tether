@@ -322,8 +322,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     assert.equal(screenOf(P2).length, offset, 'the guia got no byte from the tether while with the user')
     assert.doesNotMatch(screenOf(P2), /pedido depois/)
     assert.deepEqual(await view(), taken)
-    // Ctrl+U clears the draft the daemon keeps; Backspace does not (the contract's "apaga a letra" only holds with Ctrl+U: reported).
-    await page.keyboard.press('Control+U')
+    await page.keyboard.press('Backspace')
     await tab.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
     await page.locator('#ctx-menu > li', { hasText: /^\s*Devolver a Atrium\s*$/ }).click()
