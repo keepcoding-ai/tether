@@ -4636,7 +4636,13 @@ window.tether.onOpenTerminalTheme(() => themeDialog.show())
 window.tether.onTerminalAppearance(a => { void onAppearance(a) })
 window.tether.onEvent(onDaemonEvent)
 installPerfCollector({ panels: () => panels, kindOf: id => (slots.get(id)?.kind ?? 'shell') === 'shell' ? 'shell' : 'agent', send: r => window.tether.perfReport(r) })
-window.tether.onConnection(state => { void onConnection(state) })
+/** The push (first load) and the boot pull (a page reloaded after the last push) can both deliver the same state: handle it once. */
+function acceptConnection(state: ConnectionState): void {
+  if (connection && connection.connected === state.connected && (!state.connected || connection.pid === state.pid)) return
+  void onConnection(state)
+}
+window.tether.onConnection(acceptConnection)
+void window.tether.getConnection().then(acceptConnection)
 window.tether.onTheme(applyTheme)
 void window.tether.getTheme().then(applyTheme)
 window.tether.onFontSizeCommand(runFontSizeCommand)
