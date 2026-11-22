@@ -14,7 +14,7 @@ import type { DoorSlots } from '../../src/daemon/door/types.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { lastBlock, terminalConductor, terminalVerbs } from '../../extensions/conductor-terminal/conductor.ts'
-import { conductorRegistry, type Conductor, type ConductorContext, type ConductorTarget } from '../../extensions/for-agents/conductor-api.ts'
+import { conductorRegistry, ConductorRegistry, type Conductor, type ConductorContext, type ConductorTarget } from '../../extensions/for-agents/conductor-api.ts'
 import { createScreenReaders } from '../../extensions/for-agents/screen/index.ts'
 import { removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
@@ -211,16 +211,18 @@ ${FAKE_PROC}`)
   test('o registro: sem condutor próprio o agente cai no do terminal; com um do motor, o dele ganha e o que falta cai aqui', async () => {
     const slot = await spawn('claude', 'registry')
     const target: ConductorTarget = { paneId: slot.slotId, type: 'terminal', slot }
-    // The daemon activated the extension (its manifest is loaded with the others): the registry already has it.
+    // A registry of the test's own: the process-wide one also holds the engines' conductors (conductor-claude answers for kind claude).
     {
-      assert.deepEqual(conductorRegistry.chain(target).map((c) => c.id), ['terminal'])
-      for (const act of ['send', 'interrupt', 'read', 'detect', 'lastAnswer'] as const) assert.equal(conductorRegistry.pick(target, act)?.id, 'terminal', act)
-      assert.equal(conductorRegistry.pick(target, 'launchArgs'), undefined)
-      assert.deepEqual(conductorRegistry.verbsOf(target).map((v) => v.verb.name), ['type', 'keys'])
-      assert.deepEqual(conductorRegistry.capabilitiesOf(target).map((c) => c.id), ['send', 'interrupt', 'read', 'type', 'keys'])
+      const registry = new ConductorRegistry()
+      registry.register(terminalConductor)
+      assert.deepEqual(registry.chain(target).map((c) => c.id), ['terminal'])
+      for (const act of ['send', 'interrupt', 'read', 'detect', 'lastAnswer'] as const) assert.equal(registry.pick(target, act)?.id, 'terminal', act)
+      assert.equal(registry.pick(target, 'launchArgs'), undefined)
+      assert.deepEqual(registry.verbsOf(target).map((v) => v.verb.name), ['type', 'keys'])
+      assert.deepEqual(registry.capabilitiesOf(target).map((c) => c.id), ['send', 'interrupt', 'type', 'keys'])
       // Not a slot pane, not a terminal: not its pane.
-      assert.deepEqual(conductorRegistry.chain({ paneId: 'n1', type: 'note' }), [])
-      assert.deepEqual(conductorRegistry.chain({ paneId: 't1', type: 'terminal' }), [])
+      assert.deepEqual(registry.chain({ paneId: 'n1', type: 'note' }), [])
+      assert.deepEqual(registry.chain({ paneId: 't1', type: 'terminal' }), [])
 
       const own10: Conductor = {
         id: 'claude',
@@ -229,12 +231,12 @@ ${FAKE_PROC}`)
         launchArgs: () => ({ value: ['--model', 'x'], proven: true }),
         interrupt: async () => ({ value: { stopped: true }, proven: true }),
       }
-      const d2 = conductorRegistry.register(own10)
+      const d2 = registry.register(own10)
       try {
-        assert.equal(conductorRegistry.pick(target, 'interrupt')?.id, 'claude')
-        assert.equal(conductorRegistry.pick(target, 'launchArgs')?.id, 'claude')
-        assert.equal(conductorRegistry.pick(target, 'send')?.id, 'terminal')
-        assert.equal(conductorRegistry.pick(target, 'read')?.id, 'terminal')
+        assert.equal(registry.pick(target, 'interrupt')?.id, 'claude')
+        assert.equal(registry.pick(target, 'launchArgs')?.id, 'claude')
+        assert.equal(registry.pick(target, 'send')?.id, 'terminal')
+        assert.equal(registry.pick(target, 'read')?.id, 'terminal')
       } finally { d2.dispose() }
     }
     assert.equal(conductorRegistry.get('terminal'), terminalConductor)

@@ -83,7 +83,6 @@ export const terminalConductor: Conductor = {
   capabilities: [
     { id: 'send', label: 'Enviar texto digitado' },
     { id: 'interrupt', label: 'Interromper' },
-    { id: 'read', label: 'Ler a tela' },
     { id: 'type', label: 'Digitar' },
     { id: 'keys', label: 'Teclar' },
   ],
