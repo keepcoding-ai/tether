@@ -147,8 +147,8 @@ test('door routed: object data in both hosts and the mark of an attention for th
     await waitUntil(() => api.slots.get(workerId)?.attentionFor !== undefined && api.slots.get(commonId)?.attention === 'done', 15_000, `attentionFor and attention show (worker ${JSON.stringify(api.slots.get(workerId))}, common ${JSON.stringify(api.slots.get(commonId))})`)
     assert.equal(api.slots.get(workerId)!.attention, undefined, 'a routed slot has no attention for the person')
 
-    // The panes open now: the app learns the states from the daemon (a turn report the daemon gets after the app attached to a
-    // soul slot is not applied in this setup, so the turns come first).
+    // The panes open now. With a pane in focus the app marks its attention as seen at once, by design, so a `done` is never awaited
+    // on a focused pane: the page says its window has no focus (below), and the turns come first so the states are already there.
     // Nobody is looking until step 3 (the page says its window has no focus): no attention is seen while the panes open.
     await page.evaluate(() => { document.hasFocus = () => false })
     for (const id of [commonId, ownerId, workerId]) await page.evaluate(id => window.__tether.openSlot(id), id)
