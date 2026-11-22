@@ -508,6 +508,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
     // the open drawer paint a neutral outline on their frame instead, never the desk colour.
     focusKind: () => scope === 'drawer' ? 'drawer' : scope instanceof FramesPad ? (focusedPad === scope ? 'keyboard' : 'none') : 'foco',
     paneOptions: panel => paneTypes.optionsOf(panel),
+    isBlankPane: id => empties.get(id)?.blank === true,
     // A tab dragged here from another frame: the focused frame is where it landed (a pad's, or the desks'), and the keyboard follows it.
     onPaneDropped: id => {
       if (scope instanceof FramesPad) setFocusedPad(scope)
