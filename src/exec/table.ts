@@ -17,7 +17,7 @@ const loaders = {
 
 /** The operations each lazy module exports (exec.table.test.ts checks the lists against the modules). */
 export const lazyNames = {
-  agents: ['resolveClaude', 'resolveCodex', 'ensureSettingsFile', 'hasStatusLine', 'userNotify', 'resolveShell', 'resolveSoul', 'soulLaunch', 'renamedNode', 'loadSkills', 'materializeSkills'],
+  agents: ['resolveClaude', 'resolveCodex', 'ensureSettingsFile', 'userNotify', 'resolveShell', 'resolveSoul', 'soulLaunch', 'renamedNode', 'loadSkills', 'materializeSkills'],
   ext: ['writeTextAtomicDir'],
   os: ['killTree', 'sampleProcessTable', 'listListeners', 'startTime', 'startTimeInfo', 'stopStartTimeHelper', 'ensurePrivateDir', 'procPlan', 'identifyProcess', 'listeningOwner'],
 } as const
