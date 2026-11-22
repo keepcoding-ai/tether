@@ -4,7 +4,9 @@
 //   - state/badge/tooltip per design §5 (grey · normal N · busy dot · amber · red after a fall), "ago" in Portuguese,
 //     the version footer and its reload hint;
 //   - the poller against a fake fetch: bearer from api.key (never in the snapshot), onChange only on change, 15 s / 2 s
-//     cadence by watch(), pause → /pause, 404 → "indisponível" and pauseSupported false, releaseAll → one release per client.
+//     cadence by watch(), pause → /pause, 404 → "indisponível" and pauseSupported false, releaseAll → one release per client;
+//   - presence: the active browser, its policy/version/debug as a state line or an alert, the agents' tab and browser,
+//     the Agentes section (only live sessions, grouped by browser), the fallback named across polls, activate and focus.
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -13,7 +15,7 @@ import { join } from 'node:path'
 import { clientIdOf } from '../../extensions/web-bridge/agents.ts'
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { createStatusPoller } from '../../extensions/web-bridge/status-poll.ts'
-import { activeAgents, ago, badgeOf, browserLabel, EMPTY_SNAPSHOT, reduceStatus, slotIdOf, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
+import { activeAgents, agentGroups, ago, badgeOf, browserAlert, browserLabel, EMPTY_SNAPSHOT, fallbackLine, reduceStatus, slotIdOf, stateMarks, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
 
 const NOW = 1_800_000_000_000
 const snap = (patch: Partial<StatusSnapshot>): StatusSnapshot => ({ ...EMPTY_SNAPSHOT, at: NOW, daemon: 'up', everUp: true, version: { vendored: '0.1.0', installed: '0.1.0', pendingReload: false }, ...patch })
@@ -47,13 +49,13 @@ describe('web-bridge status: the snapshot from /status', () => {
     })
     assert.equal(r.paused, false, 'paused must be the boolean true')
     assert.deepEqual(r.browsers, [
-      { id: 'b1', name: 'Chrome', tabs: 3, lastActivityAt: Date.parse('2027-01-01T00:00:00.000Z') },
-      { id: 'b2', name: 'Edge', tabs: 0 },
+      { id: 'b1', name: 'Chrome', tabs: 3, lastActivityAt: Date.parse('2027-01-01T00:00:00.000Z'), active: false, debug: false, focusTabId: 1 },
+      { id: 'b2', name: 'Edge', tabs: 0, active: false, debug: false },
     ])
     assert.deepEqual(r.agents, [
-      { clientId: 'tether:s1', slotId: 's1', name: 'Claude · a', tabs: 2, lastSeenAt: NOW - 1000, calls: 0 },
-      { clientId: 'tether:s2', slotId: 's2', name: 'Claude · b', tabs: 1, lastTool: 'click', lastSeenAt: NOW - 5000, calls: 2 },
-      { clientId: 'atrium:x', name: 'atrium:x', tabs: 0, calls: 0 },
+      { clientId: 'tether:s1', slotId: 's1', name: 'Claude · a', tabs: 2, lastSeenAt: NOW - 1000, calls: 0, live: false, tab: { browserId: 'b1', id: 1 } },
+      { clientId: 'tether:s2', slotId: 's2', name: 'Claude · b', tabs: 1, lastTool: 'click', lastSeenAt: NOW - 5000, calls: 2, live: false, tab: { browserId: 'b1', id: 3 } },
+      { clientId: 'atrium:x', name: 'atrium:x', tabs: 0, calls: 0, live: false },
     ])
     assert.deepEqual(reduceStatus(undefined), { paused: false, debug: false, browsers: [], agents: [] })
     assert.deepEqual(reduceStatus('x'), { paused: false, debug: false, browsers: [], agents: [] })
@@ -125,13 +127,15 @@ describe('web-bridge status: the poller', () => {
     status: () => unknown | Error
     pause: number
     release: number
+    activate: number
+    focus: number
     timers: { fn: () => void; ms: number }[]
   }
   function setup(key: string | undefined, name: string): { fake: Fake; changes: StatusSnapshot[]; poller: ReturnType<typeof createStatusPoller>; bridgeHome: string; logs: string[] } {
     const bridgeHome = join(tmp, name)
     mkdirSync(bridgeHome, { recursive: true })
     if (key !== undefined) writeFileSync(join(bridgeHome, 'api.key'), `${key}\n`)
-    const fake: Fake = { calls: [], status: () => ({ ok: true, paused: false, browsers: [], clients: [] }), pause: 200, release: 200, timers: [] }
+    const fake: Fake = { calls: [], status: () => ({ ok: true, paused: false, browsers: [], clients: [] }), pause: 200, release: 200, activate: 200, focus: 200, timers: [] }
     const fetchFake: typeof fetch = async (url, init) => {
       const u = new URL(String(url))
       const headers = init?.headers as Record<string, string> | undefined
@@ -143,6 +147,8 @@ describe('web-bridge status: the poller', () => {
       }
       if (u.pathname === '/pause' || u.pathname === '/resume') return new Response(fake.pause === 200 ? '{"ok":true}' : 'nope', { status: fake.pause })
       if (/^\/clients\/.+\/release$/.test(u.pathname)) return new Response(fake.release === 200 ? '{"ok":true}' : 'nope', { status: fake.release })
+      if (/^\/browsers\/[^/]+\/activate$/.test(u.pathname)) return new Response(fake.activate === 200 ? '{"ok":true}' : 'nope', { status: fake.activate })
+      if (/^\/browsers\/[^/]+\/tabs\/[^/]+\/focus$/.test(u.pathname)) return new Response(fake.focus === 200 ? '{"ok":true}' : 'nope', { status: fake.focus })
       return new Response('?', { status: 404 })
     }
     const changes: StatusSnapshot[] = []
@@ -167,7 +173,7 @@ describe('web-bridge status: the poller', () => {
     assert.equal(changes.length, 1)
     assert.equal(changes[0]!.daemon, 'up')
     assert.equal(changes[0]!.everUp, true)
-    assert.deepEqual(changes[0]!.browsers, [{ id: 'b1', name: 'Chrome', tabs: 0 }])
+    assert.deepEqual(changes[0]!.browsers, [{ id: 'b1', name: 'Chrome', tabs: 0, active: false, debug: false }])
     assert.deepEqual(changes[0]!.options, { browserId: 'chrome', browserName: 'Chrome' })
     assert.ok(!JSON.stringify(changes[0]).includes('segredo'), 'the key never reaches the snapshot')
     await new Promise(r => setTimeout(r, 0))
@@ -223,5 +229,91 @@ describe('web-bridge status: the poller', () => {
     assert.equal(bad.ok, false)
     assert.match((bad as { message: string }).message, /recusou soltar 2 de 2/)
     assert.ok(logs.every(l => !l.includes('Bearer')), 'no bearer in the log')
+  })
+
+  test('activate: POST /browsers/<id>/activate, then a poll; 404 says the browser left', async () => {
+    const { fake, poller } = setup('k', 'd')
+    assert.deepEqual(await poller.activate('b 2'), { ok: true })
+    const posts = fake.calls.filter(c => c.method === 'POST')
+    assert.deepEqual(posts.map(c => c.path), ['/browsers/b%202/activate'])
+    assert.equal(posts[0]!.auth, 'Bearer k', 'the same bearer as release')
+    assert.equal(fake.calls.at(-1)!.path, '/status', 'the radio reflects the daemon right after')
+    fake.activate = 404
+    assert.deepEqual(await poller.activate('gone'), { ok: false, message: 'Esse navegador não está mais conectado.' })
+  })
+
+  test('focusTab: POST /browsers/<id>/tabs/<tab>/focus; 422 out of scope, 504 an older extension', async () => {
+    const { fake, poller } = setup('k', 'e')
+    assert.deepEqual(await poller.focusTab('b1', 7), { ok: true })
+    assert.deepEqual(fake.calls.filter(c => c.method === 'POST').map(c => c.path), ['/browsers/b1/tabs/7/focus'])
+    fake.focus = 422
+    assert.match(((await poller.focusTab('b1', 7)) as { message: string }).message, /não está mais sob controle/)
+    fake.focus = 504
+    assert.match(((await poller.focusTab('b1', 7)) as { message: string }).message, /recarregue-a/)
+  })
+
+  test('the fallback names the fallen browser by what an earlier poll saw', async () => {
+    const { fake, poller } = setup('k', 'f')
+    fake.status = () => ({ ok: true, browsers: [{ id: 'b1', name: 'Chrome', active: true }, { id: 'b2', name: 'Edge' }], clients: [] })
+    await poller.refresh()
+    fake.status = () => ({ ok: true, activeBrowserId: 'b1', activeFallback: { from: 'b1', to: 'b2', at: '2027-01-01T00:00:00.000Z' }, browsers: [{ id: 'b2', name: 'Edge', active: true }], clients: [] })
+    const s = await poller.refresh()
+    assert.deepEqual(s.activeFallback, { fromId: 'b1', fromName: 'Chrome', toId: 'b2', toName: 'Edge', at: Date.parse('2027-01-01T00:00:00.000Z') })
+    assert.equal(s.activeBrowserId, 'b1')
+    assert.equal(fallbackLine(s.activeFallback!), 'Chrome desconectou; usando Edge')
+  })
+})
+
+describe('web-bridge status: presence (the popover\'s two sections)', () => {
+  const body = {
+    ok: true, paused: false, activeBrowserId: 'b1',
+    browsers: [
+      { id: 'b1', name: 'Chrome', active: true, extensionVersion: '0.2.0', debug: { on: true },
+        policy: { source: 'extension', evaluate: 'own-tabs', evaluateHandedTabs: false, upload: true, download: true, pdf: true, readNetwork: true, windowPerAgent: true },
+        tabs: [{ id: 7, windowId: 3, title: 'GitHub – PR #42', owner: 'tether:s1' }, { id: 8, windowId: 3, title: 'outra', owner: 'tether:s1' }] },
+      { id: 'b2', name: 'Chrome', userAgent: 'Chrome/1 Edg/1', policy: { source: 'config' }, tabs: [] },
+      { id: 'b3', name: 'Brave', extensionVersion: '0.2.0', policy: { source: 'extension', evaluate: 'off' }, tabs: [{ id: 2, windowId: 9, title: 'x', owner: 'tether:s3' }] },
+    ],
+    clients: [
+      { id: 'tether:s1', name: 'Atrium', lastSeenAt: NOW - 1000, calls: 4, live: true, browserId: 'b1' },
+      { id: 'tether:s2', name: 'Codex', lastSeenAt: NOW - 2000, calls: 1, live: true, browserId: 'b1' },
+      { id: 'tether:s3', name: 'Antigo', lastSeenAt: NOW - 3000, calls: 9, live: false, browserId: 'b3' },
+      { id: 'tether:s4', name: 'Novo', lastSeenAt: NOW - 4000, calls: 0, live: true },
+      { id: 'tether:s5', name: 'Órfão', lastSeenAt: NOW - 5000, calls: 2, live: true, browserId: 'gone' },
+    ],
+  }
+  const r = reduceStatus(body)
+
+  test('the browser: active, version, debug, evaluate, policy source, a tab to focus', () => {
+    assert.deepEqual(r.browsers[0], { id: 'b1', name: 'Chrome', tabs: 2, active: true, extensionVersion: '0.2.0', debug: true, evaluate: 'own-tabs', policySource: 'extension', focusTabId: 7 })
+    assert.deepEqual(r.browsers[1], { id: 'b2', name: 'Edge', tabs: 0, active: false, debug: false, policySource: 'config' })
+    assert.equal(r.activeBrowserId, 'b1')
+    assert.equal(r.activeFallback, undefined)
+  })
+
+  test('the state line and the alert', () => {
+    assert.deepEqual(stateMarks(r.browsers[0]!).map(m => m.text), ['JS ✓', 'dev ●', 'v0.2.0'])
+    assert.deepEqual(stateMarks(r.browsers[2]!).map(m => [m.text, m.tone]), [['JS ✗', 'off'], ['v0.2.0', undefined]])
+    assert.equal(browserAlert(r.browsers[0]!, '0.2.0'), undefined, 'same version, policy from the extension: no alert')
+    assert.deepEqual(browserAlert(r.browsers[1]!, '0.2.0'), { text: 'Extensão desatualizada neste navegador', action: { id: 'extension-page', label: 'Recarregar…' } })
+    assert.equal(browserAlert({ ...r.browsers[0]!, extensionVersion: '0.1.0' }, '0.2.0')!.text, 'Extensão 0.1.0; o Tether traz a 0.2.0')
+  })
+
+  test('an agent carries its browser and its tab there (the first one it owns)', () => {
+    const atrium = r.agents.find(a => a.clientId === 'tether:s1')!
+    assert.equal(atrium.live, true)
+    assert.equal(atrium.browserId, 'b1')
+    assert.deepEqual(atrium.tab, { browserId: 'b1', id: 7, title: 'GitHub – PR #42' })
+    assert.equal(r.agents.find(a => a.clientId === 'tether:s2')!.tab, undefined, 'no tab yet: "aguardando"')
+  })
+
+  test('Agentes: only live sessions, grouped by browser in the browsers\' order; no tool yet = the active browser; a gone browser keeps its agents', () => {
+    const groups = agentGroups(r)
+    assert.deepEqual(groups.map(g => [g.browserId, g.label, g.agents.map(a => a.name)]), [
+      ['b1', 'Chrome', ['Atrium', 'Codex', 'Novo']],
+      ['gone', 'Navegador desconectado', ['Órfão']],
+    ])
+    assert.ok(!groups.some(g => g.browserId === 'b3'), 'a browser whose only agent is not live has no group')
+    assert.deepEqual(agentGroups({ browsers: r.browsers, agents: r.agents.map(a => ({ ...a, live: false })) }), [], 'nobody live: the section says so')
   })
 })

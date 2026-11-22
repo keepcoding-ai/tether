@@ -7,10 +7,10 @@ export const BUSY_WINDOW_MS = 10_000
 
 // ---- the wire (what the bridge's GET /status returns; validated field by field, nothing else kept) -----------------
 
-export interface WireTab { id?: unknown; url?: unknown; title?: unknown; owner?: unknown }
-export interface WireBrowser { id?: unknown; name?: unknown; userAgent?: unknown; connectedAt?: unknown; lastFocusedAt?: unknown; tabs?: unknown }
-export interface WireClient { id?: unknown; name?: unknown; lastTool?: unknown; lastSeenAt?: unknown; calls?: unknown }
-export interface WireStatus { ok?: unknown; paused?: unknown; browsers?: unknown; clients?: unknown }
+export interface WireTab { id?: unknown; windowId?: unknown; url?: unknown; title?: unknown; owner?: unknown }
+export interface WireBrowser { id?: unknown; name?: unknown; userAgent?: unknown; connectedAt?: unknown; lastFocusedAt?: unknown; tabs?: unknown; active?: unknown; extensionVersion?: unknown; debug?: unknown; policy?: unknown }
+export interface WireClient { id?: unknown; name?: unknown; lastTool?: unknown; lastSeenAt?: unknown; calls?: unknown; live?: unknown; browserId?: unknown }
+export interface WireStatus { ok?: unknown; paused?: unknown; browsers?: unknown; clients?: unknown; activeBrowserId?: unknown; activeFallback?: unknown }
 
 // ---- the snapshot (what crosses to the renderer) ----------------------------------------------------------------
 
@@ -22,7 +22,21 @@ export interface BrowserView {
   tabs: number
   /** Last focus or connection, epoch ms (undefined when the daemon gave none). */
   lastActivityAt?: number
+  /** The active browser (`browsers[].active`: exactly one among the connected): the agents' calls without `browser` go here. */
+  active?: boolean
+  /** The manifest version the extension runs (absent on an extension older than the presence contract). */
+  extensionVersion?: string
+  /** The debug mode is on in this browser (its options page). */
+  debug?: boolean
+  /** Where an agent may run JS (`policy.evaluate`); absent when the daemon does not know (an older extension). */
+  evaluate?: EvaluateMode
+  /** `policy.source`: 'extension' = the browser stated it; 'config' = an older extension, the daemon only read config.json. */
+  policySource?: 'extension' | 'config'
+  /** A tab under control in this browser, to focus its window (`POST /browsers/:id/tabs/:tabId/focus`); none = no arrow. */
+  focusTabId?: number
 }
+
+export type EvaluateMode = 'off' | 'own-tabs' | 'all'
 
 export interface AgentView {
   /** The bridge client id (`tether:<slotId>` for a pane of this app). */
@@ -36,7 +50,16 @@ export interface AgentView {
   lastTool?: string
   lastSeenAt?: number
   calls: number
+  /** A live session (`clients[].live`: not released, acted in the last 15 min); the others are history. */
+  live?: boolean
+  /** The browser of the session's last tool call (absent before its first). */
+  browserId?: string
+  /** The agent's tab (its first owned tab in that browser, else anywhere): its arrow and its title. */
+  tab?: { browserId: string; id: number; title?: string }
 }
+
+/** The active browser fell and another answers in its place until it comes back (`activeFallback`), with the names. */
+export interface FallbackView { fromId: string; fromName: string; toId: string; toName: string; at?: number }
 
 export type DaemonReach = 'up' | 'down' | 'no-key' | 'refused'
 
@@ -57,6 +80,10 @@ export interface StatusSnapshot {
   debug: boolean
   /** "Opções da extensão": the browser it opens in (hidden when none). */
   options?: { browserId: string; browserName: string }
+  /** The chosen active browser (persisted at the daemon), connected or not. */
+  activeBrowserId?: string
+  /** Present while the chosen one is away and a substitute answers. */
+  activeFallback?: FallbackView
 }
 
 export const EMPTY_SNAPSHOT: StatusSnapshot = Object.freeze({ at: 0, daemon: 'down', everUp: false, paused: false, pauseSupported: true, debug: false, browsers: [], agents: [], version: { pendingReload: false } }) as StatusSnapshot
@@ -83,23 +110,55 @@ export function browserLabel(name: string | undefined, userAgent: string | undef
   return 'Navegador'
 }
 
-/** The sanitized part of a /status body (browsers, agents, paused). Anything malformed is dropped, never thrown on. */
-export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents' | 'debug'> {
+/** What `reduceStatus` returns: the part of the snapshot that comes from the body. */
+export type ReducedStatus = Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents' | 'debug' | 'activeBrowserId' | 'activeFallback'>
+
+const EVALUATE: readonly EvaluateMode[] = ['off', 'own-tabs', 'all']
+const tabIdOf = (v: unknown): number | undefined => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : undefined)
+
+/**
+ * The sanitized part of a /status body. Anything malformed is dropped, never thrown on. `knownNames` (browser id -> label,
+ * kept by the poller across polls) names the browser of `activeFallback.from`, which is no longer in `browsers`.
+ */
+export function reduceStatus(raw: unknown, knownNames?: ReadonlyMap<string, string>): ReducedStatus {
   const body = (raw && typeof raw === 'object' ? raw : {}) as WireStatus
   const owned = new Map<string, number>()
+  /** Each owner's tabs across the browsers, in the order the browsers listed them. */
+  const ownedTabs = new Map<string, { browserId: string; id: number; title?: string }[]>()
   const browsers: BrowserView[] = []
   for (const b of Array.isArray(body.browsers) ? (body.browsers as WireBrowser[]) : []) {
     const id = str(b?.id)
     if (!id) continue
     let tabs = 0
+    let focusTabId: number | undefined
     for (const t of Array.isArray(b.tabs) ? (b.tabs as WireTab[]) : []) {
+      const tid = tabIdOf(t?.id)
+      if (tid !== undefined && focusTabId === undefined) focusTabId = tid
       const owner = str(t?.owner)
       if (!owner) continue
       tabs++
       owned.set(owner, (owned.get(owner) ?? 0) + 1)
+      if (tid === undefined) continue
+      const title = str(t.title)
+      const list = ownedTabs.get(owner) ?? []
+      list.push({ browserId: id, id: tid, ...(title ? { title } : {}) })
+      ownedTabs.set(owner, list)
     }
     const last = num(b.lastFocusedAt) ?? num(b.connectedAt)
-    browsers.push({ id, name: browserLabel(str(b.name), str(b.userAgent)), tabs, ...(last === undefined ? {} : { lastActivityAt: last }) })
+    const policy = (b.policy && typeof b.policy === 'object' ? b.policy : undefined) as { source?: unknown; evaluate?: unknown } | undefined
+    const evaluate = EVALUATE.find(m => m === policy?.evaluate)
+    const policySource = policy?.source === 'extension' || policy?.source === 'config' ? policy.source : undefined
+    const extensionVersion = str(b.extensionVersion)
+    browsers.push({
+      id, name: browserLabel(str(b.name), str(b.userAgent)), tabs,
+      ...(last === undefined ? {} : { lastActivityAt: last }),
+      active: b.active === true,
+      ...(extensionVersion ? { extensionVersion } : {}),
+      debug: (b.debug as { on?: unknown } | undefined)?.on === true,
+      ...(evaluate ? { evaluate } : {}),
+      ...(policySource ? { policySource } : {}),
+      ...(focusTabId === undefined ? {} : { focusTabId }),
+    })
   }
   const agents: AgentView[] = []
   for (const c of Array.isArray(body.clients) ? (body.clients as WireClient[]) : []) {
@@ -109,10 +168,28 @@ export function reduceStatus(raw: unknown): Pick<StatusSnapshot, 'paused' | 'bro
     const lastTool = str(c.lastTool)
     const lastSeenAt = num(c.lastSeenAt)
     const calls = num(c.calls)
-    agents.push({ clientId: id, ...(slotId ? { slotId } : {}), name: str(c.name) ?? id, tabs: owned.get(id) ?? 0, ...(lastTool ? { lastTool } : {}), ...(lastSeenAt === undefined ? {} : { lastSeenAt }), calls: calls === undefined ? 0 : Math.max(0, Math.floor(calls)) })
+    const browserId = str(c.browserId)
+    const mine = ownedTabs.get(id) ?? []
+    const tab = mine.find(t => t.browserId === browserId) ?? mine[0]
+    agents.push({
+      clientId: id, ...(slotId ? { slotId } : {}), name: str(c.name) ?? id, tabs: owned.get(id) ?? 0,
+      ...(lastTool ? { lastTool } : {}), ...(lastSeenAt === undefined ? {} : { lastSeenAt }),
+      calls: calls === undefined ? 0 : Math.max(0, Math.floor(calls)),
+      live: c.live === true, ...(browserId ? { browserId } : {}), ...(tab ? { tab } : {}),
+    })
   }
   agents.sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0) || a.name.localeCompare(b.name))
-  return { paused: body.paused === true, debug: debugOf(raw).length > 0, browsers, agents }
+  const activeBrowserId = str(body.activeBrowserId)
+  const fb = (body.activeFallback && typeof body.activeFallback === 'object' ? body.activeFallback : {}) as { from?: unknown; to?: unknown; at?: unknown }
+  const from = str(fb.from)
+  const to = str(fb.to)
+  const nameOf = (bid: string): string => browsers.find(x => x.id === bid)?.name ?? knownNames?.get(bid) ?? 'O navegador escolhido'
+  const at = num(fb.at)
+  const activeFallback: FallbackView | undefined = from && to ? { fromId: from, fromName: nameOf(from), toId: to, toName: nameOf(to), ...(at === undefined ? {} : { at }) } : undefined
+  return {
+    paused: body.paused === true, debug: debugOf(raw).length > 0, browsers, agents,
+    ...(activeBrowserId ? { activeBrowserId } : {}), ...(activeFallback ? { activeFallback } : {}),
+  }
 }
 
 /** A call in flight at the daemon (GET /status `browsers[].pending`, bridge layer 0): never arguments. */
@@ -182,8 +259,7 @@ export function browserNames(s: StatusSnapshot): string[] {
   return [...new Set(s.browsers.map(b => b.name))]
 }
 
-/** The popover's line and the tooltip's suffix while the debug mode is on. */
-export const DEBUG_LINE = 'Modo de depuração ligado na extensão do navegador: o registro guarda mais detalhes de cada chamada. Desligue nas opções da extensão quando terminar.'
+/** The tooltip's suffix while the debug mode is on (the popover marks it per browser: "dev"). */
 export const DEBUG_SUFFIX = 'modo de depuração ligado'
 
 /** The tooltip (§5), in Portuguese. `product` is the Bridge's name ("Tether Bridge"); while the debug mode is on, it is named last. */
@@ -234,4 +310,67 @@ export function versionLine(v: StatusSnapshot['version']): { text: string; reloa
   const differ = v.installed !== vendored
   const reload = v.pendingReload || differ
   return { text: differ ? `Extensão: ${vendored} no Tether · ${v.installed} instalada` : `Extensão ${vendored}`, reload }
+}
+
+// ---- the popover's two sections (presence) ------------------------------------------------------------------------
+
+/** One mark of a browser's state line ("JS ✓", "dev ●", "v0.2.0") with its tooltip; `tone` colours it. */
+export interface StateMark { key: 'js' | 'dev' | 'version'; text: string; title: string; tone?: 'warn' | 'off' }
+
+/** A state the tether cannot leave as is: the line under the browser's name, with its action. */
+export interface BrowserAlert { text: string; action: { id: 'extension-page'; label: string } }
+
+/** The short line under a browser's name: where JS runs, the debug mode, the extension's version. */
+export function stateMarks(b: BrowserView): StateMark[] {
+  const out: StateMark[] = []
+  if (b.evaluate === 'own-tabs') out.push({ key: 'js', text: 'JS ✓', title: 'O agente pode rodar JavaScript nas abas dele' })
+  else if (b.evaluate === 'all') out.push({ key: 'js', text: 'JS em todas', title: 'O agente pode rodar JavaScript em qualquer aba', tone: 'warn' })
+  else if (b.evaluate === 'off') out.push({ key: 'js', text: 'JS ✗', title: 'O agente não roda JavaScript neste navegador', tone: 'off' })
+  if (b.debug) out.push({ key: 'dev', text: 'dev ●', title: 'Modo de depuração ligado na extensão: o registro guarda mais detalhes de cada chamada. Desligue nas opções da extensão quando terminar.', tone: 'warn' })
+  if (b.extensionVersion) out.push({ key: 'version', text: `v${b.extensionVersion}`, title: `Extensão ${b.extensionVersion} neste navegador` })
+  return out
+}
+
+/**
+ * The alert of a browser, if any. An extension other than the one the tether carries (no version, a different version,
+ * or a policy the daemon only read from config.json) runs without what the tether expects; the tether cannot reload it,
+ * so the action opens the extension's page in that browser.
+ */
+export function browserAlert(b: BrowserView, vendored: string | undefined): BrowserAlert | undefined {
+  const differs = !!b.extensionVersion && vendored !== undefined && b.extensionVersion !== vendored
+  if (b.extensionVersion && b.policySource !== 'config' && !differs) return undefined
+  const text = differs ? `Extensão ${b.extensionVersion}; o Tether traz a ${vendored}` : 'Extensão desatualizada neste navegador'
+  return { text, action: { id: 'extension-page', label: 'Recarregar…' } }
+}
+
+/** The fallback notice: "<A> desconectou; usando <B>". */
+export function fallbackLine(f: FallbackView): string {
+  return `${f.fromName} desconectou; usando ${f.toName}`
+}
+
+/** A group of the Agentes section: a browser (its name as the label) and its live agents. */
+export interface AgentGroup { browserId: string; label: string; agents: AgentView[] }
+
+/**
+ * The Agentes section: only the live sessions, grouped by the browser of their last call, in the order of the browser
+ * list (an agent that has not called a tool yet goes with the active browser, where its first call lands). A browser
+ * without a live agent has no group; agents whose browser is gone stay under "Navegador desconectado".
+ */
+export function agentGroups(s: Pick<StatusSnapshot, 'browsers' | 'agents'>): AgentGroup[] {
+  const active = s.browsers.find(b => b.active)?.id
+  const groups = new Map<string, AgentView[]>()
+  for (const a of s.agents) {
+    if (!a.live) continue
+    const key = a.browserId ?? active ?? ''
+    const list = groups.get(key) ?? []
+    list.push(a)
+    groups.set(key, list)
+  }
+  const out: AgentGroup[] = []
+  for (const b of s.browsers) {
+    const list = groups.get(b.id)
+    if (list) { out.push({ browserId: b.id, label: b.name, agents: list }); groups.delete(b.id) }
+  }
+  for (const [browserId, list] of groups) out.push({ browserId, label: 'Navegador desconectado', agents: list })
+  return out
 }

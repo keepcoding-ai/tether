@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
 import { folderCount } from '../../src/trace/timeline.ts'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
-import { debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type StatusSnapshot } from './status.ts'
+import { debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type ReducedStatus, type StatusSnapshot } from './status.ts'
 
 export const POLL_IDLE_MS = 15_000
 export const POLL_OPEN_MS = 2_000
@@ -48,6 +48,10 @@ export interface StatusPoller {
   refresh(): Promise<StatusSnapshot>
   pause(on: boolean): Promise<ActionOutcome>
   releaseAll(): Promise<ActionOutcome>
+  /** The radio of Navegadores: POST /browsers/<id>/activate (the agents' calls without `browser` go there from now on). */
+  activate(browserId: string): Promise<ActionOutcome>
+  /** An arrow: POST /browsers/<id>/tabs/<tabId>/focus (only a tab under control; 504 = an extension without focus-tab). */
+  focusTab(browserId: string, tabId: number): Promise<ActionOutcome>
 }
 
 /** api.key of the bridge home (never logged, never returned past the request). */
@@ -110,6 +114,8 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   let running = false
   let timer: unknown
   let inflight: Promise<StatusSnapshot> | undefined
+  /** Browser id -> label of every browser seen since start (names `activeFallback.from`, already gone from the list). Bounded by the browsers of one machine. */
+  const knownNames = new Map<string, string>()
 
   const readKey = (): Promise<string | undefined> => readApiKey(deps.bridgeHome, deps.io)
 
@@ -124,14 +130,18 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   const take = async (): Promise<StatusSnapshot> => {
     const key = await readKey()
     let daemon: DaemonReach = 'down'
-    let reduced: ReturnType<typeof reduceStatus> = { paused: false, debug: false, browsers: [], agents: [] }
+    let reduced: ReducedStatus = { paused: false, debug: false, browsers: [], agents: [] }
     if (!key) daemon = 'no-key'
     else {
       try {
         const r = await call('GET', '/status', key)
         if (r.status === 401 || r.status === 403) { daemon = 'refused'; await r.arrayBuffer().catch(() => undefined) }
         else if (!r.ok) { daemon = 'down'; await r.arrayBuffer().catch(() => undefined) }
-        else { reduced = reduceStatus(await r.json().catch(() => undefined)); daemon = 'up' }
+        else {
+          reduced = reduceStatus(await r.json().catch(() => undefined), knownNames)
+          for (const b of reduced.browsers) knownNames.set(b.id, b.name)
+          daemon = 'up'
+        }
       } catch { daemon = 'down' }
     }
     if (daemon === 'up') everUp = true
@@ -151,7 +161,8 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
 
   const refresh = (): Promise<StatusSnapshot> => (inflight ??= take().finally(() => { inflight = undefined }))
 
-  const act = async (what: string, path: string): Promise<ActionOutcome> => {
+  /** What a status code other than 2xx means for the person; `byStatus` overrides per action. */
+  const act = async (what: string, path: string, byStatus: Record<number, string> = {}): Promise<ActionOutcome> => {
     const key = await readKey()
     if (!key) return { ok: false, message: 'A instalação do bridge ainda não tem chave; abra o Tether de novo.' }
     try {
@@ -159,6 +170,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       await r.arrayBuffer().catch(() => undefined)
       if (r.ok) { deps.log(`${what}: ok`); return { ok: true } }
       deps.log(`${what}: o daemon respondeu ${r.status}`)
+      if (byStatus[r.status]) return { ok: false, message: byStatus[r.status]! }
       if (r.status === 404) return { ok: false, message: 'Pausar está indisponível nesta versão do bridge; o próximo "npm run bridge:build" traz o recurso.' }
       if (r.status === 401 || r.status === 403) return { ok: false, message: 'O daemon recusou a chave do Tether.' }
       return { ok: false, message: `O daemon respondeu ${r.status}.` }
@@ -191,6 +203,16 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       if (bad.includes('no-key')) return { ok: false, message: 'A instalação do bridge ainda não tem chave.' }
       return { ok: false, message: `O daemon recusou soltar ${bad.length} de ${ids.length} agente(s).` }
     },
+    activate: async browserId => {
+      const r = await act('ativar navegador', `/browsers/${encodeURIComponent(browserId)}/activate`, { 404: 'Esse navegador não está mais conectado.' })
+      await refresh().catch(() => undefined)
+      return r
+    },
+    focusTab: (browserId, tabId) => act('focar aba', `/browsers/${encodeURIComponent(browserId)}/tabs/${encodeURIComponent(String(tabId))}/focus`, {
+      404: 'Esse navegador não está mais conectado.',
+      422: 'Essa aba não está mais sob controle de um agente.',
+      504: 'A extensão desse navegador não respondeu; recarregue-a para focar a janela.',
+    }),
   }
 }
 

@@ -43,8 +43,12 @@ export interface WebBridgeChannels {
     pause(on: boolean): Promise<ActionOutcome>
     /** "Retomar todas as abas": POST /clients/<id>/release for every client the last snapshot listed. */
     releaseAll(): Promise<ActionOutcome>
-    /** "Opções da extensão": opens chrome://extensions/?id=<id> in the snapshot's `options` browser. */
-    openOptions(): Promise<ActionOutcome>
+    /** "Opções da extensão": opens chrome://extensions/?id=<id> in the browser named (a connected one's label), else the snapshot's `options` browser. */
+    openOptions(browserName?: string): Promise<ActionOutcome>
+    /** The radio of Navegadores: makes a connected browser the active one. */
+    activate(browserId: string): Promise<ActionOutcome>
+    /** An arrow: brings a tab under control (and its window) to the front. */
+    focusTab(browserId: string, tabId: number): Promise<ActionOutcome>
   }
   send: {
     /** The popover opened (poll every 2 s) or closed (every 15 s). */
