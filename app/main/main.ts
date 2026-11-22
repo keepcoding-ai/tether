@@ -128,6 +128,11 @@ let win: BrowserWindow | undefined
 let quittingAll = false
 /** Set when the daemon connection was lost: the next connection reloads the renderer so every panel restarts its slot. */
 let reloadOnReconnect = false
+/** After a lost connection: a failed reconnect schedules another attempt (growing delay, capped) until one connects. */
+let recovering = false
+let recoverDelay = 500
+let recoverTimer: NodeJS.Timeout | undefined
+const RECOVER_MAX_MS = 5000
 /** The app is going away for real (menu, tray, OS): closing the window must not be turned into "hide". */
 let quitting = false
 /** The daemon is being restarted from the tray: its connection closing is expected, not a crash. */
@@ -287,11 +292,15 @@ function connectDaemon(): Promise<void> {
         // loss (a crash, "Reiniciar tudo…", `tether daemon restart`) reloads the page on the next connection.
         if (restartingDaemon) return
         reloadOnReconnect = true
+        recovering = true
+        recoverDelay = 500
         sendConnection({ connected: false, pipe, error: 'conexão com o tetherd fechada' })
         // The daemon died (or was shut down): bring one back (the tray keeps the app alive with no window)
         // and let the renderer restart its panels.
-        setTimeout(() => { void connectDaemon() }, 500)
+        scheduleRecover(500)
       })
+      recovering = false
+      if (recoverTimer) { clearTimeout(recoverTimer); recoverTimer = undefined }
       sendConnection(connectionState())
       void syncSlots(client)
       void syncPause(client)
@@ -300,11 +309,24 @@ function connectDaemon(): Promise<void> {
       if (reloadOnReconnect) { reloadOnReconnect = false; win?.webContents.reloadIgnoringCache() }
     } catch (err) {
       sendConnection({ connected: false, pipe, error: err instanceof Error ? err.message : String(err) })
+      // Only after a loss: the first connection of the app keeps its "Tentar de novo".
+      if (recovering && !restartingDaemon && !quitting && !quittingAll) {
+        scheduleRecover(recoverDelay)
+        recoverDelay = Math.min(recoverDelay * 2, RECOVER_MAX_MS)
+      }
     } finally {
       connecting = undefined
     }
   })()
   return connecting
+}
+
+function scheduleRecover(ms: number): void {
+  if (recoverTimer) clearTimeout(recoverTimer)
+  recoverTimer = setTimeout(() => {
+    recoverTimer = undefined
+    if (recovering && !restartingDaemon && !daemon) void connectDaemon()
+  }, ms)
 }
 
 function windowInFront(): boolean {
