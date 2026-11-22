@@ -16,6 +16,10 @@ import { join, resolve } from 'node:path'
 export const COOKIE_RUNTIME_FLAG = '--cookie-fuse-runtime'
 export const RUNTIME_MANIFEST = 'tether-runtime.json'
 export const RUNTIME_FUSE = 'EnableCookieEncryption'
+/** The copy's executable is renamed (and re-branded, app/exe-identity.mjs) so the Task Manager shows "tether", not "electron". */
+export const RUNTIME_EXE = 'tether.exe'
+/** The factory executable inside node_modules' electron dist. */
+export const SOURCE_EXE = 'electron.exe'
 
 export interface RuntimeManifest {
   v: 2
@@ -43,7 +47,7 @@ export function cookieRuntimeDir(home: string, electronVersion: string): string 
 
 /** The executable inside a runtime folder (Windows only for now: the macOS copy would need re-signing after the flip). */
 export function runtimeExe(dir: string): string {
-  return join(dir, 'electron.exe')
+  return join(dir, RUNTIME_EXE)
 }
 
 export function sha256File(path: string): string {
@@ -80,7 +84,7 @@ export function parseManifest(text: string | undefined): RuntimeManifest | undef
   if (!r || r.v !== 2 || r.fuse !== RUNTIME_FUSE || typeof r.electronVersion !== 'string' || !hex(r.sourceSha256) || !hex(r.exeSha256)) return undefined
   const files = r.files
   if (!files || typeof files !== 'object' || Array.isArray(files) || !Object.values(files).every(hex)) return undefined
-  if (files['electron.exe'] !== r.exeSha256) return undefined
+  if (files[RUNTIME_EXE] !== r.exeSha256) return undefined
   return r as RuntimeManifest
 }
 
@@ -97,8 +101,8 @@ export function runtimeVerdict(input: { manifestText: string | undefined, runnin
   if (m.electronVersion !== input.runningVersion) return { ok: false, reason: 'versão diferente' }
   if (!input.privateDir()) return { ok: false, reason: 'pasta não privada' }
   const files = input.files()
-  if (files === undefined || files['electron.exe'] === undefined) return { ok: false, reason: 'ausente' }
-  if (files['electron.exe'] !== m.exeSha256) return { ok: false, reason: 'executável alterado' }
+  if (files === undefined || files[RUNTIME_EXE] === undefined) return { ok: false, reason: 'ausente' }
+  if (files[RUNTIME_EXE] !== m.exeSha256) return { ok: false, reason: 'executável alterado' }
   if (!sameFiles(files, m.files)) return { ok: false, reason: 'arquivos alterados' }
   return { ok: true }
 }
