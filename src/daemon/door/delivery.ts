@@ -51,6 +51,8 @@ interface QueuedItem {
 /** What the delivery needs of the MCP server (DoorMcp): the stream state, the channel, the stream edges. */
 export interface DeliveryMcp {
   connected(slotId: string): boolean
+  /** Connected AND a client that starts a turn from a channel message (see DoorMcp.wakes). */
+  wakes(slotId: string): boolean
   sendChannel(slotId: string, content: string, meta: Record<string, string>): boolean
   onDidStream(listener: (slotId: string, open: boolean) => void): IDisposable
 }
@@ -191,7 +193,7 @@ export class DeliveryService {
   pathOf(slotId: string): 'inside' | 'terminal' | 'wait' {
     const port = this.opts.port()
     if (!port) return 'wait'
-    if (this.opts.mcp.connected(slotId)) return 'inside'
+    if (this.opts.mcp.wakes(slotId)) return 'inside'
     return this.terminalReady(port, slotId) ? 'terminal' : 'wait'
   }
 
@@ -272,7 +274,7 @@ export class DeliveryService {
       if (!item) break
       const insideOk = !item.paths || item.paths.includes('inside')
       const terminalOk = !item.paths || item.paths.includes('terminal')
-      if (insideOk && this.opts.mcp.sendChannel(slotId, item.msg.body, deliveryMeta(item.msg, item.ext, item.id))) {
+      if (insideOk && this.opts.mcp.wakes(slotId) && this.opts.mcp.sendChannel(slotId, item.msg.body, deliveryMeta(item.msg, item.ext, item.id))) {
         this.shift(item, 'inside')
       } else if (terminalOk && this.terminalReady(port, slotId)) {
         const outcome = await this.type(port, slotId, item)

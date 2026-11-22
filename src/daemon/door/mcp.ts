@@ -71,6 +71,8 @@ const isPlainObject = (v: unknown): v is Json => typeof v === 'object' && v !== 
 /** One slot's server: the handshake, the tools, and what the door sends on its own (list_changed, a channel message). */
 class DoorBackend implements McpBackend {
   private transport: McpTransport | undefined
+  /** What the client declared in its last `initialize` (name and version are logged; capabilities are kept for later rules). */
+  client: { name?: string; version?: string; capabilities?: Json } = {}
   private readonly slotId: string
   private readonly owner: DoorMcp
   constructor(slotId: string, owner: DoorMcp) { this.slotId = slotId; this.owner = owner }
@@ -87,7 +89,15 @@ class DoorBackend implements McpBackend {
       const id = m.id
       const reply = (body: Json): void => { void t.send({ jsonrpc: '2.0', id, ...body }) }
       const params = isPlainObject(m.params) ? m.params : {}
-      if (m.method === 'initialize') reply({ result: this.owner.initializeResult(this.slotId, params.protocolVersion) })
+      if (m.method === 'initialize') {
+        const info = isPlainObject(params.clientInfo) ? params.clientInfo : {}
+        this.client = {
+          ...(typeof info.name === 'string' ? { name: info.name } : {}),
+          ...(typeof info.version === 'string' ? { version: info.version } : {}),
+          ...(isPlainObject(params.capabilities) ? { capabilities: params.capabilities } : {}),
+        }
+        reply({ result: this.owner.initializeResult(this.slotId, params.protocolVersion, this.client) })
+      }
       else if (m.method === 'ping') reply({ result: {} })
       else if (m.method === 'tools/list') reply({ result: { tools: this.owner.tools() } })
       else if (m.method === 'tools/call') {
@@ -229,6 +239,16 @@ export class DoorMcp {
   /** The slot's CLI is listening: a session with its GET stream open (what the server says unasked reaches it at once). */
   connected(slotId: string): boolean { return this.host.streamOpen(slotId) }
 
+  /**
+   * Connected AND the client starts a turn from a channel message. Provisional deny-list: Codex keeps the message and wakes
+   * nothing; an unnamed or unknown client still counts as waking (the proven Claude path). The rule underneath (what the launch
+   * plan declared of the channel) comes later.
+   */
+  wakes(slotId: string): boolean {
+    if (!this.connected(slotId)) return false
+    return !/^codex/i.test(this.backends.get(slotId)?.client.name ?? '')
+  }
+
   /** A slot's GET stream opened or closed (edges only). */
   onDidStream(listener: (slotId: string, open: boolean) => void): IDisposable {
     this.streamListeners.add(listener)
@@ -260,10 +280,11 @@ export class DoorMcp {
   // ---- the backend's answers -------------------------------------------------------------------
 
   /** @internal The `initialize` result: legacy era, tools that change, the channel declared, the instructions built now. */
-  initializeResult(slotId: string, asked: unknown): Json {
+  initializeResult(slotId: string, asked: unknown, client: { name?: string; version?: string } = {}): Json {
     const want = typeof asked === 'string' ? asked : ''
     const version = LEGACY_REVISIONS.includes(want) ? want : LEGACY_REVISIONS.at(-1)!
-    this.opts.log(`door: slot ${slotId}: sessão do servidor tether (era legada, protocolo ${version}${want !== version ? `, pedido ${want || 'nenhum'}` : ''})`)
+    const who = client.name ? `, cliente ${client.name}${client.version ? ` ${client.version}` : ''}` : ''
+    this.opts.log(`door: slot ${slotId}: sessão do servidor tether (era legada, protocolo ${version}${want !== version ? `, pedido ${want || 'nenhum'}` : ''}${who})`)
     return {
       protocolVersion: version,
       serverInfo: { name: DOOR_MCP_SERVER, version: '1.0.0' },
