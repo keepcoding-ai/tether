@@ -1,7 +1,7 @@
 // The user interlock of the delivery (src/daemon/door/user-presence.ts): the draft and the silence. Pure.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { countsAsTyping, draftEffect, UserPresence, USER_QUIET_MS } from '../../src/daemon/door/user-presence.ts'
+import { countsAsTyping, draftAfter, UserPresence, USER_QUIET_MS } from '../../src/daemon/door/user-presence.ts'
 
 describe('door user presence', () => {
   test('nobody typed: free', () => {
@@ -29,10 +29,52 @@ describe('door user presence', () => {
     }
   })
 
-  test('the last effect of a chunk wins', () => {
-    assert.equal(draftEffect('ab\r'), false)
-    assert.equal(draftEffect('\rab'), true)
-    assert.equal(draftEffect('\x7f'), undefined)
+  test('the draft is a count: the chunk is read in order', () => {
+    assert.equal(draftAfter(0, 'ab\r'), 0)
+    assert.equal(draftAfter(0, '\rab'), 2)
+    assert.equal(draftAfter(0, '\x7f'), 0)
+    assert.equal(draftAfter(3, '\x08\x7f'), 1)
+  })
+
+  test('a letter and Backspace free the slot', () => {
+    const p = new UserPresence()
+    p.input('s', 'a', 1000)
+    assert.equal(p.draft('s'), true)
+    p.input('s', '\x7f', 2000)
+    assert.equal(p.draft('s'), false)
+    assert.equal(p.isFree('s', 2000 + USER_QUIET_MS), true)
+  })
+
+  test('two letters and one Backspace keep the draft', () => {
+    const p = new UserPresence()
+    p.input('s', 'ab', 1000)
+    p.input('s', '\x7f', 2000)
+    assert.equal(p.draft('s'), true)
+    assert.equal(p.isFree('s', 2000 + USER_QUIET_MS * 10), false)
+  })
+
+  test('Backspace on an empty box never goes negative', () => {
+    const p = new UserPresence()
+    p.input('s', '\x7f\x7f', 1000)
+    p.input('s', 'a', 2000)
+    assert.equal(p.draft('s'), true)
+    p.input('s', '\x7f', 3000)
+    assert.equal(p.draft('s'), false)
+  })
+
+  test('a paste weighs its length; chunks add up across calls', () => {
+    const p = new UserPresence()
+    p.input('s', '\x1b[200~abcd\x1b[201~', 1000)
+    p.input('s', '\x7f\x7f\x7f', 2000)
+    assert.equal(p.draft('s'), true)
+    p.input('s', '\x7f', 3000)
+    assert.equal(p.draft('s'), false)
+    p.input('s', 'a', 4000)
+    p.input('s', 'b', 5000)
+    p.input('s', '\x7f', 6000)
+    assert.equal(p.draft('s'), true)
+    p.input('s', '\x7f', 7000)
+    assert.equal(p.draft('s'), false)
   })
 
   test('a busy turn takes the draft', () => {
