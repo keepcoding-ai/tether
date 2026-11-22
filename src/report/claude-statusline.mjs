@@ -1,10 +1,16 @@
 // Claude Code status line for every Claude launched by tether (injected via --settings).
 // Claude pipes a JSON object on stdin; we print one line: model (strong alert when it is Fable), effort, cwd.
+// Then the user's own statusLine.command (if any) runs with the same stdin and its output follows on the next line.
 // Plain Node, no dependencies, never throws and never exits non-zero.
 
+import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/** How long the user's own status line command may run before it is dropped. */
+const CHAIN_TIMEOUT_MS = 1000
 
 /** One status line from Claude's stdin payload (any value; garbage yields a line with placeholders). */
 export function formatStatusLine(payload) {
@@ -117,16 +123,79 @@ export function persistContext(payload, home = tetherHome(), slotId = process.en
   } catch { /* the status line must never fail */ }
 }
 
+/** The user's own `statusLine.command`: user settings (CLAUDE_CONFIG_DIR or ~/.claude), then the project's settings.json and
+ * settings.local.json; the last one that defines a command wins, as in Claude. Undefined when none.
+ * @param {unknown} payload @param {NodeJS.ProcessEnv} [env] @returns {string | undefined} */
+export function userStatusLineCommand(payload, env = process.env) {
+  const j = isObj(payload) ? payload : {}
+  const ws = isObj(j.workspace) ? j.workspace : {}
+  const cwd = typeof ws.current_dir === 'string' && ws.current_dir ? ws.current_dir : typeof j.cwd === 'string' ? j.cwd : ''
+  const files = [join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json')]
+  if (cwd) files.push(join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json'))
+  /** @type {string | undefined} */
+  let command
+  for (const f of files) {
+    try {
+      const sl = JSON.parse(readFileSync(f, 'utf8'))?.statusLine
+      if (isObj(sl) && typeof sl.command === 'string' && sl.command.trim()) command = sl.command
+    } catch { /* absent or malformed: skip */ }
+  }
+  return command
+}
+
+/** Runs the user's status line command with the same stdin; resolves to its trimmed stdout, or '' on any failure, timeout or
+ * empty output. Never runs this very script (no recursion). Async on purpose: on timeout we stop waiting at once, even when a
+ * grandchild keeps the pipe open (a sync spawn would block until it closes), and kill the process tree.
+ * @param {string | undefined} command @param {string} stdin @param {string} [self] @param {number} [timeoutMs]
+ * @returns {Promise<string>} */
+export function runUserStatusLine(command, stdin, self = fileURLToPath(import.meta.url), timeoutMs = CHAIN_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    if (!command) return resolve('')
+    const norm = (/** @type {string} */ x) => x.split(String.fromCharCode(92)).join('/').toLowerCase()
+    if (norm(command).includes('claude-statusline.mjs') || norm(command).includes(norm(self))) return resolve('')
+    let done = false
+    let out = ''
+    /** @type {import('node:child_process').ChildProcess | undefined} */
+    let child
+    /** @param {string} v */
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v) } }
+    const kill = () => {
+      try {
+        if (!child?.pid) return
+        if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref()
+        else process.kill(-child.pid, 'SIGKILL')
+      } catch { /* already gone */ }
+    }
+    const timer = setTimeout(() => { kill(); finish('') }, timeoutMs)
+    try {
+      child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, detached: process.platform !== 'win32' })
+      child.on('error', () => finish(''))
+      child.stdin?.on('error', () => {})
+      child.stdout?.setEncoding('utf8')
+      child.stdout?.on('data', (c) => { out += c })
+      child.on('close', (code) => finish(code === 0 ? out.trim() : ''))
+      child.stdin?.end(stdin)
+    } catch { finish('') }
+  })
+}
+
 function main() {
   let data = ''
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (c) => { data += c })
   process.stdin.on('error', () => {})
-  process.stdin.on('end', () => {
+  process.stdin.on('end', async () => {
     let payload
     try { payload = JSON.parse(data) } catch { payload = undefined }
-    try { process.stdout.write(formatStatusLine(payload)) } catch { /* nothing to show */ }
+    let out = ''
+    try { out = formatStatusLine(payload) } catch { /* nothing to show */ }
     persistContext(payload)
+    try {
+      const chained = await runUserStatusLine(userStatusLineCommand(payload), data)
+      if (chained) out += String.fromCharCode(10) + chained
+    } catch { /* ours alone */ }
+    // exit once flushed: a timed-out command's orphan pipe must not keep us alive
+    try { process.stdout.write(out, () => process.exit(0)) } catch { process.exit(0) }
   })
 }
 
