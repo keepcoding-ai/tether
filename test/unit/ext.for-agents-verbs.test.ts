@@ -15,6 +15,7 @@ import { EXT_ID, manifest } from '../../extensions/for-agents/manifest.ts'
 import type { Ownership } from '../../extensions/for-agents/rules.ts'
 import type { ExtensionEntry } from '../../extensions/types.ts'
 import '../../src/agents/load.ts'
+import { agentRegistry } from '../../src/agents/registry.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import { inboxPath } from '../../src/daemon/door/delivery.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
@@ -142,6 +143,9 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     })
     await door.releaseInactive(host.activated)
     host.emitStarted()
+    // The agent registry loads the daemon extensions (and their conductors) lazily, on its first read, which may come after the
+    // isolation below and put the real conductors back. Forcing the load now makes the isolation the last word.
+    agentRegistry.names()
     const list = (conductorRegistry as unknown as { list: Conductor[] }).list
     setAside = list.filter((c) => c !== fake)
     list.splice(0, list.length, fake)
@@ -253,6 +257,8 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     // of a later case.
     attention.signal(p1, 'done')
     await waitUntil(() => screenOf(p1).includes('espera'), 30_000, 'the message that waited, typed in p1 once its turn ended')
+    await drainInto(p1, 'the turn opened by that message to end') // typing it opened a turn: close it, so p1 leaves the case idle
+    attention.seen(p1) // the finish signaled to end the turn is the case's own: it must not stay on the pane for the next one
   })
 
   test('send raw: types through the conductor and the gate, and refuses with-user without a byte', async () => {
@@ -286,7 +292,11 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     await appSet('desk', 'cena', 'inventory', { send: false })
     assert.equal(codeOf(await call(A, 'send', { guia: p1, text: 'x' })), 'off')
     await appSet('pane', p1, 'inventory', { send: true })
-    assert.notEqual(codeOf(await call(A, 'send', { guia: p1, text: 'x' })), 'off', 'the pane\'s own value wins')
+    assert.notEqual(codeOf(await call(A, 'send', { guia: p1, text: 'inv-x' })), 'off', 'the pane\'s own value wins')
+    // That send is real: it opens a turn in p1 once typed. The case waits for it and closes the turn, so it does not leak into the next.
+    await waitUntil(() => screenOf(p1).includes('inv-x'), 30_000, 'the message sent on the own value of the pane, typed in p1')
+    await drainInto(p1, 'the turn of p1 to end')
+    attention.seen(p1) // the finish signaled to end the turn is the case's own: it must not stay on the pane for the next one
     assert.equal(codeOf(await call(A, 'send', { guia: p2, text: 'x' })), 'off')
     const listed = (data(await call(A, 'list')).desks as { panes: { id: string; off: string[] }[] }[])[0]!.panes
     assert.deepEqual(listed.find((p) => p.id === p2)!.off, ['send'])
@@ -341,10 +351,12 @@ describe('for-agents: the verbs of the owner (X3)', () => {
 
     stopped = true
     await quiet()
+    const toldBefore = inboxOf(A).split(`terminou · guia ${p1} · mesa cena`).length - 1 // what earlier cases left in the queue does not count
     const done = await call(A, 'interrupt', { guia: p1 })
     assert.equal(data(done).state, 'stopped')
     await waitUntil(() => slots.get(p1)?.attentionFor?.value === 'done' && slots.get(p1)?.attentionFor?.slotId === A, 10_000, 'the done signal, routed to the owner')
-    await toldTo(A, `terminou · guia ${p1} · mesa cena`, 'the owner told that the turn ended')
+    const told = `terminou · guia ${p1} · mesa cena`
+    await waitUntil(() => inboxOf(A).split(told).length - 1 > toldBefore, 20_000, 'the owner told that the turn ended')
     attention.seen(p1)
 
     await appSet('pane', p1, 'hand', { with: 'user', why: 'paused', by: 'gesture', since: new Date().toISOString() })
@@ -422,6 +434,8 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     // A is "de si" now, so what waited for it (the notices of the cases before) is typed into it, one at a time; the deferred
     // command is measured from when that queue is empty and the pane is quiet.
     await drainInto(A, "the owner's queue to empty into its own pane")
+    await quiet() // a notice still being composed lands after the first look at the queue: look again
+    await drainInto(A, 'the notices that came late to empty into its own pane')
     await quiet()
     const own = await call(A, 'command', { name: 'clear' })
     assert.equal(data(own).deferred, true)
