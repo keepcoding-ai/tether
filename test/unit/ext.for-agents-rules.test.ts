@@ -88,6 +88,16 @@ describe('for-agents rules: effective ownership', () => {
     assert.equal(relationOf(effective({ id: 'p', owner: own('K'), hand: hand('taken') }, undefined, NONE), 'K'), 'command')
   })
 
+  test('inventory: the desk lines reach only the panes the desk commands; a pane with an owner of its own follows its own', () => {
+    const deskOff = { send: false }
+    assert.equal(capabilityOn('send', deskOff, undefined, 'desk'), false, 'desk off, pane inherited: off')
+    assert.equal(capabilityOn('send', deskOff, undefined, 'pane'), true, 'desk off, pane given to another: on')
+    assert.equal(capabilityOn('send', deskOff, undefined, 'self'), true, 'desk off, pane "de si": on')
+    assert.equal(capabilityOn('send', deskOff, { send: false }, 'pane'), false, 'pane off for its own owner: off')
+    assert.equal(capabilityOn('send', deskOff, { send: true }, 'desk'), true, 'on here beats the desk')
+    assert.equal(capabilityOn('give-revoke', { 'give-revoke': false }, undefined, 'pane'), false, 'the own lines of the desk stay the desk own')
+  })
+
   test('inventory: everything born on; the pane differs from the desk in three states; the desk lines are the desk\'s only', () => {
     assert.equal(capabilityOn('send', undefined), true)
     assert.equal(capabilityOn('send', { send: false }), false)

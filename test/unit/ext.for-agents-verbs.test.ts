@@ -282,6 +282,20 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     await appSet('pane', p1, 'inventory')
     await appSet('desk', 'cena', 'inventory')
 
+    // The desk's inventory is what its owner may do on the panes it commands through the desk: a pane given to another agent
+    // follows only its own inventory, so what the desk turned off does not reach K there, and the pane's own off does.
+    await appSet('desk', 'cena', 'inventory', { interrupt: false })
+    assert.equal(codeOf(await call(A, 'interrupt', { guia: p2 })), 'off', 'inherited from the desk')
+    await appSet('pane', p1, 'owner', { owner: K, since: new Date().toISOString(), givenBy: A } satisfies Ownership)
+    assert.equal(codeOf(await call(K, 'interrupt', { guia: p1 })), 'not-busy', 'given to K: the desk does not reach it')
+    const given = (data(await call(A, 'list')).desks as { panes: { id: string; off: string[] }[] }[])[0]!.panes
+    assert.deepEqual(given.find((p) => p.id === p1)!.off, [], 'the list says the same')
+    await appSet('pane', p1, 'inventory', { interrupt: false })
+    assert.equal(codeOf(await call(K, 'interrupt', { guia: p1 })), 'off', 'off on the pane itself, for its own owner')
+    await appSet('pane', p1, 'inventory')
+    await appSet('pane', p1, 'owner')
+    await appSet('desk', 'cena', 'inventory')
+
     await appSet('desk', 'cena', 'inventory', { 'open-close': false, 'give-revoke': false, type: false })
     assert.equal(codeOf(await call(A, 'open', { kind: 'soul', cwd: home })), 'off')
     assert.equal(codeOf(await call(A, 'close', { guia: p1 })), 'off')

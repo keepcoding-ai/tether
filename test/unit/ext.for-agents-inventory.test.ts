@@ -46,7 +46,7 @@ describe('for-agents inventory: the model of the pad', () => {
     assert.equal(m.title, 'O que Atrium pode · kai-aware')
     assert.deepEqual(m.owner, { id: 'A', name: 'Atrium' })
     assert.equal(m.free, undefined)
-    assert.equal(m.deskHeading, 'A mesa · vale para toda guia que Atrium comanda aqui')
+    assert.equal(m.deskHeading, 'A mesa · vale para toda guia que Atrium comanda pela mesa')
     assert.deepEqual(m.deskLines.map(l => l.cap), [...CONDUCTOR_CAPABILITIES.map(c => c.id), 'open-close', 'give-revoke'])
     assert.ok(m.deskLines.every(l => l.on))
     assert.deepEqual(m.writes, [], 'nothing stored: "Ligar tudo" has nothing to do')
@@ -61,12 +61,12 @@ describe('for-agents inventory: the model of the pad', () => {
     assert.equal(m.writes.length, 3, 'the desk and the two panes with data')
   })
 
-  test('the panes with another owner come last, with the effect of the desk on them', () => {
-    const m = inventoryModel(facts({ ...given, deskInv: { d1: { send: false, command: false } }, paneInv: { g: { send: true } } }), { deskId: 'd1' })
+  test('the panes with another owner come last, and the desk does not reach them: only their own inventory counts', () => {
+    const m = inventoryModel(facts({ ...given, deskInv: { d1: { send: false, command: false } }, paneInv: { g: { send: true }, K: { keys: false } } }), { deskId: 'd1' })
     assert.equal(m.othersHeading, 'Guias desta mesa com outro dono')
     assert.deepEqual(m.others.map(o => [o.title, o.ownerName, o.self, o.summary]), [
-      ['codex · conferência', 'Kai', false, '1 desligado'],
-      ['Kai', 'Kai', true, '2 desligados'],
+      ['codex · conferência', 'Kai', false, 'tudo ligado'],
+      ['Kai', 'Kai', true, '1 desligado'],
     ])
   })
 

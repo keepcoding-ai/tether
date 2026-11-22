@@ -128,7 +128,7 @@ export function relation(deps: VerbDeps, owner: OwnerId, paneId: string): { eff:
 
 export function capOn(deps: VerbDeps, cap: CapabilityId, paneId: string): boolean {
   const inv = deps.store.inventoryOf(paneId)
-  return capabilityOn(cap, inv.desk, inv.pane)
+  return capabilityOn(cap, inv.desk, inv.pane, deps.store.effectiveOf(paneId).via)
 }
 
 /** The capabilities that are off for a pane, among those a conductor or the desk offers it. */

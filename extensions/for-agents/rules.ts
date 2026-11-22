@@ -153,10 +153,16 @@ export const DESK_CAPABILITIES: readonly { id: CapabilityId; label: string }[] =
   { id: 'give-revoke', label: 'Dar e revogar guias desta mesa' },
 ]
 
-/** Whether a capability is on for a pane in a desk: the pane's own value, else the desk's, else on (everything is born on). */
-export function capabilityOn(cap: CapabilityId, desk: Inventory | undefined, pane?: Inventory): boolean {
+/**
+ * Whether a capability is on for a pane: the pane's own value, else the desk's, else on (everything is born on). The desk's
+ * inventory is "what the desk's owner may do on the panes it commands THROUGH the desk": a pane with an owner of its own
+ * (`via` 'pane': given to another; 'self': the agent's own pane) follows only its own inventory, born all on. `via` is
+ * `Effective['via']`; absent, or 'desk', the pane inherits from the desk. The desk's own lines always read the desk.
+ */
+export function capabilityOn(cap: CapabilityId, desk: Inventory | undefined, pane?: Inventory, via?: Effective['via']): boolean {
   if (DESK_CAPABILITIES.some(c => c.id === cap)) return desk?.[cap] ?? true
-  return pane?.[cap] ?? desk?.[cap] ?? true
+  const inherits = via === undefined || via === 'desk'
+  return pane?.[cap] ?? (inherits ? desk?.[cap] : undefined) ?? true
 }
 
 /** The three states of a pane's line on the pad: as its desk, on here, off here. */

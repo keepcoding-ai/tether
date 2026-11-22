@@ -4,7 +4,7 @@
 // commands a pane is `effective()` through `effOf`; nothing here decides either. Stored shape (rules.ts, `Inventory`): on a desk
 // only what is OFF; on a pane only what the person set there (`true` = on here, `false` = off here, absent = as the desk).
 import {
-  DESK_CAPABILITIES, capabilityOn, paneCapabilityState, type CapabilityId, type Inventory, type OwnerId,
+  DESK_CAPABILITIES, capabilityOn, paneCapabilityState, type CapabilityId, type Effective, type Inventory, type OwnerId,
 } from '../rules.ts'
 import { effOf, type MenuFacts } from './menus.ts'
 
@@ -35,7 +35,7 @@ export const T = {
   goTo: (o: string): string => `Ir para ${o}`,
   allOn: 'Ligar tudo',
   allOnTip: 'Ligar tudo: volta a mesa e as guias dela ao que nasce (tudo ligado)',
-  deskHeading: (o: string | undefined): string => `A mesa · vale para toda guia que ${o ?? 'um agente'} ${o ? 'comanda' : 'comandar'} aqui`,
+  deskHeading: (o: string | undefined): string => `A mesa · vale para toda guia que ${o ?? 'um agente'} ${o ? 'comanda' : 'comandar'} pela mesa`,
   free: 'Esta mesa não foi dada a ninguém.',
   freeEnded: (name: string): string => `${name} encerrou: esta mesa não tem dono agora.`,
   giveDesk: 'Dar a mesa a um agente…',
@@ -149,14 +149,16 @@ export function inventoryModel(f: InventoryFacts, target: PadTarget): InventoryM
     ...DESK_CAPABILITIES.map(c => ({ cap: c.id, label: c.label, on: capabilityOn(c.id, deskInv) })),
   ]
 
+  // A pane with an owner of its own (given to another, or "de si") does not inherit the desk's inventory: `via` says so.
   const itemsOf = (paneId: string): ItemLine[] => {
     const inv = f.paneInv.get(paneId)
+    const via = effOf(f, paneId).via
     return caps.map(c => ({
       cap: c.id, label: c.label, state: paneCapabilityState(c.id, inv),
-      deskOn: capabilityOn(c.id, deskInv), on: capabilityOn(c.id, deskInv, inv),
+      deskOn: capabilityOn(c.id, via === 'pane' || via === 'self' ? undefined : deskInv), on: capabilityOn(c.id, deskInv, inv, via),
     }))
   }
-  const offCount = (paneId: string): number => caps.filter(c => !capabilityOn(c.id, deskInv, f.paneInv.get(paneId))).length
+  const offCount = (paneId: string, via: Effective['via']): number => caps.filter(c => !capabilityOn(c.id, deskInv, f.paneInv.get(paneId), via)).length
 
   let focus: PaneBlock | undefined
   if (focusPane) {
@@ -182,7 +184,7 @@ export function inventoryModel(f: InventoryFacts, target: PadTarget): InventoryM
       }
       if (exceptions.length === before) followers++
     } else {
-      const off = offCount(p.id)
+      const off = offCount(p.id, eff.via)
       others.push({ paneId: p.id, title: p.title, ownerId: eff.commander, ownerName: f.nameOf(eff.commander), self: eff.via === 'self', summary: off === 0 ? T.allOnSummary : T.offSummary(off) })
     }
   }

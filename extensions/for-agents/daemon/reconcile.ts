@@ -85,7 +85,7 @@ export class Reconciler {
     // F12: with "Responder pedido de permissão" off here, the request on the screen goes to the person while it is there.
     if (want.routeTo !== undefined && this.cards.has(paneId)) {
       const inv = this.store.inventoryOf(paneId)
-      if (!capabilityOn(ANSWER_CAPABILITY, inv.desk, inv.pane)) delete want.routeTo
+      if (!capabilityOn(ANSWER_CAPABILITY, inv.desk, inv.pane, eff.via)) delete want.routeTo
     }
     return want
   }

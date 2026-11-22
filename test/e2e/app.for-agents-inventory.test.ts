@@ -167,7 +167,7 @@ test('for-agents inventory pad: desk and pane lines, "herdar", other owners, "Li
     await pad.waitFor()
     assert.equal(await title(), 'O que Atrium pode · kai-aware')
     assert.deepEqual(await state(), start, 'opening the pad from the pill changed nothing')
-    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda aqui', 'Guias desta mesa com outro dono'])
+    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda pela mesa', 'Guias desta mesa com outro dono'])
     assert.deepEqual(await pad.locator('.fa-row[data-line^="desk:"] .fa-grow').allInnerTexts(), [
       'Enviar pedido e corrigir em curso', 'Interromper', 'Responder pedido de permissão', 'Rodar comandos do CLI (/compact…)', 'Digitar texto na guia', 'Teclar',
       'Abrir e fechar guias nesta mesa', 'Dar e revogar guias desta mesa',
@@ -207,7 +207,7 @@ test('for-agents inventory pad: desk and pane lines, "herdar", other owners, "Li
     await page.waitForFunction(() => document.querySelector('.fa-inv [data-key="pane:send"]') !== null)
     assert.deepEqual(await state(), afterRight, 'opening from the tab activated nothing')
     void beforeTab
-    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda aqui', 'Esta guia · soul · testes', 'Guias desta mesa com outro dono'])
+    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda pela mesa', 'Esta guia · soul · testes', 'Guias desta mesa com outro dono'])
     assert.equal(await line('pane:interrupt').innerText(), 'como a mesa · desligado')
     assert.equal(await line('pane:interrupt').getAttribute('data-state'), 'desk')
     assert.equal(await line('pane:send').innerText(), 'como a mesa · ligado')
@@ -230,7 +230,7 @@ test('for-agents inventory pad: desk and pane lines, "herdar", other owners, "Li
     // ---- 4. the panes that differ, with "herdar", from the desk's view ----
     await page.evaluate(d => window.__tether.forAgentsRun('for-agents.inventory', { kind: 'desk', id: d }), D1)
     await line(`exc:${C1}:interrupt`).waitFor()
-    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda aqui', 'Guias que diferem da mesa', 'Guias desta mesa com outro dono'])
+    assert.deepEqual(await sections(), ['A mesa · vale para toda guia que Atrium comanda pela mesa', 'Guias que diferem da mesa', 'Guias desta mesa com outro dono'])
     assert.match(await pad.locator('.fa-row[data-line^="exc:"]').first().innerText(), /soul · testes · Interromper\s*ligado aqui\s*herdar/)
     assert.match(await pad.innerText(), /As outras 2 guias que Atrium comanda seguem a mesa\./)
     await shot('difere')
