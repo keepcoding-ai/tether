@@ -197,7 +197,7 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
     store = new OwnershipStore(w.api.objects as never, w.api.desks as never)
     w.routes.set('p1', 'own'); w.routes.set('p2', 'own')
     live = []
-    notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10 })
+    notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10, cardWaitMs: 300, cardPollMs: 10 })
     live.push(w.api.slots.onState((s) => notices.stateChanged(s)), w.api.objects.onDidChange((e) => notices.objectChanged(e)))
   })
   afterEach(() => { for (const d of live) d.dispose(); notices.dispose() })
@@ -281,10 +281,41 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
   test('a waiting that no conductor can name says it waits and where to read the screen', async () => {
     w.screens.set('p1', IDLE)
     w.raise('p1', 'waiting', { busySince: 'B1', turn: 'busy' })
-    await settle()
+    await settle(30)
+    assert.equal(w.delivered.length, 0, 'the generic notice waits for the card until the deadline')
+    await settle(450)
     const body = w.delivered[0]!.msg.body.split('\n')
     assert.equal(body[0], 'espera por você · guia p1 · mesa cena')
     assert.equal(body.at(-1), 'Ver a tela: agents read-screen p1')
+  })
+
+  test('a bell before the card is drawn tells nothing until the card is there; then one request with the options', async () => {
+    w.screens.set('p1', ['• Vou criar ola.txt.', '• Working (6s • esc to interrupt)'].join('\n'))
+    w.raise('p1', 'waiting', { busySince: 'B1', turn: 'busy' })
+    await settle(30)
+    assert.equal(w.delivered.length, 0, 'no card yet: nothing is told')
+    w.screens.set('p1', `${w.screens.get('p1')}\n${CODEX_CARD}`) // the engine draws the card after the bell
+    await settle()
+    assert.equal(w.delivered.length, 1)
+    const { msg } = w.delivered[0]!
+    assert.equal(msg.kind, 'request')
+    assert.equal(msg.body.split('\n')[0], 'pede permissão · guia p1 · mesa cena')
+    assert.ok(msg.body.includes('Opções: yes · always · no'))
+  })
+
+  test('after the answer, the bell of the turn end tells no request: the finish comes alone', async () => {
+    w.screens.set('p1', CODEX_CARD)
+    w.raise('p1', 'waiting', { busySince: 'B1', turn: 'busy' })
+    await settle()
+    assert.equal(w.delivered.length, 1)
+    w.clear('p1') // the owner answered: typing clears the attention
+    w.screens.set('p1', `${w.screens.get('p1')}\x1b[2J\x1b[H${IDLE}`) // the card is gone
+    w.raise('p1', 'waiting', { busySince: 'B1', turn: 'busy' }) // the bell of the turn end, before the engine's `done`
+    await settle(20)
+    w.raise('p1', 'done', { idleSince: 'T2' }, ['turn'])
+    await settle()
+    assert.deepEqual(w.delivered.map((d) => d.msg.kind), ['request', 'notice'])
+    assert.ok(w.delivered[1]!.msg.body.startsWith('terminou · guia p1'))
   })
 
   test('the guia "de si" does not notify itself, and a pane with no route notifies nobody', async () => {
@@ -422,7 +453,7 @@ describe('for-agents: giving, revoking, pausing and the answer of the turn (X4)'
     store = new OwnershipStore(w.api.objects as never, w.api.desks as never)
     w.routes.set('p1', 'own'); w.routes.set('p2', 'own')
     conductorAnswer.text = undefined; conductorAnswer.at = undefined
-    notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10 })
+    notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10, cardWaitMs: 60, cardPollMs: 10 })
     live = [w.api.slots.onState((s) => notices.stateChanged(s)), w.api.objects.onDidChange((e) => notices.objectChanged(e))]
   })
   afterEach(() => { for (const d of live) d.dispose(); notices.dispose() })
@@ -629,7 +660,7 @@ describe('for-agents: the screen watch (X4)', () => {
   })
 
   test('the signal and the notice meet: the core routes the signal and the owner gets one request', async () => {
-    const notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10 })
+    const notices = new Notices(w.api as never, { store, gate: new WriteGate(store, w.api.slots as never) }, { settleMs: 10, cardWaitMs: 60, cardPollMs: 10 })
     const sub = w.api.slots.onState((s) => notices.stateChanged(s))
     // What the core does with `attention.signal(waiting)`: the state goes out with the attention (rerouted to the owner).
     w.api.attention.signal = (id: string): void => { w.signals.push({ id, kind: 'waiting' }); w.raise(id, 'waiting', { busySince: 'B1' }); w.raise(id, 'waiting', { busySince: 'B1' }) }
