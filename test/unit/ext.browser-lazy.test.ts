@@ -90,6 +90,21 @@ test('BrowserLife: the idle quit is not a crash and does not hold agents back; a
   assert.equal(t.life.permits('agent'), true, 'and her need lifts the hold')
 })
 
+test('BrowserLife: keepUp holds the process even when idle', () => {
+  let keep = true
+  const timers = clock()
+  const quits: string[] = []
+  const l = new BrowserLife<string>({ busy: () => 0, keepUp: () => keep, quit: p => quits.push(p), kill: () => {}, log: () => {}, timers, idleMs: 100 })
+  l.began('p1')
+  l.touch()
+  timers.advance(1_000)
+  assert.deepEqual(quits, [])
+  keep = false
+  l.touch()
+  timers.advance(100)
+  assert.deepEqual(quits, ['p1'])
+})
+
 test('BrowserLife: a need during the quit waits for it; a quit that hangs is killed and is still an idle exit', async () => {
   const t = life()
   t.life.began('p1')
@@ -161,7 +176,7 @@ interface Rig {
 const stub = pathToFileURL(join(import.meta.dirname, 'support', 'electron-stub.ts')).href
 registerHooks({ resolve: (specifier, context, next) => (specifier === 'electron' ? { url: stub, shortCircuit: true } : next(specifier, context)) })
 
-async function rig(idleMs: number): Promise<Rig> {
+async function rig(idleMs: number, persistentLogins = true): Promise<Rig> {
   const { activateRemote } = await import('../../extensions/browser/process-host.ts')
   const home = mkdtempSync(join(tmpdir(), 'tether-lazy-'))
   const dist = mkdtempSync(join(tmpdir(), 'tether-lazy-dist-'))
@@ -185,7 +200,7 @@ async function rig(idleMs: number): Promise<Rig> {
     shell: { trash: async () => {} },
     log: (m: string) => { logs.push(m) },
   }
-  const subs = activateRemote(main as never, { idleMs, quitGraceMs: 2_000 })
+  const subs = activateRemote(main as never, { idleMs, quitGraceMs: 2_000, persistentLogins: async () => persistentLogins })
   const proc = (): { pid(): number | undefined } => (globalThis as unknown as { __browserProcess: { pid(): number | undefined } }).__browserProcess
   return {
     home, handlers, sent, logs, endpoint: join(home, 'browser', 'endpoint.json'),
@@ -237,6 +252,19 @@ test('process-host: nothing starts with the app; the first need starts it, idle 
     assert.ok(second && second !== first, 'a new process')
     assert.equal(await endpointUp(r.endpoint, second), true)
   } finally { r.dispose() }
+})
+
+test('process-host: without persistent logins (no fuse) the process stays up once started; with them it leaves', { skip: process.platform !== 'win32', timeout: 60_000 }, async () => {
+  const r = await rig(300, false)
+  try {
+    assert.equal(await requestWake(r.endpoint, 10_000), true, 'still starts on demand')
+    const pid = r.pid()
+    assert.ok(pid)
+    await new Promise(res => setTimeout(res, 1_200))
+    assert.equal(r.pid(), pid, 'idle, but its logins live only in its memory: it stays')
+    assert.ok(!r.logs.some(l => l.includes('ociosidade')))
+  } finally { r.dispose() }
+  // With the fuse on (the other tests' rig) the same idle time ends it: see the first host test.
 })
 
 test('process-host: a question waiting for the person keeps the process; a crash holds agents back until the person acts', { skip: process.platform !== 'win32', timeout: 60_000 }, async () => {

@@ -23,6 +23,8 @@ export interface LifeOptions<P> {
   quitGraceMs?: number
   /** What the process is serving now: live tabs plus questions waiting for the person. Zero means idle. */
   busy(): number
+  /** The process must stay once up (e.g. the logins live only in its memory: leaving would lose them silently). */
+  keepUp?(): boolean
   /** Asks the process to leave cleanly (it closes its line, clears what it must, exits). */
   quit(proc: P): void
   /** The clean quit did not end the process in time. */
@@ -93,13 +95,13 @@ export class BrowserLife<P> {
 
   private arm(): void {
     this.cancelIdle()
-    if (this.proc === undefined || this.stopping || this.o.busy() > 0) return
+    if (this.proc === undefined || this.stopping || this.o.busy() > 0 || this.o.keepUp?.()) return
     this.idle = this.timers.set(() => { this.idle = undefined; this.stop() }, this.o.idleMs ?? IDLE_STOP_MS)
   }
 
   private stop(): void {
     const proc = this.proc
-    if (proc === undefined || this.stopping || this.o.busy() > 0) return
+    if (proc === undefined || this.stopping || this.o.busy() > 0 || this.o.keepUp?.()) return
     let finish!: () => void
     const done = new Promise<void>(r => { finish = r })
     this.stopping = { proc, done, finish, grace: this.timers.set(() => { if (this.stopping?.proc === proc) this.o.kill(proc) }, this.o.quitGraceMs ?? QUIT_GRACE_MS) }

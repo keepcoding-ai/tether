@@ -48,7 +48,7 @@ export function wantsBrowserProcess(main: TetherMain): boolean {
 
 type Fallback = (...args: unknown[]) => unknown
 
-export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGraceMs?: number } = {}): IDisposable[] {
+export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGraceMs?: number; persistentLogins?: () => Promise<boolean> } = {}): IDisposable[] {
   const log = (msg: string): void => main.log(scrubLogLine(msg))
   const ipc = main.ipc() as unknown as {
     handle(channel: string, fn: (...args: unknown[]) => unknown): IDisposable
@@ -78,11 +78,14 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
   const pausedIds = new Set<string>()
   let persistentKnown: boolean | undefined
   let fuseRead: Promise<boolean> | undefined
+  const fuseOn = opts.persistentLogins ?? cookieEncryptionInForce
   const liveTabs = (): number => { let n = 0; for (const t of tabs.values()) if (t.crashed !== 'browser' && t.crashed !== 'suspect') n++; return n }
   const life = new BrowserLife<ChildProcess>({
     ...(opts.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
     ...(opts.quitGraceMs !== undefined ? { quitGraceMs: opts.quitGraceMs } : {}),
     busy: () => liveTabs() + asks.size,
+    // Logins that live only in the process's memory (no cookie-encryption fuse) are lost when it leaves: it stays once up.
+    keepUp: () => persistentKnown === false,
     quit: proc => { const w = wire; if (w && !w.closed) w.post('quit'); else { try { proc.kill() } catch { /* gone */ } } },
     kill: proc => { try { proc.kill() } catch { /* gone */ } },
     log,
@@ -131,7 +134,7 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     restore: raw => { const id = (raw as { tabId?: unknown } | null)?.tabId; return typeof id === 'string' ? tabs.get(id) ?? null : null },
     close: tabId => { if (typeof tabId === 'string') tabs.delete(tabId) },
     // Without the process the answer is the executable's own: the same fuse the process would read.
-    status: async () => ({ persistentLogins: persistentKnown ?? await (fuseRead ??= cookieEncryptionInForce()) }),
+    status: async () => ({ persistentLogins: persistentKnown ?? await (fuseRead ??= fuseOn()) }),
     localNetworkOpen: () => [],
     controls: () => [],
     agents: () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive })),
@@ -321,7 +324,11 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     const up = !!wire && !wire.closed
     if (!up && !starting && !life.permits(by)) { log('navegador parado por queda: a chamada do agente espera o "Reabrir" da pessoa'); return undefined }
     const w = await (up ? ready : launch())
-    if (w) life.touch()
+    if (w) {
+      // Known before the idle clock starts: the process reads the same executable's fuse.
+      persistentKnown ??= await (fuseRead ??= fuseOn())
+      life.touch()
+    }
     return w
   }
 
