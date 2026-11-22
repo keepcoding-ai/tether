@@ -81,6 +81,15 @@ function fakeBridge(port: number, keyFile: () => string | undefined): Promise<Fa
       fake.state.paused = path === '/pause'
       return json(200, { ok: true, paused: fake.state.paused })
     }
+    const act = /^\/browsers\/([^/]+)\/activate$/.exec(path)
+    if (act) {
+      const id = decodeURIComponent(act[1]!)
+      const list = fake.state.browsers as { id: string; active?: boolean }[]
+      if (!list.some(b => b.id === id)) return json(404, { ok: false })
+      for (const b of list) b.active = b.id === id
+      return json(200, { ok: true, activeBrowserId: id })
+    }
+    if (/^\/browsers\/[^/]+\/tabs\/[^/]+\/focus$/.test(path)) return json(200, { ok: true })
     const m = /^\/clients\/([^/]+)\/release$/.exec(path)
     if (m) {
       const id = decodeURIComponent(m[1]!)
@@ -212,24 +221,50 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await page.evaluate(() => window.__tether.activeId()), paneB)
     const clientA = `tether:${paneA}`
     fake.state.browsers = [
-      { id: 'b1', name: 'Chrome', userAgent: 'Mozilla/5.0 Chrome/130', connectedAt: Date.now() - 120_000, lastFocusedAt: Date.now() - 30_000, tabs: [{ id: 1, url: 'https://a', owner: clientA }, { id: 2, url: 'https://b' }] },
-      { id: 'b2', name: 'Chrome', userAgent: 'Mozilla/5.0 Chrome/130 Edg/130', connectedAt: Date.now() - 5000, tabs: [] },
+      { id: 'b1', name: 'Chrome', userAgent: 'Mozilla/5.0 Chrome/130', connectedAt: Date.now() - 120_000, lastFocusedAt: Date.now() - 30_000, active: true, extensionVersion: vendoredVersion, debug: { on: false, callTimeoutMs: null },
+        policy: { source: 'extension', evaluate: 'own-tabs', evaluateHandedTabs: false, upload: true, download: true, pdf: true, readNetwork: true, windowPerAgent: true },
+        tabs: [{ id: 1, windowId: 3, url: 'https://a', title: 'GitHub – PR #42', owner: clientA }, { id: 2, windowId: 3, url: 'https://b' }] },
+      { id: 'b2', name: 'Chrome', userAgent: 'Mozilla/5.0 Chrome/130 Edg/130', connectedAt: Date.now() - 5000, active: false, policy: { source: 'config' }, tabs: [] },
     ]
     s = await openAndWait(page, x => x.snapshot.browsers.length === 2, 'two browsers')
     assert.equal(s.state, 'normal')
     assert.equal(s.badge, 2)
     assert.equal(s.title, 'Chrome, Edge conectados')
     assert.equal(await page.locator(`${STATUS} .status-badge`).textContent(), '2')
-    const rows = pop(page).locator('[data-section="browsers"] .wb-row')
+    const rows = pop(page).locator('[data-section="browsers"] .wb-browser')
     assert.equal(await rows.count(), 2)
     assert.equal(await rows.nth(0).locator('.wb-name').textContent(), 'Chrome')
-    assert.match((await rows.nth(0).locator('.wb-meta').textContent()) ?? '', /^1 aba sob controle · há/)
+    assert.ok(await rows.nth(0).locator('input[type="radio"]').isChecked(), 'the active browser is the checked radio')
+    assert.equal(await rows.nth(0).locator('.wb-marks').textContent(), `JS ✓ · v${vendoredVersion}`)
+    assert.equal(await rows.nth(0).locator('.wb-go').count(), 1, 'a tab under control: the arrow focuses the window')
     assert.equal(await rows.nth(1).locator('.wb-name').textContent(), 'Edge')
-    assert.match((await rows.nth(1).locator('.wb-meta').textContent()) ?? '', /^nenhuma aba sob controle/)
-    assert.equal(await pop(page).locator('[data-section="agents"] .wb-empty').count(), 1)
+    assert.match((await rows.nth(1).locator('.wb-alert-text').textContent()) ?? '', /desatualizada/)
+    assert.equal(await rows.nth(1).locator('.wb-action[data-action="extension-page"]').count(), 1)
+    assert.equal(await rows.nth(1).locator('.wb-go').count(), 0, 'no tab: no arrow')
+    // The debug mode: the browser's "dev" mark (amber icon), no global banner.
+    ;(fake.state.browsers[0] as { debug: unknown }).debug = { on: true, callTimeoutMs: null }
+    s = await openAndWait(page, x => x.state === 'warn', 'debug on: amber')
+    assert.equal(await rows.nth(0).locator('.wb-marks').textContent(), `JS ✓ · dev ● · v${vendoredVersion}`, 'the debug mode is the browser\'s "dev" mark')
+    assert.equal(await pop(page).locator('.wb-debug').count(), 0, 'no global debug banner')
+    ;(fake.state.browsers[0] as { debug: unknown }).debug = { on: false, callTimeoutMs: null }
+    s = await openAndWait(page, x => x.state === 'normal', 'debug off: normal')
+    assert.equal(await pop(page).locator('[data-section="agents"] .wb-empty').textContent(), 'Nenhum agente usando o navegador agora')
+    // The radio activates at once.
+    await rows.nth(1).locator('input[type="radio"]').check()
+    s = await openAndWait(page, x => (x.snapshot.browsers as { id: string; active?: boolean }[]).find(b => b.id === 'b2')?.active === true, 'Edge active')
+    assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/browsers/b2/activate'), 'POST /browsers/b2/activate')
+    await pop(page).locator('[data-section="browsers"] .wb-browser[data-browser="b1"] input[type="radio"]').check()
+    s = await openAndWait(page, x => (x.snapshot.browsers as { id: string; active?: boolean }[]).find(b => b.id === 'b1')?.active === true, 'Chrome active again')
+    // The arrow of a browser focuses one of its tabs.
+    await pop(page).locator('[data-section="browsers"] .wb-browser[data-browser="b1"] .wb-go').click()
+    for (let i = 0; i < 20 && !fake.calls.some(c => c.path === '/browsers/b1/tabs/1/focus'); i++) await sleep(100)
+    assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/browsers/b1/tabs/1/focus'), 'POST focus on a tab of the browser')
 
     // ---- 3. a busy agent; click → its pane ----
-    fake.state.clients = [{ id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 3000, calls: 4 }]
+    fake.state.clients = [
+      { id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 3000, calls: 4, live: true, browserId: 'b1' },
+      { id: 'tether:antigo', name: 'Antigo', lastTool: 'snapshot', lastSeenAt: Date.now() - 600_000, calls: 2, live: false, browserId: 'b2' },
+    ]
     s = await openAndWait(page, x => x.state === 'busy', 'busy')
     assert.equal(s.badge, 'dot')
     assert.equal(s.title, 'Claude · teste está usando o navegador')
@@ -237,27 +272,33 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await btn(page).getAttribute('data-state'), 'busy')
     const agentRow = pop(page).locator(`[data-section="agents"] .wb-agent[data-slot="${paneA}"]`)
     assert.equal(await agentRow.count(), 1)
-    assert.ok(await agentRow.evaluate(el => el.classList.contains('active') && el.classList.contains('clickable')))
+    assert.ok(await agentRow.evaluate(el => el.classList.contains('active')))
     assert.equal(await agentRow.locator('.wb-name').textContent(), 'Claude · teste')
-    assert.match((await agentRow.locator('.wb-meta').textContent()) ?? '', /^1 aba · navigate há \d+ s$/)
+    assert.equal(await agentRow.locator('.wb-tab').textContent(), '"GitHub – PR #42"')
+    const groups = pop(page).locator('[data-section="agents"] .wb-group')
+    assert.equal(await groups.count(), 1, 'only live agents; Edge has none, so no group for it')
+    assert.equal(await groups.nth(0).locator('.wb-group-label').textContent(), 'Chrome')
+    await agentRow.locator('.wb-go').click()
+    for (let i = 0; i < 20 && !fake.calls.some(c => c.path === '/browsers/b1/tabs/1/focus' && c.method === 'POST'); i++) await sleep(100)
+    assert.ok(fake.calls.filter(c => c.method === 'POST' && c.path === '/browsers/b1/tabs/1/focus').length >= 2, 'the agent\'s arrow focuses its tab')
 
     // Screenshots with the icon busy, badge dot and the popover open.
     for (const scheme of ['light', 'dark'] as const) {
       await closePop(page)
       await setTheme(page, scheme)
-      fake.state.clients = [{ id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 1000, calls: 4 }]
+      fake.state.clients = [{ id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 1000, calls: 4, live: true, browserId: 'b1' }]
       await openAndWait(page, x => x.state === 'busy', `busy for the ${scheme} shot`)
       await page.mouse.move(100, 600)
       await sleep(200)
       await shotWindowTop(app, `web-bridge-status-${scheme}`)
     }
 
-    await agentRow.click()
+    await agentRow.locator('.wb-who').click()
     await page.waitForFunction(id => window.__tether.activeId() === id, paneA)
     assert.equal(await page.evaluate(() => window.__tether.activeId()), paneA, 'clicking the agent brings its pane to the front')
 
     // The busy window closes by itself (no newer call): normal with the browser count, after 10 s.
-    fake.state.clients = [{ id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 9000, calls: 4 }]
+    fake.state.clients = [{ id: clientA, name: 'Claude · teste', lastTool: 'navigate', lastSeenAt: Date.now() - 9000, calls: 4, live: true, browserId: 'b1' }]
     s = await openAndWait(page, x => x.state === 'normal' && x.snapshot.agents.length === 1, 'busy ends after 10 s')
     assert.equal(s.badge, 2)
     assert.equal(await btn(page).getAttribute('data-state'), 'normal')

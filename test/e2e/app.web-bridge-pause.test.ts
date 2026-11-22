@@ -216,10 +216,10 @@ test('web-bridge: Pausar no popover pausa o daemon real — a extensão solta as
     assert.ok(first.body.ok)
     s = await openAndWait(page, x => x.snapshot.browsers[0]?.tabs === 1 && x.snapshot.agents.length === 1, 'a tab under control and the agent listed')
     assert.equal(s.state, 'busy', 'the call was seconds ago')
-    assert.match((await pop(page).locator('[data-section="browsers"] .wb-row .wb-meta').first().textContent()) ?? '', /^1 aba sob controle/)
+    assert.equal(await pop(page).locator('[data-section="browsers"] .wb-browser .wb-go').count(), 1, 'a tab under control: the browser has its arrow')
     const agentRow = pop(page).locator(`[data-section="agents"] .wb-agent[data-slot="${pane}"]`)
     assert.equal(await agentRow.locator('.wb-name').textContent(), 'Claude · prova')
-    assert.match((await agentRow.locator('.wb-meta').textContent()) ?? '', /^1 aba · tabs (há|agora)/)
+    assert.equal(await agentRow.locator('.wb-go').count(), 1, 'its tab: the arrow')
     assert.equal((await api.status()).browsers[0]!.tabs.filter(t => t.owner === agent.id).length, 1, 'the daemon: one tab owned by the agent')
 
     // ---- 3. Pausar: real /pause → amber, the extension lets the tab go, the agent is refused ----
@@ -231,7 +231,7 @@ test('web-bridge: Pausar no popover pausa o daemon real — a extensão solta as
     assert.equal(await pop(page).locator('.wb-notice.ok').textContent(), 'Tether Bridge pausado: os agentes esperam.')
     assert.equal(await pop(page).locator('.wb-action[data-action="pause"]').count(), 0)
     assert.equal(await pop(page).locator('.wb-action[data-action="resume"]').count(), 1)
-    assert.match((await pop(page).locator('[data-section="browsers"] .wb-row .wb-meta').first().textContent()) ?? '', /^nenhuma aba sob controle/)
+    assert.equal(await pop(page).locator('[data-section="browsers"] .wb-browser .wb-go').count(), 0, 'paused: no tab under control')
     const daemon = await api.status()
     assert.equal(daemon.paused, true)
     assert.equal(daemon.browsers[0]!.tabs.length, 0, 'the extension detached from every tab under control')
