@@ -160,6 +160,18 @@ describe('conductor-codex: the acts', () => {
     assert.equal(never.writes.filter((w) => w.data === '\r').length, 4, 'the Enter of the send and three more')
   })
 
+  test('send: the envelope header whose `·` Codex shows as blanks still counts as the text stuck in the box (Enter pressed again)', async () => {
+    const envelope = '[tether · for-agents · de atrium (owner) · m_abc123] Crie um arquivo ola.txt com a palavra ola nesta pasta.'
+    const stuckScreen = [...HEAD, '', ...composer('[tether  for-agents  de atrium (owner)  m_abc123] Crie um arquivo ola.txt com a palavra ola nesta pasta.')]
+    const f = fakeCtx([stuckScreen])
+    const original = f.ctx.write
+    let stuck = true
+    f.ctx.screen = async (): Promise<ScreenText> => ({ screen: stuck ? stuckScreen : WORKING, history: [], cols: 120, rows: 40, end: 0 })
+    f.ctx.write = async (c) => { await original(c); if (c.length === 1 && c[0]!.data === '\r') stuck = false }
+    await codexConductor.send!(f.ctx, envelope)
+    assert.deepEqual(f.writes.map((w) => w.data), [envelope, '\r', '\r'])
+  })
+
   test('send and command write nothing over a card (a `y` in the text would approve)', async () => {
     const f = fakeCtx([PERMISSION])
     assert.equal(await codeOf(codexConductor.send!(f.ctx, 'yes please')), 'busy')
