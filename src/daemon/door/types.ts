@@ -229,6 +229,14 @@ export interface DoorRequests {
   handle<A = unknown>(name: string, handler: ExtRequestHandler<A>): IDisposable
 }
 
+export interface DoorEvents {
+  /**
+   * Sends `{ t: 'ext-event', ext, name, payload }` to every client of the pipe, `ext` set by the core. Fire-and-forget: a
+   * no-op in a satellite and after the extension was disposed. `payload`: any JSON.
+   */
+  emit(name: string, payload?: unknown): void
+}
+
 /** What one daemon extension gets of the door (spread into TetherDaemon). */
 export interface DoorApi {
   slots: DoorSlots
@@ -238,4 +246,5 @@ export interface DoorApi {
   attention: DoorAttention
   objects: DoorObjects
   requests: DoorRequests
+  events: DoorEvents
 }

@@ -9,7 +9,7 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import { DoorError } from '../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../src/daemon/door/types.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { Recorder, removeHome, tempHome, uniquePipe } from './daemon.helpers.ts'
+import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const rejectsWith = (code: string) => (e: unknown): boolean => e instanceof DaemonError && e.code === code
 
@@ -83,6 +83,30 @@ describe('agent door extension requests (N1d)', () => {
     assert.equal((await rec.client.request({ t: 'ext-request', ext: 'short', name: 'ping' })).result, 'again')
     again.dispose()
   })
+
+  test('events.emit reaches every client as ext-event with the ext the core set; a disposed extension emits nothing', async () => {
+    const second = await Recorder.connect(daemon.pipe)
+    try {
+      const got: { ext: string; name: string; payload?: unknown }[][] = [[], []]
+      rec.client.on('ext-event', (e) => got[0]!.push(e))
+      second.client.on('ext-event', (e) => got[1]!.push(e))
+      const store = new DisposableStore()
+      const events = door.apiFor('probe', store).events
+      events.emit('said', { room: 'obra', n: 1 })
+      events.emit('bare')
+      store.dispose()
+      events.emit('said', { after: 'dispose' })
+      door.apiFor('other', other).events.emit('said', 'from other')
+      await waitUntil(() => got.every((g) => g.length >= 3), 5_000, 'ext-event on both clients')
+      for (const g of got) assert.deepEqual(g, [
+        { ext: 'probe', name: 'said', payload: { room: 'obra', n: 1 } },
+        { ext: 'probe', name: 'bare' },
+        { ext: 'other', name: 'said', payload: 'from other' },
+      ])
+    } finally {
+      second.close()
+    }
+  })
 })
 
 describe('agent door extension requests in a satellite (no port)', () => {
@@ -95,5 +119,12 @@ describe('agent door extension requests in a satellite (no port)', () => {
     assert.deepEqual(await handler({ t: 'ext-request', id: 1, ext: 'probe', name: 'ping' }, { client: 'cli' }), { result: { client: 'cli' } })
     store.dispose()
     await assert.rejects(Promise.resolve().then(() => handler({ t: 'ext-request', id: 2, ext: 'probe', name: 'ping' }, { client: 'cli' })), (e: unknown) => e instanceof DoorError && e.code === 'unknown-request')
+  })
+
+  test('emitting does nothing (no port, no clients) and does not throw', () => {
+    const sat = new DoorHost({ log: () => {} })
+    const events = sat.apiFor('probe', new DisposableStore()).events
+    assert.equal(sat.port, undefined)
+    assert.doesNotThrow(() => { events.emit('said', { n: 1 }); events.emit('bare') })
   })
 })

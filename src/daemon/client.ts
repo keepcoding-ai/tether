@@ -65,6 +65,8 @@ type Events = {
   desks: [map: DeskMap]
   /** Agent door: one key of an extension's object data changed (`value` undefined: deleted). */
   object: [e: { ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }]
+  /** Agent door: an extension's event (`ext` set by the daemon's core, never by the extension). */
+  'ext-event': [e: { ext: string; name: string; payload?: unknown }]
   close: []
 }
 
@@ -221,6 +223,11 @@ export class DaemonClient extends EventEmitter<Events> {
       case 'object': {
         const { t: _t, ...e } = msg
         this.emit('object', e)
+        return
+      }
+      case 'ext-event': {
+        const { t: _t, ...e } = msg
+        this.emit('ext-event', e)
         return
       }
     }

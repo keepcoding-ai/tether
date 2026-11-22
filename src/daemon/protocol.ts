@@ -398,5 +398,7 @@ export type Event =
   | { t: 'desks'; map: DeskMap }
   /** Agent door: one key of an extension's object data changed (`value` absent: deleted). */
   | { t: 'object'; ext: string; kind: ObjectKind; objectId: string; key: string; value?: unknown }
+  /** Agent door: an event of the daemon half of extension `ext` (its `events.emit(name, payload)`), to every client. */
+  | { t: 'ext-event'; ext: string; name: string; payload?: unknown }
 
 export type DaemonMessage = Reply | Event

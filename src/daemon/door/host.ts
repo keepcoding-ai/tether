@@ -16,7 +16,7 @@ import { AttentionRouteService } from './attention-route.ts'
 import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
 import { SlotsService } from './slots.ts'
-import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorObjects, type DoorRequests, type DoorSlots, type DoorVerbs } from './types.ts'
+import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorEvents, type DoorObjects, type DoorRequests, type DoorSlots, type DoorVerbs } from './types.ts'
 import { VerbRegistry } from './verbs.ts'
 
 export interface DoorHostOptions {
@@ -43,8 +43,8 @@ export class DoorHost implements DoorSeams {
   readonly mcp: DoorMcp
   /** The delivery (D6): inside through `mcp`, through the terminal of a held pane, or queued in <home>/slots/<slot>.inbox.jsonl. */
   readonly delivery: DeliveryService
-  /** The extensions' own requests (N1): `ext-request` reaches the handler of that extension and name. */
-  private readonly extRequests = new ExtRequestService()
+  /** The extensions' own requests and events (N1): `ext-request` reaches the handler of that extension and name; `ext-event` goes to every client. */
+  private readonly extRequests = new ExtRequestService(() => this.portRef)
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
@@ -170,7 +170,8 @@ export class DoorHost implements DoorSeams {
     const attention: DoorAttention = this.attentionService.apiFor(ext, own)
     const objects: DoorObjects = this.objects.apiFor(ext, own)
     const requests: DoorRequests = this.extRequests.requestsFor(ext, own)
-    return { slots, desks, verbs, delivery, attention, objects, requests }
+    const events: DoorEvents = this.extRequests.eventsFor(ext, own)
+    return { slots, desks, verbs, delivery, attention, objects, requests, events }
   }
 
   /** Logs through tetherd's log (for the services the next slices add). */

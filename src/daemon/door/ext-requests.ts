@@ -1,13 +1,20 @@
-// Extension requests (N1, daemon half): the pipe's `ext-request` reaches the handler the extension registered under that
-// name. The core sets `ext` (an extension's API only ever registers under its own id), so two extensions may use the same
-// name. Registering always works, satellites included: only tetherd gets requests from a pipe.
+// Extension requests and events (N1, daemon half): the pipe's `ext-request` reaches the handler the extension registered
+// under that name, and `events.emit` goes to every client as `ext-event`. The core sets `ext` (an extension's API only
+// ever acts under its own id), so two extensions may use the same name. Registering always works, satellites included:
+// only tetherd gets requests from a pipe, and only tetherd has clients to emit to.
 import { toDisposable, type DisposableStore, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
-import { DoorError, type DoorReplyBody, type DoorRequestContext } from './port.ts'
-import type { DoorRequests, ExtRequestHandler } from './types.ts'
+import { DoorError, type DoorReplyBody, type DoorRequestContext, type SlotPort } from './port.ts'
+import type { DoorEvents, DoorRequests, ExtRequestHandler } from './types.ts'
 
 export class ExtRequestService {
   /** ext → name → handler. Grows with what the extensions register, not with clients or calls. */
   private readonly handlers = new Map<string, Map<string, ExtRequestHandler>>()
+  /** The server's port: undefined in a satellite, where emitting does nothing. */
+  private readonly port: () => SlotPort | undefined
+
+  constructor(port: () => SlotPort | undefined) {
+    this.port = port
+  }
 
   register(ext: string, name: string, handler: ExtRequestHandler): IDisposable {
     if (typeof name !== 'string' || !name) throw new Error(`pedido de extensão sem nome (${ext})`)
@@ -40,5 +47,17 @@ export class ExtRequestService {
   /** The `requests` part of extension `ext`'s DoorApi; its registrations land in `own`. */
   requestsFor(ext: string, own: DisposableStore): DoorRequests {
     return { handle: (name, handler) => own.add(this.register(ext, name, handler as ExtRequestHandler)) }
+  }
+
+  /** The `events` part of extension `ext`'s DoorApi: silent once `own` is disposed (the extension left). */
+  eventsFor(ext: string, own: DisposableStore): DoorEvents {
+    return {
+      emit: (name, payload) => {
+        if (typeof name !== 'string' || !name) throw new Error(`evento de extensão sem nome (${ext})`)
+        const port = this.port()
+        if (!port || own.isDisposed) return
+        port.broadcast(payload === undefined ? { t: 'ext-event', ext, name } : { t: 'ext-event', ext, name, payload })
+      },
+    }
   }
 }
