@@ -1,10 +1,13 @@
-// The soul conductor in tetherd. Skeleton: it registers nothing yet; its slice registers the conductor in
-// conductorRegistry (../for-agents/conductor-api.ts) and returns that disposable.
+// The soul conductor in tetherd: registers itself in conductorRegistry (../for-agents/conductor-api.ts); the acts live in conductor.ts.
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
+import { conductorRegistry } from '../for-agents/conductor-api.ts'
+import { soulConductor } from './conductor.ts'
 
 export { manifest } from './manifest.ts'
 
 export function activate(_api: TetherDaemon): IDisposable[] {
-  return []
+  // One registry per process, and a process may activate the daemon extensions twice (see conductor-terminal): the second finds it there.
+  if (conductorRegistry.get(soulConductor.id) === soulConductor) return []
+  return [conductorRegistry.register(soulConductor)]
 }
