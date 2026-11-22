@@ -1,11 +1,12 @@
-// Ends only the processes registered in scene.json (setup.mjs record ...) plus the daemon whose pid file sits in the bench home,
-// then removes the bench root. Refuses when the root holds a link (junction or symlink) or sits where it must not.
+// Ends the processes of the bench scene and removes the bench root. Targets are chosen ONLY by command line:
+// it contains the bench root (a unique path), or carries --relaunched-from=<pid> of a bench app (the Electron relaunch chain).
+// Never by executable name alone. Refuses when the root holds a link (junction or symlink) or sits where it must not.
 //   node teardown.mjs
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import { CLI, SCENE, readScene } from './lib.mjs'
+import { CLI, SCENE, listProcs, norm, readScene, selfChain } from './lib.mjs'
 
 const scene = readScene()
 const root = scene.root
@@ -27,16 +28,60 @@ if (existsSync(root)) {
 
 const env = { ...process.env, TETHER_HOME: scene.home, TETHER_PIPE: scene.pipe }
 for (const k of Object.keys(env)) if (/^(CLAUDE|TETHER_SLOT)/i.test(k)) delete env[k]
-const pids = { ...scene.pids }
-try { const n = Number.parseInt(readFileSync(join(scene.home, 'tetherd.pid'), 'utf8'), 10); if (n && !pids.daemon) pids.daemon = n } catch { /* no pid file */ }
-const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+const rootN = norm(root)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const killTree = pid => spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+const daemonPid = () => { try { return Number.parseInt(readFileSync(join(scene.home, 'tetherd.pid'), 'utf8'), 10) || undefined } catch { return undefined } }
 
-// The app first, then a graceful daemon stop (it ends the PTY trees), then whatever is left, by the recorded PID.
-if (pids.app && alive(pids.app)) { spawnSync('taskkill', ['/PID', String(pids.app), '/T', '/F'], { stdio: 'ignore' }); console.log(`encerrado: app (${pids.app})`) }
-if (pids.daemon && alive(pids.daemon)) spawnSync(process.execPath, [CLI, 'daemon', 'stop'], { env, stdio: 'ignore', timeout: 20_000 })
-for (const [name, pid] of Object.entries(pids)) {
-  if (name !== 'app' && alive(pid)) { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); console.log(`encerrado: ${name} (${pid})`) }
+// Bench processes: root in the command line, or relaunched from a PID already known to be a bench app (fixpoint).
+function benchProcs() {
+  const procs = listProcs()
+  const skip = selfChain(procs)
+  const appPids = new Set(scene.pids?.app ? [scene.pids.app] : [])
+  const recorded = new Set([...Object.values(scene.pids ?? {}), daemonPid()].filter(Boolean))
+  const hit = new Map()
+  for (let changed = true; changed;) {
+    changed = false
+    for (const p of procs) {
+      if (hit.has(p.pid) || skip.has(p.pid)) continue
+      const rel = /--relaunched-from=(\d+)/.exec(p.cmd)
+      const byRoot = norm(p.cmd).includes(rootN) || (recorded.has(p.pid) && /node|electron|tether/i.test(p.name))
+      const byRelaunch = rel && appPids.has(Number(rel[1]))
+      if (byRoot || byRelaunch) {
+        hit.set(p.pid, p)
+        if (byRelaunch || (/electron/i.test(p.name) && !/--type=/.test(p.cmd))) appPids.add(p.pid)
+        changed = true
+      }
+    }
+  }
+  return { list: [...hit.values()], appPids }
 }
-rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+
+const stage = (p, appPids, dPids) => appPids.has(p.pid) ? 0 : dPids.has(p.pid) || /tetherd/i.test(p.name) ? 1 : 2
+const label = ['app', 'daemon', 'resto']
+let stopped = false
+const deadline = Date.now() + 20_000
+for (;;) {
+  const { list, appPids } = benchProcs()
+  const dPids = new Set([daemonPid(), scene.pids?.daemon].filter(Boolean))
+  const first = Math.min(...list.map(p => stage(p, appPids, dPids)), 9)
+  if (list.length === 0) break
+  if (Date.now() > deadline) break
+  if (first === 1 && !stopped) { stopped = true; spawnSync(process.execPath, [CLI, 'daemon', 'stop'], { env, stdio: 'ignore', timeout: 15_000 }) }
+  for (const p of list.filter(p => stage(p, appPids, dPids) === first)) {
+    killTree(p.pid)
+    console.log(`encerrado: ${label[first]} (${p.pid} ${p.name})`)
+  }
+  await sleep(700)
+}
+
+const left = benchProcs().list
+try {
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+} catch (e) {
+  const holders = left.map(p => `${p.pid} ${p.name}`).join(', ') || 'nenhum processo achado'
+  console.error(`nao consegui apagar ${root} (${e.code ?? e.message}); seguram a pasta: ${holders}`)
+  process.exit(1)
+}
 rmSync(SCENE, { force: true })
 console.log(`bancada apagada: ${root}`)

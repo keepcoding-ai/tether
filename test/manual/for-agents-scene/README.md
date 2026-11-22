@@ -8,8 +8,8 @@ Abreviações: `CLI` = `node D:/atrium/.tmp/wt/tether-agents/bin/tether.mjs`. `$
 
 ## Preparar (uma vez)
 
-1. `node setup.mjs` e cole os três blocos que ele imprime num PowerShell novo (tira `CLAUDE*`/`TETHER_*`, sobe `tetherd` em modo serve, builda e abre o app visível; cada PID é registrado com `setup.mjs record`).
-2. No app: crie as mesas `atrium` e `cena`. Em Configurações, ligue `for-agents` e os quatro condutores (terminal, claude, soul, codex).
+1. `node setup.mjs` cria a bancada e diz os dois modos. Depois `node setup.mjs up`: ele mesmo sobe o `tetherd` em modo serve (`node src/daemon/main.ts`), espera o daemon responder, roda `node app/build.mjs` e abre o app visível, tudo com `spawn` destacado, sem `CLAUDE*`/`TETHER_*` herdados e com home e pipe da bancada passados pelo `env` (nenhum shell estraga o nome do pipe). Os PIDs vão para `scene.json`. O modo antigo, que imprime os blocos para PowerShell e Git Bash, é `node setup.mjs print`.
+2. No app: não precisa mexer em Configurações, `for-agents` e os condutores (terminal, claude, soul, codex) já nascem ligados. Crie as mesas `atrium` e `cena` pelo botão "+" da barra de mesas; duplo clique no nome para renomear.
 3. Abra A (Claude Code) numa guia da mesa `atrium`, depois de ligar as extensões, com `CLAUDE*` limpo; a sessão de A é o "eu" da cena.
 
 ## Régua de TODO passo
@@ -66,4 +66,4 @@ Nota de sintaxe: `--args` é repetível (um valor por ocorrência), então `-P <
 
 ## Fim
 
-`node teardown.mjs`: encerra só os PIDs de `scene.json` (e o do `tetherd.pid` da bancada) e apaga a raiz; recusa se achar link.
+`node teardown.mjs`: encerra, em árvore e por linha de comando (nunca só por nome de executável), o app e seus relançamentos (`--relaunched-from=<pid>`), depois o daemon (`daemon stop` incluso), depois tudo que tem a raiz da bancada na linha de comando (ptyd, soul, codex, claude, filhos do Electron). Repete por até 20 s e apaga a raiz e o `scene.json`. Se a pasta continuar presa, imprime quem a segura e sai com código 1, mantendo o `scene.json`. Recusa se achar link ou raiz fora do temp com `tether-cena-`.
