@@ -40,7 +40,7 @@ export const openVerb: VerbDef = {
     const kind = wantString(args, 'kind')
     const cwd = wantString(args, 'cwd')
     const name = optString(args, 'name')
-    const profile = optString(args, 'profile')
+    const asked = optString(args, 'profile')
     const model = optString(args, 'model')
     const effort = optString(args, 'effort')
     const brief = optString(args, 'brief')
@@ -48,7 +48,9 @@ export const openVerb: VerbDef = {
     if (extra !== undefined && !(Array.isArray(extra) && extra.every((x) => typeof x === 'string'))) refuse('bad-request', 'args: esperava uma lista de textos')
     if (kind !== 'shell' && !deps.api.agents.get(kind)) refuse('agent-unavailable', `o motor ${kind} não está disponível`)
     if (kind === 'shell' && (model || effort || brief)) refuse('bad-request', 'um shell não leva model, effort nem brief')
-    if (profile && !deps.api.profiles.get(profile)) refuse('bad-request', `não existe o perfil ${profile}`)
+    if (asked && !deps.api.profiles.get(asked)) refuse('bad-request', `não existe o perfil ${asked}`)
+    // No profile asked: the engine's default one, as when the person opens a pane of that engine in the app (Soul: `-g`).
+    const profile = asked ?? deps.api.profiles.defaultFor(kind)?.id
 
     // The desk: the one asked for, else the only desk the caller owns.
     const map = deps.api.desks.map()

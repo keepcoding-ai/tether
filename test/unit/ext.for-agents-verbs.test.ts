@@ -21,6 +21,8 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { DoorAttention, DoorSlots, VerbResult } from '../../src/daemon/door/types.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
+import type { Profile } from '../../src/core/profile.ts'
+import { writeProfiles } from '../../src/core/profile-sync.ts'
 import type { DeskMap, ObjectKind } from '../../src/daemon/protocol.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -127,7 +129,12 @@ describe('for-agents: the verbs of the owner (X3)', () => {
       activate: (api) => { const w = wire(api); fa = w.forAgents; return w.disposables },
     }
     door = new DoorHost({ log: (m) => logs.push(m) })
-    const host = new DaemonExtensionHost({ home, log: (m) => logs.push(m), door, extensions: [entry] })
+    const profiles: Profile[] = [
+      { id: 'soul', name: 'soul', agent: 'soul', args: ['-g'], default: true },
+      { id: 'soul-plain', name: 'soul-plain', agent: 'soul', args: [] },
+    ]
+    writeProfiles(home, profiles) // the daemon reads the same list from disk that the host's door port serves
+    const host = new DaemonExtensionHost({ home, log: (m) => logs.push(m), door, extensions: [entry], profileStore: { profiles: () => profiles } })
     host.activate()
     daemon = await startDaemon({
       home, pipe: uniquePipe(home), memoryIntervalMs: 0, readyFallbackMs: 300, minAgentAgeMs: 0, adapters: { soul: fakeAdapter(home) }, door,
@@ -486,7 +493,13 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.deepEqual(seen.launch.slice(before), [{ cwd: home }])
     await waitUntil(() => planned.has(String(data(bare).pane)), 30_000, 'the bare pane planned')
     assert.deepEqual(planned.get(String(data(bare).pane)), ['--model', ''], 'the arguments of the conductor reached the launch')
+    // No profile asked: the engine's default profile (Soul's carries -g); an explicit profile still wins.
+    assert.equal(slots.get(String(data(bare).pane))!.profileId, 'soul', 'the engine default profile was used')
     await call(A, 'close', { guia: String(data(bare).pane) }).catch(() => undefined)
+    const explicit = await call(A, 'open', { kind: 'soul', cwd: home, name: 'filha4', profile: 'soul-plain' })
+    assert.equal(explicit.isError, undefined, explicit.text)
+    assert.equal(slots.get(String(data(explicit).pane))!.profileId, 'soul-plain', 'the asked profile wins over the default')
+    await call(A, 'close', { guia: String(data(explicit).pane) }).catch(() => undefined)
 
     // The pane appears in the desk map: it is commanded by inheritance, and the brief reaches it through the delivery.
     await sendMap(map([A, p1, p2, child], [K, p3]))
