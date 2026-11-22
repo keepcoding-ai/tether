@@ -203,7 +203,7 @@ describe('agent door MCP server (D5)', () => {
     assert.deepEqual(r.capabilities, { tools: { listChanged: true }, experimental: { 'claude/channel': {} } })
     assert.equal(r.serverInfo.name, DOOR_MCP_SERVER)
     assert.equal(r.instructions, `${DOOR_INSTRUCTIONS}\n\n[ext]\nUse probe_tool to probe.`)
-    assert.ok(logs.includes('door: slot s1: sessão do servidor tether (era legada, protocolo 2025-11-25)'))
+    assert.ok(logs.includes('door: slot s1: sessão do servidor tether (era legada, protocolo 2025-11-25, cliente t 1)'))
 
     const inside = await post(url, key, { jsonrpc: '2.0', id: 2, method: 'server/discover', params: {} }, init.session)
     assert.equal(inside.msg!.error.code, -32601)
