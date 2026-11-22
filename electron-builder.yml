@@ -49,7 +49,8 @@ win:
       arch: x64
     - target: zip
       arch: x64
-  signAndEditExecutable: false
+  # Edit the exe resources (name, icon, version) but skip code signing: no certificate here.
+  signExecutable: false
 nsis:
   oneClick: false
   perMachine: false
