@@ -2,22 +2,22 @@
   "version": "0.2.0",
   "extensionId": "injmgjkjjfjeamlnnpacjcfnfkjgpmnk",
   "files": {
-    "atrium-bridge.mjs": "de2d9ad6fef5566b6b6f99b809423a54e5706c0d1edd48a53ad436e1074b9a76",
-    "build-info.json": "48cef13462d5600b88b716b7a83104693d5440648766ad22248d632cdbb57e5e",
+    "atrium-bridge.mjs": "e19a508d695786272eb7a91bc1a11e836fed5c6ddf749a87ad7afc03a9f3e5e3",
+    "build-info.json": "ee968c61600a814c73f0af1ac8f515c41de95bd1b834a6388c55d7138da5223f",
     "extension/brand/logo-dark.svg": "0d89f725158afdc818897fcba554fecaddf61abb07803021605f24370d2f98a3",
     "extension/brand/logo-h-dark.svg": "bbb7a43b552ac1791ad6590a36f96f9cc7aec54d100422d8a1e50acd3506dbfd",
     "extension/brand/logo-h-light.svg": "2071b7db312a31d15e128c916db55a34408313991d570d12a8df6e7fc574a213",
     "extension/brand/logo-light.svg": "6558c9f88445beba342d294c9417542105e50e49e6b7c7e547fbb6f0542efdbd",
-    "extension/dist/background.js": "86d6cebb1f23336146fdbdcccdd5fed9c377ea4e70bc78f1dec4f9d2179e9408",
-    "extension/dist/options.js": "b439ec95b90b05c6ffbb028bec4f117ae616b691b9f5719dddf5307cd367d70e",
-    "extension/dist/popup.js": "7f3dacf3e77816edba05f58a62db3d0f469474eba7813e00d28d2d35b2801629",
+    "extension/dist/background.js": "aba7e09bb9e5a846df0e6cee2f48b4c5cc3c2d55c29f68622919cb9907938fc4",
+    "extension/dist/options.js": "faf10ab679c237a21fbaf35bb1c1f7bf5283f6779b0f74071f78bd90b8eb88f8",
+    "extension/dist/popup.js": "d9935cb241f7aa418383595ec78bb92add4e14ad1e36b14e252a3e46b49e83a1",
     "extension/icons/icon-128.png": "6c9986bfd7b8c68e556ebddb3432434d7fd2340b329777206e20519d570316ad",
     "extension/icons/icon-16.png": "fbd612385946ed94e98a76810517a4c511665836752d318fe8b24e78e8e8ee7f",
     "extension/icons/icon-32.png": "6653f66fc9571a276aad07fa3e8d89a33acb74593a782dec65b0fe17c899c5e6",
     "extension/icons/icon-48.png": "b4cd027bcadbe2f329e11fa805a57a283459d22e9be0edf97f65be0be963abb0",
-    "extension/manifest.json": "2a10ea0057b43a262bcbefc58d45ff2bba1b45ab5c455173f19686473d958003",
+    "extension/manifest.json": "d4ac15a87bbb335dd422280400f75d9e7de9d3c262f81bf77a6bbfcb1b5448d1",
     "extension/options.html": "ca495f06e11d2c826050b3c62f40c5504137439c37e52e8f916efebb0e542eac",
-    "extension/popup.html": "07ff79480308cae043e94cee7d15bfce94ba748a310a264930d29f86f4e60229",
-    "extension/ui.css": "a1327d055bc6013f3a220fa235fa704973be56c40a61bc7f88febe34e2a861ed"
+    "extension/popup.html": "b8c376157239fff706158e143729f492b94c2146b651103f7ce24654f0a35745",
+    "extension/ui.css": "cb54e78a844b4b0e7397c401980632251468cb9ff297eb250813b5bc1ed80490"
   }
 }

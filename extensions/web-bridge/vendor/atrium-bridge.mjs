@@ -47,8 +47,22 @@ function isCallId(v) {
 }
 function cleanClientName(raw) {
   if (typeof raw !== "string") return void 0;
-  const cleaned = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
+  const spaced = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(new RegExp("\\p{Cf}", "gu"), "").replace(/\s+/g, " ").trim();
+  const cleaned = [...spaced].slice(0, CLIENT_NAME_MAX).join("").trim();
   return cleaned || void 0;
+}
+function latin1ClientName(name) {
+  return name.replace(/[^ -~ -ÿ]/gu, "?");
+}
+function clientNameFromHeaders(encoded, plain) {
+  if (typeof encoded === "string") {
+    try {
+      const name = cleanClientName(decodeURIComponent(encoded));
+      if (name) return name;
+    } catch {
+    }
+  }
+  return cleanClientName(plain);
 }
 function sanitizeTabs(v) {
   if (!Array.isArray(v)) return [];
@@ -60,12 +74,21 @@ function sanitizeTabs(v) {
       id: t.id,
       url: typeof t.url === "string" ? t.url.slice(0, STATUS_URL_MAX) : "",
       title: typeof t.title === "string" ? t.title.slice(0, STATUS_TITLE_MAX) : "",
-      ...isClientId(t.owner) ? { owner: t.owner } : {}
+      ...isClientId(t.owner) ? { owner: t.owner } : {},
+      ...typeof t.windowId === "number" && Number.isInteger(t.windowId) ? { windowId: t.windowId } : {}
     });
   }
   return out;
 }
-var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, CALL_ID_HEADER, CALL_ID_PATTERN, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
+function sanitizePolicy(v) {
+  const p = v;
+  if (!p || typeof p !== "object") return null;
+  if (p.evaluate !== "off" && p.evaluate !== "own-tabs" && p.evaluate !== "all") return null;
+  const flags = ["evaluateHandedTabs", "upload", "download", "pdf", "readNetwork", "windowPerAgent"];
+  if (!flags.every((k) => typeof p[k] === "boolean")) return null;
+  return { evaluate: p.evaluate, ...Object.fromEntries(flags.map((k) => [k, p[k]])) };
+}
+var PROTOCOL_VERSION, DEFAULT_PORT, WS_PATH, CLOSE_DENIED, CLOSE_REPLACED, CLOSE_PROTOCOL, CLIENT_ID_HEADER, CLIENT_NAME_HEADER, CLIENT_NAME_ENCODED_HEADER, CLIENT_ID_PATTERN, CLIENT_NAME_MAX, CALL_ID_HEADER, CALL_ID_PATTERN, STATUS_TABS_MAX, STATUS_URL_MAX, STATUS_TITLE_MAX, SEED_FILE, EXTENSION_ID_PATTERN;
 var init_protocol = __esm({
   "src/protocol.ts"() {
     "use strict";
@@ -77,6 +100,7 @@ var init_protocol = __esm({
     CLOSE_PROTOCOL = 4400;
     CLIENT_ID_HEADER = "x-bridge-client";
     CLIENT_NAME_HEADER = "x-bridge-client-name";
+    CLIENT_NAME_ENCODED_HEADER = "x-bridge-client-name-enc";
     CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,63}$/;
     CLIENT_NAME_MAX = 80;
     CALL_ID_HEADER = "x-bridge-call";
@@ -154,6 +178,19 @@ import { randomBytes as randomBytes2 } from "node:crypto";
 import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
+function readState(home2) {
+  try {
+    const raw = JSON.parse(readFileSync2(statePath(home2), "utf8"));
+    const id = raw?.activeBrowserId;
+    return typeof id === "string" && id.length > 0 && id.length <= 100 ? { activeBrowserId: id } : {};
+  } catch {
+    return {};
+  }
+}
+function writeState(home2, state) {
+  mkdirSync(home2, { recursive: true });
+  writeFileAtomic(statePath(home2), JSON.stringify(state, null, 2) + "\n");
+}
 function debugFromRequest(request2) {
   if (request2?.enabled !== true) return { on: false };
   return { on: true, ...request2.callTimeoutMs !== void 0 ? { callTimeoutMs: request2.callTimeoutMs } : {} };
@@ -345,7 +382,7 @@ function removeDaemonPid(home2, pid) {
   } catch {
   }
 }
-var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, traceLogPath, localKeyPath, uploadKeyPath, configPath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
+var KEY_SCOPES, UPLOAD_TOOLS, UPLOAD_KEY_NAME, DEFAULT_KEY_NAME, LEGACY_KEY_NAME, KEY_NAME_PATTERN, supervisorHome, daemonPidPath, daemonLogPath, mcpLogPath, traceLogPath, localKeyPath, uploadKeyPath, configPath, statePath, lockPath, isKey, isBrand, isExtensionVersion, isExtensionIdList, mtimeIso, sleepSync, LOCK_STALE_MS, LOCK_WAIT_MS, withPort;
 var init_config = __esm({
   "daemon/src/config.ts"() {
     "use strict";
@@ -366,6 +403,7 @@ var init_config = __esm({
     localKeyPath = (home2) => join2(home2, "api.key");
     uploadKeyPath = (home2) => join2(home2, "upload.key");
     configPath = (home2) => join2(home2, "config.json");
+    statePath = (home2) => join2(home2, "state.json");
     lockPath = (home2) => join2(home2, "config.lock");
     isKey = (v) => {
       const k = v;
@@ -834,7 +872,8 @@ var init_client = __esm({
               connection: "close",
               // Quem chama, quando a casca se identificou: o daemon loga o id e o repassa à extensão em cada `call`.
               ...target.client ? { [CLIENT_ID_HEADER]: target.client.id } : {},
-              ...target.client?.name ? { [CLIENT_NAME_HEADER]: target.client.name } : {},
+              // O nome vai em UTF-8 codificado (o cabeçalho só leva Latin-1) e, para um daemon antigo, no cabeçalho de antes.
+              ...target.client?.name ? { [CLIENT_NAME_ENCODED_HEADER]: encodeURIComponent(target.client.name), [CLIENT_NAME_HEADER]: latin1ClientName(target.client.name) } : {},
               // O id desta chamada: o daemon o usa como rid e o põe em cada linha de log e no erro (data.callId).
               ...callId ? { [CALL_ID_HEADER]: callId } : {},
               ...body !== void 0 ? { "content-type": "application/json" } : {}
@@ -909,7 +948,7 @@ var init_texts = __esm({
     };
     BRIDGE_TOOL_TEXTS = {
       list_browsers: {
-        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt, lastFocusedAt? }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, the other tools default to the one the user focused most recently (lastFocusedAt) and say so in a Notice; pass browser when the user said which one ("in Brave").',
+        description: 'List the user browsers connected to the Atrium Bridge: { id, name, userAgent, connectedAt, active, lastFocusedAt?, extensionVersion? }. Call it first when you do not know which browser to use. With one browser you can use it directly; with several, the other tools keep using the browser this session already acted in, or else the active browser (active: true, chosen by the user) and say so in a Notice; pass browser when the user said which one ("in Brave").',
         params: {}
       },
       navigate: {
@@ -1132,7 +1171,9 @@ var init_texts = __esm({
     };
     BROWSER_TEXTS = {
       /** Primeiro bloco de texto do resultado quando a casca escolheu o browser pelo foco. */
-      focusedNotice: (name) => `Notice: usei "${name}", o navegador em que voc\xEA mexeu por \xFAltimo; passe browser= para escolher.`
+      focusedNotice: (name) => `Notice: usei "${name}", o navegador em que voc\xEA mexeu por \xFAltimo; passe browser= para escolher.`,
+      /** Primeiro bloco de texto do resultado quando a casca escolheu o navegador ativo (o que a pessoa marcou no hospedeiro). */
+      activeNotice: (name) => `Notice: usei "${name}", o navegador ativo; passe browser= para escolher outro.`
     };
     DAEMON_TEXTS = {
       /** Sucesso de uma chamada que precisou reiniciar o daemon. Vai como primeiro bloco de texto do resultado. */
@@ -1187,11 +1228,15 @@ async function assertPortFree(port) {
     probe.listen(port, "127.0.0.1", () => probe.close(() => resolveFree()));
   });
 }
+function embeddedChannelSeeds() {
+  return JSON.stringify(EMBEDDED_PUBLIC_CHANNELS.map((id) => ({ id, app: id, kind: "public" })));
+}
 function startEmbeddedSupervisor(opts) {
   const dataDir = supervisorHome(opts.home);
   const baseEnv = {
     SUPERVISOR_DATA_DIR: dataDir,
-    SUPERVISOR_DEVICE_VERIFICATION_ORIGIN: opts.verificationOrigin
+    SUPERVISOR_DEVICE_VERIFICATION_ORIGIN: opts.verificationOrigin,
+    SUPERVISOR_CHANNEL_SEEDS: embeddedChannelSeeds()
   };
   let status = "starting";
   let detail;
@@ -1308,7 +1353,7 @@ ${scrub(tail.join("")).slice(-1200)}`);
     }
   };
 }
-var EMBEDDED_OWNER, SUPERVISOR_SERVICE_DIR, DEFAULT_START_TIMEOUT_MS, APPROVE_TIMEOUT_MS, USER_CODE, ENV_ALLOWLIST, normalizeUserCode;
+var EMBEDDED_OWNER, SUPERVISOR_SERVICE_DIR, DEFAULT_START_TIMEOUT_MS, APPROVE_TIMEOUT_MS, USER_CODE, ENV_ALLOWLIST, normalizeUserCode, EMBEDDED_PUBLIC_CHANNELS;
 var init_embedded = __esm({
   "daemon/src/embedded.ts"() {
     "use strict";
@@ -1351,6 +1396,7 @@ var init_embedded = __esm({
       const code = raw.trim().toUpperCase();
       return USER_CODE.test(code) ? code : null;
     };
+    EMBEDDED_PUBLIC_CHANNELS = Object.freeze(["codium", "soul-cli", "atrium-assistant"]);
   }
 });
 
@@ -1819,6 +1865,7 @@ __export(util_exports, {
   required: () => required,
   safeExtend: () => safeExtend,
   shallowClone: () => shallowClone,
+  sizeCaps: () => sizeCaps,
   slugify: () => slugify,
   stringifyPrimitive: () => stringifyPrimitive,
   toZod: () => toZod,
@@ -2241,6 +2288,18 @@ function prefixIssues(path, issues) {
 }
 function unwrapMessage(message) {
   return typeof message === "string" ? message : message?.message;
+}
+function sizeCaps(defChecks) {
+  const caps = [];
+  for (const ch of defChecks ?? []) {
+    const d = ch._zod.def;
+    if (!/_(length|size)$|_equals$/.test(d.check))
+      break;
+    const max = d.maximum ?? d.length ?? d.size;
+    if (max >= 0)
+      caps.push([max, ch]);
+  }
+  return caps;
 }
 function attachSchema(issues, start, inst) {
   var _a3;
@@ -3443,7 +3502,7 @@ var init_versions = __esm({
     version = {
       major: 4,
       minor: 6,
-      patch: 5
+      patch: 7
     };
   }
 });
@@ -3570,6 +3629,28 @@ function isValidJWT(token, algorithm = null) {
   } catch {
     return false;
   }
+}
+function capSize(inst, size) {
+  const caps = sizeCaps(inst._zod.def.checks);
+  if (!caps.length)
+    return;
+  const cap = Math.min(...caps.map((c) => c[0]));
+  const parse4 = inst._zod.parse;
+  inst._zod.parse = (payload, ctx) => {
+    const n = size(payload.value);
+    if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
+      for (const [max, ch] of sizeCaps(inst._zod.def.checks)) {
+        if (n > max && ch._zod.def.when(payload)) {
+          const start = payload.issues.length;
+          ch._zod.check(payload);
+          payload.issues[start].continue = false;
+          attachSchema(payload.issues, start, inst);
+          return payload;
+        }
+      }
+    }
+    return parse4(payload, ctx);
+  };
 }
 function handleArrayResult(result, final, index) {
   if (result.issues.length) {
@@ -3881,7 +3962,7 @@ function handleRefineResult(result, payload, input, inst) {
     payload.issues.push(issue(_iss));
   }
 }
-var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
+var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, base64Charset, $ZodBase64, base64urlCharset, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, arraySize, $ZodArray, NO_SYMBOL_KEYS, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
   "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
@@ -4339,6 +4420,7 @@ var init_schemas = __esm({
         return payload;
       };
     });
+    arraySize = (input) => Array.isArray(input) ? input.length : -1;
     $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def3) => {
       $ZodType.init(inst, def3);
       const memo2 = globalConfig.memoizer;
@@ -4376,6 +4458,7 @@ var init_schemas = __esm({
         }
         return payload;
       };
+      capSize(inst, arraySize);
     });
     NO_SYMBOL_KEYS = [];
     $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def3) => {
@@ -19420,7 +19503,7 @@ var init_tool_texts = __esm({
       },
       tabs: {
         name: "WebTabs",
-        description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id.",
+        description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id. A tab whose title could not be read in time is listed with an empty title and readable: false; open a new tab to replace it.",
         params: {}
       },
       new_tab: {
@@ -19538,7 +19621,7 @@ var init_tool_texts = __esm({
     ADOPT_TOOL_TEXTS = {
       ask_user: {
         name: "WebAskUser",
-        description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
+        description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended: "returned" (the person handed the tab back), "declined" (the person said they cannot help; the tab is back with you), "dismissed" or "timeout". On "returned" and "declined" the person may add a short note for you (plain text); read it, it may say what happened or what to do next. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
         params: {
           message: "What you need from the person, in one or two plain sentences (text only, cut at 500 characters).",
           kind: '"login" when you need the person to sign in (the host hands the tab over clean of scripts), "other" for anything else. Default "other".'
@@ -20296,7 +20379,7 @@ function lastFocused(list) {
   }
   return best;
 }
-function chooseBrowser(list, requested) {
+function chooseBrowser(list, requested, session) {
   if (requested) {
     const byId = list.find((b) => b.id === requested);
     if (byId) return { browser: byId };
@@ -20314,7 +20397,11 @@ function chooseBrowser(list, requested) {
   if (list.length === 0) {
     throw new BridgeError("NO_BROWSER_CONNECTED", "no browser is connected to the Atrium Bridge; ask the user to open one with the extension paired");
   }
+  const mine = session !== void 0 ? list.find((b) => b.id === session) : void 0;
+  if (mine) return { browser: mine };
   if (list.length > 1) {
+    const active = list.find((b) => b.active === true);
+    if (active) return { browser: active, notice: BROWSER_TEXTS.activeNotice(active.name) };
     const focused = lastFocused(list);
     if (focused) return { browser: focused, notice: BROWSER_TEXTS.focusedNotice(focused.name) };
     throw new BridgeError(
@@ -20386,11 +20473,13 @@ function present(list, requested) {
   return list.some((b) => b.id === requested || b.name.toLowerCase() === requested.toLowerCase());
 }
 function createResilientBridge(client, shell2) {
+  let session;
   if (!shell2) {
     return {
       listBrowsers: async () => ({ value: await client.browsers(), restarted: false }),
       callTool: async (tool, args, requested, callId) => {
-        const { browser, notice } = chooseBrowser(await client.browsers(), requested);
+        const { browser, notice } = chooseBrowser(await client.browsers(), requested, session);
+        session = browser.id;
         const value = await client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug);
         return { value, restarted: false, browser: browser.id, ...notice ? { notice } : {} };
       }
@@ -20428,7 +20517,7 @@ function createResilientBridge(client, shell2) {
   }
   function resolveAfterWait(waited, requested) {
     try {
-      return chooseBrowser(waited.list, requested);
+      return chooseBrowser(waited.list, requested, session);
     } catch (e) {
       if (waited.waitedMs > 0 && e instanceof BridgeError && (e.code === "NO_BROWSER_CONNECTED" || e.code === "BROWSER_NOT_FOUND")) {
         const suffix = DAEMON_TEXTS.waitedSuffix({ ageSeconds: Math.round(waited.ageMs / 1e3), waitedSeconds: Math.round(waited.waitedMs / 1e3) });
@@ -20478,11 +20567,12 @@ function createResilientBridge(client, shell2) {
       tool,
       isPureRead(tool, args),
       async (progress) => {
-        const waited = await browsersWhen((list) => present(list, requested), waitCallMs, callId ? { callId } : {});
+        const waited = await browsersWhen((list) => present(list, requested ?? session), waitCallMs, callId ? { callId } : {});
         const { browser, notice } = resolveAfterWait(waited, requested);
         if (notice) progress.notice = notice;
         progress.browser = browser.id;
         progress.stage = "call";
+        session = browser.id;
         return alive(client.call(browser.id, tool, args, daemonTimeoutFor(args), callId, browser.debug));
       },
       callId
@@ -24841,12 +24931,25 @@ var init_trace = __esm({
 
 // daemon/src/registry.ts
 import { randomUUID } from "node:crypto";
-var CLIENTS_MAX, RELEASE_TOOL, EXPIRED_CALLS_MAX, INSPECT_TIMEOUT_MS, MAX_TIMER_MS, BrowserConnection, Registry;
+function isLive(c, now) {
+  return c.lastTool !== RELEASE_TOOL && now - Date.parse(c.lastSeenAt) < CLIENT_IDLE_MS;
+}
+function pickSubstitute(conns) {
+  let best = conns[0];
+  for (const c of conns) {
+    const a = c.lastFocusedAt ?? "";
+    const b = best.lastFocusedAt ?? "";
+    if (a > b || a === b && c.info.connectedAt > best.info.connectedAt) best = c;
+  }
+  return best.info.id;
+}
+var CLIENT_IDLE_MS, CLIENTS_MAX, RELEASE_TOOL, EXPIRED_CALLS_MAX, INSPECT_TIMEOUT_MS, MAX_TIMER_MS, BrowserConnection, Registry;
 var init_registry = __esm({
   "daemon/src/registry.ts"() {
     "use strict";
     init_errors();
     init_trace();
+    CLIENT_IDLE_MS = 15 * 6e4;
     CLIENTS_MAX = 200;
     RELEASE_TOOL = "release";
     EXPIRED_CALLS_MAX = 200;
@@ -24862,6 +24965,8 @@ var init_registry = __esm({
       lastFocusedAt;
       /** O modo debug pedido pela extensão desta conexão (`{t:'debug'}`, F6). Só em memória: some com a conexão. */
       debugRequest;
+      /** O que a extensão afirmou aplicar aos agentes (`{t:'policy'}`); ausente numa extensão antiga. */
+      policy;
       constructor(info2, ws) {
         this.info = info2;
         this.ws = ws;
@@ -24895,24 +25000,106 @@ var init_registry = __esm({
       clients = /* @__PURE__ */ new Map();
       /** Chamadas vencidas por id, na ordem em que venceram (limitado a EXPIRED_CALLS_MAX). */
       expired = /* @__PURE__ */ new Map();
-      list() {
-        return [...this.browsers.values()].map((c) => c.described());
+      /**
+       * O navegador ativo: o escolhido (persistido pela identidade, o `bridgeId`) e, enquanto ele está fora, o substituto
+       * que assumiu. O substituto fica fixo até ele também cair: o ativo não troca a cada foco.
+       */
+      chosenId;
+      substitute;
+      opts;
+      constructor(opts = {}) {
+        this.opts = opts;
+        this.chosenId = opts.activeBrowserId;
       }
-      /** O que `GET /status` devolve: browsers com abas e foco, clientes do mais recente para o mais antigo. */
-      status() {
-        return { browsers: [...this.browsers.values()].map((c) => c.status()), clients: [...this.clients.values()].reverse() };
+      list() {
+        const active = this.activeId();
+        return [...this.browsers.values()].map((c) => ({ ...c.described(), active: c.info.id === active }));
+      }
+      /** O que `GET /status` devolve: browsers com abas e foco, clientes do mais recente para o mais antigo, e o ativo. */
+      status(now = Date.now()) {
+        const active = this.activeId();
+        const fallback = this.activeFallback();
+        return {
+          ...this.chosenId ? { activeBrowserId: this.chosenId } : {},
+          ...fallback ? { activeFallback: fallback } : {},
+          browsers: [...this.browsers.values()].map((c) => ({ ...c.status(now), active: c.info.id === active })),
+          clients: [...this.clients.values()].reverse().map((c) => ({ ...c, live: isLive(c, now) }))
+        };
+      }
+      // ------------------------------------------------------------------------------------------ navegador ativo
+      /** O id do navegador ativo agora: sempre um dos conectados enquanto houver algum; undefined sem nenhum. */
+      activeId() {
+        if (this.chosenId && this.browsers.has(this.chosenId)) return this.chosenId;
+        if (this.substitute && this.browsers.has(this.substitute.id)) return this.substitute.id;
+        return void 0;
+      }
+      /** O escolhido está fora e um substituto responde por ele. */
+      activeFallback() {
+        if (!this.chosenId || this.browsers.has(this.chosenId) || !this.substitute || !this.browsers.has(this.substitute.id)) return void 0;
+        return { from: this.chosenId, to: this.substitute.id, at: this.substitute.at };
+      }
+      /** `POST /browsers/:id/activate`: a pessoa escolheu este (conectado) como ativo. Persiste e desfaz o substituto. */
+      activate(id) {
+        if (!this.browsers.has(id)) {
+          throw new BridgeError("BROWSER_NOT_FOUND", `no connected browser with id "${id}"`, { browsers: this.list() });
+        }
+        const before = this.chosenId;
+        this.substitute = void 0;
+        if (before === id) return;
+        this.choose(id);
+        this.opts.log?.("active_chosen", { browser: id, ...before ? { previous: before } : {}, by: "request" });
+      }
+      choose(id) {
+        this.chosenId = id;
+        this.opts.saveActive?.(id);
+      }
+      /**
+       * Depois de um browser entrar ou sair: garante exatamente um ativo entre os conectados. O escolhido conectado vence
+       * (e desfaz o substituto); com ele fora, o substituto em vigor fica; sem substituto vivo, assume o último em foco
+       * (ou, sem foco relatado, o que conectou por último), e o aviso vai ao log e ao `/status` (`activeFallback`).
+       */
+      reconcile() {
+        if (this.browsers.size === 0) {
+          this.substitute = void 0;
+          return;
+        }
+        if (!this.chosenId) {
+          const first = this.browsers.keys().next().value;
+          this.choose(first);
+          this.opts.log?.("active_chosen", { browser: first, by: "first-connected" });
+        }
+        if (this.browsers.has(this.chosenId)) {
+          if (this.substitute) this.opts.log?.("active_restored", { browser: this.chosenId, substitute: this.substitute.id });
+          this.substitute = void 0;
+          return;
+        }
+        if (this.substitute && this.browsers.has(this.substitute.id)) return;
+        const pick2 = pickSubstitute([...this.browsers.values()]);
+        this.substitute = { id: pick2, at: (/* @__PURE__ */ new Date()).toISOString() };
+        this.opts.log?.("active_fallback", { from: this.chosenId, to: pick2 });
       }
       /**
        * Chamado quando o conjunto de agentes ATIVOS muda (um novo, um nome novo, um que encerrou): o servidor repassa às
        * extensões (`{t:'status'}`, A12). Só a mudança do conjunto, nunca cada chamada: N agentes agindo não geram tráfego.
        */
       onClientsChanged = null;
-      /** Anota que `client` acabou de pedir `tool` (chamada ou consulta). O nome mais recente vence; sem nome, mantém o anterior. */
-      noteClient(client, tool, now = /* @__PURE__ */ new Date()) {
+      /**
+       * Anota que `client` acabou de pedir `tool` (chamada ou consulta). O nome mais recente vence; sem nome, mantém o
+       * anterior. `browserId`: o browser de uma chamada de tool (a sessão fica nele até chamar outro).
+       */
+      noteClient(client, tool, now = /* @__PURE__ */ new Date(), browserId) {
         const previous = this.clients.get(client.id);
         this.clients.delete(client.id);
         const name = client.name ?? previous?.name;
-        this.clients.set(client.id, { id: client.id, ...name ? { name } : {}, lastTool: tool, lastSeenAt: now.toISOString(), calls: (previous?.calls ?? 0) + 1 });
+        const browser = browserId ?? previous?.browserId;
+        this.clients.set(client.id, {
+          id: client.id,
+          ...name ? { name } : {},
+          lastTool: tool,
+          lastSeenAt: now.toISOString(),
+          calls: (previous?.calls ?? 0) + 1,
+          ...browser ? { browserId: browser } : {}
+        });
         while (this.clients.size > CLIENTS_MAX) this.clients.delete(this.clients.keys().next().value);
         const wasActive = previous !== void 0 && previous.lastTool !== RELEASE_TOOL;
         const isActive = tool !== RELEASE_TOOL;
@@ -24932,12 +25119,14 @@ var init_registry = __esm({
       add(conn) {
         const previous = this.browsers.get(conn.info.id);
         this.browsers.set(conn.info.id, conn);
+        this.reconcile();
         return previous;
       }
       /** Remove só se ainda for esta conexão (uma substituta pode já ter tomado o lugar). */
       remove(conn) {
         if (this.browsers.get(conn.info.id) !== conn) return false;
         this.browsers.delete(conn.info.id);
+        this.reconcile();
         return true;
       }
       /**
@@ -25096,6 +25285,15 @@ import { statSync as statSync8 } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { resolve as resolve7 } from "node:path";
 import { dirname as dirname6, join as join8 } from "node:path";
+function policyOf(conn, config2) {
+  if (conn?.policy) return { source: "extension", ...conn.policy };
+  const caps = config2.capabilities ?? {};
+  const out = {};
+  const ev = caps.evaluate;
+  if (ev === "off" || ev === "own-tabs" || ev === "all") out.evaluate = ev;
+  for (const k of BOOLEAN_POLICY_KEYS) if (typeof caps[k] === "boolean") out[k] = caps[k];
+  return { source: "config", ...out };
+}
 function statusFor(code) {
   switch (code) {
     case "BROWSER_NOT_FOUND":
@@ -25127,7 +25325,17 @@ async function startDaemon(opts) {
   const log = opts.log ?? defaultLog;
   const callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   let config2 = ensureConfig(opts.home, opts.port);
-  const registry2 = new Registry();
+  const registry2 = new Registry({
+    ...readState(opts.home),
+    saveActive: (id) => {
+      try {
+        writeState(opts.home, { activeBrowserId: id });
+      } catch (e) {
+        log("state_write_failed", { reason: e.code ?? "unknown" });
+      }
+    },
+    log
+  });
   const traceLog = createTraceLog(traceLogPath(opts.home));
   const dumps = createDumps(join8(dirname6(traceLogPath(opts.home)), "debug"), opts.dumpsMax);
   const debugOf = (_c, conn) => debugFromRequest(conn?.debugRequest);
@@ -25235,7 +25443,7 @@ async function startDaemon(opts) {
     if (!isClientId(id)) {
       throw Object.assign(new Error(`invalid X-Bridge-Client: expected ${CLIENT_ID_PATTERN.source}`), { code: "INVALID_ARGUMENT" });
     }
-    const name = cleanClientName(req.headers[CLIENT_NAME_HEADER]);
+    const name = clientNameFromHeaders(req.headers[CLIENT_NAME_ENCODED_HEADER], req.headers[CLIENT_NAME_HEADER]);
     return name ? { id, name } : { id };
   };
   const callIdOf = (req) => {
@@ -25364,8 +25572,34 @@ async function startDaemon(opts) {
       }
       if (req.method === "GET" && url.pathname === "/status") {
         const status = registry2.status();
-        const body = { ok: true, paused, ...status, browsers: status.browsers.map((b) => ({ ...b, debug: modeInfo(registry2.get(b.id)) })) };
+        const body = {
+          ok: true,
+          paused,
+          ...status,
+          browsers: status.browsers.map((b) => {
+            const conn = registry2.get(b.id);
+            return { ...b, debug: modeInfo(conn), policy: policyOf(conn, config2) };
+          })
+        };
         return json2(res, 200, body);
+      }
+      const act = /^\/browsers\/([^/]+)\/activate$/.exec(url.pathname);
+      if (req.method === "POST" && act) {
+        const id = decodeURIComponent(act[1]);
+        registry2.activate(id);
+        log("browser_activated", { key: key.name, browser: id });
+        return json2(res, 200, { ok: true, activeBrowserId: id });
+      }
+      const foc = /^\/browsers\/([^/]+)\/tabs\/([^/]+)\/focus$/.exec(url.pathname);
+      if (req.method === "POST" && foc) {
+        const id = decodeURIComponent(foc[1]);
+        const tab = Number(decodeURIComponent(foc[2]));
+        if (!Number.isSafeInteger(tab) || tab < 0) throw Object.assign(new Error("invalid tab id: expected a non-negative integer"), { code: "INVALID_ARGUMENT" });
+        const conn = registry2.get(id);
+        if (!conn) throw new BridgeError("BROWSER_NOT_FOUND", `no connected browser with id "${id}"`, { browsers: registry2.list() });
+        const result = await registry2.ask(conn, "focus-tab", (rid) => ({ t: "focus-tab", rid, tab }), FOCUS_TAB_TIMEOUT_MS);
+        log("tab_focused", { key: key.name, browser: id, tab });
+        return json2(res, 200, { ok: true, browser: id, ...result });
       }
       if (req.method === "POST" && url.pathname === "/pause") {
         const browsers = await pause({ key: key.name });
@@ -25436,7 +25670,7 @@ async function startDaemon(opts) {
         }
         const timeout = timeoutFor(typeof body.timeoutMs === "number" && body.timeoutMs > 0 ? Math.min(body.timeoutMs, 6e5) : void 0, args, target);
         const started = Date.now();
-        if (client) registry2.noteClient(client, body.tool);
+        if (client) registry2.noteClient(client, body.tool, /* @__PURE__ */ new Date(), target ? id : void 0);
         const who = { callId, key: key.name, ...client ? { client: client.id } : {}, browser: id, tool: body.tool };
         const timeoutMs = Number.isFinite(timeout) ? timeout : null;
         log("call_started", { ...who, timeoutMs });
@@ -25519,7 +25753,8 @@ async function startDaemon(opts) {
           id: msg.id,
           name: String(msg.name ?? "").slice(0, 100) || msg.id,
           userAgent: String(msg.userAgent ?? "").slice(0, 300),
-          connectedAt: (/* @__PURE__ */ new Date()).toISOString()
+          connectedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          ...isExtensionVersion(msg.extensionVersion) ? { extensionVersion: msg.extensionVersion } : {}
         };
         const mine = new BrowserConnection(info2, ws);
         const previous = registry2.add(mine);
@@ -25597,6 +25832,11 @@ async function startDaemon(opts) {
         conn.lastFocusedAt = (/* @__PURE__ */ new Date()).toISOString();
         return;
       }
+      if (msg.t === "policy") {
+        const policy = sanitizePolicy(msg.policy);
+        if (policy) conn.policy = policy;
+        return;
+      }
     });
     ws.on("close", () => {
       clearTimeout(helloTimer);
@@ -25648,7 +25888,7 @@ async function startDaemon(opts) {
     }
   };
 }
-var HELLO_TIMEOUT_MS, EXTENSION_ORIGIN_PREFIX, MAX_BODY, DEFAULT_CALL_TIMEOUT_MS, DIAGNOSE_TIMEOUT_MS, MAX_FRAME, TRACE_BATCH_MAX, DUMP_REQUEST_TIMEOUT_MS, defaultLog;
+var HELLO_TIMEOUT_MS, EXTENSION_ORIGIN_PREFIX, MAX_BODY, DEFAULT_CALL_TIMEOUT_MS, DIAGNOSE_TIMEOUT_MS, MAX_FRAME, TRACE_BATCH_MAX, DUMP_REQUEST_TIMEOUT_MS, FOCUS_TAB_TIMEOUT_MS, BOOLEAN_POLICY_KEYS, defaultLog;
 var init_server3 = __esm({
   "daemon/src/server.ts"() {
     "use strict";
@@ -25674,6 +25914,8 @@ var init_server3 = __esm({
     MAX_FRAME = 64 * 1024 * 1024;
     TRACE_BATCH_MAX = 500;
     DUMP_REQUEST_TIMEOUT_MS = 6e3;
+    FOCUS_TAB_TIMEOUT_MS = 5e3;
+    BOOLEAN_POLICY_KEYS = ["upload", "download", "pdf", "readNetwork", "windowPerAgent"];
     defaultLog = (event, fields = {}) => {
       process.stderr.write(JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), event, ...fields }) + "\n");
     };
