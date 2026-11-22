@@ -10,9 +10,9 @@ import type { PickItem, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import { OBJECT_KEYS, type Frozen, type Hand, type OwnerId, type Ownership } from '../rules.ts'
-import { effOf, menus, readFacts, type Action, type MenuFacts, type Target } from './menus.ts'
-import { PICK, giveDeskDialog, givePaneDialog, revokeDeskDialog, waitingWhat } from './texts.ts'
-import { clockOf } from './view-model.ts'
+import { effOf, menus, openedPanes, readFacts, type Action, type MenuFacts, type Target } from './menus.ts'
+import { PICK, closeOpenedDialog, giveDeskDialog, givePaneDialog, revokeDeskDialog, waitingWhat } from './texts.ts'
+import { clockOf, initialOf } from './view-model.ts'
 
 const MAX_RECENT = 3
 
@@ -43,7 +43,7 @@ export function pickItems(agents: readonly AgentPane[], c: PickContext): PickIte
     const o = c.owns(a.slotId)
     const place = a.inDrawer ? 'a Gaveta' : (a.deskTitle ?? '')
     const detail = [a.slotId === c.paneId ? PICK.itself : place ? PICK.livesIn(place) : '', o.mesas + o.guias > 0 ? PICK.owns(o.mesas, o.guias) : ''].filter(Boolean).join(' · ')
-    return { value: a.slotId, label: a.name, icon: 'robot', hue: agentHue(a.slotId), ...(detail ? { detail } : {}), group }
+    return { value: a.slotId, label: a.name, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), group }
   }
   return [...recent.map(a => row(a, PICK.groupRecent)), ...here.map(a => row(a, PICK.groupHere)), ...elsewhere.map(a => row(a, PICK.groupElsewhere))]
 }
@@ -170,6 +170,17 @@ export function gestures(ui: TetherUi): IDisposable[] {
     if (answer.choice === 'revoke') await w.revoke(t)
   }
 
+  /** "Fechar as guias que <dono> abriu (N)…": the dialog says what happens to the agents; the panes close one by one, none activated. */
+  async function closeOpened(deskId: string, owner: OwnerId): Promise<void> {
+    const f = readFacts(ui)
+    const ids = openedPanes(ui, f, owner, deskId)
+    if (ids.length === 0) return
+    const name = f.deskOwner.get(deskId)?.ended?.name ?? f.nameOf(owner)
+    const answer = await ui.dialogs.ask(closeOpenedDialog({ owner: name, guias: ids.length, desk: deskName(f, deskId) }))
+    if (answer.choice !== 'close' && answer.choice !== 'stop') return
+    for (const id of ids) await ui.panes.closeGuide(id, { process: answer.choice === 'stop' ? 'stop' : 'keep' })
+  }
+
   const goTo = (f: MenuFacts, t: Target): void => {
     if (t.kind === 'pane') { ui.panes.reveal(t.id); return }
     const first = f.panes.find(p => p.deskId === t.id)
@@ -192,8 +203,7 @@ export function gestures(ui: TetherUi): IDisposable[] {
       case 'revoke': done(act.target.kind === 'desk' ? revokeDesk(act.target) : w.revoke(act.target)); return
       case 'keep-desk': done(w.revoke({ kind: 'desk', id: act.deskId })); return
       case 'inventory': void ui.commands.run('for-agents.inventory', act.target); return
-      // The guias an owner opened are known to the daemon (SlotMeta.createdBy) and not to the app; no row asks for this until it is.
-      case 'close-opened': return
+      case 'close-opened': done(closeOpened(act.deskId, act.owner)); return
     }
   }
 

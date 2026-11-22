@@ -97,7 +97,8 @@ export function clockOf(iso: string): string {
   return `${two(d.getHours())}:${two(d.getMinutes())}`
 }
 
-const initialOf = (name: string): string => {
+/** The first letter of an agent's name, upper case: the letter on its tab emblem and in the picker. */
+export const initialOf = (name: string): string => {
   const first = [...name.trim()][0]
   return first ? first.toUpperCase() : '?'
 }

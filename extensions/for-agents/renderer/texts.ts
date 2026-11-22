@@ -214,3 +214,28 @@ export function revokeDeskDialog(t: RevokeDeskText): DialogSpec {
     cancelLabel: 'Cancelar',
   }
 }
+
+export interface CloseOpenedText {
+  owner: string
+  /** The guias the owner opened that are still on the desk. */
+  guias: number
+  desk: string
+}
+
+/** "Fechar as guias que <dono> abriu (N)…": the owner ended, the guias it opened stayed. Closing the panes never forgets the sessions. */
+export function closeOpenedDialog(t: CloseOpenedText): DialogSpec {
+  const n = t.guias
+  const them = n === 1 ? 'a guia' : `as ${n} guias`
+  return {
+    situation: 'for-agents.close-opened',
+    tone: 'danger',
+    icon: 'broom',
+    title: `Fechar ${them} que ${t.owner} abriu`,
+    message: `${t.owner} encerrou. ${n === 1 ? 'A guia que ele abriu em' : `As ${n} guias que ele abriu em`} ${t.desk} ${n === 1 ? 'continua' : 'continuam'} aí, agora suas.`,
+    choices: [
+      { id: 'close', icon: 'x', label: n === 1 ? 'Fechar a guia' : `Fechar as ${n} guias`, consequence: 'Os agentes continuam rodando sem painel (em “Rodando sem painel”); dá para reabrir.', tone: 'neutral' },
+      { id: 'stop', icon: 'stop', label: 'Parar e fechar', consequence: n === 1 ? 'O agente é encerrado antes de a guia fechar.' : 'Cada agente é encerrado antes de a guia dele fechar.', tone: 'destructive' },
+    ],
+    cancelLabel: 'Cancelar',
+  }
+}

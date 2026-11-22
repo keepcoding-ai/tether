@@ -10,12 +10,23 @@
 // shows the menu items that declare a pin (MenuPin): the primaries on the left with their labels, the icons on the
 // right; the icons that do not fit leave the bar (right to left), never the menu. Esc and the header's switch take the
 // pad back to the frame. The model is app/renderer/panel-frames.ts; the frames live in the core (TetherUi.pads.panelFrames).
-import { icon, type IconName } from '../../app/renderer/icons.ts'
-import type { AgentPane, ContextMenuEntry, FrameFilter, FramePane, PaneInfo, PanelFrameRow, PanelFrameTree } from '../../app/renderer/ext-api.ts'
+import { ICON_NAMES, icon, type IconName } from '../../app/renderer/icons.ts'
+import { emblemNode } from '../../app/renderer/door/tab-emblem-rules.ts'
+import type { AgentPane, ContextMenuEntry, FrameFilter, FramePane, PaneHeadItem, PaneInfo, PanelFrameRow, PanelFrameTree, TabEmblem } from '../../app/renderer/ext-api.ts'
 import { guideGroups, visibleRows, type FrameGuideGroup } from '../../app/renderer/panel-frames.ts'
 import type { ManagerView } from '../frame-pads/manager-slot.ts'
 
 export const MANAGER_TITLE = 'Painéis da mesa'
+
+/**
+ * What the extensions mark on a guide, as the tab shows it: the emblems, the lines of the status bar ("quem comanda · última ação"),
+ * and the attention that waits for an agent owner (the diamond). The card draws them; it decides nothing about them.
+ */
+export interface GuideMarks {
+  emblems: readonly TabEmblem[]
+  head: readonly PaneHeadItem[]
+  routed?: { owner: string; value: 'done' | 'waiting'; since: string; hue: number; tooltip: string }
+}
 
 export interface ManagerHost {
   tree(): PanelFrameTree
@@ -25,6 +36,8 @@ export interface ManagerHost {
   describe(paneId: string): PaneInfo | undefined
   /** Mounts a frame's view so its panes are live (a closed owner's frame). */
   mount(key: string): boolean
+  /** What the extensions mark on a guide (none: the card is as it always was). */
+  marks(paneId: string): GuideMarks
   /** The guide's tab menu (manager form) as data. */
   menuEntries(paneId: string): ContextMenuEntry[]
   /** That menu at page coordinates, by its opener. */
@@ -77,9 +90,36 @@ export function paneLabel(p: FramePane, agent: AgentPane | undefined): string {
   return agent?.name ?? p.title
 }
 
+/** "14:05" in the person's clock; '' when the time is not one. */
+export function clock(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** What a guide waits for from its owner, in the card's words ("espera a Atrium · permissão 14:05"). */
+export function waitsText(owner: string, value: 'done' | 'waiting', since: string): string {
+  const at = clock(since)
+  return value === 'waiting' ? `espera a ${owner} · permissão${at ? ` ${at}` : ''}` : `terminou, para ${owner}${at ? ` · ${at}` : ''}`
+}
+
+const iconOf = (name: string): SVGSVGElement | undefined => ((ICON_NAMES as readonly string[]).includes(name) ? icon(name as IconName) : undefined)
+
 /** A guide's short detail: the file it shows, its address, or its folder. */
 export function paneDetail(p: FramePane, info: PaneInfo | undefined): string {
   return p.url ?? p.file ?? info?.file ?? info?.cwd ?? ''
+}
+
+/** What the e2e reads of one card. */
+export interface GuideSnapshot {
+  id: string
+  title: string
+  detail: string
+  emblems: { cls: string; text: string; title: string }[]
+  /** The hue of the diamond, null when there is none. */
+  routed: string | null
+  line: string
+  bar: { label: string; pin: string; hidden: boolean }[]
 }
 
 export class PanelPadManager implements ManagerView {
@@ -241,11 +281,37 @@ export class PanelPadManager implements ManagerView {
     ic.append(icon(agent ? AGENT_ICON[agent.kind] ?? 'brand' : PANE_ICON[p.component] ?? 'app-window'))
     const name = el('span', 'pf-r-title', paneLabel(p, agent) || '(sem nome)')
     const detail = paneDetail(p, info)
-    const sub = el('span', 'pf-r-kind', detail)
-    sub.title = detail
+    const marks = this.host.marks(p.id)
+    const routed = marks.routed
+    const waits = routed ? waitsText(this.host.agent(routed.owner)?.name ?? routed.owner, routed.value, routed.since) : ''
+    const sub = el('span', 'pf-r-kind', routed ? waits : detail)
+    sub.title = routed ? `${waits}
+${detail}`.trim() : detail
     if (agent?.alive) name.classList.add('live')
-    head.append(ic, name, sub)
-    b.append(head, this.barEl(p))
+    head.append(ic, name)
+    if (routed) {
+      const diamond = el('span', 'attn routed')
+      diamond.style.setProperty('--attn-hue', String(routed.hue))
+      diamond.setAttribute('role', 'img')
+      diamond.setAttribute('aria-label', routed.tooltip)
+      diamond.title = routed.tooltip
+      head.append(diamond)
+    }
+    if (marks.emblems.length > 0) {
+      const box = el('span', 'ext-emblems')
+      box.append(...marks.emblems.map(e => emblemNode(e, iconOf)))
+      head.append(box)
+    }
+    head.append(sub)
+    b.append(head)
+    // The line of the status bar (who commands, the last thing it did), after the folder when the head says what it waits for.
+    const line = [routed ? detail : '', ...marks.head.map(h => h.text)].filter(Boolean)
+    if (line.length > 0 && (marks.head.length > 0 || routed)) {
+      const l = el('div', 'pf-r-line', line.join(' · '))
+      l.title = marks.head.map(h => h.tooltip || h.text).join('\n')
+      b.append(l)
+    }
+    b.append(this.barEl(p))
     b.addEventListener('click', () => { this.select(p.id); this.list.focus({ preventScroll: true }) })
     b.addEventListener('dblclick', ev => { if ((ev.target as HTMLElement | null)?.closest('button')) return; this.go(p.id) })
     b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.select(p.id); this.host.tabMenu(p.id, ev.clientX, ev.clientY) })
@@ -356,10 +422,23 @@ export class PanelPadManager implements ManagerView {
     }
   }
 
+  private guideSnapshot(id: string): GuideSnapshot {
+    const c = this.cardOf(id)
+    return {
+      id,
+      title: c?.querySelector('.pf-r-title')?.textContent ?? '',
+      detail: c?.querySelector('.pf-r-kind')?.textContent ?? '',
+      emblems: [...(c?.querySelectorAll<HTMLElement>('.pf-r-head .ext-emblem') ?? [])].map(e => ({ cls: e.className.replace('ext-emblem', '').trim(), text: e.textContent?.trim() ?? '', title: e.getAttribute('title') ?? '' })),
+      routed: c?.querySelector<HTMLElement>('.pf-r-head .attn.routed')?.style.getPropertyValue('--attn-hue') || null,
+      line: c?.querySelector('.pf-r-line')?.textContent ?? '',
+      bar: [...(c?.querySelectorAll<HTMLButtonElement>('.pf-r-bar .pf-act[data-label]') ?? [])].map(b => ({ label: b.dataset.label ?? '', pin: b.dataset.pin ?? '', hidden: b.hidden })),
+    }
+  }
+
   /** What the e2e reads. */
   snapshot(): {
     filter: FrameFilter
-    groups: { key: string; panel: string; name: string; state: string; loose: boolean; guides: { id: string; title: string; detail: string }[] }[]
+    groups: { key: string; panel: string; name: string; state: string; loose: boolean; guides: GuideSnapshot[] }[]
     looseGuides: number
     selected?: string
   } {
@@ -369,7 +448,7 @@ export class PanelPadManager implements ManagerView {
         const h = this.list.querySelector<HTMLElement>(`.pf-owner[data-key="${CSS.escape(g.row.key)}"]`)
         return {
           key: g.row.key, panel: g.row.panelId, name: h?.querySelector('.pf-o-name')?.textContent ?? '', state: h?.querySelector('.pf-o-state')?.textContent ?? '', loose: g.row.loose,
-          guides: g.guides.map(p => { const c = this.cardOf(p.id); return { id: p.id, title: c?.querySelector('.pf-r-title')?.textContent ?? '', detail: c?.querySelector('.pf-r-kind')?.textContent ?? '' } }),
+          guides: g.guides.map(p => this.guideSnapshot(p.id)),
         }
       }),
       looseGuides: Number(/\((\d+)\)/.exec(this.chips.loose.textContent ?? '')?.[1] ?? 0),

@@ -25,6 +25,10 @@ export function activate(ui: TetherUi): IDisposable[] {
     agent: paneId => ui.agents.get(paneId) ?? ui.agents.list().find(a => a.paneId === paneId),
     describe: paneId => ui.panes.describe(paneId),
     mount: key => ui.pads.panelFrames.mount(key),
+    marks: paneId => {
+      const routed = ui.panes.slotFacts(paneId)?.routed
+      return { emblems: ui.panes.emblems(paneId), head: ui.panes.headItems(paneId), ...(routed ? { routed } : {}) }
+    },
     menuEntries: paneId => ui.panes.tabMenuEntries(paneId, { from: 'manager' }),
     tabMenu: (paneId, x, y, opener) => ui.panes.showTabMenu(paneId, x, y, opener, { from: 'manager' }),
     beginDrag: (paneId, ev) => ui.panes.beginDrag(paneId, ev),
@@ -65,6 +69,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ui.pads.panelFrames.onDidChange(refresh),
     ui.agents.onDidChange(refresh),
     ui.panes.onDidChangeActive(refresh),
+    ui.panes.onDidChangeMarks(refresh),
     ui.pads.panelFrames.onDidLoose((key, cause) => {
       if (cause === 'lost') { showToast({ text: 'O quadro da prancheta ficou solto', ms: TOAST_MS, action: { label: 'Ver', run: () => show('all', key) } }); return }
       // The person closed the panel: its guides go with it; "Desfazer" brings back only the frame, under the closed owner.

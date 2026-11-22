@@ -10,7 +10,7 @@ import type { AgentPane } from '../../app/renderer/agent-panes.ts'
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import { OwnershipStore } from '../../extensions/for-agents/daemon/ownership.ts'
 import { gestures, pickItems, writes } from '../../extensions/for-agents/renderer/gestures.ts'
-import { deskMenu, paneMenu, toRows, type MenuFacts, type Row, type Waiting } from '../../extensions/for-agents/renderer/menus.ts'
+import { deskMenu, paneMenu, readFacts, toRows, type MenuFacts, type Row, type Waiting } from '../../extensions/for-agents/renderer/menus.ts'
 import { giveDeskDialog, givePaneDialog, revokeDeskDialog } from '../../extensions/for-agents/renderer/texts.ts'
 import type { Frozen, Hand, Ownership } from '../../extensions/for-agents/rules.ts'
 
@@ -203,6 +203,7 @@ describe('the picker rows', () => {
     assert.equal(items[0]!.detail, 'mora em atrium · dono de 1 mesa')
     assert.equal(items[4]!.detail, 'mora em a Gaveta')
     assert.ok(items.every(i => i.icon === 'robot' && typeof i.hue === 'number'))
+    assert.deepEqual(items.map(i => i.letter), ['A', 'K', 'S', 'C', 'N'], 'the initial of the name, as on its tab emblem')
     assert.deepEqual(pickItems(agents, { ...ctx, exclude: 'A' }).map(i => i.value).includes('A'), false)
     assert.equal(pickItems(agents, { ...ctx, paneId: 'K' }).find(i => i.value === 'K')!.detail?.startsWith('ela mesma: de si'), true)
   })
@@ -337,5 +338,86 @@ describe('the commands', () => {
     handlers.get('for-agents.give')!(undefined, 'p1')
     await settle()
     assert.deepEqual([mem.log.length, calls.length], [0, 0])
+  })
+})
+
+describe('what the app tells the menus (slot facts): the three lines the model waited for', () => {
+  const ENDED = { owner: 'A', since: T, givenBy: 'user', ended: { at: '2026-11-21T14:30:00', name: 'Atrium' } }
+  type Facts = { createdBy?: { ext: string; slotId?: string }; attention?: { value: 'done' | 'waiting'; since: string }; routed?: { owner: string; value: 'done' | 'waiting'; since: string; hue: number; tooltip: string } }
+
+  /** A `ui` with a desk d1 of three terminals: x (opened by A), y (opened by someone else), z (nobody's). */
+  function appWith(slotFacts: Record<string, Facts>, objects: Array<['pane' | 'desk', string, string, unknown]>) {
+    const mem = new Mem()
+    for (const [k, id, key, v] of objects) mem.data.set(`${k}|${id}|${key}`, v)
+    const closed: string[] = []
+    const asked: string[] = []
+    let desk: ((id: string) => unknown[]) | undefined
+    const answers: string[] = []
+    const ui = {
+      objects: mem,
+      commands: { registerCommand: () => ({ dispose() {} }), run: async () => 'ran' },
+      panes: {
+        activeId: () => undefined,
+        all: () => ['x', 'y', 'z'].map(id => ({ id, type: 'terminal', agent: 'soul' })),
+        slotFacts: (id: string) => slotFacts[id],
+        closeGuide: async (id: string, o?: { process?: string }) => { closed.push(`${id}:${o?.process}`) },
+        reveal: () => {},
+        tabMenu: () => ({ dispose() {} }),
+      },
+      desks: { list: () => [{ id: 'd1', name: 'kai-aware', color: '', asleep: false, panes: ['x', 'y', 'z'] }], menu: (p: (id: string) => unknown[]) => { desk = p; return { dispose() {} } } },
+      agents: { list: () => [], get: (id: string) => (id === 'A' ? { name: 'Atrium' } : undefined), focus: () => true },
+      pick: { list: async () => undefined },
+      dialogs: { ask: async (spec: { title: string }) => { asked.push(spec.title); return { choice: answers.shift() ?? 'cancel', remember: false } } },
+      test: { expose: () => {} },
+    } as unknown as TetherUi
+    return { ui, mem, closed, asked, answers, deskRows: () => desk!('d1') as Array<{ label?: string; run?: () => void }> }
+  }
+  const settle = (): Promise<void> => new Promise(r => setTimeout(r, 10))
+
+  test('opened by: only panes of the desk that this extension opened for that owner count', () => {
+    const { ui } = appWith({ x: { createdBy: { ext: 'for-agents', slotId: 'A' } }, y: { createdBy: { ext: 'for-agents', slotId: 'K' } }, z: {} }, [])
+    const f = readFacts(ui)
+    assert.equal(f.openedBy?.('A', 'd1'), 1)
+    assert.equal(f.openedBy?.('K', 'd1'), 1)
+    assert.equal(f.openedBy?.('A', 'd2'), 0)
+    const other = appWith({ x: { createdBy: { ext: 'other', slotId: 'A' } } }, [])
+    assert.equal(readFacts(other.ui).openedBy?.('A', 'd1'), 0, 'another extension\'s guias are not ours to close')
+  })
+
+  test('waiting (5): a commanded pane waits for its owner when the daemon routed the attention, with the time', () => {
+    const routed = { owner: 'A', value: 'waiting' as const, since: '2026-11-21T14:05:00', hue: 300, tooltip: 'Esperando Atrium' }
+    const { ui } = appWith({ x: { routed } }, [['desk', 'd1', 'owner', { owner: 'A', since: T, givenBy: 'user' }]])
+    assert.deepEqual(readFacts(ui).waiting?.('x'), { kind: 'waiting', at: '2026-11-21T14:05:00' })
+    assert.equal(readFacts(ui).waiting?.('y'), undefined)
+    const rows = paneMenu(readFacts(ui), 'x')
+    const heads = rows.filter(r => r.kind === 'info').map(r => (r as { text: string }).text)
+    assert.equal(heads[0], 'Espera Atrium: pediu permissão às 14:05')
+  })
+
+  test('waiting (6): a pane nobody commands (the owner ended) waits for the person; an attention of the person on a commanded pane is not the owner\'s', () => {
+    const own = { since: T, givenBy: 'user' }
+    const ended = appWith({ x: { attention: { value: 'waiting', since: '2026-11-21T14:05:00' } } }, [['pane', 'x', 'owner', ENDED]])
+    assert.deepEqual(readFacts(ended.ui).waiting?.('x'), { kind: 'waiting', at: '2026-11-21T14:05:00' })
+    assert.match((paneMenu(readFacts(ended.ui), 'x')[0] as { text: string }).text, /encerrou · voltou para você · pede permissão/)
+    const commanded = appWith({ x: { attention: { value: 'waiting', since: '2026-11-21T14:05:00' } } }, [['pane', 'x', 'owner', { owner: 'A', ...own }]])
+    assert.equal(readFacts(commanded.ui).waiting?.('x'), undefined)
+  })
+
+  test('"Fechar as guias que Atrium abriu (N)…": the dialog says what happens, and each choice closes the guias the way it says', async () => {
+    const desks = [['desk', 'd1', 'owner', { ...ENDED, ended: { at: '2026-11-21T14:30:00', name: 'Atrium' } }] as ['desk', string, string, unknown]]
+    const app = appWith({ x: { createdBy: { ext: 'for-agents', slotId: 'A' } }, y: { createdBy: { ext: 'for-agents', slotId: 'A' } }, z: {} }, desks)
+    for (const x of gestures(app.ui)) x.dispose()
+    const row = app.deskRows().find(r => r.label === 'Fechar as guias que Atrium abriu (2)…')!
+    assert.ok(row, 'the row is there')
+    app.answers.push('close')
+    row.run!(); await settle()
+    assert.deepEqual(app.asked, ['Fechar as 2 guias que Atrium abriu'])
+    assert.deepEqual(app.closed, ['x:keep', 'y:keep'], 'closed with the processes running, z (nobody\'s) untouched')
+    app.answers.push('stop')
+    row.run!(); await settle()
+    assert.deepEqual(app.closed.slice(2), ['x:stop', 'y:stop'])
+    app.answers.push('cancel')
+    row.run!(); await settle()
+    assert.equal(app.closed.length, 4, 'cancel closes nothing')
   })
 })

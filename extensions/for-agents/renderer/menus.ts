@@ -8,6 +8,7 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import {
   OBJECT_KEYS, effective, type DeskFacts, type Effective, type Frozen, type Hand, type OwnerId, type Ownership,
 } from '../rules.ts'
+import { EXT_ID } from '../manifest.ts'
 import { INFO, L, waitingWhat } from './texts.ts'
 import { clockOf } from './view-model.ts'
 
@@ -266,7 +267,7 @@ export function readFacts(ui: TetherUi): MenuFacts {
   const deskOf = new Map<string, string>()
   for (const d of desks) for (const id of d.panes) deskOf.set(id, d.id)
   const map = <T>(kind: 'desk' | 'pane', key: string): Map<string, T> => new Map(ui.objects.entries<T>(kind, key))
-  return {
+  const facts: MenuFacts = {
     panes: ui.panes.all().map(p => ({ id: p.id, type: p.type, deskId: deskOf.get(p.id), title: titleOf(ui, p), agent: p.agent !== undefined })),
     desks: desks.map(d => ({ id: d.id, name: d.name })),
     paneOwner: map<Ownership>('pane', OBJECT_KEYS.owner),
@@ -275,7 +276,30 @@ export function readFacts(ui: TetherUi): MenuFacts {
     deskHand: map<Hand>('desk', OBJECT_KEYS.hand),
     frozen: map<Frozen>('pane', OBJECT_KEYS.frozen),
     nameOf: id => ui.agents.get(id)?.name ?? id,
+    waiting: id => waitingOf(ui, facts, id),
+    openedBy: (owner, deskId) => openedPanes(ui, facts, owner, deskId).length,
   }
+  return facts
+}
+
+/**
+ * What a pane waits for, as the menus say it. A pane commanded by someone waits for that owner when the daemon sent the attention
+ * to it (the diamond); a pane nobody commands (its owner ended) waits for the person, and says so in its own words.
+ */
+function waitingOf(ui: TetherUi, f: MenuFacts, paneId: string): Waiting | undefined {
+  const s = ui.panes.slotFacts(paneId)
+  if (!s) return undefined
+  if (s.routed) return { kind: s.routed.value, ...(s.routed.since ? { at: s.routed.since } : {}) }
+  if (s.attention && effOf(f, paneId).commander === undefined) return { kind: s.attention.value, ...(s.attention.since ? { at: s.attention.since } : {}) }
+  return undefined
+}
+
+/** The panes of a desk the owner's agent opened (SlotMeta.createdBy: this extension, acting for that slot). */
+export function openedPanes(ui: TetherUi, f: MenuFacts, owner: OwnerId, deskId: string): string[] {
+  return f.panes.filter(p => p.deskId === deskId && p.id !== owner).filter(p => {
+    const c = ui.panes.slotFacts(p.id)?.createdBy
+    return c?.ext === EXT_ID && c.slotId === owner
+  }).map(p => p.id)
 }
 
 /** Puts the menus of ownership in the pill and in every tab; `run` does the action of a picked row. */
