@@ -1,6 +1,6 @@
 // `agents open`: a new pane in one of the owner's desks. It is born by `slots.create({ desk, onBehalfOf })`: the pane enters
 // inactive (it never takes the front) and, being in a desk of the owner, is commanded by inheritance with no data of its own.
-// `model` and `effort` become launch arguments through the engine's conductor. The first-open dialogs are the conductor's
+// The launch arguments come from the engine's conductor (`model` and `effort` included). The first-open dialogs are the conductor's
 // `boot`, run in the background: the verb does not wait for the agent to come up. `brief` is a `send` queued right after.
 import { slotTitle } from '../../../../app/shared/agent-info.ts'
 import type { SlotKind, SlotState } from '../../../../src/daemon/protocol.ts'
@@ -69,12 +69,15 @@ export const openVerb: VerbDef = {
 
     let launch: string[] = []
     let proven = true
-    if (model || effort) {
-      const c = conductorRegistry.pick(futureTarget(kind), 'launchArgs')
-      if (!c) refuse('bad-request', `o motor ${kind} não sabe traduzir model nem effort`)
+    // The engine's conductor always speaks for the launch, with what there is (model, effort, cwd): it carries what the engine
+    // needs to come up quietly (Codex: no update dialog, the folder trusted), not only the translation of model and effort.
+    const c = conductorRegistry.pick(futureTarget(kind), 'launchArgs')
+    if (c) {
       const r = c.launchArgs!({ ...(model ? { model } : {}), ...(effort ? { effort } : {}), cwd })
       launch = r.value
       proven = r.proven
+    } else if (model || effort) {
+      refuse('bad-request', `o motor ${kind} não sabe traduzir model nem effort`)
     }
     const all = [...launch, ...((extra as string[] | undefined) ?? [])]
     const slot = await deps.api.slots.create({

@@ -32,10 +32,14 @@ const ECHO = [
   'setInterval(() => {}, 1000)',
 ].join('\n')
 
+/** The arguments each slot was planned with (what `open` handed the launch). */
+const planned = new Map<string, string[]>()
+
 function fakeAdapter(home: string): AgentAdapter {
   return {
     name: 'soul',
     plan: (input): LaunchPlan => {
+      planned.set(input.slot.slotId, [...input.slot.args])
       const env: Record<string, string> = {}
       for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
       delete env.NODE_TEST_CONTEXT
@@ -474,6 +478,15 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.equal(data(unproven).proven, false)
     assert.match(unproven.text, /não provado pela sonda/)
     await call(A, 'close', { guia: String(data(unproven).pane) }).catch(() => undefined)
+
+    // With no model and no effort the conductor still speaks for the launch (Codex needs its quiet-start arguments).
+    const before = seen.launch.length
+    const bare = await call(A, 'open', { kind: 'soul', cwd: home, name: 'filha3' })
+    assert.equal(bare.isError, undefined, bare.text)
+    assert.deepEqual(seen.launch.slice(before), [{ cwd: home }])
+    await waitUntil(() => planned.has(String(data(bare).pane)), 30_000, 'the bare pane planned')
+    assert.deepEqual(planned.get(String(data(bare).pane)), ['--model', ''], 'the arguments of the conductor reached the launch')
+    await call(A, 'close', { guia: String(data(bare).pane) }).catch(() => undefined)
 
     // The pane appears in the desk map: it is commanded by inheritance, and the brief reaches it through the delivery.
     await sendMap(map([A, p1, p2, child], [K, p3]))
