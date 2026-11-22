@@ -6,7 +6,8 @@
 // app/dist/main.cjs (no npm, no console window), so a build happens here first and must be redone by hand
 // (`npm run app:build` or `npm run app:install`) after code changes: the launcher never builds.
 // Windows, Tether Browser E15: install also keeps a copy of Electron's runtime with the cookie-encryption fuse on under
-// <TETHER_HOME>/runtime/ (app/shared/cookie-runtime.ts), and the shortcut passes --cookie-fuse-runtime so main hands the
+// <TETHER_HOME>/runtime/ (app/shared/cookie-runtime.ts; its exe is tether.exe with the tether's icon and version strings, so every
+// process shows as "tether" in the Task Manager), and the shortcut passes --cookie-fuse-runtime so main hands the
 // launch to that copy while it is valid. `runtime` makes only that copy (no build, no shortcut).
 //   node app/install.mjs install | uninstall | read | runtime [--prefix <dir>]
 //   (--prefix: macOS only; without it install picks /Applications or ~/Applications, uninstall/read look in both)
@@ -17,8 +18,9 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { brandExecutable } from './exe-identity.mjs'
 import { BRAND } from './shared/brand.ts'
-import { COOKIE_RUNTIME_FLAG, cookieRuntimeDir, hashTree, parseManifest, RUNTIME_FUSE, RUNTIME_MANIFEST, runtimeExe, runtimeReusable, sha256File } from './shared/cookie-runtime.ts'
+import { COOKIE_RUNTIME_FLAG, cookieRuntimeDir, hashTree, parseManifest, RUNTIME_EXE, RUNTIME_FUSE, RUNTIME_MANIFEST, runtimeExe, runtimeReusable, SOURCE_EXE, sha256File } from './shared/cookie-runtime.ts'
 import { ensurePrivateDir } from '../extensions/browser/private-dir.ts'
 import { tetherHome } from '../src/core/paths.ts'
 
@@ -235,11 +237,11 @@ export async function flipCookieFuse(exe) {
  * matches the source binary and every file of the copy still hashes to it. Assembled in a sibling temp folder and swapped in; copies for other
  * Electron versions are removed (best effort: one in use stays). Returns { dir, exe, reused, manifest }.
  */
-export async function prepareCookieRuntime({ home, sourceDist, electronVersion, flip = flipCookieFuse, privatize = ensurePrivateDir }) {
+export async function prepareCookieRuntime({ home, sourceDist, electronVersion, flip = flipCookieFuse, brand = brandExecutable, privatize = ensurePrivateDir }) {
   const dir = cookieRuntimeDir(home, electronVersion)
   const parent = dirname(dir)
   privatize(parent)
-  const sourceSha256 = sha256File(runtimeExe(sourceDist))
+  const sourceSha256 = sha256File(join(sourceDist, SOURCE_EXE))
   let current
   try { current = parseManifest(readFileSync(join(dir, RUNTIME_MANIFEST), 'utf8')) } catch { /* none */ }
   let files
@@ -249,9 +251,12 @@ export async function prepareCookieRuntime({ home, sourceDist, electronVersion, 
   rmSync(tmp, { recursive: true, force: true })
   try {
     cpSync(sourceDist, tmp, { recursive: true })
+    // The copy is the tether's own executable: renamed, then icon and version strings rewritten, then the fuse flipped.
+    renameSync(join(tmp, SOURCE_EXE), runtimeExe(tmp))
+    await brand(runtimeExe(tmp))
     await flip(runtimeExe(tmp))
     const files = hashTree(tmp)
-    const manifest = { v: 2, electronVersion, fuse: RUNTIME_FUSE, sourceSha256, exeSha256: files['electron.exe'], files }
+    const manifest = { v: 2, electronVersion, fuse: RUNTIME_FUSE, sourceSha256, exeSha256: files[RUNTIME_EXE], files }
     writeFileSync(join(tmp, RUNTIME_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`)
     try { rmSync(dir, { recursive: true, force: true }) } catch (e) {
       throw new Error(`não consegui substituir ${dir} (o tether está aberto por ele? feche-o e rode de novo): ${e instanceof Error ? e.message : String(e)}`)

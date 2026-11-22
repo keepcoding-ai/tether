@@ -7,9 +7,13 @@
 // agents' tool fails at once instead of knocking on a dead port. "Reabrir" starts the process again (its gatekeeper writes a new
 // endpoint, the agents' tool reconnects by itself) and brings every crashed tab back, except one that was on screen or loading
 // in two crashes in a row within CRASH_REPEAT_MS (crash-rules.ts): that one stays paused, explained, until its own Reabrir.
+// The process is not started with the app: it starts at the first need (a tab to restore or reopen, an agent's tool call through
+// the wake pipe, wake.ts) and, with no live tab and no question waiting for the person for IDLE_STOP_MS, it is asked to quit
+// cleanly (lazy-life.ts). That quit is not a crash: nothing is marked crashed, and agents are not held back afterwards.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { app, type BrowserWindow, screen } from 'electron'
@@ -25,6 +29,12 @@ import { BROWSER_INVOKES } from './ipc.ts'
 import { manifest } from './manifest.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import { isId, savedOf, type TabInfo } from './tab-rules.ts'
+import { BrowserLife, type Need } from './lazy-life.ts'
+import { serveWake } from './wake.ts'
+import { DownloadStore } from './downloads.ts'
+import { CLOSED_HISTORY_FILE } from './closed-history.ts'
+import { keepOf, parseClosed, pruneClosed } from './closed-rules.ts'
+import { cookieEncryptionInForce } from './session.ts'
 import type { BrowserHello, HostWindowState } from './process-child.ts'
 
 export const CHILD_BUNDLE = 'browser-child.cjs'
@@ -38,7 +48,7 @@ export function wantsBrowserProcess(main: TetherMain): boolean {
 
 type Fallback = (...args: unknown[]) => unknown
 
-export function activateRemote(main: TetherMain): IDisposable[] {
+export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGraceMs?: number; persistentLogins?: () => Promise<boolean> } = {}): IDisposable[] {
   const log = (msg: string): void => main.log(scrubLogLine(msg))
   const ipc = main.ipc() as unknown as {
     handle(channel: string, fn: (...args: unknown[]) => unknown): IDisposable
@@ -62,6 +72,27 @@ export function activateRemote(main: TetherMain): IDisposable[] {
   const notices = new Map<number, NoticeHandle>()
   const watched = new Set<string>()
   let win: BrowserWindow | undefined
+  /** The questions (local network, upload) waiting for the person: the process is busy while any is open, tab or not. */
+  const asks = new Set<string>()
+  /** The tabs the person paused (a tab not loaded yet keeps its pause only in the process's memory, which an idle quit ends): replayed at every start. */
+  const pausedIds = new Set<string>()
+  let persistentKnown: boolean | undefined
+  let fuseRead: Promise<boolean> | undefined
+  const fuseOn = opts.persistentLogins ?? cookieEncryptionInForce
+  const liveTabs = (): number => { let n = 0; for (const t of tabs.values()) if (t.crashed !== 'browser' && t.crashed !== 'suspect') n++; return n }
+  const life = new BrowserLife<ChildProcess>({
+    ...(opts.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
+    ...(opts.quitGraceMs !== undefined ? { quitGraceMs: opts.quitGraceMs } : {}),
+    busy: () => liveTabs() + asks.size,
+    // Logins that live only in the process's memory (no cookie-encryption fuse) are lost when it leaves: it stays once up.
+    keepUp: () => persistentKnown === false,
+    quit: proc => { const w = wire; if (w && !w.closed) w.post('quit'); else { try { proc.kill() } catch { /* gone */ } } },
+    kill: proc => { try { proc.kill() } catch { /* gone */ } },
+    log,
+  })
+  let downloadStore: DownloadStore | undefined
+  /** The gatekeeper's endpoint file goes when the process does: the agents' tool then fails at once instead of knocking on a dead port. */
+  const dropEndpoint = (): void => { try { rmSync(join(main.home, 'browser', 'endpoint.json'), { force: true }) } catch { /* the next start rewrites it */ } }
 
   // ---- the window, as the process needs it ----
   const windowState = (w: BrowserWindow): HostWindowState => {
@@ -102,22 +133,49 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     get: tabId => (typeof tabId === 'string' ? tabs.get(tabId) ?? null : null),
     restore: raw => { const id = (raw as { tabId?: unknown } | null)?.tabId; return typeof id === 'string' ? tabs.get(id) ?? null : null },
     close: tabId => { if (typeof tabId === 'string') tabs.delete(tabId) },
-    status: () => ({ persistentLogins }),
+    // Without the process the answer is the executable's own: the same fuse the process would read.
+    status: async () => ({ persistentLogins: persistentKnown ?? await (fuseRead ??= fuseOn()) }),
     localNetworkOpen: () => [],
     controls: () => [],
     agents: () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive })),
-    downloads: () => [],
+    downloads: () => (downloadStore ??= new DownloadStore(join(main.home, 'browser'), log)).list(),
     uploadOpen: () => [],
-    closedList: () => [],
+    // The history is a file: readable without the process (never written here: the process owns that).
+    closedList: async () => {
+      let raw: unknown
+      try { raw = JSON.parse(await readFile(join(main.home, 'browser', CLOSED_HISTORY_FILE), 'utf8')) } catch { raw = undefined }
+      return pruneClosed(parseClosed(raw), Date.now(), keepOf(main.settings.get('closedHistory')))
+    },
+  }
+  /** What the person's action needs the process for, whatever the tabs: a channel that works on state only the process has. */
+  const needsProcess = (channel: string, args: unknown[]): boolean => {
+    if (channel === 'reopenClosed' || channel === 'clearClosed' || channel === 'logoutAll' || channel === 'showDownload') return true
+    if (channel === 'restore') {
+      const id = (args[0] as { tabId?: unknown } | null)?.tabId
+      const known = typeof id === 'string' ? tabs.get(id) : undefined
+      return known?.crashed !== 'browser' && known?.crashed !== 'suspect'
+    }
+    // A pane that never loaded is closed with its saved address, for the closed history the process keeps.
+    if (channel === 'close') return typeof args[0] === 'string' && !tabs.has(args[0]) && !!args[2] && typeof args[2] === 'object'
+    return false
+  }
+  const track = (channel: string, args: unknown[]): void => {
+    const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : typeof v === 'string' ? [v] : [])
+    if (channel === 'pause') for (const id of ids(args[0])) pausedIds.add(id)
+    else if (channel === 'pauseTabs') for (const id of ids(args[0])) pausedIds.add(id)
+    else if (channel === 'resume' || channel === 'resumeTabs') for (const id of ids(args[0])) pausedIds.delete(id)
+    else if (channel === 'close') for (const id of ids(args[0])) pausedIds.delete(id)
+    else if ((channel === 'localNetworkAnswer' || channel === 'uploadAnswer') && typeof args[0] === 'string') { asks.delete(`${channel === 'uploadAnswer' ? 'upload' : 'local'}:${args[0]}`); life.changed() }
   }
   for (const channel of BROWSER_INVOKES) {
     if (channel === 'reopen') continue
     subs.push(ipc.handle(channel, async (...args: unknown[]) => {
-      const w = await ready
+      track(channel, args)
+      const w = needsProcess(channel, args) ? await ensure('person') : await ready
       if (!w || w.closed) return fallback[channel]?.(...args)
       try {
         const r = await w.call('ipcInvoke', channel, args)
-        if (channel === 'status') persistentLogins = (r as { persistentLogins?: boolean } | null)?.persistentLogins === true
+        if (channel === 'status') persistentKnown = persistentLogins = (r as { persistentLogins?: boolean } | null)?.persistentLogins === true
         if (channel === 'close' && typeof args[0] === 'string') tabs.delete(args[0])
         return r
       } catch (e) {
@@ -178,8 +236,14 @@ export function activateRemote(main: TetherMain): IDisposable[] {
       if (typeof channel !== 'string') return
       const a = Array.isArray(args) ? args : []
       if (channel === 'tab' && a[0] && typeof a[0] === 'object') { const t = a[0] as TabInfo; tabs.set(t.tabId, t) }
-      if (channel === 'closed' && typeof a[0] === 'string') tabs.delete(a[0])
+      if (channel === 'closed' && typeof a[0] === 'string') { tabs.delete(a[0]); pausedIds.delete(a[0]) }
+      const kind = channel === 'localNetworkAsk' || channel === 'localNetworkCancelled' ? 'local' : channel === 'uploadAsk' || channel === 'uploadCancelled' ? 'upload' : undefined
+      if (kind) {
+        const id = channel.endsWith('Ask') ? (a[0] as { id?: unknown } | null)?.id : a[0]
+        if (typeof id === 'string') { if (channel.endsWith('Ask')) asks.add(`${kind}:${id}`); else asks.delete(`${kind}:${id}`) }
+      }
       ipc.send(channel, ...a)
+      if (channel === 'tab' || channel === 'closed' || kind) life.changed()
     })
     w.handle('settingSet', (key: unknown, value: unknown) => { if (typeof key === 'string') main.settings.set(key, value as SettingValue) })
     w.handle('settingWatch', (key: unknown) => {
@@ -197,7 +261,11 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     w.handle('trash', (path: unknown) => (typeof path === 'string' ? main.shell.trash(path) : Promise.reject(new Error('caminho inválido'))))
   }
 
-  subs.push(main.agents.onDidChange(a => wire?.post('agentChange', a, false)))
+  // The process sends the interface its 'agent' events itself; while it is not up, they come from here.
+  subs.push(main.agents.onDidChange(a => {
+    if (wire && !wire.closed) wire.post('agentChange', a, false)
+    else ipc.send('agent', { slotId: a.slotId, name: a.name, alive: a.alive })
+  }))
   subs.push(main.agents.onDidExit(e => wire?.post('agentExit', e)))
   subs.push(main.agents.onDidRemove(e => wire?.post('agentRemove', e)))
 
@@ -217,6 +285,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
       const started = Date.now()
       const proc = spawn(process.execPath, [join(main.dist, CHILD_BUNDLE)], { env, stdio: 'ignore', windowsHide: true })
       child = proc
+      life.began(proc)
       log(`processo do navegador iniciado (pid ${proc.pid})`)
       const connected = new Promise<Wire | undefined>(resolve => {
         accept = w => { accept = undefined; resolve(w) }
@@ -238,11 +307,29 @@ export function activateRemote(main: TetherMain): IDisposable[] {
       await isReady
       if (w.closed) return undefined
       heartbeat(w, proc)
+      if (pausedIds.size) void w.call('ipcInvoke', 'pauseTabs', [[...pausedIds]]).catch(() => {})
       log(`processo do navegador pronto em ${Date.now() - started} ms`)
       return w
     })().finally(() => { starting = undefined })
     ready = starting
     return starting
+  }
+
+  /**
+   * The process up for a need, started if it is not: the line, or undefined (it did not come up, or the need may not start it:
+   * after a crash an agent's call waits for the person's Reabrir). An idle quit in flight ends first.
+   */
+  const ensure = async (by: Need): Promise<Wire | undefined> => {
+    await life.settled()
+    const up = !!wire && !wire.closed
+    if (!up && !starting && !life.permits(by)) { log('navegador parado por queda: a chamada do agente espera o "Reabrir" da pessoa'); return undefined }
+    const w = await (up ? ready : launch())
+    if (w) {
+      // Known before the idle clock starts: the process reads the same executable's fuse.
+      persistentKnown ??= await (fuseRead ??= fuseOn())
+      life.touch()
+    }
+    return w
   }
 
   /** A process that stops answering is hung: it is killed, and its exit is a crash like any other. */
@@ -272,10 +359,19 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     wire = undefined
     ready = Promise.resolve(undefined)
     resolveNotices()
+    const kind = life.ended(proc)
     if (disposed) return
+    if (kind === 'idle') {
+      // Not a crash: no tab is marked, no repeat is counted. The gatekeeper's endpoint goes with the process.
+      dropEndpoint()
+      onScreen.clear()
+      asks.clear()
+      log('processo do navegador encerrado (ocioso)')
+      return
+    }
     log(`processo do navegador parou (código ${code ?? '—'}${signal ? `, sinal ${signal}` : ''})`)
     // The agents' tool reads the endpoint at every connection: without it they fail at once, and the next process writes a new one.
-    try { rmSync(join(main.home, 'browser', 'endpoint.json'), { force: true }) } catch { /* the next start rewrites it */ }
+    dropEndpoint()
     const now: BrowserCrash = {
       at: Date.now(),
       suspects: [...tabs.values()].filter(t => t.loading || onScreen.has(t.surfaceId)).map(t => t.tabId),
@@ -298,7 +394,7 @@ export function activateRemote(main: TetherMain): IDisposable[] {
     if (!asked) return null
     if (!reopening) {
       reopening = (async () => {
-        const w = await (wire && !wire.closed ? ready : launch())
+        const w = await ensure('person')
         if (!w) return
         // The rest come back in order; one that fails stays crashed.
         for (const t of [...tabs.values()]) {
@@ -344,9 +440,9 @@ export function activateRemote(main: TetherMain): IDisposable[] {
 
   // E2E builds: the test's function runs against the extension's hooks in the browser process.
   const g = globalThis as Record<string, unknown>
-  g.__browserRun = async (src: string, arg: unknown) => { const w = await ready; if (!w) throw new Error(BROWSER_CRASHED); return w.call('testRun', src, arg) }
-  g.__browserEval = async (src: string, arg: unknown) => { const w = await ready; if (!w) throw new Error(BROWSER_CRASHED); return w.call('testEval', src, arg) }
-  g.__browserProcess = { pid: () => child?.pid, alive: () => !!wire && !wire.closed, ready: () => ready.then(w => !!w) }
+  g.__browserRun = async (src: string, arg: unknown) => { const w = await ensure('person'); if (!w) throw new Error(BROWSER_CRASHED); return w.call('testRun', src, arg) }
+  g.__browserEval = async (src: string, arg: unknown) => { const w = await ensure('person'); if (!w) throw new Error(BROWSER_CRASHED); return w.call('testEval', src, arg) }
+  g.__browserProcess = { pid: () => child?.pid, alive: () => !!wire && !wire.closed, ready: () => ready.then(w => !!w), ensure: () => ensure('person').then(w => !!w) }
   subs.push(toDisposable(() => { delete g.__browserRun; delete g.__browserEval; delete g.__browserProcess }))
 
   subs.push(toDisposable(() => {
@@ -378,6 +474,10 @@ export function activateRemote(main: TetherMain): IDisposable[] {
   process.on('exit', onQuit)
   subs.push(toDisposable(() => process.off('exit', onQuit)))
 
-  void launch()
+  // Agents' tool calls (the MCP command's wake, wake.ts): the process up and its gatekeeper's endpoint written, or the answer is no.
+  const wakeServer = serveWake(join(main.home, 'browser', 'endpoint.json'), async () => ((await ensure('agent')) ? child?.pid : undefined), { log })
+  subs.push(toDisposable(() => { wakeServer.close(); life.dispose() }))
+  // E2E builds keep the old start (their crash flows begin with a running process); the app never does.
+  if (process.env.TETHER_BROWSER_EAGER === '1') void ensure('person')
   return subs
 }

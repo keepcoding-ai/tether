@@ -29,6 +29,8 @@ export async function launchHidden(home: string, pipe: string): Promise<{ app: E
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
+  // The browser process starts with the app here: these flows begin with it running (the app itself starts it at first need).
+  env.TETHER_BROWSER_EAGER = '1'
   if (process.env.TETHER_GATE_TRACE) env.TETHER_GATE_TRACE = process.env.TETHER_GATE_TRACE
   delete env.TETHER_CLAUDE_ARGS
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
