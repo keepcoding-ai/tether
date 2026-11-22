@@ -3,6 +3,7 @@
 import type { TetherUi } from '../../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../../app/shared/vscode-lifecycle.ts'
 import { emblemSets } from './emblem-sets.ts'
+import { extRequests } from './ext-requests.ts'
 import { headItem } from './head-item.ts'
 import { manifest } from './manifest.ts'
 import { marks } from './marks.ts'
@@ -28,5 +29,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...tabLine(ui),
     ...headItem(ui),
     ...pickGroups(ui),
+    ...extRequests(ui),
   ]
 }
