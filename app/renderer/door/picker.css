@@ -30,6 +30,9 @@ dialog.picker .pk-field input[type="text"]:focus { outline: none; }
 .pk-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; color: var(--fg-dim); }
 .pk-icon .ph { width: 16px; height: 16px; }
 .pk-item.hued .pk-icon { color: hsl(var(--pk-hue) var(--mark-s) var(--mark-fg-l)); }
+/* A row's one-letter mark (PickItem.letter: an agent's initial): the tab emblem's chip, in the row's hue. */
+.pk-icon.letter { width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1; color: var(--fg-dim); background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent); }
+.pk-item.hued .pk-icon.letter { background: hsl(var(--pk-hue) var(--mark-s) 50% / var(--mark-bg-a)); box-shadow: inset 0 0 0 1px hsl(var(--pk-hue) var(--mark-s) 50% / var(--mark-line-a)); }
 .pk-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
 .pk-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pk-label b { color: var(--accent); font-weight: 600; }

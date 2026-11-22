@@ -139,6 +139,9 @@ const door = new DoorHost({
   systemDeskName: id => desks.systemDesks.find(d => d.id === id)?.name,
   sendDeskMap: map => { void window.tether.request({ t: 'desk-map', map }) },
   slots: () => slots.values(),
+  slot: slotId => slots.get(slotId),
+  ownerName: slotId => { const o = slots.get(slotId); return o ? panelTitle(o) : undefined },
+  closeGuide: (paneId, process) => closeGuideQuiet(paneId, process),
   log: message => console.warn(message),
 })
 const sealActivations = new Map<number, Set<() => void>>()
@@ -808,6 +811,20 @@ async function closePanel(slotId: string, opts: { ask?: boolean } = {}): Promise
   closedByPerson.add(slotId) // before the daemon's answer: 'forget' may take the panel before settleClose returns
   if (!await settleClose(slot, opts)) { closedByPerson.delete(slotId); return }
   const still = findPanel(slotId) // `forget` makes the daemon say `removed`, which may already have taken the panel
+  if (still) removeAnyPanel(still)
+}
+
+/**
+ * Closes a pane for an extension that already asked the person: no dialog. The process is left running (`keep`) or stopped
+ * first (`stop`); a pane with no slot just goes. Remembered for "reabrir o último painel fechado", like any close.
+ */
+async function closeGuideQuiet(slotId: string, process: 'keep' | 'stop'): Promise<void> {
+  const panel = findPanel(slotId)
+  if (!panel) return
+  rememberClosed(slotId)
+  closedByPerson.add(slotId)
+  if (slots.has(slotId) && process === 'stop') await window.tether.request({ t: 'stop', slotId })
+  const still = findPanel(slotId)
   if (still) removeAnyPanel(still)
 }
 
@@ -2016,6 +2033,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
+      door.slotRemoved(ev.slotId)
       startErrors.delete(ev.slotId)
       const panel = findPanel(ev.slotId)
       if (panel) removeAnyPanel(panel)
@@ -4332,6 +4350,10 @@ function activateRendererExtensions(): void {
         setTabLine: (paneId, hue) => door.setTabLine(id, paneId, hue),
         setHeadItem: (paneId, item) => door.setHeadItem(id, paneId, item),
         headItems: paneId => door.headItems(paneId),
+        emblems: paneId => door.emblemsOf(paneId),
+        onDidChangeMarks: listener => add(door.onMarksChange(listener)),
+        slotFacts: paneId => door.slotFacts(paneId),
+        closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {

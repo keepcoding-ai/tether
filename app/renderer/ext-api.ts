@@ -254,6 +254,19 @@ export interface PaneHeadItem {
 }
 
 /**
+ * What the app knows of the slot behind a pane that an extension may read (`panes.slotFacts`): who created it and what its
+ * attention is. The daemon stamps no time on an attention, so `since` is when this window first saw it (ISO).
+ */
+export interface PaneSlotFacts {
+  /** The extension (and the agent slot it acted for) that created the slot (SlotMeta.createdBy). */
+  createdBy?: { ext: string; slotId?: string }
+  /** The attention that waits for the person (what the orange marks). */
+  attention?: { value: 'done' | 'waiting'; since: string }
+  /** The attention that waits for an agent owner (the diamond): the owner's slot, the mark as the tab draws it, and since when. */
+  routed?: { owner: string; value: 'done' | 'waiting'; since: string; hue: number; tooltip: string }
+}
+
+/**
  * One row of the list picker (`pick`). The first nine rows answer to the keys 1 to 9 while the filter is empty (the key
  * chooses the row, as Enter does).
  */
@@ -262,6 +275,8 @@ export interface PickItem<T> {
   label: string
   detail?: string
   icon?: string
+  /** One character drawn in the row's icon place, in the row's hue (an agent's initial: "A", "K"); longer text is cut to its first character. Wins over `icon`. */
+  letter?: string
   hue?: number
   /**
    * The heading of the group the row belongs to ("Recentes", "Nesta mesa", "Outras mesas"). Groups keep the order in which
@@ -347,6 +362,21 @@ export interface TetherUi {
     setHeadItem(paneId: string, item: PaneHeadItem | undefined): void
     /** Every extension's status-bar line of a pane, in a stable order (by extension id): for a view that shows the same line. */
     headItems(paneId: string): readonly PaneHeadItem[]
+    /** Every extension's emblems on a pane's tab, in a stable order (by extension id, each in the order it gave them): for a view that shows the same marks. */
+    emblems(paneId: string): readonly TabEmblem[]
+    /**
+     * A mark of a pane changed: an emblem, its status-bar line, its tab line, or the diamond of an attention that waits for an
+     * owner (`slotFacts().routed`). The pane's id; undefined when any pane may have changed.
+     */
+    onDidChangeMarks(listener: (paneId: string | undefined) => void): IDisposable
+    /** What the app knows of the slot behind a pane (see PaneSlotFacts); undefined for a pane with no slot. */
+    slotFacts(paneId: string): PaneSlotFacts | undefined
+    /**
+     * Closes the pane of a slot, as an extension that already asked the person (its own dialog), with no further question.
+     * `process: 'keep'` (the default) leaves the agent running without a pane ("Rodando sem painel", reopenable); 'stop'
+     * stops it first. A pane with no slot just closes. Remembered for "reabrir o último painel fechado". Resolves once done.
+     */
+    closeGuide(paneId: string, opts?: { process?: 'keep' | 'stop' }): Promise<void>
     /**
      * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
      * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider

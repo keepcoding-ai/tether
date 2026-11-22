@@ -29,27 +29,27 @@
 .seg .desk-seal .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg .desk-seal .ph { width: 11px; height: 11px; flex: none; }
 
-/* The tab's emblems of extensions: on the right, after the title and before the state marks. Hidden while empty. */
-.tether-tab .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
-.tether-tab .ext-emblems[hidden] { display: none; }
-.tether-tab .ext-emblem {
+/* The tab's emblems of extensions (and the same emblems on a card of a view that lists panes, .pf-r-head): on the right, after the title and before the state marks. Hidden while empty. */
+:is(.tether-tab, .pf-r-head) .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+:is(.tether-tab, .pf-r-head) .ext-emblems[hidden] { display: none; }
+:is(.tether-tab, .pf-r-head) .ext-emblem {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px;
   color: var(--fg-dim); background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
   font: inherit; line-height: 0;
 }
-.tether-tab .ext-emblem.hued {
+:is(.tether-tab, .pf-r-head) .ext-emblem.hued {
   color: hsl(var(--emblem-hue) var(--mark-s) var(--mark-fg-l));
   background: hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-bg-a));
   box-shadow: inset 0 0 0 1px hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-line-a));
 }
-.tether-tab button.ext-emblem { cursor: pointer; }
-.tether-tab button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
-.tether-tab button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.tether-tab .ext-emblem .ph { width: 11px; height: 11px; }
+:is(.tether-tab, .pf-r-head) button.ext-emblem { cursor: pointer; }
+:is(.tether-tab, .pf-r-head) button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
+:is(.tether-tab, .pf-r-head) button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:is(.tether-tab, .pf-r-head) .ext-emblem .ph { width: 11px; height: 11px; }
 
 /* An attention that waits for an agent owner, not for the person (SlotState.attentionFor): a diamond in the owner's colour on the
    tab, in place of the orange dot. A shape no other mark of the tether uses; the hue (0-359, agentHue of the owner) is --attn-hue. */
-.tether-tab .attn.routed {
+:is(.tether-tab, .pf-r-head) .attn.routed {
   display: inline-block; width: 7px; height: 7px; margin: 0 1px; border-radius: 1px; transform: rotate(45deg);
   background: hsl(var(--attn-hue, 0) var(--mark-solid-s) var(--mark-solid-l));
 }
@@ -86,8 +86,8 @@
 .seg .desk-seal.act:hover { filter: brightness(1.12); }
 
 /* An emblem with a letter in place of the glyph (TabEmblem.label: the owner's initial), and one whose owner ended ('struck'). */
-.tether-tab .ext-emblem.letter { width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1; }
-.tether-tab .ext-emblem.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed var(--fg-dim); outline-offset: -1px; opacity: .8; }
+:is(.tether-tab, .pf-r-head) .ext-emblem.letter { width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 1; }
+:is(.tether-tab, .pf-r-head) .ext-emblem.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed var(--fg-dim); outline-offset: -1px; opacity: .8; }
 
 /* The thin line under a tab an owner commands (TetherUi.panes.setTabLine), in the owner's hue. */
 .tether-tab.ext-line { box-shadow: inset 0 -2px 0 hsl(var(--line-hue, 0) var(--mark-solid-s) var(--mark-solid-l) / .6); }

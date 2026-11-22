@@ -195,7 +195,7 @@ const TAB = '.tether-tab[data-slot]'
 const PANEL = '.panel[data-slot-id]'
 
 /** The icon for a name the app has; undefined for one it does not (the emblem then draws as an empty chip). */
-type MakeIcon = (name: string) => SVGSVGElement | undefined
+export type MakeIcon = (name: string) => SVGSVGElement | undefined
 let makeIcon: MakeIcon | undefined
 
 /** icons.ts holds the SVG text (a build-time import), so it is loaded on first use: this file stays loadable by the unit tests. */
@@ -207,29 +207,35 @@ async function loadIcons(): Promise<MakeIcon> {
   return makeIcon
 }
 
+/**
+ * One emblem as an element: a button when it answers a click (a press on it is not a press on the tab or the card), a span
+ * otherwise. The tab header and a card of a view that lists panes draw it the same way.
+ */
+export function emblemNode(emblem: TabEmblem, icons: MakeIcon, ext?: string): HTMLElement {
+  const click = emblem.onActivate
+  const el = document.createElement(click ? 'button' : 'span')
+  if (el instanceof HTMLButtonElement) el.type = 'button'
+  el.className = `ext-emblem${emblem.hue === undefined ? '' : ' hued'}${emblem.label ? ' letter' : ''}${emblem.variant === 'struck' ? ' struck' : ''}`
+  if (ext !== undefined) el.dataset.ext = ext
+  if (emblem.hue !== undefined) el.style.setProperty('--emblem-hue', String(emblem.hue))
+  if (emblem.tooltip) { el.title = emblem.tooltip; el.setAttribute('aria-label', emblem.tooltip) }
+  if (emblem.label) el.textContent = emblem.label
+  else { const glyph = icons(emblem.icon); if (glyph) el.append(glyph) }
+  if (click) {
+    // Like the ×: a press on the emblem does not start a tab drag, and a click on it is not a click on the tab.
+    el.addEventListener('pointerdown', ev => ev.stopPropagation())
+    el.addEventListener('click', ev => { ev.stopPropagation(); try { click() } catch (err) { console.error('panes.setEmblem onActivate', err) } })
+  }
+  return el
+}
+
 /** Fills the `.ext-emblems` container of one tab header with the pane's emblems (hidden when there are none) and sets its line. */
 function paintTab(tab: HTMLElement, emblems: readonly PlacedEmblem[], line: number | undefined, icons: MakeIcon): void {
   if (line === undefined) { tab.classList.remove('ext-line'); tab.style.removeProperty('--line-hue') }
   else { tab.classList.add('ext-line'); tab.style.setProperty('--line-hue', String(line)) }
   const box = tab.querySelector<HTMLElement>(':scope > .ext-emblems')
   if (!box) return
-  const nodes = emblems.map(({ ext, emblem }) => {
-    const click = emblem.onActivate
-    const el = document.createElement(click ? 'button' : 'span')
-    if (el instanceof HTMLButtonElement) el.type = 'button'
-    el.className = `ext-emblem${emblem.hue === undefined ? '' : ' hued'}${emblem.label ? ' letter' : ''}${emblem.variant === 'struck' ? ' struck' : ''}`
-    el.dataset.ext = ext
-    if (emblem.hue !== undefined) el.style.setProperty('--emblem-hue', String(emblem.hue))
-    if (emblem.tooltip) { el.title = emblem.tooltip; el.setAttribute('aria-label', emblem.tooltip) }
-    if (emblem.label) el.textContent = emblem.label
-    else { const glyph = icons(emblem.icon); if (glyph) el.append(glyph) }
-    if (click) {
-      // Like the ×: a press on the emblem does not start a tab drag, and a click on it is not a click on the tab.
-      el.addEventListener('pointerdown', ev => ev.stopPropagation())
-      el.addEventListener('click', ev => { ev.stopPropagation(); try { click() } catch (err) { console.error('panes.setEmblem onActivate', err) } })
-    }
-    return el
-  })
+  const nodes = emblems.map(({ ext, emblem }) => emblemNode(emblem, icons, ext))
   box.replaceChildren(...nodes)
   box.hidden = nodes.length === 0
 }

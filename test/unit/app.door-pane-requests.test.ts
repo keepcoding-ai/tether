@@ -84,7 +84,7 @@ describe('DoorHost wiring', () => {
     const { resendMap: _r, ...rest } = fakePort()
     const port: DoorPort = {
       ...rest, layout: () => emptyLayout(), paneType: c => c, systemDeskName: () => undefined,
-      sendDeskMap: m => { sent.push(m) }, slots: () => all, sleep: id => { slept.push(id) },
+      sendDeskMap: m => { sent.push(m) }, slots: () => all, slot: id => all.find(s => s.slotId === id), ownerName: () => undefined, closeGuide: async () => {}, sleep: id => { slept.push(id) },
       addPane: s => { added.push(s.slotId) },
       ...over,
     }

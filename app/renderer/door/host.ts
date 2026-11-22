@@ -2,7 +2,7 @@
 // (state applied, slots listed, layout saved, strip rendered, the two menus, the daemon's `desks` and `object` events) and
 // the TetherUi blocks of the door (desks, pane emblems and menus, pick, objects) are served from here. The rules live in
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
-import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
+import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PaneSlotFacts, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
@@ -12,6 +12,7 @@ import { deskSeals } from './desk-seal-rules.ts'
 import { collect } from './menus.ts'
 import { ObjectMirrors, rendererAsk, type DaemonAsk, type ObjectEventBody } from './objects.ts'
 import { Picker } from './picker.ts'
+import { AttentionStamps, slotFactsOf } from './slot-facts.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
 import { HeadItemBoard, HeadItemPainter, TabEmblemBoard, TabEmblemPainter } from './tab-emblem-rules.ts'
 
@@ -27,6 +28,12 @@ export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
   sleep(slotId: string): void
   /** Every slot the app knows. */
   slots(): Iterable<SlotState>
+  /** One slot by id. */
+  slot(slotId: string): SlotState | undefined
+  /** The name an agent's pane shows (the tooltip of an attention that waits for it). */
+  ownerName(slotId: string): string | undefined
+  /** Closes the pane of a slot with no question; 'stop' stops the process first. */
+  closeGuide(paneId: string, process: 'keep' | 'stop'): Promise<void>
 }
 
 export class DoorHost {
@@ -44,9 +51,9 @@ export class DoorHost {
   constructor(port?: DoorPort, ask: DaemonAsk = rendererAsk()) {
     this.port = port
     this.objects = new ObjectMirrors(ask)
-    this.emblems = new TabEmblemBoard(paneId => this.emblemPainter.repaint(paneId))
+    this.emblems = new TabEmblemBoard(paneId => { this.emblemPainter.repaint(paneId); this.marksChanged(paneId) })
     this.emblemPainter = new TabEmblemPainter(this.emblems)
-    this.heads = new HeadItemBoard(paneId => this.headPainter.repaint(paneId))
+    this.heads = new HeadItemBoard(paneId => { this.headPainter.repaint(paneId); this.marksChanged(paneId) })
     this.headPainter = new HeadItemPainter(this.heads)
     this.mapSender = port && new DeskMapSender(map => port.sendDeskMap(map))
   }
@@ -54,6 +61,9 @@ export class DoorHost {
   private readonly deskMenus = new Set<{ ext: string; fn: (deskId: string) => ContextMenuRow[] }>()
   private readonly paneMenus = new Set<{ ext: string; fn: (pane: PaneInfo) => ContextMenuRow[]; top: boolean }>()
   private readonly deskListeners = new Set<() => void>()
+  private readonly markListeners = new Set<(paneId: string | undefined) => void>()
+  /** When each slot's attention was first seen here (the daemon stamps none). */
+  private readonly stamps = new AttentionStamps()
   /** The desks as the last strip drawing showed them. */
   private deskSignature: string | undefined
 
@@ -61,6 +71,7 @@ export class DoorHost {
 
   /** A slot's state was applied (the daemon's `state` event), after the pane and the strip were updated. */
   stateApplied(slot: SlotState): void {
+    if (this.stamps.observe(slot)) this.marksChanged(slot.slotId)
     const port = this.port
     if (!port) return
     applyPaneRequests([slot], this.requestPort(port))
@@ -86,6 +97,7 @@ export class DoorHost {
   /** The slot list was read again (`list`: at start and on every reconnection). */
   slotsListed(slots: readonly SlotState[]): void {
     this.mapSender?.reconnected()
+    for (const s of slots) this.stamps.observe(s)
     void this.objects.reload()
     this.restored(slots)
   }
@@ -174,6 +186,33 @@ export class DoorHost {
 
   /** An extension's line in a pane's status bar (a terminal panel draws it). */
   setHeadItem(ext: string, paneId: string, item: PaneHeadItem | undefined): void { this.heads.set(ext, paneId, item) }
+
+  /** Every extension's emblems on a pane's tab, in stable order. */
+  emblemsOf(paneId: string): readonly TabEmblem[] { return this.emblems.of(paneId).map(p => p.emblem) }
+
+  /** A mark of a pane changed (an emblem, a line, a status-bar line, an attention that waits for an owner). */
+  onMarksChange(listener: (paneId: string | undefined) => void): IDisposable {
+    this.markListeners.add(listener)
+    return toDisposable(() => { this.markListeners.delete(listener) })
+  }
+
+  private marksChanged(paneId: string | undefined): void {
+    for (const l of [...this.markListeners]) { try { l(paneId) } catch (err) { console.error('panes.onDidChangeMarks', err) } }
+  }
+
+  /** What the app knows of the slot behind a pane (created by, attention); undefined without a port or a slot. */
+  slotFacts(paneId: string): PaneSlotFacts | undefined {
+    const port = this.port
+    return port ? slotFactsOf(port.slot(paneId), this.stamps, port.ownerName) : undefined
+  }
+
+  /** Closes the pane of a slot with no question (the extension asked already). */
+  closeGuide(paneId: string, process: 'keep' | 'stop' = 'keep'): Promise<void> {
+    return this.port ? this.port.closeGuide(paneId, process) : Promise.resolve()
+  }
+
+  /** A slot went away. */
+  slotRemoved(slotId: string): void { this.stamps.forget(slotId) }
 
   /** Every extension's status-bar line of a pane. */
   headItems(paneId: string): readonly PaneHeadItem[] { return this.heads.of(paneId) }

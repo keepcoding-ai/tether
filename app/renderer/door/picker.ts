@@ -147,8 +147,9 @@ export class Picker {
           const hue = normalizeHue(row.item.hue)
           if (hue !== undefined) { li.classList.add('hued'); li.style.setProperty('--pk-hue', String(hue)) }
           const ic = document.createElement('span'); ic.className = 'pk-icon'
-          const glyph = row.item.icon ? icons(row.item.icon) : undefined
-          if (glyph) ic.append(glyph)
+          const letter = Array.from(typeof row.item.letter === 'string' ? row.item.letter.trim() : '')[0]
+          if (letter) { ic.classList.add('letter'); ic.textContent = letter }
+          else { const glyph = row.item.icon ? icons(row.item.icon) : undefined; if (glyph) ic.append(glyph) }
           const text = document.createElement('span'); text.className = 'pk-text'
           const label = document.createElement('span'); label.className = 'pk-label'
           for (const run of row.runs) {
