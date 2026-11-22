@@ -415,7 +415,7 @@ export function loadSkills(libraryDir: string, log: (msg: string) => void = () =
     const text = readFileSync(file, 'utf8')
     const meta = parseFrontmatter(text)
     if (!meta || meta.name !== entry) { log(`skill ${entry} ignorada: o SKILL.md precisa de "name: ${entry}" no cabeçalho`); continue }
-    out.push({ name: meta.name, description: meta.description, dir, text })
+    out.push({ name: meta.name, description: meta.description, ...(meta.agents ? { agents: meta.agents } : {}), dir, text })
   }
   return out
 }
