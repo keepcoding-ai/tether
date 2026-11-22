@@ -19,6 +19,7 @@ process.stdin.on('data', (d) => {
     if (part === '\x1b[201~') { pasting = false; continue }
     for (const ch of part) {
       if (ch === '\x7f' || ch === '\b') line = line.slice(0, -1)
+      else if (ch.charCodeAt(0) === 21) line = '' // Ctrl+U
       else if (ch === '\r' || ch === '\n') { if (pasting) line += ' / '; else submit() }
       else if (ch >= ' ') line += ch
     }

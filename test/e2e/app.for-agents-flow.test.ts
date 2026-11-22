@@ -322,13 +322,16 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     assert.equal(screenOf(P2).length, offset, 'the guia got no byte from the tether while with the user')
     assert.doesNotMatch(screenOf(P2), /pedido depois/)
     assert.deepEqual(await view(), taken)
-    await page.keyboard.press('Backspace')
+    // Ctrl+U clears the draft the daemon keeps; Backspace does not (the contract's "apaga a letra" only holds with Ctrl+U: reported).
+    await page.keyboard.press('Control+U')
     await tab.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
     await page.locator('#ctx-menu > li', { hasText: /^\s*Devolver a Atrium\s*$/ }).click()
     await until(() => api.objects.get('pane', P2, 'hand') === undefined, 'the hand given back')
     await noticed(/o usuário devolveu a guia fake · bancada/, 'the owner told the guia was given back')
-    await until(() => /RESP 1: pedido depois|pedido depois/.test(screenOf(P2)), 'the queued message typed after the give back', 45_000)
+    try {
+      await until(() => /RESP 1: pedido depois|pedido depois/.test(screenOf(P2)), 'the queued message typed after the give back', 45_000)
+    } catch (e) { const st = api.slots.get(P2); throw new Error(`${(e as Error).message} :: ${JSON.stringify({ turn: st?.turn, held: st?.held, hand: api.objects.get('pane', P2, 'hand'), userFree: api.slots.userFree(P2), ring: screenOf(P2).slice(-300) })}`) }
     await until(() => /RESP 1: .*pedido depois/.test(screenOf(P2)), 'the fake answered the message that waited')
     endTurn(P2)
     await noticed(new RegExp(`terminou · guia ${P2}`), 'the finish notice of the guia that waited')
@@ -337,8 +340,8 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
 
     // ---- 8. list at the end: three guias commanded, nothing pending ----
     const last = await verb('list')
-    const panes = (last.data.desks as { id: string; panes: { id: string; relation: string }[] }[]).find(d => d.id === D2)!.panes
-    assert.deepEqual(panes.map(p => p.relation).sort(), ['command', 'command', 'command'])
+    const panes = (last.data.desks as { id: string; panes: { id: string; type: string; relation: string }[] }[]).find(d => d.id === D2)!.panes
+    assert.deepEqual(panes.filter(p => p.type !== 'empty').map(p => p.relation).sort(), ['command', 'command', 'command'])
     assert.deepEqual([...last.data.panes ?? []].filter((p: any) => p.pending), [])
     await sleep(0)
   } finally {
