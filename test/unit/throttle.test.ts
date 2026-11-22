@@ -2,13 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { applyThrottleSwitches, throttleSwitches, throttlingWanted } from '../../app/main/throttle.ts'
 
-test('throttling off (default): switches and one disable-features', () => {
+test('throttling off (default): only disable-features=CalculateNativeWinOcclusion', () => {
   const calls: Array<[string, string | undefined]> = []
   applyThrottleSwitches({ appendSwitch: (n, v) => calls.push([n, v]) }, false)
+  assert.deepEqual(throttleSwitches(false), { flags: [], disableFeatures: ['CalculateNativeWinOcclusion'] })
   assert.deepEqual(calls, [
-    ['disable-renderer-backgrounding', undefined],
-    ['disable-background-timer-throttling', undefined],
-    ['disable-backgrounding-occluded-windows', undefined],
     ['disable-features', 'CalculateNativeWinOcclusion'],
   ])
 })

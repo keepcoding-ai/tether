@@ -775,9 +775,6 @@ function denyLocalFonts(win: BrowserWindow): void {
   ses.setPermissionCheckHandler((_wc, permission) => permission !== 'local-fonts')
 }
 
-/** Set by start() from the same restore key as the command-line switches. */
-let backgroundThrottling = false
-
 function createWindow(): void {
   const saved = normalizeWindowState(settings().window)
   const displays = screen.getAllDisplays()
@@ -797,7 +794,6 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling,
       // The HTML preview's page runs in a <webview> (an isolated guest: app/main/html-preview-main.ts locks it down).
       webviewTag: true,
       // A window that is never shown does not paint, and Playwright's screenshot would wait forever;
@@ -1325,7 +1321,6 @@ function showStandaloneDialog(situation: string): Promise<{ answer: DialogAnswer
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling,
       ...(hidden ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   })
@@ -1382,7 +1377,6 @@ async function start(): Promise<void> {
   // Chromium switches must precede app.whenReady(); settings are already loaded (settingsStore is built at module load).
   const throttling = throttlingWanted(process.env.TETHER_THROTTLING, (settings() as { performance?: { throttling?: unknown } }).performance?.throttling)
   applyThrottleSwitches(app.commandLine, throttling)
-  backgroundThrottling = throttling
   let outcome = await acquireSingleInstance()
   let closeStandalone: (() => void) | undefined
   while (outcome === 'stale') {
