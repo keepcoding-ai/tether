@@ -38,6 +38,9 @@ export const ANSWER_CHARS = 600
 export const CARD_LINES = 20
 /** The owner's return is told after the burst of states it causes settles. */
 export const RETURN_SETTLE_MS = 150
+/** A 'waiting' whose card is not on the screen yet waits this long for it (polled every CARD_POLL_MS) before the generic notice. */
+export const CARD_WAIT_MS = 8000
+export const CARD_POLL_MS = 250
 /** With the turn's start unknown (the daemon began in the middle of it), an answer written this long before its end still counts. */
 export const ANSWER_SKEW_MS = 10_000
 
@@ -145,10 +148,15 @@ export class Notices {
   private readonly frozenTold = new Set<string>()
   private disposed = false
 
-  constructor(api: NoticesApi, wiring: NoticesWiring, opts: { settleMs?: number; readers?: ScreenReaders } = {}) {
+  private readonly cardWaitMs: number
+  private readonly cardPollMs: number
+
+  constructor(api: NoticesApi, wiring: NoticesWiring, opts: { settleMs?: number; cardWaitMs?: number; cardPollMs?: number; readers?: ScreenReaders } = {}) {
     this.api = api
     this.wiring = wiring
     this.settleMs = opts.settleMs ?? RETURN_SETTLE_MS
+    this.cardWaitMs = opts.cardWaitMs ?? CARD_WAIT_MS
+    this.cardPollMs = opts.cardPollMs ?? CARD_POLL_MS
     this.readers = opts.readers ?? createScreenReaders({ joinWrapped: false })
   }
 
@@ -178,7 +186,8 @@ export class Notices {
   private async announce(paneId: string, owner: string, key: string): Promise<void> {
     const s = this.api.slots.get(paneId)
     if (!s?.attentionFor) return
-    const what = await this.classify(s)
+    const what = await this.classifyEdge(s, key)
+    if (!what) return
     // What the person or the owner did while the screen was read decides whether the notice is still true.
     const now = this.api.slots.get(paneId)
     if (this.disposed || !now?.attentionFor || now.attentionFor.slotId !== owner || this.edges.get(paneId) !== key) return
@@ -197,6 +206,27 @@ export class Notices {
     }
     this.supersede(paneId)
     await this.send(owner, msg, [paneId])
+  }
+
+  /**
+   * What a fresh edge is. A 'waiting' can come from the engine's bell before the card is drawn (Codex rings when the request
+   * arrives, and again when the turn ends, before its `done`): while a conductor that can read the screen sees no card, the
+   * notice waits for the card, for the edge to be replaced (the `done`, the owner acting) or for the deadline, and only then
+   * says the generic "waits for you". `undefined`: the edge is no longer the current one, nothing is told.
+   */
+  private async classifyEdge(s: SlotState, key: string): Promise<What | undefined> {
+    if (s.attentionFor?.value === 'done') return { what: 'finished' }
+    const paneId = s.slotId
+    const owner = s.attentionFor?.slotId ?? ''
+    const deadline = Date.now() + this.cardWaitMs
+    for (;;) {
+      const seen = await detectOn(this.api, this.wiring, this.readers, paneId, owner)
+      if (seen && 'card' in seen) return { what: seen.state === 'permission' ? 'permission' : 'question', card: seen.card }
+      const now = this.api.slots.get(paneId)
+      if (this.disposed || !now?.attentionFor || this.edges.get(paneId) !== key) return undefined
+      if (!seen || Date.now() >= deadline) return { what: 'waiting', tail: await this.tail(paneId) }
+      await new Promise<void>((r) => setTimeout(r, this.cardPollMs).unref?.())
+    }
   }
 
   /** What the edge is: a 'done' is a finish; a 'waiting' is read from the screen by the conductor that knows. */
