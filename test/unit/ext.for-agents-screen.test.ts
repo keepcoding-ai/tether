@@ -1,7 +1,7 @@
 // The screen as text (5.4): the raw of an agent's PTY becomes the text a person sees. The samples in test/fixtures/screen/
 // are raw output recorded by the probes, with the text each probe recorded beside it; the reader must give the same text.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { describe, test } from 'node:test'
@@ -217,6 +217,7 @@ describe('a tela como texto: o que o leitor faz', () => {
 describe('o loader dentro do bundle CJS (sem import.meta)', () => {
   test('carrega sem lançar e acha a pasta vendor só quando pedida', async () => {
     const { build } = await import('esbuild')
+    mkdirSync(resolve('.tmp'), { recursive: true })
     const dir = mkdtempSync(join(resolve('.tmp'), 'loader-cjs-'))
     try {
       const out = join(dir, 'loader.cjs')
