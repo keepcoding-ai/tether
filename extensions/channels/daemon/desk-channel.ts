@@ -135,6 +135,8 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
       activation()
       run(`mesa ${deskId}`, (c) => follow(c, deskId))
     }),
+    // for-agents on again with nothing to publish: no change would come, so its activation starts the pass.
+    feed.onDidActivate(() => { if (live) activation() }),
     api.desks.onDidChange(() => {
       if (!live || !feed.active) return
       activation()

@@ -388,4 +388,16 @@ describe('the desk channel (F1)', () => {
     assert.ok(isMember(c, q), 'the pane in the desk stays')
     assert.ok(isMember(c, outsider), 'the old owner from outside stays, as before the restart')
   })
+
+  test('for-agents on again with no desk owned: one pass reconciles at once, with no change of the desk map', async () => {
+    unbind()
+    // While off, every desk loses its owner: on again, the feed publishes nothing.
+    for (const d of ['d1', 'd2', 'd4', 'd5', 'd6', 'sys']) await revoke(d)
+    await sleep(200)
+    assert.equal(channelOf('d6')!.closed, undefined, 'nothing follows while off')
+    const from = await lastSeq('d6')
+    bind()
+    await said('#sexta foi encerrado: a mesa ficou sem dono', 'd6', from)
+    assert.equal(channelOf('d6')!.closed!.by, USER)
+  })
 })

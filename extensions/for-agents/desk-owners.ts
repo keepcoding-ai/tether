@@ -20,6 +20,8 @@ export interface DeskOwnerFeed {
   get(deskId: string): DeskOwnerFact | undefined
   /** `fact` is undefined when the desk lost its owner (revoked, or the desk is gone). */
   onDidChange(listener: (deskId: string, fact: DeskOwnerFact | undefined) => void): { dispose(): void }
+  /** Fires once per activation, when its first publication is done (`ready` resolved), even if it published nothing. */
+  onDidActivate(listener: () => void): { dispose(): void }
   /** Resolves when the first publication of the current activation is done (already resolved while inactive). */
   readonly ready: Promise<void>
 }
@@ -38,6 +40,7 @@ const same = (a: DeskOwnerFact | undefined, b: DeskOwnerFact | undefined): boole
 export function createDeskOwnerFeed(): DeskOwnerPublisher {
   const facts = new Map<string, DeskOwnerFact>()
   const listeners = new Set<(deskId: string, fact: DeskOwnerFact | undefined) => void>()
+  const activations = new Set<() => void>()
   let active = false
   let ready: Promise<void> = Promise.resolve()
   let resolveReady: (() => void) | undefined
@@ -49,6 +52,10 @@ export function createDeskOwnerFeed(): DeskOwnerPublisher {
     onDidChange(listener) {
       listeners.add(listener)
       return { dispose: () => { listeners.delete(listener) } }
+    },
+    onDidActivate(listener) {
+      activations.add(listener)
+      return { dispose: () => { activations.delete(listener) } }
     },
     publish(deskId, fact) {
       if (same(facts.get(deskId), fact)) return
@@ -68,8 +75,10 @@ export function createDeskOwnerFeed(): DeskOwnerPublisher {
       }
     },
     markReady() {
-      resolveReady?.()
+      if (!resolveReady) return
+      resolveReady()
       resolveReady = undefined
+      for (const l of [...activations]) l()
     },
   }
 }
