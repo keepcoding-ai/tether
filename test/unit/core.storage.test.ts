@@ -32,9 +32,9 @@ function code(fn: () => unknown): string | undefined {
 }
 
 describe('storageRoots', () => {
-  test('sync is the user dir, local is the home', () => {
+  test('sync is the `sync` subfolder of the user dir, local is the home', () => {
     const r = storageRoots({ TETHER_HOME: 'h', TETHER_USER_DIR: 'u' })
-    assert.deepEqual(r, { sync: 'u', local: 'h' })
+    assert.deepEqual(r, { sync: join('u', 'sync'), local: 'h' })
   })
 })
 

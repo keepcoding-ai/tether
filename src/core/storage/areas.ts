@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { tetherHome, userDir } from '../paths.ts'
 
 /**
@@ -11,7 +12,10 @@ export interface StorageRoots {
   local: string
 }
 
-/** Root folder of each area: sync is the person's folder (`userDir`), local is the machine state (`tetherHome`). */
+/**
+ * Root folder of each area: sync is the `sync` subfolder of the person's folder (`userDir`, which also holds the working
+ * files such as settings.json), local is the machine state (`tetherHome`).
+ */
 export function storageRoots(env: NodeJS.ProcessEnv = process.env): StorageRoots {
-  return { sync: userDir(env), local: tetherHome(env) }
+  return { sync: join(userDir(env), 'sync'), local: tetherHome(env) }
 }
