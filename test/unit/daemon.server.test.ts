@@ -207,4 +207,22 @@ describe('attention', () => {
     assert.ok(!existsSync(slotAttentionPath(home, id)), 'forget removes the report')
     c.client.close()
   })
+
+  test('unseen marks the slot unread: seen leaves it, off clears it', async () => {
+    const c = await Recorder.connect(daemon.pipe)
+    const { slot } = await c.client.request({ t: 'create', kind: 'shell', cwd, start: true })
+    const id = slot!.slotId
+    await c.state(id, (s) => s.status === 'running')
+    await c.client.request({ t: 'unseen', slotId: id })
+    await c.state(id, (s) => s.attention === 'done' && s.attentionHeld === true, 5_000, 'marked unread')
+    await c.client.request({ t: 'seen', slotId: id })
+    await sleep(300)
+    const marked = (await c.client.request({ t: 'list' })).slots!.find((s) => s.slotId === id)!
+    assert.equal(marked.attention, 'done')
+    assert.equal(marked.attentionHeld, true)
+    await c.client.request({ t: 'unseen', slotId: id, off: true })
+    await c.state(id, (s) => s.attention === undefined && s.attentionHeld === undefined, 5_000, 'mark removed')
+    await c.client.request({ t: 'forget', slotId: id })
+    c.client.close()
+  })
 })

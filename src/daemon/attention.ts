@@ -13,9 +13,11 @@
 // tracks those strings across chunks.
 //
 // Cleared by: the user typing into the slot (input that is not a terminal reply), `seen` (the pane got the
-// focus), a new launch and the process exit. A 'waiting' that is a pending request (a hook report with a `reason` other
-// than 'idle_prompt': a permission prompt, a question) is the exception: focus does not clear it, only the request
-// being resolved does (typing, a new turn, a finished turn, a reset). The owning agent's `seen(true)` clears it too.
+// focus), a new launch and the process exit. A `pending` value is the exception: focus does not clear it, only
+// resolving it does (typing, a new turn, a finished turn, a reset). The owning agent's `seen(true)` clears it too.
+// Two things make a value pending: a 'waiting' that is a pending request (a hook report with a `reason` other than
+// 'idle_prompt': a permission prompt, a question), and `defer` (the person marked the slot unread: 'done' unless
+// something is already shown). Any change of value other than the mark itself drops `pending`.
 
 import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
@@ -44,7 +46,7 @@ type Scan = 'text' | 'esc' | 'string' | 'string-esc'
 
 export class AttentionState {
   value: Attention | undefined
-  /** `value` is a 'waiting' that stands for a pending request: only resolving it clears it, not focus. Never true while `value` is not 'waiting'. */
+  /** `value` stands for something the person must resolve (a pending request, or an unread mark): focus does not clear it. Never true while `value` is undefined. */
   pending = false
   /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: its `turn` events, else Enter→busy, quiet→idle. Shells never. */
   turn: Turn = 'idle'
@@ -83,9 +85,10 @@ export class AttentionState {
     // The turn ended but a background subagent still runs: the agent is waiting for it, not stopped.
     if (kind === 'done' && this.background > 0) { this.delegating = true; return this.setTurn('busy') }
     const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
-    const changed = this.set(kind)
+    const before = { value: this.value, pending: this.pending }
+    this.set(kind)
     this.pending = pending
-    return changed || t
+    return this.value !== before.value || this.pending !== before.pending || t
   }
 
   /**
@@ -121,6 +124,18 @@ export class AttentionState {
   seen(force = false): boolean {
     if (this.pending && !force) return false
     return this.set(undefined)
+  }
+
+  /**
+   * The person marked the slot unread: shows 'done' when nothing is shown (a 'done' or 'waiting' already there stays) and
+   * makes it pending, so focus no longer clears it. Leaves the turn alone. Returns true when the value or `pending` changed;
+   * `seen(true)` undoes it.
+   */
+  defer(): boolean {
+    const changed = !this.pending
+    this.value ??= 'done'
+    this.pending = true
+    return changed
   }
 
   /** Output from the process at `now` (ms). Returns true when the value changed (a bell). */
@@ -223,9 +238,11 @@ export class AttentionState {
     return true
   }
 
+  /** Shows `v`; any new value (even the same one) is not the unread mark, so `pending` drops. True when the value or `pending` changed. */
   private set(v: Attention | undefined): boolean {
-    if (v !== 'waiting') this.pending = false
-    if (this.value === v) return false
+    const was = this.pending
+    this.pending = false
+    if (this.value === v) return was
     this.value = v
     return true
   }

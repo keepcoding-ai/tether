@@ -74,6 +74,58 @@ describe('attention: a pending waiting survives focus', () => {
   })
 })
 
+describe('attention: marked unread (defer)', () => {
+  const mk = () => new AttentionState(attentionOptions('claude'))
+  test('from nothing it shows done; done and waiting keep their value; all are pending', () => {
+    const a = mk()
+    assert.equal(a.defer(), true)
+    assert.equal([a.value, a.pending].join(), 'done,true')
+    assert.equal(a.defer(), false, 'again: nothing changed')
+    const d = mk(); d.hook('done')
+    assert.equal(d.defer(), true)
+    assert.equal([d.value, d.pending].join(), 'done,true')
+    const w = mk(); w.hook('waiting', 'idle_prompt')
+    assert.equal(w.defer(), true)
+    assert.equal([w.value, w.pending].join(), 'waiting,true')
+  })
+  test('does not touch the turn', () => {
+    const a = mk(); a.hook('start')
+    a.defer()
+    assert.equal(a.turn, 'busy')
+  })
+  test('focus does not clear it; the owner force does', () => {
+    const a = mk(); a.defer()
+    assert.equal(a.seen(), false)
+    assert.equal(a.value, 'done')
+    assert.equal(a.seen(true), true)
+    assert.equal([a.value, a.pending].join(), ',false')
+  })
+  test('falls on input, a lone ESC, start and reset', () => {
+    for (const end of [(a: AttentionState) => a.input('x'), (a: AttentionState) => a.input(''), (a: AttentionState) => a.hook('start'), (a: AttentionState) => a.reset()]) {
+      const a = mk(); a.defer()
+      assert.equal(end(a), true)
+      assert.equal([a.value, a.pending].join(), ',false')
+    }
+  })
+  test('a new done is an ordinary notice: done without pending, and focus clears it', () => {
+    const a = mk(); a.defer()
+    assert.equal(a.hook('done'), true, 'pending dropped counts as a change')
+    assert.equal([a.value, a.pending].join(), 'done,false')
+    assert.equal(a.seen(), true)
+    assert.equal(a.value, undefined)
+  })
+  test('idle_prompt and BEL do not downgrade it; permission_prompt turns it into a pending waiting', () => {
+    const a = mk(); a.defer()
+    assert.equal(a.hook('waiting', 'idle_prompt'), false)
+    assert.equal([a.value, a.pending].join(), 'done,true')
+    const s = new AttentionState(attentionOptions('shell')); s.defer()
+    assert.equal(s.output('', 0), false)
+    assert.equal([s.value, s.pending].join(), 'done,true')
+    assert.equal(a.hook('waiting', 'permission_prompt'), true)
+    assert.equal([a.value, a.pending].join(), 'waiting,true')
+  })
+})
+
 describe('attention: claude (hooks only)', () => {
   test('a hook sets the value; typing clears it; seen clears it; a reset clears it', () => {
     const a = new AttentionState(attentionOptions('claude'))

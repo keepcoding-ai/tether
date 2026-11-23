@@ -689,6 +689,7 @@ class DaemonImpl implements Daemon {
     if (slot.stopping) s.stopping = true
     if (this.adapterOf(slot.meta.agent)?.resumes && isAlive(slot) && this.reportedThisRun(slot) && !slot.restarting && !slot.stopping) s.canRestart = true
     if (slot.attention.value) s.attention = slot.attention.value
+    if (slot.attention.pending) s.attentionHeld = true
     if (slot.attention.turn === 'busy') {
       s.turn = 'busy'
       if (slot.attention.busySince) s.busySince = slot.attention.busySince
@@ -2006,6 +2007,12 @@ class DaemonImpl implements Daemon {
         // Attention rerouted to a live owner is the owner's to clear (`attention.seen`): a pipe client's `seen` leaves it alone.
         if (this.stateOf(slot).attentionFor) return { t: 'ok', id }
         if (slot.attention.seen()) this.broadcastState(slot)
+        return { t: 'ok', id }
+      }
+      case 'unseen': {
+        const slot = this.slot(req.slotId)
+        if (this.stateOf(slot).attentionFor) return { t: 'ok', id }
+        if (req.off ? slot.attention.seen(true) : slot.attention.defer()) this.broadcastState(slot)
         return { t: 'ok', id }
       }
       case 'detach': {
