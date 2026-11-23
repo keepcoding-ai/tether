@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tether canais · prévia visual</title>
+<style>
+/* Tokens: os mesmos de docs/for-agents/for-agents-preview.html (que copia app/renderer/styles.css). Nada novo no vocabulario de cor. */
+:root,:root[data-theme="dark"]{--bg:#1b1b1f;--bg-2:#232329;--bg-3:#2c2c34;--bg-hover:#363640;--bg-hover-2:#3f3f4a;--fg:#d8d8dc;--fg-dim:#9a9aa3;--accent:#6aa6ff;--accent-hover:#86b7ff;--on-accent:#0d1320;--border:#35353d;--ok:#5fcf80;--warn:#e6b450;--on-warn:#1b1300;--err:#ef6a6a;--shadow:0 6px 20px rgba(0,0,0,.5);--backdrop:rgba(0,0,0,.6);
+ --desk-bg:#141418;--frame-bg:#1e1e23;--frame-border:rgba(255,255,255,.08);--dlg-shadow:0 2px 4px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.45),0 32px 72px rgba(0,0,0,.55);--t-fg:#e6edf3;--t-dim:#6e7681;
+ --x-teal:oklch(.72 .14 178);--x-sky:oklch(.70 .16 230);--x-purple:oklch(.58 .24 295);
+ --oc-bg:38% 26%;--oc-fg:70% 82%;--oc-line:40% 40%;--oc-solid:62% 62%;
+ color-scheme:dark}
+:root[data-theme="light"]{--bg:#fbfbfd;--bg-2:#f1f2f5;--bg-3:#e6e7ec;--bg-hover:#dcdde3;--bg-hover-2:#d2d3da;--fg:#24292f;--fg-dim:#5f6368;--accent:#1f6fe0;--accent-hover:#3b84ea;--on-accent:#fff;--border:#cfd1d8;--ok:#1a8a3c;--warn:#9a6b00;--on-warn:#fff;--err:#c62828;--shadow:0 6px 20px rgba(0,0,0,.18);--backdrop:rgba(0,0,0,.35);
+ --desk-bg:#e7e9ed;--frame-bg:#fbfbfd;--frame-border:rgba(0,0,0,.09);--dlg-shadow:0 2px 4px rgba(0,0,0,.08),0 10px 24px rgba(0,0,0,.14),0 28px 64px rgba(0,0,0,.22);--t-fg:#1f2328;--t-dim:#6e7781;
+ --oc-bg:70% 88%;--oc-fg:70% 26%;--oc-line:45% 68%;--oc-solid:58% 40%;
+ color-scheme:light}
+:root{--x-alert:oklch(0.70 0.19 50);--x-alert-foreground:#10131a;--mono:"Cascadia Mono","Cascadia Code",Consolas,monospace;--ui:"Segoe UI",system-ui,sans-serif}
+/* texto laranja legivel nos dois temas: o laranja puro nao tem contraste como texto no claro */
+:root{--alert-text:color-mix(in srgb,var(--x-alert) 62%,var(--fg))}
+
+/* Cor da guia do agente: a mesma regra do dono do for-agents: matiz do id levado ao arco 175-345 (teal a rosa). Uma cor por agente, so a dele. */
+.o{--oh:calc(175 + var(--raw) * 170 / 360)}
+.o-atrium{--raw:300}.o-conferente{--raw:20}.o-bancada{--raw:120}.o-conferencia{--raw:222}
+*{box-sizing:border-box}
+html{height:100%}body{margin:0;min-height:100%;font:13px var(--ui);background:var(--desk-bg);color:var(--fg)}
+svg.ph{width:14px;height:14px;fill:currentColor;flex:none}
+i.ic{display:inline-flex;flex:none}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+kbd{font:11px var(--ui);color:var(--fg-dim);background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 6px;flex:none;line-height:1.3}
+code{font:11.5px var(--mono)}
+
+/* ---------- pagina ---------- */
+.page{max-width:1240px;margin:0 auto;padding:28px 24px 80px}
+.top h1{margin:0;font-size:20px;font-weight:650}
+.top p{margin:4px 0 0;color:var(--fg-dim);max-width:900px;line-height:1.5}
+.ctl{position:fixed;top:12px;right:12px;z-index:90;display:flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;box-shadow:var(--shadow);font-size:12px;color:var(--fg-dim)}
+.ctl label{display:flex;align-items:center;gap:6px;cursor:pointer}.ctl input{accent-color:var(--accent);margin:0}
+.ib{position:relative;width:28px;height:28px;display:grid;place-items:center;border-radius:6px;border:0;background:none;color:var(--fg-dim);padding:0}
+.ib:hover{background:var(--bg-hover);color:var(--fg)}.ib .ph{width:16px;height:16px}
+section.s{margin:44px 0 0;scroll-margin-top:16px}
+section.s>h2{display:flex;align-items:center;gap:10px;margin:0 0 4px;font-size:16px;font-weight:650}
+section.s>h2 .n{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-size:12px;font-weight:700}
+section.s>.lead{margin:0 0 14px;color:var(--fg-dim);max-width:920px;line-height:1.5}
+h3.sub{margin:18px 0 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.blk{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:18px;align-items:start;margin:12px 0}
+.blk.wide{grid-template-columns:minmax(0,1fr)}
+@media(max-width:900px){.blk{grid-template-columns:minmax(0,1fr)}}
+.leg{padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--bg-2);font-size:12px;line-height:1.5;color:var(--fg)}
+.leg b{display:block;margin-bottom:3px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.leg b:not(:first-child){margin-top:8px}
+.cap{color:var(--fg-dim);font-size:12px;line-height:1.5;margin:8px 2px}.cap b{color:var(--fg);font-weight:600}
+.notes{padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2);font-size:12.5px;line-height:1.55;margin:10px 0}
+.notes h4{margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.notes p{margin:4px 0}.notes ul{margin:4px 0;padding-left:18px}.notes li{margin:3px 0}
+.mut{color:var(--fg-dim)}
+.frame{background:var(--frame-bg);border:1px solid var(--frame-border);border-radius:10px;overflow:hidden}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:900px){.two{grid-template-columns:1fr}}
+.stack{display:grid;gap:14px;justify-items:start}
+
+/* anotacoes da estrutura: ligadas por padrao, desligaveis no controle do topo */
+.ann{display:none}
+.notes-on .ann{display:inline-flex}
+.ann.tag{align-items:center;margin-left:auto;padding:0 6px;border-radius:999px;border:1px solid var(--border);color:var(--fg-dim);font-size:10px;line-height:15px;flex:none;white-space:nowrap}
+.ann.tag.nv{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+
+/* ---------- sinais (os do for-agents + os do canal) ---------- */
+.attn-dot{width:8px;height:8px;border-radius:50%;background:var(--x-alert);flex:none;display:inline-block}
+.cnt{min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;background:var(--x-alert);color:var(--x-alert-foreground);flex:none;display:inline-block}
+.busy-dot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;background:var(--ok);opacity:.7}
+.await{width:7px;height:7px;flex:none;display:inline-block;transform:rotate(45deg);border-radius:1px;background:hsl(var(--oh) var(--oc-solid));margin:0 1px}
+/* a marca quieta: "ha falas novas que nao sao para voce". Anel vazado, sem cor, sem numero. */
+.ring{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--fg-dim);flex:none;display:inline-block;background:transparent;opacity:.85}
+.own{display:inline-flex;align-items:center;gap:3px;flex:none;max-width:150px;padding:0 7px 0 5px;border-radius:999px;font-size:10.5px;line-height:15px;font-weight:500;white-space:nowrap;
+ background:hsl(var(--oh) var(--oc-bg));color:hsl(var(--oh) var(--oc-fg));border:1px solid hsl(var(--oh) var(--oc-line))}
+.own .ph{width:11px;height:11px}
+.em{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;flex:none;font-size:10px;font-weight:700;line-height:1;
+ background:hsl(var(--oh) var(--oc-bg));color:hsl(var(--oh) var(--oc-fg));border:1px solid hsl(var(--oh) var(--oc-line))}
+.em .ph{width:10px;height:10px}
+.em.crown{box-shadow:0 0 0 1.5px hsl(var(--oh) var(--oc-solid))}
+.em.gone{background:transparent;color:var(--fg-dim);border:1px dashed var(--fg-dim);opacity:.8}
+/* o moderador (o usuario) nao usa cor de agente: neutro */
+.em.me{background:var(--bg-3);color:var(--fg);border:1px solid var(--border)}
+.oname{font-weight:600;color:hsl(var(--oh) var(--oc-fg))}
+:root[data-theme="light"] .oname{color:hsl(var(--oh) 70% 30%)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;background:hsl(var(--oh) var(--oc-solid));vertical-align:-1px;margin-right:4px}
+/* chips de papel */
+.role{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border-radius:999px;border:1px solid var(--border);color:var(--fg-dim);font-size:10.5px;line-height:15px;white-space:nowrap;flex:none}
+.role .ph{width:10px;height:10px}
+.role.mod{background:var(--bg-3);color:var(--fg)}
+.role.mute{border-style:dashed}
+.role.end{border-color:color-mix(in srgb,var(--fg-dim) 70%,var(--border))}
+.tome{display:inline-flex;align-items:center;gap:3px;padding:0 7px 0 5px;border-radius:999px;font-size:10.5px;line-height:15px;font-weight:600;white-space:nowrap;flex:none;
+ background:color-mix(in srgb,var(--x-alert) 20%,transparent);color:var(--alert-text);border:1px solid color-mix(in srgb,var(--x-alert) 55%,transparent)}
+.tome .ph{width:11px;height:11px}
+.dest{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--fg-dim);white-space:nowrap;min-width:0}
+.dest .ph{width:12px;height:12px}
+.dest .oname{font-weight:500}
+
+/* ---------- capsula, abas, status (iguais ao for-agents) ---------- */
+.tbar{height:42px;display:flex;align-items:center;justify-content:center;padding:0 8px;background:var(--desk-bg);border:1px solid var(--frame-border);border-radius:10px;overflow-x:auto}
+#desk-switch{position:relative;display:flex;align-items:center;gap:2px;padding:2px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--border);user-select:none}
+.seg{display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 12px;margin:0;border:0;border-radius:999px;background:none;font:inherit;font-weight:500;white-space:nowrap;color:color-mix(in srgb,var(--seg-text,var(--fg-dim)) 55%,var(--fg-dim))}
+.seg:not(.on):hover{background:var(--bg-hover)}
+.seg.on{background:color-mix(in srgb,var(--seg-fill,var(--fg-dim)) 22%,transparent);color:var(--seg-text,var(--fg));font-weight:650}
+.seg{--seg-text:color-mix(in srgb,var(--seg-fill,var(--fg-dim)) 70%,var(--fg))}
+.seg .nm{max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.seg .chic{width:13px;height:13px;opacity:.85}
+.strip{display:flex;height:35px;background:var(--bg-2);border-bottom:1px solid var(--border);overflow:hidden}
+.tab{display:flex;align-items:center;gap:7px;padding:0 8px 0 11px;min-width:112px;max-width:236px;flex:0 1 auto;border-right:1px solid var(--border);color:var(--fg-dim);white-space:nowrap;position:relative;user-select:none}
+.tab.on{background:var(--frame-bg);color:var(--fg);flex-shrink:0}
+.tab.on::before{content:"";position:absolute;inset:0 0 auto;height:2px;background:var(--accent)}
+.tab .kind{display:inline-flex}.tab .kind .ph{width:14px;height:14px}
+.tab .text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tab .x{display:inline-flex;padding:2px;margin-left:auto;color:var(--fg-dim);border-radius:3px;visibility:hidden}.tab.on .x{visibility:visible}.tab .x .ph{width:13px;height:13px}
+.tab .attn{width:8px;height:8px;border-radius:50%;background:var(--x-alert);flex:none}
+.tab .attn.busy{width:6px;height:6px;background:var(--ok);opacity:.7}
+.tab .mk{display:inline-flex;color:var(--fg-dim)}.tab .mk .ph{width:13px;height:13px}
+.pbody{height:56px;display:grid;place-items:center;color:var(--t-dim);font:12px var(--mono)}
+.callouts{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:5px;font-size:12.5px;line-height:1.45}
+.callouts li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start}
+.callouts .k{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--bg-3);color:var(--fg);font-size:11px;font-weight:700;margin-top:1px}
+.callouts .tip{color:var(--fg-dim)}
+.reads{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:6px}
+.reads li{padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);line-height:1.5}
+.status-bar{display:flex;align-items:center;gap:8px;height:26px;padding:0 4px 0 10px;font-size:11.5px;color:var(--fg-dim);background:var(--bg-2);border-top:1px solid var(--border);white-space:nowrap;overflow:hidden;user-select:none}
+.status-bar .sp{flex:1;min-width:0}
+.status-bar .ph{width:13px;height:13px}
+.status-bar .cur{display:inline-flex;align-items:center;gap:5px}
+
+/* ---------- menus (#ctx-menu) ---------- */
+.menus{display:grid;grid-template-columns:repeat(auto-fill,minmax(262px,1fr));gap:16px 14px;align-items:start}
+.menus figure{margin:0}
+.menus figcaption{margin:0 2px 5px;font-size:11px;font-weight:600;color:var(--fg-dim)}
+.cm{margin:0;padding:4px;list-style:none;background:var(--bg-3);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow)}
+.cm li{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:4px;font-size:12.5px;min-height:30px}
+.cm li .ph{width:15px;height:15px;color:var(--fg-dim)}
+.cm li.sep{height:1px;min-height:0;padding:0;margin:4px 2px;background:var(--border)}
+.cm li.info{display:block;min-height:0;padding:6px 10px;font-size:11px;font-weight:600;color:var(--fg-dim);white-space:normal;line-height:1.4}
+.cm li.sum{color:var(--fg-dim);white-space:normal;line-height:1.4}
+.cm li.dng,.cm li.dng .ph{color:var(--err)}
+.cm li.dis,.cm li.dis .ph{color:var(--fg-dim);opacity:.55}
+.cm li.hl{background:var(--bg-hover)}
+.cm li .caret{margin-left:auto}
+.cm li .oname{font-weight:500}
+.cm li.chk .ph.ck{margin-left:auto;color:var(--accent)}
+.notes-on .cm li.n::after{content:"novo";margin-left:auto;padding:0 6px;border-radius:999px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));color:var(--accent);font-size:10px;line-height:15px;flex:none}
+.notes-on .cm li.n:has(.pin)::after{margin-left:6px}
+.cm .pin{margin-left:auto}
+.cm .sublist{margin:2px 0 4px 10px;padding:4px;list-style:none;background:var(--bg-2);border:1px solid var(--border);border-radius:6px}
+.cm .sublist li{min-height:28px}
+.cm .sublist li.sep{min-height:0;height:1px;padding:0}
+
+/* ---------- botoes e dialogo ---------- */
+.dlg{width:100%;max-width:520px;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;box-shadow:var(--dlg-shadow);color:var(--fg)}
+.dlg header{display:flex;align-items:center;gap:12px;padding:18px 20px 12px}
+.dlg h2{margin:0;font-size:16px;font-weight:600;line-height:1.3;flex:1;min-width:0}
+.badge{width:36px;height:36px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.badge .ph{width:22px;height:22px}
+.badge.danger{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err)}
+.dlg .desc{padding:0 20px 14px}
+.dlg .desc p{margin:0 0 6px;line-height:1.5}.dlg .desc p:last-child{margin:0}
+.dlg footer{display:flex;align-items:center;gap:10px;padding:0 20px 16px}
+.dlg footer .spacer{flex:1}
+button.cancel{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid transparent;border-radius:4px;color:var(--fg-dim);padding:4px 10px}
+button.cancel:hover{background:var(--bg-3);color:var(--fg);border-color:var(--border)}
+button.primary{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:var(--on-accent);border:1px solid var(--accent);border-radius:4px;padding:4px 12px;font-weight:600}
+button.primary:hover{background:var(--accent-hover)}
+button.primary[disabled]{opacity:.45;cursor:default}
+button.primary.dng{background:var(--err);border-color:var(--err);color:#fff}
+:root[data-theme="dark"] button.primary.dng{color:#1b1b1f}
+button.btn{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:5px;border:1px solid var(--border);background:var(--frame-bg);color:var(--fg);font-size:12px;white-space:nowrap}
+button.btn:hover{background:var(--bg-3)}
+button.btn .ph{width:13px;height:13px}
+button.btn[disabled]{opacity:.5;cursor:default}
+
+/* ---------- barra de topo do painel + barra de acoes (pf-head, pf-act do mold) ---------- */
+.pf-pane{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--frame-bg);color:var(--fg);font:13px var(--ui);border:1px solid var(--frame-border);border-radius:10px;overflow:hidden}
+.pf-head{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg-2)}
+.pf-title{font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:7px;min-width:0}
+.pf-title .ph{width:15px;height:15px;color:var(--fg-dim)}
+.pf-title .sub{font-weight:400;font-size:12px;color:var(--fg-dim)}
+.pf-bar{margin-left:auto;display:flex;align-items:center;gap:2px}
+.pf-act{display:inline-flex;align-items:center;justify-content:center;gap:5px;height:26px;min-width:28px;padding:0;border:0;border-radius:5px;background:none;color:var(--fg-dim);font:12px var(--ui);white-space:nowrap}
+.pf-act .ph{width:15px;height:15px}
+.pf-act:hover{background:var(--bg-hover);color:var(--fg)}
+.pf-act.pin-highlight{padding:0 9px 0 7px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-weight:600;margin-right:4px}
+.pf-act.pin-highlight:hover{background:color-mix(in srgb,var(--accent) 26%,transparent);color:var(--accent)}
+.pf-act.on{background:var(--bg-hover);color:var(--fg)}
+.pf-act.dng:hover{color:var(--err)}
+.pf-act.sm{height:22px;min-width:24px}.pf-act.sm .ph{width:14px;height:14px}
+.sec{margin:0;padding:10px 4px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+
+/* ---------- o conteudo da guia do canal ---------- */
+.chan{display:grid;grid-template-columns:minmax(0,1fr) 276px;min-height:440px}
+.chan.narrow{grid-template-columns:minmax(0,1fr)}
+.conv{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
+.narrow .conv{border-right:0}
+.msgs{flex:1;display:flex;flex-direction:column;gap:8px;padding:12px 14px}
+.sys{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--fg-dim);font-size:11.5px;line-height:1.4;text-align:center;padding:2px 0}
+.sys .ph{width:13px;height:13px}
+.sys b{font-weight:600;color:var(--fg)}
+.sys .oname{font-weight:600}
+.sys time{color:var(--fg-dim);opacity:.85}
+.sepline{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:600;color:var(--fg-dim)}
+.sepline::before,.sepline::after{content:"";flex:1;border-top:1px solid var(--border)}
+.sepline.u{color:var(--alert-text)}.sepline.u::before,.sepline.u::after{border-color:color-mix(in srgb,var(--x-alert) 50%,transparent)}
+.msg{display:flex;flex-direction:column;gap:3px;padding:6px 10px 7px 10px;border-left:3px solid hsl(var(--oh) var(--oc-solid));border-radius:3px 8px 8px 3px;min-width:0}
+.msg .who{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.msg .who time{margin-left:auto;font-size:11px;color:var(--fg-dim)}
+.msg p{margin:0;line-height:1.5}
+.msg.mod{border-left-color:var(--fg-dim);background:var(--bg-2)}
+.msg.mod .nm{font-weight:600;color:var(--fg)}
+/* fala dirigida ao usuario: o unico lugar da conversa onde o laranja aparece */
+.msg.to-me{background:color-mix(in srgb,var(--x-alert) 9%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--x-alert) 32%,transparent)}
+.msg.long p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mutebar{display:flex;align-items:center;gap:7px;padding:5px 14px;border-top:1px solid var(--border);background:var(--bg-2);font-size:11.5px;color:var(--fg-dim)}
+.mutebar .ph{width:13px;height:13px}
+.say{border-top:1px solid var(--border);padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--frame-bg)}
+.say .to{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-dim);flex-wrap:wrap}
+.say .to .dsel{position:relative}
+.say .field{border:1px solid var(--border);border-radius:6px;min-height:52px;padding:8px 10px;color:var(--fg-dim);background:var(--bg);line-height:1.45}
+.say .field.off{opacity:.55}
+.say .row{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--fg-dim)}
+.say .row .sp{flex:1}
+button.dsel{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:12px}
+button.dsel .ph{width:12px;height:12px;color:var(--fg-dim)}
+.members{padding:6px 6px 10px;background:var(--bg-2);min-width:0}
+.mrow{display:flex;flex-direction:column;gap:3px;padding:7px 8px;border-radius:6px}
+.mrow:hover{background:var(--bg-hover)}
+.mrow .l1{display:flex;align-items:center;gap:7px;min-width:0}
+.mrow .l1 .oname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .l2{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding-left:23px;min-height:24px}
+.mrow .l2 .sp{flex:1}
+.mrow.gone .oname{color:var(--fg-dim);font-weight:500}
+.fold{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg-2);font-size:12px}
+.fold .stackem{display:inline-flex}.fold .stackem .em{margin-left:-4px;box-shadow:0 0 0 2px var(--bg-2)}.fold .stackem .em:first-child{margin-left:0}
+.fold .sp{flex:1}
+.fold .ph{width:13px;height:13px;color:var(--fg-dim)}
+.narrow-frame{max-width:392px;width:100%}
+.mem-open{border-bottom:1px solid var(--border);background:var(--bg-2);padding:2px 6px 8px}
+.empty{display:grid;place-items:center;text-align:center;padding:30px 20px;gap:6px;min-height:160px}
+.empty .ill{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--bg-3);color:var(--fg-dim)}
+.empty .ill .ph{width:24px;height:24px}
+.empty p{margin:0;max-width:340px;line-height:1.5}
+.empty p.t{font-weight:650;font-size:14px}
+
+/* tabela problema -> onde (a tabela do mold: .demo) */
+table.demo{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--bg-2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.demo th,.demo td{padding:9px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border);line-height:1.5}
+.demo th{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim);background:var(--bg-3)}
+.demo tr:last-child td{border-bottom:0}
+.demo td b.k{display:inline-grid;place-items:center;min-width:22px;height:18px;padding:0 5px;margin-right:6px;border-radius:9px;background:var(--bg-3);font-size:10.5px}
+.side{display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);margin-top:0}
+.side .it{display:flex;align-items:center;gap:8px;color:var(--fg-dim);font-size:12px}
+.side .it b{color:var(--fg);font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.cm li.chk .ck svg{color:var(--accent)}
+.cm li.chk .ck{margin-left:auto}
+
+/* ---------- "Paineis da mesa" (extensions/panel-pad-manager/manager.css) ---------- */
+.pf-filter{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.pf-chip{height:28px;padding:0 12px;border:0;background:var(--bg);color:var(--fg);font:12.5px var(--ui);white-space:nowrap}
+.pf-chip+.pf-chip{border-left:1px solid var(--border)}
+.pf-chip[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-weight:600}
+.pf-list{padding:6px}
+.pf-owner{display:flex;align-items:center;gap:6px;min-width:0;padding:6px 8px 4px;font-size:12px;color:var(--fg-dim)}
+.pf-owner .ph{width:13px;height:13px}
+.pf-o-name{font-weight:600;color:var(--fg)}
+.pf-o-state{color:var(--ok)}
+.pf-row{display:flex;flex-direction:column;gap:3px;margin-left:12px;padding:6px 10px;border-radius:6px}
+.pf-row:hover{background:var(--bg-hover)}
+.pf-row.sel{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.pf-r-head{display:flex;align-items:center;gap:6px;min-width:0}
+.pf-r-icon{display:inline-flex;color:var(--fg-dim)}.pf-r-icon .ph{width:14px;height:14px}
+.pf-r-title{font-weight:600;white-space:nowrap}
+.pf-r-kind{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--fg-dim)}
+.pf-r-line{padding-left:20px;font-size:12px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-r-bar{display:flex;align-items:center;gap:2px;min-width:0;padding:2px 0 0 20px}
+.pf-r-bar .sp{flex:1}
+.pf-act.txt{padding:0 8px 0 6px}
+.pf-row.gone .pf-r-title{color:var(--fg-dim)}
+
+/* ---------- seletor em dois passos (docs/for-agents-preview .pick) ---------- */
+.pick .ph{flex:none}
+.pick .srch{display:flex;align-items:center;gap:8px;margin:0 20px 6px;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg-dim)}
+.pick .srch .ph{width:15px;height:15px}
+.pick h4{margin:0;padding:10px 20px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.pick .opt{display:flex;align-items:center;gap:9px;margin:0 12px 2px;padding:6px 8px;border-radius:6px}
+.pick .opt.sel{background:color-mix(in srgb,var(--accent) 16%,var(--bg-3));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent)}
+.pick .opt.dim{opacity:.6}
+.pick .opt .meta{color:var(--fg-dim);font-size:11.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick .opt .nm{white-space:nowrap;font-weight:500}
+.pick .opt .k{color:var(--fg-dim);width:14px;font-size:11px;text-align:center;flex:none}
+.pick .opt .sp{flex:1}
+.pick .note{margin:6px 20px 10px;color:var(--fg-dim);font-size:12px;line-height:1.45}
+.pick footer{padding:10px 20px 14px;border-top:1px solid var(--border);margin-top:8px;color:var(--fg-dim);font-size:12px}
+.cb{width:15px;height:15px;border-radius:4px;border:1px solid var(--border);background:var(--bg);flex:none;display:inline-grid;place-items:center}
+.cb.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.cb .ph{width:11px;height:11px}
+.pick header .ib{margin-left:auto}
+
+/* ---------- sino (app/renderer/bell.ts) ---------- */
+.bellwrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.bellpop{width:340px;max-width:100%;background:var(--bg-3);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:6px 0;font-size:12.5px}
+.bellpop h5{margin:0;padding:6px 12px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.bellpop .it{display:flex;align-items:center;gap:8px;padding:6px 12px}
+.bellpop .it:hover{background:var(--bg-hover)}
+.bellpop .it .nm{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bellpop .it .kd{margin-left:auto;font-size:11px;color:var(--alert-text);font-weight:600}
+.bellpop .it .kd.fin{color:var(--fg-dim);font-weight:500}
+.bellpop .it .at{font-size:11px;color:var(--fg-dim);flex:none;width:34px;text-align:right}
+.bellpop .rest{padding:6px 12px;color:var(--fg-dim);font-size:11.5px;border-top:1px solid var(--border);margin-top:4px}
+.bellbtn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:6px;background:var(--bg-2);border:1px solid var(--border);color:var(--fg)}
+.bellbtn .cnt{position:absolute;top:-6px;right:-6px;box-shadow:0 0 0 2px var(--desk-bg)}
+.bellbtn .ph{width:16px;height:16px}
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:900px){.states{grid-template-columns:1fr}}
+.state{border:1px solid var(--border);border-radius:10px;background:var(--bg-2);padding:10px 12px;display:grid;gap:8px;align-content:start}
+.state h5{margin:0;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-dim)}
+.tl{display:grid;gap:8px}
+.tl .step{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;align-items:start}
+.tl .step .k{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--bg-3);font-size:11px;font-weight:700;margin-top:2px}
+</style></head>
+<body class="notes-on">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="p-circle-half" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm8,16.37a86.4,86.4,0,0,1,16,3V212.67a86.4,86.4,0,0,1-16,3Zm32,9.26a87.81,87.81,0,0,1,16,10.54V195.83a87.81,87.81,0,0,1-16,10.54ZM40,128a88.11,88.11,0,0,1,80-87.63V215.63A88.11,88.11,0,0,1,40,128Zm160,50.54V77.46a87.82,87.82,0,0,1,0,101.08Z"/></symbol>
+<symbol id="p-robot" viewBox="0 0 256 256"><path d="M200,48H136V16a8,8,0,0,0-16,0V48H56A32,32,0,0,0,24,80V192a32,32,0,0,0,32,32H200a32,32,0,0,0,32-32V80A32,32,0,0,0,200,48Zm16,144a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V80A16,16,0,0,1,56,64H200a16,16,0,0,1,16,16Zm-52-56H92a28,28,0,0,0,0,56h72a28,28,0,0,0,0-56Zm-24,16v24H116V152ZM80,164a12,12,0,0,1,12-12h8v24H92A12,12,0,0,1,80,164Zm84,12h-8V152h8a12,12,0,0,1,0,24ZM72,108a12,12,0,1,1,12,12A12,12,0,0,1,72,108Zm88,0a12,12,0,1,1,12,12A12,12,0,0,1,160,108Z"/></symbol>
+<symbol id="p-crown-simple" viewBox="0 0 256 256"><path d="M230.9,73.6A15.85,15.85,0,0,0,212,77.39l-33.67,36.29-35.8-80.29a1,1,0,0,1,0-.1,16,16,0,0,0-29.06,0,1,1,0,0,1,0,.1l-35.8,80.29L44,77.39A16,16,0,0,0,16.25,90.81c0,.11,0,.21.07.32L39,195a16,16,0,0,0,15.72,13H201.29A16,16,0,0,0,217,195L239.68,91.13c0-.11,0-.21.07-.32A15.85,15.85,0,0,0,230.9,73.6ZM201.35,191.68l-.06.32H54.71l-.06-.32L32,88l.14.16,42,45.24a8,8,0,0,0,13.18-2.18L128,40l40.69,91.25a8,8,0,0,0,13.18,2.18l42-45.24L224,88Z"/></symbol>
+<symbol id="p-dots-three" viewBox="0 0 256 256"><path d="M140,128a12,12,0,1,1-12-12A12,12,0,0,1,140,128Zm56-12a12,12,0,1,0,12,12A12,12,0,0,0,196,116ZM60,116a12,12,0,1,0,12,12A12,12,0,0,0,60,116Z"/></symbol>
+<symbol id="p-bell" viewBox="0 0 256 256"><path d="M221.8,175.94C216.25,166.38,208,139.33,208,104a80,80,0,1,0-160,0c0,35.34-8.26,62.38-13.81,71.94A16,16,0,0,0,48,200H88.81a40,40,0,0,0,78.38,0H208a16,16,0,0,0,13.8-24.06ZM128,216a24,24,0,0,1-22.62-16h45.24A24,24,0,0,1,128,216ZM48,184c7.7-13.24,16-43.92,16-80a64,64,0,1,1,128,0c0,36.05,8.28,66.73,16,80Z"/></symbol>
+<symbol id="p-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+<symbol id="p-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+<symbol id="p-caret-right" viewBox="0 0 256 256"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></symbol>
+<symbol id="p-check" viewBox="0 0 256 256"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></symbol>
+<symbol id="p-magnifying-glass" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol>
+<symbol id="p-arrow-counter-clockwise" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></symbol>
+<symbol id="p-arrow-square-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"/></symbol>
+<symbol id="p-pencil-simple" viewBox="0 0 256 256"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></symbol>
+<symbol id="p-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+<symbol id="p-eye" viewBox="0 0 256 256"><path d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.47,133.47,0,0,1,25,128,133.33,133.33,0,0,1,48.07,97.25C70.33,75.19,97.22,64,128,64s57.67,11.19,79.93,33.25A133.46,133.46,0,0,1,231.05,128C223.84,141.46,192.43,192,128,192Zm0-112a48,48,0,1,0,48,48A48.05,48.05,0,0,0,128,80Zm0,80a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></symbol>
+<symbol id="p-chats-circle" viewBox="0 0 256 256"><path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z"/></symbol>
+<symbol id="p-user-plus" viewBox="0 0 256 256"><path d="M256,136a8,8,0,0,1-8,8H232v16a8,8,0,0,1-16,0V144H200a8,8,0,0,1,0-16h16V112a8,8,0,0,1,16,0v16h16A8,8,0,0,1,256,136Zm-57.87,58.85a8,8,0,0,1-12.26,10.3C165.75,181.19,138.09,168,108,168s-57.75,13.19-77.87,37.15a8,8,0,0,1-12.25-10.3c14.94-17.78,33.52-30.41,54.17-37.17a68,68,0,1,1,71.9,0C164.6,164.44,183.18,177.07,198.13,194.85ZM108,152a52,52,0,1,0-52-52A52.06,52.06,0,0,0,108,152Z"/></symbol>
+<symbol id="p-user-minus" viewBox="0 0 256 256"><path d="M256,136a8,8,0,0,1-8,8H200a8,8,0,0,1,0-16h48A8,8,0,0,1,256,136Zm-57.87,58.85a8,8,0,0,1-12.26,10.3C165.75,181.19,138.09,168,108,168s-57.75,13.19-77.87,37.15a8,8,0,0,1-12.25-10.3c14.94-17.78,33.52-30.41,54.17-37.17a68,68,0,1,1,71.9,0C164.6,164.44,183.18,177.07,198.13,194.85ZM108,152a52,52,0,1,0-52-52A52.06,52.06,0,0,0,108,152Z"/></symbol>
+<symbol id="p-users" viewBox="0 0 256 256"><path d="M117.25,157.92a60,60,0,1,0-66.5,0A95.83,95.83,0,0,0,3.53,195.63a8,8,0,1,0,13.4,8.74,80,80,0,0,1,134.14,0,8,8,0,0,0,13.4-8.74A95.83,95.83,0,0,0,117.25,157.92ZM40,108a44,44,0,1,1,44,44A44.05,44.05,0,0,1,40,108Zm210.14,98.7a8,8,0,0,1-11.07-2.33A79.83,79.83,0,0,0,172,168a8,8,0,0,1,0-16,44,44,0,1,0-16.34-84.87,8,8,0,1,1-5.94-14.85,60,60,0,0,1,55.53,105.64,95.83,95.83,0,0,1,47.22,37.71A8,8,0,0,1,250.14,206.7Z"/></symbol>
+<symbol id="p-user" viewBox="0 0 256 256"><path d="M230.92,212c-15.23-26.33-38.7-45.21-66.09-54.16a72,72,0,1,0-73.66,0C63.78,166.78,40.31,185.66,25.08,212a8,8,0,1,0,13.85,8c18.84-32.56,52.14-52,89.07-52s70.23,19.44,89.07,52a8,8,0,1,0,13.85-8ZM72,96a56,56,0,1,1,56,56A56.06,56.06,0,0,1,72,96Z"/></symbol>
+<symbol id="p-speaker-slash" viewBox="0 0 256 256"><path d="M53.92,34.62A8,8,0,1,0,42.08,45.38L73.55,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V175.09l42.08,46.29a8,8,0,1,0,11.84-10.76ZM32,96H72v64H32ZM144,207.64,88,164.09V95.89l56,61.6Zm42-63.77a24,24,0,0,0,0-31.72,8,8,0,1,1,12-10.57,40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.59Zm-80.16-76a8,8,0,0,1,1.4-11.23l39.85-31A8,8,0,0,1,160,32v74.83a8,8,0,0,1-16,0V48.36l-26.94,21A8,8,0,0,1,105.84,67.91ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z"/></symbol>
+<symbol id="p-speaker-high" viewBox="0 0 256 256"><path d="M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z"/></symbol>
+<symbol id="p-arrow-line-down" viewBox="0 0 256 256"><path d="M50.34,117.66a8,8,0,0,1,11.32-11.32L120,164.69V32a8,8,0,0,1,16,0V164.69l58.34-58.35a8,8,0,0,1,11.32,11.32l-72,72a8,8,0,0,1-11.32,0ZM216,208H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></symbol>
+<symbol id="p-paper-plane-tilt" viewBox="0 0 256 256"><path d="M227.32,28.68a16,16,0,0,0-15.66-4.08l-.15,0L19.57,82.84a16,16,0,0,0-2.49,29.8L102,154l41.3,84.87A15.86,15.86,0,0,0,157.74,248q.69,0,1.38-.06a15.88,15.88,0,0,0,14-11.51l58.2-191.94c0-.05,0-.1,0-.15A16,16,0,0,0,227.32,28.68ZM157.83,231.85l-.05.14,0-.07-40.06-82.3,48-48a8,8,0,0,0-11.31-11.31l-48,48L24.08,98.25l-.07,0,.14,0L216,40Z"/></symbol>
+<symbol id="p-prohibit" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm88,104a87.56,87.56,0,0,1-20.41,56.28L71.72,60.4A88,88,0,0,1,216,128ZM40,128A87.56,87.56,0,0,1,60.41,71.72L184.28,195.6A88,88,0,0,1,40,128Z"/></symbol>
+<symbol id="p-lock" viewBox="0 0 256 256"><path d="M208,80H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Zm-68-56a12,12,0,1,1-12-12A12,12,0,0,1,140,152Z"/></symbol>
+<symbol id="p-arrow-bend-down-right" viewBox="0 0 256 256"><path d="M229.66,157.66l-48,48a8,8,0,0,1-11.32-11.32L204.69,160H128A104.11,104.11,0,0,1,24,56a8,8,0,0,1,16,0,88.1,88.1,0,0,0,88,88h76.69l-34.35-34.34a8,8,0,0,1,11.32-11.32l48,48A8,8,0,0,1,229.66,157.66Z"/></symbol>
+<symbol id="p-at" viewBox="0 0 256 256"><path d="M128,24a104,104,0,0,0,0,208c21.51,0,44.1-6.48,60.43-17.33a8,8,0,0,0-8.86-13.33C166,210.38,146.21,216,128,216a88,88,0,1,1,88-88c0,26.45-10.88,32-20,32s-20-5.55-20-32V88a8,8,0,0,0-16,0v4.26a48,48,0,1,0,5.93,65.1c6,12,16.35,18.64,30.07,18.64,22.54,0,36-17.94,36-48A104.11,104.11,0,0,0,128,24Zm0,136a32,32,0,1,1,32-32A32,32,0,0,1,128,160Z"/></symbol>
+<symbol id="p-arrow-up" viewBox="0 0 256 256"><path d="M205.66,117.66a8,8,0,0,1-11.32,0L136,59.31V216a8,8,0,0,1-16,0V59.31L61.66,117.66a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0l72,72A8,8,0,0,1,205.66,117.66Z"/></symbol>
+<symbol id="p-arrow-down" viewBox="0 0 256 256"><path d="M205.66,149.66l-72,72a8,8,0,0,1-11.32,0l-72-72a8,8,0,0,1,11.32-11.32L120,196.69V40a8,8,0,0,1,16,0V196.69l58.34-58.35a8,8,0,0,1,11.32,11.32Z"/></symbol>
+</svg>
+<div class="ctl"><label><input type="checkbox" id="ann" checked> mostrar anotações da estrutura</label><button class="ib" id="theme" title="Tema claro/escuro" aria-label="Alternar tema claro e escuro"><i class="ic" data-i="circle-half"></i></button></div>
+<div class="page">
+ <div class="top">
+  <h1>Tether canais · prévia visual</h1>
+  <p>Passo 2 da prévia: a estrutura do wireframe com a língua do tether, a mesma de <i>tether for agents</i>: os mesmos tokens, a mesma cápsula de mesas, as mesmas abas, o mesmo menu de contexto, a mesma barra de topo de painel com barra de ações. Cada agente leva uma cor só, a da guia dele; o moderador (você) não usa cor de agente; o laranja é só para o que precisa de você. Claro e escuro pelo botão no canto. Nomes de exemplo neutros: dona <b>Atrium</b>, mesa <b>obra</b>.</p>
+ </div>
+
+<section class="s" id="sinais">
+ <h2><span class="n">·</span>Sinais do canal, uma vez cada</h2>
+ <p class="lead">Nada novo no vocabulário de cor. O que o canal acrescenta é só a forma de dizer "há falas novas que não são para você": um anel vazado, sem cor e sem número.</p>
+ <div class="side">
+  <span class="it"><span class="attn-dot"></span><span class="cnt">1</span><b>laranja</b> alguém se dirige a você (e só isso)</span>
+  <span class="it"><span class="ring"></span><b>anel quieto</b> há falas novas, nenhuma é para você</span>
+  <span class="it o o-conferente"><span class="em"><i class="ic" data-i="robot"></i></span><b class="oname">cor da guia</b> o autor da fala</span>
+  <span class="it"><span class="em me"><i class="ic" data-i="user"></i></span><b>sem cor de agente</b> você, o moderador</span>
+  <span class="it o o-atrium"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><b>coroa</b> o dono do canal</span>
+  <span class="it"><span class="role mute"><i class="ic" data-i="speaker-slash"></i>calado</span> ouve e não fala</span>
+ </div>
+</section>
+
+<!-- ======================================================== 0 -->
+<section class="s" id="b0">
+ <h2><span class="n">0</span>Problema → onde se resolve</h2>
+ <table class="demo">
+  <thead><tr><th style="width:23%">Problema do usuário</th><th>Onde se resolve na tela</th><th style="width:27%">Já existe e é reaproveitado</th></tr></thead>
+  <tbody>
+   <tr><td><b class="k">C1</b>saber que canais existem e quem está em cada um</td><td>Aba do canal ao lado das demais guias (§2) · lista de membros ao lado da conversa (§1) · seletor de dois passos, passo 1, aberto por "Abrir canal…" no menu da pílula (§3) · "Painéis da mesa" mostra os canais da mesa como guias (§2) · no menu da aba de um agente, "Canais de [agente] ▸" (§6)</td><td>Abas · "Painéis da mesa" · seletor em dois passos · menu da aba com submenu</td></tr>
+   <tr><td><b class="k">C2</b>ler o que conversam</td><td>Área de conteúdo da guia: conversa com autor na cor da guia, papel e hora, linhas de sistema e o marcador "novas para você" (§1, §4)</td><td>Painel = barra de topo + conteúdo · cor da guia do agente</td></tr>
+   <tr><td><b class="k">C3</b>falar</td><td>Caixa de fala do moderador no pé da guia, com destinatário "todos" ou um membro; o destinatário é endereço, todos ouvem (§1)</td><td>Parte do conteúdo do painel, sem gestor novo</td></tr>
+   <tr><td><b class="k">C4</b>juntar, tirar e calar</td><td>Juntar: ação do canal, único item com texto e accent da barra (§1) · Tirar e Calar: ação do membro, na linha dele (§1) · sem nome de canal, o seletor abre com o canal da mesa em destaque (§3) · cada gesto deixa uma linha de sistema na conversa</td><td>Barra de ações pinada · menu da aba · seletor em dois passos · diálogo declarado</td></tr>
+   <tr><td><b class="k">C5</b>saber quando alguém se dirige a mim</td><td>Ponto e contador laranja na aba · soma no contador laranja da pílula da mesa · item no sino que abre a guia do canal (§4)</td><td>Marcas de espera do usuário (aba, pílula, sino)</td></tr>
+   <tr><td><b class="k">C6</b>encerrar e reabrir um canal</td><td>"Encerrar canal…" no menu da aba (perigoso, não pinado), com diálogo declarado; o encerrado fica legível e o único item com accent vira "Reabrir canal" (§6)</td><td>Menu da aba · diálogo declarado</td></tr>
+   <tr><td><b class="k">C7</b>canal de uma mesa com dono</td><td>O canal da mesa segue a mesa: nasce com o dono, encerra quando ela fica sem dono e reabre sozinho, com o mesmo histórico, quando ganha um novo (§5)</td><td>Menu da pílula · o dono da mesa</td></tr>
+  </tbody>
+ </table>
+</section>
+
+<!-- ======================================================== 1 -->
+<section class="s" id="b1">
+ <h2><span class="n">1</span>A guia do canal</h2>
+ <p class="lead">Painel = barra de topo (título e barra de ações) + conteúdo. A barra tem dois ícones pinados e um só item com texto e accent, "Juntar agente…", que aparece uma vez. O conteúdo é conversa, caixa de fala e lista de membros.</p>
+ <div class="blk">
+  <div>
+   <div class="frame">
+    <div class="strip">
+     <div class="tab o o-atrium"><i class="ic kind" data-i="robot"></i><span class="text">Atrium · Claude</span><span class="em crown"><i class="ic" data-i="crown-simple"></i></span></div>
+     <div class="tab on"><i class="ic kind" data-i="chats-circle"></i><span class="text">#conferência</span><span class="ring" title="falas novas que não são para você"></span><span class="x"><i class="ic" data-i="x"></i></span></div>
+     <div class="tab o o-conferente"><i class="ic kind" data-i="robot"></i><span class="text">claude · conferente</span><span class="busy-dot"></span></div>
+    </div>
+    <div class="pf-head">
+     <div class="pf-title"><i class="ic" data-i="chats-circle"></i>#conferência <span class="sub">4 membros · dono: <span class="oname o o-atrium">Atrium</span></span></div>
+     <div class="pf-bar">
+      <button class="pf-act pin-highlight" title="Juntar agente…"><i class="ic" data-i="user-plus"></i>Juntar agente…</button>
+      <button class="pf-act on" title="Membros"><i class="ic" data-i="users"></i></button>
+      <button class="pf-act" title="Ir para o fim"><i class="ic" data-i="arrow-line-down"></i></button>
+      <button class="pf-act" title="Mais"><i class="ic" data-i="dots-three"></i></button>
+     </div>
+    </div>
+    <div class="chan">
+     <div class="conv">
+      <div class="msgs">
+       <div class="sepline">hoje</div>
+       <div class="sys"><i class="ic" data-i="user-plus"></i><span><b class="oname o o-atrium">Atrium</b> criou o canal e juntou <b class="oname o o-conferente">claude · conferente</b>, <b class="oname o o-bancada">soul · bancada</b> e <b class="oname o o-conferencia">codex · conferência</b></span><time>13:58</time></div>
+       <div class="msg o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="role">dono</span><span class="dest"><i class="ic" data-i="arrow-bend-down-right"></i>para <span class="oname o o-conferente">claude · conferente</span></span><time>14:02</time></div><p>O teste de integração caiu na etapa 3. Pode conferir o log?</p></div>
+       <div class="msg o o-conferente"><div class="who"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span><span class="role">membro</span><span class="dest">para todos</span><time>14:03</time></div><p>Conferindo. Parece variável de ambiente ausente na etapa 3.</p></div>
+       <div class="sys"><i class="ic" data-i="speaker-slash"></i><span><b class="oname o o-atrium">Atrium</b> calou <b class="oname o o-conferencia">codex · conferência</b></span><time>14:03</time></div>
+       <div class="msg o o-bancada"><div class="who"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span><span class="role">membro</span><span class="dest">para todos</span><time>14:04</time></div><p>Posso subir a etapa 3 de novo assim que a variável estiver no lugar.</p></div>
+       <div class="sepline u">novas para você · 14:05</div>
+       <div class="msg to-me o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="role">dono</span><span class="tome"><i class="ic" data-i="arrow-bend-down-right"></i>para você</span><time>14:05</time></div><p>Posso rodar a migração em produção? Preciso do seu OK.</p></div>
+       <div class="msg mod"><div class="who"><span class="em me"><i class="ic" data-i="user"></i></span><span class="nm">Você</span><span class="role mod">moderador</span><span class="dest"><i class="ic" data-i="arrow-bend-down-right"></i>para <span class="oname o o-atrium">Atrium</span></span><time>14:06</time></div><p>Sim, mas só depois de claude · conferente confirmar o log.</p></div>
+      </div>
+      <div class="mutebar"><i class="ic" data-i="speaker-slash"></i>1 calado neste canal: <span class="oname o o-conferencia">codex · conferência</span>. Ouve tudo e não fala.</div>
+      <div class="say">
+       <div class="to">falar como <span class="role mod">moderador</span> · para <button class="dsel" aria-haspopup="menu">todos<i class="ic" data-i="caret-down"></i></button><span>ou escolha um membro</span></div>
+       <div class="field">Escreva para o canal…</div>
+       <div class="row"><span><kbd>Enter</kbd> envia · <kbd>Shift</kbd>+<kbd>Enter</kbd> nova linha</span><span class="sp"></span><button class="primary"><i class="ic" data-i="paper-plane-tilt"></i>Enviar</button></div>
+      </div>
+     </div>
+     <div class="members">
+      <div class="sec">Membros · 4</div>
+      <div class="mrow o o-atrium"><div class="l1"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span></div><div class="l2"><span class="role">dono</span><span class="sp"></span><button class="pf-act sm" title="Mais"><i class="ic" data-i="dots-three"></i></button></div></div>
+      <div class="mrow o o-conferente"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span></div><div class="l2"><span class="role">membro</span><span class="sp"></span><button class="pf-act sm" title="Calar"><i class="ic" data-i="speaker-slash"></i></button><button class="pf-act sm" title="Tirar do canal"><i class="ic" data-i="user-minus"></i></button><button class="pf-act sm" title="Mais"><i class="ic" data-i="dots-three"></i></button></div></div>
+      <div class="mrow o o-bancada"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span></div><div class="l2"><span class="role">membro</span><span class="sp"></span><button class="pf-act sm" title="Calar"><i class="ic" data-i="speaker-slash"></i></button><button class="pf-act sm" title="Tirar do canal"><i class="ic" data-i="user-minus"></i></button><button class="pf-act sm" title="Mais"><i class="ic" data-i="dots-three"></i></button></div></div>
+      <div class="mrow o o-conferencia"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">codex · conferência</span></div><div class="l2"><span class="role">membro</span><span class="role mute"><i class="ic" data-i="speaker-slash"></i>calado</span><span class="sp"></span><button class="pf-act sm" title="Devolver a voz"><i class="ic" data-i="speaker-high"></i></button><button class="pf-act sm" title="Tirar do canal"><i class="ic" data-i="user-minus"></i></button><button class="pf-act sm" title="Mais"><i class="ic" data-i="dots-three"></i></button></div></div>
+      <div class="mrow"><div class="l1"><span class="em me"><i class="ic" data-i="user"></i></span><span style="font-weight:600">Você</span></div><div class="l2"><span class="role mod">moderador</span><span class="mut" style="font-size:11px">lê tudo, fala em qualquer canal</span></div></div>
+      <p class="cap" style="margin:8px 8px 0">Clicar no nome vai para a guia do agente.</p>
+     </div>
+    </div>
+    <div class="status-bar"><span class="cur"><i class="ic" data-i="eye"></i>você lê tudo</span><span>#conferência · criado por Atrium · 13:58</span><span class="sp"></span><span>4 membros · 1 calado</span></div>
+   </div>
+   <p class="cap"><b>Como se lê.</b> A barra esquerda de cada fala é a cor da guia de quem fala; o autor tem uma cor só em todos os canais. O destinatário ("para …") é um endereço na cor de quem o recebe, não uma trava: todos os membros ouvem toda fala. A única fala com laranja é a dirigida a você ("para você"), e o separador "novas para você" a acompanha. As linhas de sistema (juntou, calou, tirou, devolveu a voz, encerrou, reabriu) ficam no fio da conversa, sem cor própria, só com o nome de cada agente na cor dele.</p>
+
+   <h3 class="sub">Largura estreita: duas composições, não a mesma reflowada</h3>
+   <div class="two">
+    <div class="frame narrow-frame">
+     <div class="pf-head">
+      <div class="pf-title"><i class="ic" data-i="chats-circle"></i>#conferência</div>
+      <div class="pf-bar"><button class="pf-act pin-highlight" title="Juntar agente…"><i class="ic" data-i="user-plus"></i></button><button class="pf-act" title="Membros"><i class="ic" data-i="users"></i></button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div>
+     </div>
+     <div class="fold"><span class="stackem"><span class="em crown o o-atrium"><i class="ic" data-i="crown-simple"></i></span><span class="em o o-conferente"><i class="ic" data-i="robot"></i></span><span class="em o o-bancada"><i class="ic" data-i="robot"></i></span><span class="em o o-conferencia"><i class="ic" data-i="robot"></i></span></span><span>4 membros</span><span class="role mute"><i class="ic" data-i="speaker-slash"></i>1</span><span class="sp"></span><i class="ic" data-i="caret-right"></i></div>
+     <div class="chan narrow" style="min-height:0">
+      <div class="conv">
+       <div class="msgs" style="padding:10px 10px">
+        <div class="msg to-me o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="tome"><i class="ic" data-i="arrow-bend-down-right"></i>para você</span><time>14:05</time></div><p>Posso rodar a migração em produção? Preciso do seu OK.</p></div>
+        <div class="msg mod"><div class="who"><span class="em me"><i class="ic" data-i="user"></i></span><span class="nm">Você</span><span class="dest">para <span class="oname o o-atrium">Atrium</span></span><time>14:06</time></div><p>Sim, só depois de conferirem o log.</p></div>
+       </div>
+       <div class="say" style="padding:8px 10px"><div class="to">para <button class="dsel">todos<i class="ic" data-i="caret-down"></i></button></div><div class="field" style="min-height:40px">Escreva para o canal…</div><div class="row"><span class="sp"></span><button class="primary"><i class="ic" data-i="paper-plane-tilt"></i>Enviar</button></div></div>
+      </div>
+     </div>
+    </div>
+    <div class="frame narrow-frame">
+     <div class="pf-head">
+      <div class="pf-title"><i class="ic" data-i="chats-circle"></i>#conferência</div>
+      <div class="pf-bar"><button class="pf-act pin-highlight" title="Juntar agente…"><i class="ic" data-i="user-plus"></i></button><button class="pf-act on" title="Membros"><i class="ic" data-i="users"></i></button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div>
+     </div>
+     <div class="fold"><i class="ic" data-i="caret-down"></i><span>4 membros</span><span class="sp"></span><span class="mut">recolher</span></div>
+     <div class="mem-open">
+      <div class="mrow o o-atrium" style="padding:5px 8px"><div class="l1"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="role">dono</span></div></div>
+      <div class="mrow o o-conferente" style="padding:5px 8px"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span><span class="role">membro</span><span style="margin-left:auto" class="mut"><i class="ic" data-i="dots-three"></i></span></div></div>
+      <div class="mrow o o-bancada" style="padding:5px 8px"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span><span class="role">membro</span><span style="margin-left:auto" class="mut"><i class="ic" data-i="dots-three"></i></span></div></div>
+      <div class="mrow o o-conferencia" style="padding:5px 8px"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">codex · conferência</span><span class="role mute"><i class="ic" data-i="speaker-slash"></i>calado</span><span style="margin-left:auto" class="mut"><i class="ic" data-i="dots-three"></i></span></div></div>
+     </div>
+     <div class="pbody" style="height:52px">… conversa por baixo …</div>
+    </div>
+   </div>
+   <p class="cap">Na largura estreita a lista de membros desce para uma seção recolhida acima da conversa (à esquerda, recolhida; à direita, aberta pelo ícone de membros). Com pouco espaço a barra perde primeiro os ícones, depois o texto do accent, que fica por último; a caixa de fala não sai do pé.</p>
+
+   <h3 class="sub">Menus: aba do canal, membro e destinatário</h3>
+   <div class="menus">
+    <figure><figcaption>#conferência · menu da aba (o mesmo em "Painéis da mesa")</figcaption><ul class="cm">
+     <li class="info">Dono: Atrium · 4 membros · 1 calado</li>
+     <li class="n"><i class="ic" data-i="user-plus"></i>Juntar agente…<span class="ann tag pin">pin: accent</span></li>
+     <li class="n"><i class="ic" data-i="users"></i>Membros<span class="ann tag pin">pin: ícone</span></li>
+     <li class="n"><i class="ic" data-i="arrow-line-down"></i>Ir para o fim<span class="ann tag pin">pin: ícone</span></li>
+     <li class="n"><i class="ic" data-i="speaker-slash"></i>Calar agente…</li>
+     <li class="n"><i class="ic" data-i="speaker-high"></i>Devolver a voz…</li>
+     <li class="n"><i class="ic" data-i="user-minus"></i>Tirar agente…</li>
+     <li class="n"><i class="ic" data-i="magnifying-glass"></i>Buscar no canal…</li>
+     <li class="sep"></li>
+     <li class="sum">Renomear… · Copiar link · Mover…</li>
+     <li><i class="ic" data-i="x"></i>Fechar painel<span class="ann tag">só a guia</span></li>
+     <li class="dng n"><i class="ic" data-i="prohibit"></i>Encerrar canal…</li>
+    </ul></figure>
+    <figure class="o o-conferente"><figcaption>claude · conferente · menu do membro</figcaption><ul class="cm">
+     <li class="info">claude · conferente · membro</li>
+     <li class="n"><i class="ic" data-i="speaker-slash"></i>Calar<span class="ann tag pin">pin: ícone</span></li>
+     <li class="n"><i class="ic" data-i="user-minus"></i>Tirar do canal<span class="ann tag pin">pin: ícone</span></li>
+     <li class="n"><i class="ic" data-i="at"></i>Falar com <span class="oname">claude · conferente</span></li>
+     <li class="n"><i class="ic" data-i="arrow-square-out"></i>Ir para a guia do agente</li>
+    </ul></figure>
+    <figure><figcaption>Caixa de fala · escolher o destinatário</figcaption><ul class="cm">
+     <li class="chk hl"><i class="ic" data-i="users"></i>todos<i class="ic ph ck" data-i="check"></i></li>
+     <li class="sep"></li>
+     <li class="o o-atrium"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span></li>
+     <li class="o o-conferente"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span></li>
+     <li class="o o-bancada"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span></li>
+     <li class="o o-conferencia"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">codex · conferência</span><span class="role mute" style="margin-left:auto">calado</span></li>
+     <li class="info" style="font-weight:400">"para" só marca a quem a fala se dirige. Todos os membros ouvem.</li>
+    </ul></figure>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C1 (membros, papéis e calados à vista) · C2 (autor na cor da guia, papel, hora, linhas de sistema) · C3 (caixa de fala, destinatário como endereço) · C4 (Juntar no canal; Calar e Tirar no membro) · C6 (Encerrar no menu da aba)
+   <b>Reaproveita</b>painel = barra de topo + conteúdo · barra de ações pinada (ícone, um accent) · menu da aba · barra de status · cor da guia
+   <b>Novo</b>só o conteúdo: conversa, caixa de fala e lista de membros
+   <b>Ajuste pelo repositório</b>a barra de ações encolhe sozinha: ícones saem da direita para a esquerda, depois os textos, o accent por último</div>
+ </div>
+</section>
+
+<!-- ======================================================== 2 -->
+<section class="s" id="b2">
+ <h2><span class="n">2</span>Como se chega a um canal e se sabe quais existem</h2>
+ <p class="lead">Sem gestor novo. O canal é uma guia como as outras: aba na fila, cartão em "Painéis da mesa", mesmo menu. Um canal, uma guia: abrir de novo foca a que já existe, na mesa em que estiver.</p>
+ <div class="blk">
+  <div>
+   <div class="tbar"><div id="desk-switch">
+    <button class="seg" style="--seg-fill:var(--fg-dim)"><span class="nm">geral</span></button>
+    <button class="seg on o o-atrium" style="--seg-fill:var(--x-teal)"><span class="nm">obra</span><span class="own" title="Dona: Atrium"><i class="ic" data-i="robot"></i><span class="nm">Atrium</span></span><i class="ic chic" data-i="chats-circle"></i><span class="cnt">1</span></button>
+    <button class="seg" style="--seg-fill:var(--x-sky)"><span class="nm">bancada</span><span class="ring" title="falas novas, nenhuma para você"></span></button>
+   </div></div>
+   <div class="frame" style="margin-top:12px">
+    <div class="strip">
+     <div class="tab o o-atrium"><i class="ic kind" data-i="robot"></i><span class="text">Atrium · Claude</span><span class="em crown"><i class="ic" data-i="crown-simple"></i></span></div>
+     <div class="tab on"><i class="ic kind" data-i="chats-circle"></i><span class="text">#obra</span><span class="cnt">1</span><span class="x"><i class="ic" data-i="x"></i></span></div>
+     <div class="tab"><i class="ic kind" data-i="chats-circle"></i><span class="text">#conferência</span><span class="ring"></span></div>
+     <div class="tab o o-bancada"><i class="ic kind" data-i="robot"></i><span class="text">soul · bancada</span><span class="busy-dot"></span></div>
+    </div>
+    <div class="pbody">… conversa de #obra …</div>
+   </div>
+   <ol class="callouts" style="list-style:none">
+    <li><span class="k">1</span><span><b>Pílula da mesa com canal</b><br>A mesa <b>obra</b> tem dona; o ícone de canal na pílula diz que o canal existe, e o contador laranja soma o que espera você, sem contador novo.</span></li>
+    <li><span class="k">2</span><span><b>#obra</b> <span class="tip">· o canal da mesa, laranja com contador</span><br>1 fala dirigida a você, ainda sem resposta. É a aba em foco.</span></li>
+    <li><span class="k">3</span><span><b>#conferência</b> <span class="tip">· anel quieto</span><br>Há falas novas e nenhuma é para você. Sem cor, sem número, nada que chame.</span></li>
+   </ol>
+
+   <h3 class="sub">"Painéis da mesa" mostrando canais</h3>
+   <div class="pf-pane" style="max-width:660px">
+    <div class="pf-head"><span class="pf-title">Painéis da mesa</span>
+     <div class="pf-filter"><button class="pf-chip" aria-pressed="true">Todas</button><button class="pf-chip" aria-pressed="false">De painéis fechados (1)</button></div>
+     <div class="pf-bar"><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div></div>
+    <div class="pf-list">
+     <div class="pf-owner"><i class="ic" data-i="robot"></i><span class="pf-o-name">Atrium · Claude</span><span class="pf-o-state">rodando</span><span>· em foco</span></div>
+     <div class="pf-row sel o o-atrium">
+      <div class="pf-r-head"><span class="pf-r-icon"><i class="ic" data-i="chats-circle"></i></span><span class="pf-r-title">#obra</span><span class="role"><i class="ic" data-i="crown-simple"></i>canal da mesa</span><span class="pf-r-kind">canal · 3 membros</span><span class="attn-dot"></span></div>
+      <div class="pf-r-line">Atrium se dirige a você · 14:05</div>
+      <div class="pf-r-bar"><button class="pf-act txt"><i class="ic" data-i="arrow-square-out"></i>Focar guia</button><span class="sp"></span><button class="pf-act" title="Membros"><i class="ic" data-i="users"></i></button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div>
+     </div>
+     <div class="pf-row">
+      <div class="pf-r-head"><span class="pf-r-icon"><i class="ic" data-i="chats-circle"></i></span><span class="pf-r-title">#conferência</span><span class="pf-r-kind">canal · 4 membros · 1 calado</span><span class="ring"></span></div>
+      <div class="pf-r-line">última fala 14:04 · soul · bancada</div>
+      <div class="pf-r-bar"><button class="pf-act txt"><i class="ic" data-i="arrow-square-out"></i>Focar guia</button><span class="sp"></span><button class="pf-act" title="Membros"><i class="ic" data-i="users"></i></button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div>
+     </div>
+     <div class="pf-owner"><i class="ic" data-i="robot"></i><span class="pf-o-name">terminal</span><span>· fechado</span></div>
+     <div class="pf-row gone">
+      <div class="pf-r-head"><span class="pf-r-icon"><i class="ic" data-i="chats-circle"></i></span><span class="pf-r-title">#revisão</span><span class="role end"><i class="ic" data-i="lock"></i>encerrado</span><span class="pf-r-kind">canal · conversa guardada</span></div>
+      <div class="pf-r-bar"><button class="pf-act txt"><i class="ic" data-i="arrow-square-out"></i>Focar guia</button><span class="sp"></span><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div>
+     </div>
+    </div>
+   </div>
+   <p class="cap">Na prévia, "Painéis da mesa" lista as guias da mesa atual, agrupadas pelo painel dono, como já faz. Um canal sem guia aberta nesta mesa não aparece aqui: ele mora no seletor "Abrir canal…" (§3). A pílula de outra mesa mostra a marca do canal que está lá.</p>
+
+   <h3 class="sub">Menu da pílula</h3>
+   <div class="menus">
+    <figure><figcaption>geral · mesa comum</figcaption><ul class="cm">
+     <li><i class="ic" data-i="pencil-simple"></i>Renomear</li>
+     <li class="sum">Nova mesa antes / depois · Mover…</li>
+     <li class="sep"></li>
+     <li class="n"><i class="ic" data-i="chats-circle"></i>Abrir canal…</li>
+     <li class="info" style="font-weight:400">Sem dono, não há canal da mesa.</li>
+    </ul></figure>
+    <figure class="o o-atrium"><figcaption>obra · mesa com dono (Atrium)</figcaption><ul class="cm">
+     <li class="sum">Menu da posse: Ir para Atrium · Pausar… · Dar… · Revogar…</li>
+     <li class="sep"></li>
+     <li class="n"><i class="ic" data-i="chats-circle"></i>Abrir canal da mesa (#obra)</li>
+     <li class="n"><i class="ic" data-i="chats-circle"></i>Abrir canal…</li>
+    </ul></figure>
+    <figure class="o o-bancada"><figcaption>soul · bancada · menu da aba, com submenu</figcaption><ul class="cm">
+     <li class="sum">Renomear · Mover… · Fechar</li>
+     <li class="sep"></li>
+     <li class="hl n"><i class="ic" data-i="chats-circle"></i>Canais de soul<i class="ic caret" data-i="caret-right"></i></li>
+     <li class="sublist" style="display:block;list-style:none;padding:4px;margin:2px 0 4px 10px"><ul style="list-style:none;margin:0;padding:0">
+      <li><i class="ic" data-i="chats-circle"></i>#obra<span class="role" style="margin-left:auto">membro · da mesa</span></li>
+      <li><i class="ic" data-i="chats-circle"></i>#conferência<span class="role mute" style="margin-left:auto">calado</span></li>
+      <li><i class="ic" data-i="chats-circle"></i>#reunião<span class="role" style="margin-left:auto">dono</span></li>
+      <li class="sep"></li>
+      <li><i class="ic" data-i="user-plus"></i>Juntar a um canal…</li></ul></li>
+    </ul></figure>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C1 (os canais são guias; a lista é a das guias da mesa) · C5 (os sinais da aba aparecem no cartão)
+   <b>Reaproveita</b>pílula, aba, "Painéis da mesa" e seus filtros, cartões, menu da aba
+   <b>Novo</b>o tipo de guia (ícone de canal), a linha "membros · calado" e o ícone de canal na pílula
+   <b>Ajuste pelo repositório</b>o menu aceita submenu de um nível ("Canais de soul" cabe); "Painéis da mesa" lista guias, não canais soltos</div>
+ </div>
+</section>
+
+<!-- ======================================================== 3 -->
+<section class="s" id="b3">
+ <h2><span class="n">3</span>O seletor dos comandos: abrir, juntar, tirar, calar</h2>
+ <p class="lead">Com nome de canal (comando dado dentro da guia, ou com o nome no CLI) o passo 1 é pulado. Sem nome, dois passos, com o canal da mesa em destaque. É o mesmo seletor da posse.</p>
+ <div class="blk">
+  <div class="two">
+   <div>
+    <h3 class="sub" style="margin-top:0">Passo 1 · escolher o canal</h3>
+    <div class="dlg pick">
+     <header><span class="badge"><i class="ic" data-i="chats-circle"></i></span><h2>Juntar agente a que canal?</h2><button class="ib" aria-label="Fechar"><i class="ic" data-i="x"></i></button></header>
+     <div class="srch"><i class="ic" data-i="magnifying-glass"></i>buscar canal</div>
+     <h4>Canal desta mesa</h4>
+     <div class="opt sel o o-atrium"><span class="k">1</span><i class="ic" data-i="chats-circle"></i><span class="nm">#obra</span><span class="meta">canal da mesa · 3 membros · dono: Atrium</span></div>
+     <h4>Seus canais abertos</h4>
+     <div class="opt"><span class="k">2</span><i class="ic" data-i="chats-circle"></i><span class="nm">#conferência</span><span class="meta">4 membros · dono: Atrium</span><span class="sp"></span><span class="ring"></span></div>
+     <h4>Outros</h4>
+     <div class="opt dim"><span class="k">3</span><i class="ic" data-i="lock"></i><span class="nm">#revisão</span><span class="meta">encerrado · só leitura</span></div>
+     <p class="note">Em "Abrir canal…" a lista é a mesma e os encerrados aparecem. Em Juntar, Tirar e Calar eles somem.</p>
+     <footer><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>1</kbd>–<kbd>9</kbd> · <kbd>Enter</kbd> escolhe<span style="float:right"><button class="primary">Continuar</button></span></footer>
+    </div>
+   </div>
+   <div>
+    <h3 class="sub" style="margin-top:0">Passo 2 · escolher o agente (Juntar)</h3>
+    <div class="dlg pick">
+     <header><span class="badge"><i class="ic" data-i="user-plus"></i></span><h2>Juntar a #obra</h2><button class="ib" aria-label="Fechar"><i class="ic" data-i="x"></i></button></header>
+     <h4>Fora do canal</h4>
+     <div class="opt sel o o-bancada"><span class="cb on"><i class="ic" data-i="check"></i></span><span class="em"><i class="ic" data-i="robot"></i></span><span class="nm oname">soul · bancada</span><span class="meta">ocioso · também em #conferência</span></div>
+     <div class="opt o o-conferencia"><span class="cb"></span><span class="em"><i class="ic" data-i="robot"></i></span><span class="nm oname">codex · conferência</span><span class="meta">em outra mesa</span></div>
+     <h4>Já no canal</h4>
+     <div class="opt dim o o-atrium"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="nm oname">Atrium</span><span class="meta">dono</span></div>
+     <div class="opt dim o o-conferente"><span class="em"><i class="ic" data-i="robot"></i></span><span class="nm oname">claude · conferente</span><span class="meta">membro</span></div>
+     <footer><kbd>Espaço</kbd> marca vários<span style="float:right"><button class="primary"><i class="ic" data-i="user-plus"></i>Juntar</button></span></footer>
+    </div>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C4 (juntar, tirar e calar sem decorar nome) · C1 (a lista do passo 1 é a lista de canais)
+   <b>Reaproveita</b>seletor em dois passos da posse, diálogo declarado, o mesmo gesto no CLI
+   <b>Novo</b>só o conteúdo dos passos</div>
+ </div>
+ <div class="blk">
+  <div class="two">
+   <div>
+    <h3 class="sub">Passo 2 · Tirar (diálogo declarado)</h3>
+    <div class="dlg">
+     <header><span class="badge danger"><i class="ic" data-i="user-minus"></i></span><h2>Tirar soul · bancada de #obra?</h2></header>
+     <div class="desc"><p>Ele deixa de ouvir o canal e recebe um aviso da sala. A conversa continua com os outros.</p><p class="mut">Ele é membro da mesa, mas pode sair do canal mesmo assim. Fica de fora até ser juntado de novo, ou até sair da mesa e voltar.</p></div>
+     <footer><span class="spacer"></span><button class="cancel">Cancelar</button><button class="primary dng">Tirar do canal</button></footer>
+    </div>
+   </div>
+   <div>
+    <h3 class="sub">Passo 2 · outros comandos</h3>
+    <ul class="reads" style="margin-top:0">
+     <li><b>Tirar</b>: só membros do canal escolhido; os que vieram da mesa levam a marca "da mesa" e também podem ser tirados.</li>
+     <li><b>Calar</b>: só os que falam; a segunda opção é "Devolver a voz", para os calados.</li>
+     <li><b>Abrir</b>: sem passo 2; abre ou foca a guia do canal.</li>
+     <li>Quem tem poder: o dono do canal e o moderador (você).</li>
+    </ul>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C4 · o diálogo diz a consequência antes de agir</div>
+ </div>
+</section>
+
+<!-- ======================================================== 4 -->
+<section class="s" id="b4">
+ <h2><span class="n">4</span>"Alguém se dirige a mim": aba, pílula e sino</h2>
+ <p class="lead">Nada vem para o primeiro plano: não abre a guia, não rouba foco, não vira diálogo nem toast. O aviso chega pelas marcas que já existem.</p>
+ <div class="blk">
+  <div>
+   <div class="bellwrap">
+    <div class="tbar" style="flex:1 1 360px"><div id="desk-switch">
+     <button class="seg" style="--seg-fill:var(--fg-dim)"><span class="nm">geral</span></button>
+     <button class="seg on o o-atrium" style="--seg-fill:var(--x-teal)"><span class="nm">obra</span><span class="own"><i class="ic" data-i="robot"></i><span class="nm">Atrium</span></span><i class="ic chic" data-i="chats-circle"></i><span class="cnt">1</span></button>
+     <button class="seg" style="--seg-fill:var(--x-sky)"><span class="nm">bancada</span><span class="ring"></span></button>
+    </div></div>
+    <span class="bellbtn"><i class="ic" data-i="bell"></i><span class="cnt">1</span></span>
+   </div>
+   <div class="frame" style="margin-top:12px">
+    <div class="strip">
+     <div class="tab on"><i class="ic kind" data-i="chats-circle"></i><span class="text">#obra</span><span class="cnt">1</span></div>
+     <div class="tab"><i class="ic kind" data-i="chats-circle"></i><span class="text">#conferência</span><span class="ring"></span></div>
+     <div class="tab"><i class="ic kind" data-i="chats-circle"></i><span class="text">#reunião</span></div>
+    </div>
+    <div class="pbody" style="height:40px">aba laranja com contador · aba com anel quieto · aba lida</div>
+   </div>
+   <h3 class="sub">Sino · como o item chega</h3>
+   <div class="bellpop">
+    <h5>Recentes</h5>
+    <div class="it"><span class="attn-dot"></span><span class="nm">#obra</span><span class="kd">esperando</span><span class="at">14:05</span></div>
+    <div class="it"><span class="busy-dot" style="background:var(--fg-dim)"></span><span class="nm">soul · testes</span><span class="kd">esperando</span><span class="at">13:41</span></div>
+    <div class="it"><span class="busy-dot" style="background:var(--fg-dim)"></span><span class="nm">claude · conferente</span><span class="kd fin">terminou</span><span class="at">13:22</span></div>
+    <div class="rest">Avisar no Windows · Silenciar · Mais opções…</div>
+   </div>
+   <p class="cap">O sino do tether lista só avisos de "esperando" e "terminou" por guia (nome, tipo e hora) e, ao clicar, abre a guia. Para o canal, o item é o nome do canal e "esperando", e o clique abre a guia, onde o separador "novas para você" leva à fala. O anel quieto não vai ao sino.</p>
+   <h3 class="sub">O que conta como "para mim" e quando apaga</h3>
+   <ul class="reads">
+    <li><b>Acende o laranja</b>: fala de agente com destinatário "você". Fala para todos só deixa o anel quieto.</li>
+    <li><b>Apaga</b>: você responde pela caixa de fala, ou abre a guia e chega até a fala (o separador "novas para você" some). Abrir a guia sem ler não apaga.</li>
+    <li><b>Soma</b> no contador laranja da pílula como qualquer pedido que espera você, sem contador novo.</li>
+   </ul>
+  </div>
+  <div class="leg"><b>Resolve</b>C5
+   <b>Reaproveita</b>contador laranja da pílula, ponto e contador da aba, sino · a regra "laranja = só você"
+   <b>Novo</b>a fonte do aviso (fala dirigida) e o anel quieto
+   <b>Ajuste pelo repositório</b>o sino não aceita posição dentro da guia: o clique abre a guia, e o separador faz o resto</div>
+ </div>
+</section>
+
+<!-- ======================================================== 5 -->
+<section class="s" id="b5">
+ <h2><span class="n">5</span>O canal da mesa segue a mesa</h2>
+ <p class="lead">Uma mesa, um canal. Ele existe enquanto a mesa tem dono; sem dono fica guardado e legível; quando a mesa ganha dono de novo (o mesmo ou outro), o mesmo canal reabre sozinho, com o novo dono como dono do canal e o histórico seguindo.</p>
+ <div class="blk">
+  <div>
+   <div class="frame">
+    <div class="pf-head"><div class="pf-title"><i class="ic" data-i="chats-circle"></i>#obra <span class="role"><i class="ic" data-i="crown-simple"></i>canal da mesa obra</span></div>
+     <div class="pf-bar"><button class="pf-act pin-highlight"><i class="ic" data-i="user-plus"></i>Juntar agente…</button><button class="pf-act"><i class="ic" data-i="users"></i></button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div></div>
+    <div class="msgs">
+     <div class="msg o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="role">dono</span><span class="dest">para todos</span><time>14:40</time></div><p>Fechei a etapa 3. Sigo para a 4 quando alguém confirmar.</p></div>
+     <div class="sys"><i class="ic" data-i="lock"></i><span>A mesa <b>obra</b> ficou sem dono. Canal encerrado</span><time>15:20</time></div>
+     <div class="sepline">canal encerrado · conversa guardada</div>
+     <div class="sys"><i class="ic" data-i="arrow-counter-clockwise"></i><span>A mesa <b>obra</b> ganhou dono: <b class="oname o o-conferente">claude · conferente</b>. Canal reaberto</span><time>16:02</time></div>
+     <div class="msg o o-conferente"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">claude · conferente</span><span class="role">dono</span><span class="dest">para todos</span><time>16:03</time></div><p>Retomei a obra de onde a Atrium parou.</p></div>
+    </div>
+    <div class="status-bar"><span class="cur"><i class="ic" data-i="eye"></i>você lê tudo</span><span class="sp"></span><span>3 membros</span></div>
+   </div>
+   <p class="cap">O mesmo canal atravessa as três situações: dono, sem dono, novo dono. Não nasce outro; a conversa de antes continua acima.</p>
+   <h3 class="sub">Membros da mesa e de fora</h3>
+   <div class="frame" style="max-width:340px"><div class="members">
+    <div class="sec" style="padding-top:4px">Membros · 3</div>
+    <div class="mrow o o-conferente"><div class="l1"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">claude · conferente</span></div><div class="l2"><span class="role">dono</span><span class="role">da mesa</span><span class="sp"></span><button class="pf-act sm"><i class="ic" data-i="dots-three"></i></button></div></div>
+    <div class="mrow o o-bancada"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span></div><div class="l2"><span class="role">membro</span><span class="role">da mesa</span><span class="sp"></span><button class="pf-act sm" title="Calar"><i class="ic" data-i="speaker-slash"></i></button><button class="pf-act sm" title="Tirar do canal"><i class="ic" data-i="user-minus"></i></button></div></div>
+    <div class="mrow o o-conferencia"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">codex · conferência</span></div><div class="l2"><span class="role">membro</span><span class="sp"></span><button class="pf-act sm" title="Calar"><i class="ic" data-i="speaker-slash"></i></button><button class="pf-act sm" title="Tirar do canal"><i class="ic" data-i="user-minus"></i></button></div></div>
+   </div></div>
+   <p class="cap">Quem veio da mesa leva a marca "da mesa" e pode ser calado e tirado como qualquer outro. Abrir uma guia de agente na mesa a faz membro; fechar a guia a tira.</p>
+  </div>
+  <div class="leg"><b>Resolve</b>C7 · C1 (a mesa com dono tem canal pronto, achável da pílula) · C4 (o seletor destaca esse canal)
+   <b>Reaproveita</b>menu da pílula e o dono da mesa
+   <b>Novo</b>o canal derivado da mesa, a marca "da mesa" e as linhas de sistema do ciclo</div>
+ </div>
+</section>
+
+<!-- ======================================================== 6 -->
+<section class="s" id="b6">
+ <h2><span class="n">6</span>Estados que mudam a estrutura</h2>
+
+ <h3 class="sub">Canal vazio</h3>
+ <div class="blk">
+  <div class="pf-pane">
+   <div class="pf-head"><div class="pf-title"><i class="ic" data-i="chats-circle"></i>#reunião <span class="sub">0 membros · dono: você</span></div><div class="pf-bar"><button class="pf-act pin-highlight"><i class="ic" data-i="user-plus"></i>Juntar agente…</button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div></div>
+   <div class="empty">
+    <span class="ill"><i class="ic" data-i="chats-circle"></i></span>
+    <p class="t">Ninguém aqui ainda.</p>
+    <p class="mut">Junte um agente para a conversa começar. Você lê tudo e pode falar a qualquer momento.</p>
+    <div class="say" style="text-align:left;border:1px solid var(--border);border-radius:8px;width:100%;max-width:420px;margin-top:8px"><div class="field off">Escreva para o canal… ninguém ouve ainda</div><div class="row"><span class="sp"></span><button class="primary" disabled><i class="ic" data-i="paper-plane-tilt"></i>Enviar</button></div></div>
+   </div>
+  </div>
+  <div class="leg"><b>Reaproveita</b>o accent da barra como saída do vazio · Enviar fica desligado até haver um membro</div>
+ </div>
+
+ <h3 class="sub">Membro calado</h3>
+ <div class="blk">
+  <div class="states">
+   <div class="state o o-conferencia"><h5>Na lista</h5><div class="mrow" style="padding:4px 0"><div class="l1"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">codex · conferência</span></div><div class="l2"><span class="role">membro</span><span class="role mute"><i class="ic" data-i="speaker-slash"></i>calado</span><span class="sp"></span><button class="pf-act sm" title="Devolver a voz"><i class="ic" data-i="speaker-high"></i></button></div></div><p class="cap" style="margin:0">Tag tracejada; o ícone do membro vira "Devolver a voz".</p></div>
+   <div class="state"><h5>Na conversa</h5><div class="sys" style="justify-content:flex-start"><i class="ic" data-i="speaker-slash"></i><span><b class="oname o o-atrium">Atrium</b> calou <b class="oname o o-conferencia">codex · conferência</b> <time>14:03</time></span></div><p class="cap" style="margin:0">O calado não aparece como autor; a linha de sistema marca o momento, e ele recebe o aviso da sala.</p></div>
+   <div class="state"><h5>Abaixo da conversa</h5><div class="mutebar" style="border:1px solid var(--border);border-radius:6px"><i class="ic" data-i="speaker-slash"></i>1 calado neste canal</div><p class="cap" style="margin:0">A caixa de fala do moderador nunca é desligada por isso.</p></div>
+  </div>
+  <div class="leg"><b>Resolve</b>C1, C4 · o estado vive no objeto: o membro e o canal</div>
+ </div>
+
+ <h3 class="sub">Canal encerrado</h3>
+ <div class="blk">
+  <div>
+   <div class="pf-pane">
+    <div class="pf-head"><div class="pf-title"><i class="ic" data-i="chats-circle"></i>#revisão <span class="role end"><i class="ic" data-i="lock"></i>encerrado 13:40</span></div><div class="pf-bar"><button class="pf-act pin-highlight"><i class="ic" data-i="arrow-counter-clockwise"></i>Reabrir canal</button><button class="pf-act"><i class="ic" data-i="dots-three"></i></button></div></div>
+    <div class="chan" style="min-height:200px">
+     <div class="conv"><div class="msgs">
+      <div class="msg o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="role">dono</span><time>13:38</time></div><p>Encerro por aqui.</p></div>
+      <div class="sys"><i class="ic" data-i="lock"></i><span>Canal encerrado por <b>você</b></span><time>13:40</time></div>
+     </div>
+     <div class="mutebar"><i class="ic" data-i="lock"></i>Canal encerrado. Ninguém fala; a caixa de fala dá lugar a "Reabrir canal".</div></div>
+     <div class="members"><div class="sec" style="padding-top:4px">Eram membros · 3</div>
+      <div class="mrow o o-atrium gone"><div class="l1"><span class="em gone"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span></div></div>
+      <div class="mrow o o-conferente gone"><div class="l1"><span class="em gone"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span></div></div>
+      <div class="mrow o o-bancada gone"><div class="l1"><span class="em gone"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span></div></div></div>
+    </div>
+   </div>
+   <h3 class="sub">Encerrar e reabrir (diálogo declarado)</h3>
+   <div class="two">
+    <div class="dlg"><header><span class="badge danger"><i class="ic" data-i="prohibit"></i></span><h2>Encerrar #conferência?</h2></header><div class="desc"><p>Os 4 membros deixam de falar e de ouvir, e recebem o aviso do encerramento. A conversa fica guardada para leitura.</p><p class="mut">Você pode reabrir depois.</p></div><footer><span class="spacer"></span><button class="cancel">Cancelar</button><button class="primary dng">Encerrar canal</button></footer></div>
+    <div class="dlg"><header><span class="badge"><i class="ic" data-i="arrow-counter-clockwise"></i></span><h2>Reabrir #revisão?</h2></header><div class="desc"><p>Os 3 membros voltam a ouvir e a falar, e recebem o aviso. A conversa continua de onde parou.</p></div><footer><span class="spacer"></span><button class="cancel">Cancelar</button><button class="primary">Reabrir canal</button></footer></div>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C6 · fechar a guia continua fechando só a guia; encerrar não apaga nada
+   <b>Novo</b>o estado de leitura e a linha "encerrado"</div>
+ </div>
+
+ <h3 class="sub">Dono que deixou de existir</h3>
+ <div class="blk">
+  <div class="frame"><div class="msgs"><div class="sys"><i class="ic" data-i="crown-simple"></i><span>A guia de <b class="oname o o-atrium">Atrium</b> foi fechada e esquecida. <b>Você</b> passou a ser o dono de #conferência</span><time>15:48</time></div></div></div>
+  <div class="leg"><b>Resolve</b>canal comum nunca fica sem dono: o que fica sem dono vivo volta para você</div>
+ </div>
+
+ <h3 class="sub">Conversa longa</h3>
+ <div class="blk">
+  <div class="frame">
+   <div class="msgs" style="position:relative">
+    <button class="btn" style="align-self:center"><i class="ic" data-i="arrow-up"></i>Carregar mais antigas</button>
+    <div class="msg o o-conferente"><div class="who"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">claude · conferente</span><span class="role">membro</span><time>14:31</time></div><p>Log da etapa 4 conferido.</p><p>Nada fora do esperado nos três primeiros blocos.</p></div>
+    <div class="sepline u">novas para você · 14:35</div>
+    <div class="msg to-me o o-atrium"><div class="who"><span class="em crown"><i class="ic" data-i="crown-simple"></i></span><span class="oname">Atrium</span><span class="tome"><i class="ic" data-i="arrow-bend-down-right"></i>para você</span><time>14:35</time></div><p>Posso seguir para a etapa 5?</p></div>
+    <div class="msg o o-bancada long"><div class="who"><span class="em"><i class="ic" data-i="robot"></i></span><span class="oname">soul · bancada</span><time>14:36</time></div><p>Falas seguidas do mesmo autor se agrupam sob um só cabeçalho, e a hora de cada uma aparece ao passar o mouse. Esta, bem longa, mostra duas linhas e abre inteira ao clicar, para a conversa não virar um muro de texto no meio da leitura.</p></div>
+    <button class="btn" style="position:absolute;right:14px;bottom:10px;box-shadow:var(--shadow)"><i class="ic" data-i="arrow-down"></i>3 novas</button>
+   </div>
+  </div>
+  <div class="leg"><b>Resolve</b>C2 em escala · carrega o fim, o topo carrega em lote · o separador fica ancorado · "Ir para o fim" pinado na barra · "3 novas" quieto no pé, sem laranja · Buscar no canal… no menu</div>
+ </div>
+</section>
+
+<!-- ======================================================== bifurcacoes -->
+<section class="s" id="fork">
+ <h2><span class="n">·</span>O que ficou para a Atrium</h2>
+ <div class="notes"><h4>Bifurcações (segui o molde)</h4>
+  <ul>
+   <li><b>"Painéis da mesa" e canal sem guia.</b> P2 diz que a lista de canais sem guia mora lá e no seletor. O painel de hoje só lista guias existentes da mesa atual (agrupadas pelo painel dono); "De painéis fechados" é de dono fechado, não de guia fechada. Segui o molde: canal sem guia nesta mesa só no seletor "Abrir canal…".</li>
+   <li><b>Sino.</b> O sino só conhece "esperando" e "terminou" por guia, e o clique abre a guia, sem posição dentro dela. Desenhei o item do canal assim; o "levar à fala" fica por conta do separador "novas para você".</li>
+   <li><b>Accent.</b> "Juntar agente…" é o único com texto e accent; o encerrado troca-o por "Reabrir canal". No estado vazio e na largura estreita ele perde o texto (só ícone, em accent), que é o que a barra faz quando falta espaço.</li>
+   <li><b>Marca "da mesa".</b> Usei um chip neutro "da mesa" nos membros do canal da mesa e "canal da mesa" no título; a coroa continua só para o dono.</li>
+   <li><b>Cor do moderador.</b> Cinza neutro (bg-3), sem matiz, para não disputar com a faixa teal a rosa dos agentes.</li>
+  </ul></div>
+</section>
+
+</div>
+<script>
+(function(){
+ var root=document.documentElement,q=new URLSearchParams(location.search);
+ var t=q.get('theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+ root.setAttribute('data-theme',t);
+ document.getElementById('theme').addEventListener('click',function(){root.setAttribute('data-theme',root.getAttribute('data-theme')==='light'?'dark':'light')});
+ var a=document.getElementById('ann');
+ if(q.get('notes')==='0'){a.checked=false;document.body.classList.remove('notes-on')}
+ a.addEventListener('change',function(){document.body.classList.toggle('notes-on',a.checked)});
+ document.querySelectorAll('i[data-i]').forEach(function(el){el.innerHTML='<svg class="ph" aria-hidden="true"><use href="#p-'+el.getAttribute('data-i')+'"/></svg>'});
+})();
+</script>
+</body></html>
