@@ -207,6 +207,15 @@ describe('the picker rows', () => {
     assert.deepEqual(pickItems(agents, { ...ctx, exclude: 'A' }).map(i => i.value).includes('A'), false)
     assert.equal(pickItems(agents, { ...ctx, paneId: 'K' }).find(i => i.value === 'K')!.detail?.startsWith('ela mesma: de si'), true)
   })
+  test('the emblem of the guia rides on its row; none when the reader has none or the row is the pane itself', () => {
+    const agents = [agent('A', 'Atrium'), agent('K', 'kai')]
+    const emblem = { glyph: 'x' } as never
+    const withE = pickItems(agents, { ...ctx, paneId: 'K', emblemOf: id => (id === 'A' || id === 'K' ? emblem : undefined) })
+    assert.equal(withE.find(i => i.value === 'A')!.emblem, emblem)
+    assert.equal('emblem' in withE.find(i => i.value === 'K')!, false)
+    assert.equal(pickItems(agents, { ...ctx, emblemOf: () => undefined }).every(i => !('emblem' in i)), true)
+    assert.equal(pickItems(agents, ctx).every(i => !('emblem' in i)), true)
+  })
 })
 
 describe('the dialogs\' words', () => {

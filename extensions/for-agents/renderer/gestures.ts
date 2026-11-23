@@ -6,7 +6,7 @@
 // "Ir para", which is a request to go. The commands (`for-agents.give`, `.take`...) take `{ kind, id }`: with it they act
 // there, with no picker for a given `to`; without it they act on the active pane.
 import type { AgentPane } from '../../../app/renderer/agent-panes.ts'
-import type { PickItem, TetherUi } from '../../../app/renderer/ext-api.ts'
+import type { PaneEmblem, PickItem, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import { OBJECT_KEYS, type Frozen, type Hand, type OwnerId, type Ownership } from '../rules.ts'
@@ -29,6 +29,8 @@ export interface PickContext {
   owns(id: OwnerId): { mesas: number; guias: number }
   /** The pane being given: its own agent reads "ela mesma: de si". */
   paneId?: string | undefined
+  /** Reads the emblem of a guia (its slot id); rows with none stay bare. */
+  emblemOf?: ((id: string) => PaneEmblem | undefined) | undefined
 }
 
 /** Only live agents (F8); "Recentes", then "Nesta mesa", then "Outras mesas", each by name. */
@@ -43,7 +45,8 @@ export function pickItems(agents: readonly AgentPane[], c: PickContext): PickIte
     const o = c.owns(a.slotId)
     const place = a.inDrawer ? 'a Gaveta' : (a.deskTitle ?? '')
     const detail = [a.slotId === c.paneId ? PICK.itself : place ? PICK.livesIn(place) : '', o.mesas + o.guias > 0 ? PICK.owns(o.mesas, o.guias) : ''].filter(Boolean).join(' · ')
-    return { value: a.slotId, label: a.name, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), group }
+    const emblem = a.slotId === c.paneId ? undefined : c.emblemOf?.(a.slotId)
+    return { value: a.slotId, label: a.name, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), ...(emblem ? { emblem } : {}), group }
   }
   return [...recent.map(a => row(a, PICK.groupRecent)), ...here.map(a => row(a, PICK.groupHere)), ...elsewhere.map(a => row(a, PICK.groupElsewhere))]
 }
@@ -144,7 +147,7 @@ export function gestures(ui: TetherUi): IDisposable[] {
         title: t.kind === 'desk' ? (passing ? PICK.titleDeskPass : PICK.titleDesk)(deskName(f, t.id)) : PICK.titlePane(paneTitle(f, t.id)),
         placeholder: PICK.placeholder,
         emptyText: PICK.empty,
-        items: pickItems(ui.agents.list(), { deskId: deskOf(f, t), exclude: current, recent, owns: ownsOf(f), ...(t.kind === 'pane' ? { paneId: t.id } : {}) }),
+        items: pickItems(ui.agents.list(), { deskId: deskOf(f, t), exclude: current, recent, owns: ownsOf(f), emblemOf: id => ui.panes.personEmblem(id), ...(t.kind === 'pane' ? { paneId: t.id } : {}) }),
       })
       if (to === undefined) return
       const answer = await ui.dialogs.ask(dialogFor(readFacts(ui), t, to))
