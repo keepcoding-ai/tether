@@ -87,7 +87,7 @@ import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange
 import type { DeskView, PaneInfo } from './ext-api.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
-import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu } from './tab-emblems.ts'
+import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
@@ -4401,6 +4401,7 @@ function activateRendererExtensions(): void {
         tabLine: paneId => door.tabLineOf(paneId),
         onDidChangeMarks: listener => add(door.onMarksChange(listener)),
         slotFacts: paneId => door.slotFacts(paneId),
+        personEmblem: paneId => { const p = findPanel(paneId); return p ? personEmblemOf(p.params) : undefined },
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
         hibernate: paneId => door.hibernate(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),

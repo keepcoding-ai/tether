@@ -12,10 +12,13 @@ import { PICK_NUMBERED, groupHeading, moveSelection, numberedRow, rankPicks, res
 /** The icon for a name the app has; undefined for one it does not (the row then draws without one). */
 type MakeIcon = (name: string) => SVGSVGElement | undefined
 let makeIcon: MakeIcon | undefined
+/** The tab's emblem chip (tab-emblems.ts imports icons.ts too, so it loads with them). */
+let makeBadge: ((e: NonNullable<PickItem<unknown>['emblem']>) => HTMLElement) | undefined
 
 /** icons.ts holds the SVG text (a build-time import), so it is loaded on first use: this file stays loadable by the unit tests. */
 async function loadIcons(): Promise<MakeIcon> {
   if (makeIcon) return makeIcon
+  makeBadge = (await import('../tab-emblems.ts')).emblemBadge
   const { ICON_NAMES, icon } = await import('../icons.ts')
   const names = ICON_NAMES as readonly string[]
   makeIcon = name => (names.includes(name) ? icon(name as Parameters<typeof icon>[0]) : undefined)
@@ -162,6 +165,7 @@ export class Picker {
           if (row.item.detail) { const dt = document.createElement('span'); dt.className = 'pk-detail'; dt.textContent = row.item.detail; text.append(dt) }
           if (numbered && i < PICK_NUMBERED) { const n = document.createElement('kbd'); n.className = 'pk-num'; n.textContent = String(i + 1); li.append(n) }
           li.append(ic, text)
+          if (row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem))
           list.append(li)
           // The featured row is apart from the rest: a rule under it, when there is a rest.
           if (row.featured && rows.length > 1) { const sep = document.createElement('li'); sep.className = 'pk-sep'; sep.setAttribute('role', 'presentation'); list.append(sep) }

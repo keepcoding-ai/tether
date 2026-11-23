@@ -27,9 +27,11 @@ export function rankPicks<T>(featured: PickItem<T> | undefined, items: readonly 
   const rank = (item: PickItem<T>, isFeatured: boolean): { row: PickRow<T>; key: number } | undefined => {
     const label = fuzzyMatch(query, item.label)
     const detail = label || !item.detail ? undefined : fuzzyMatch(query, item.detail)
-    if (!label && !detail) return undefined
+    // The emblem's name is the last place a query can match, ranked like a detail-only match.
+    const emblem = label || detail || !item.emblem ? undefined : fuzzyMatch(query, item.emblem.name)
+    if (!label && !detail && !emblem) return undefined
     const runs = label && label.positions.length > 0 ? highlightRuns(item.label, label.positions) : [{ text: item.label, hit: false }]
-    return { row: { item, featured: isFeatured, runs }, key: label ? 1000 + label.score : detail!.score }
+    return { row: { item, featured: isFeatured, runs }, key: label ? 1000 + label.score : (detail ?? emblem)!.score }
   }
   const top = featured && rank(featured, true)
   if (top) rows.push(top.row)

@@ -26,6 +26,7 @@ import type { AgentUi } from './agent-ui.ts'
 import type { ProfileOption } from './profile-options.ts'
 import type { AttentionHandle, AttentionRaise, Badge } from './seal-rules.ts'
 import type { Brand } from '../shared/brand.ts'
+import type { HueName } from '../shared/palette.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
 import type { AgentPane } from './agent-panes.ts'
@@ -268,6 +269,18 @@ export interface PaneSlotFacts {
 }
 
 /**
+ * The emblem the person put on a pane's tab (the "Emblema…" menu), as the tab shows it: the library's current name, colour
+ * and icon (emblem-rules.ts `Emblem`, without the id and the built-in flags). Editing the emblem changes every pane that wears it.
+ */
+export interface PaneEmblem {
+  name: string
+  /** A hue name of the palette (HueName). */
+  color: HueName
+  /** A Phosphor icon name of the emblem catalog (emblem-icons.ts). */
+  icon: string
+}
+
+/**
  * One row of the list picker (`pick`). The first nine rows answer to the keys 1 to 9 while the filter is empty (the key
  * chooses the row, as Enter does).
  */
@@ -275,6 +288,11 @@ export interface PickItem<T> {
   value: T
   label: string
   detail?: string
+  /**
+   * The emblem of the person the row stands for (`panes.personEmblem`), drawn at the row's right end so rows with the same
+   * name tell apart. The filter also matches its name. Absent: the row is drawn as before.
+   */
+  emblem?: PaneEmblem
   icon?: string
   /** One character drawn in the row's icon place, in the row's hue (an agent's initial: "A", "K"); longer text is cut to its first character. Wins over `icon`. */
   letter?: string
@@ -379,6 +397,12 @@ export interface TetherUi {
     onDidChangeMarks(listener: (paneId: string | undefined) => void): IDisposable
     /** What the app knows of the slot behind a pane (see PaneSlotFacts); undefined for a pane with no slot. */
     slotFacts(paneId: string): PaneSlotFacts | undefined
+    /**
+     * The emblem the PERSON put on the tab of a pane ("Emblema…"), as the tab shows it (an edited emblem under its new name;
+     * undefined for none, an unknown id or a hidden built-in). Not to be confused with `emblems`, the marks of extensions. It
+     * reads the pane's params, so it works for a pane of any desk, the drawer or a live frames pad, visible or not.
+     */
+    personEmblem(paneId: string): PaneEmblem | undefined
     /**
      * Closes the pane of a slot, as an extension that already asked the person (its own dialog), with no further question.
      * `process: 'keep'` (the default) leaves the agent running without a pane ("Rodando sem painel", reopenable); 'stop'

@@ -10,6 +10,7 @@ import { HUE_NAMES } from '../shared/palette.ts'
 import { EMBLEM_CATEGORIES, EMBLEM_ICONS } from './emblem-icons.ts'
 import { BUILTIN_EMBLEMS, buildIconIndex, displayName, type Emblem, HUE_LABELS, isModified, MAX_NAME, newEmblemId, readEmblems, searchIcons, shownEmblem, type IconIndexEntry } from './emblem-rules.ts'
 import { icon, type IconName } from './icons.ts'
+import type { PaneEmblem } from './ext-api.ts'
 
 /** What the emblems need from the app: the panels (to count and clear wearers), writing a tab's emblem, saving the library. */
 export interface EmblemHost {
@@ -101,6 +102,22 @@ export function emblemChip(panelId: string): HTMLElement | undefined {
   const el = newChip()
   paint(el, e)
   el.classList.add('menu-emblem')
+  return el
+}
+
+/** The emblem a pane's params make the tab show (library edits and hiding applied), as an extension may read it. */
+export function personEmblemOf(params: unknown): PaneEmblem | undefined {
+  const e = shownEmblem(lib, emblemParam(params))
+  return e ? { name: displayName(e), color: e.color, icon: e.icon } : undefined
+}
+
+/** A detached chip of an emblem (a picker row's right end): the tab's chip, named in its title and aria-label. */
+export function emblemBadge(e: PaneEmblem): HTMLElement {
+  const el = newChip()
+  paint(el, { id: '', name: e.name, color: e.color, icon: e.icon })
+  el.classList.add('pk-emblem')
+  el.setAttribute('role', 'img')
+  el.setAttribute('aria-label', e.name)
   return el
 }
 
