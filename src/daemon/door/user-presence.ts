@@ -86,6 +86,11 @@ export class UserPresence {
     return Math.max(...ps.map((p) => p.draft > 0 ? Infinity : p.typedAt + this.quietMs))
   }
 
+  /** When (ms epoch) `who` (default: the person) last typed; undefined when never. Not affected by a draft in the box. */
+  typedAt(slotId: string, who: Typist = 'user'): number | undefined {
+    return this.bySlot.get(slotId)?.[who]?.typedAt
+  }
+
   /** No draft and `quietMs` of silence at `now` (of `who`, or of both). */
   isFree(slotId: string, now: number, who?: Typist): boolean {
     const at = this.freeAt(slotId, who)

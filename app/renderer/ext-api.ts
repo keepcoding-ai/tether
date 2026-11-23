@@ -10,6 +10,7 @@ import type { SettingsError } from '../shared/settings-file.ts'
 import type { ExtObjects, SettingsFileState, SettingsList, SettingWriteResult } from '../shared/api.ts'
 import type { MenuItem } from '../shared/vscode-menu-registry.ts'
 import type { IDisposable } from '../shared/vscode-lifecycle.ts'
+import type { ExtDaemon } from './door/ext-requests.ts'
 import type { DialogAnswer, DialogSpec } from '../shared/dialog.ts'
 import type { TerminalAppearance } from '../shared/terminal-theme.ts'
 import type { ColorScheme } from '../shared/theme.ts'
@@ -408,6 +409,12 @@ export interface TetherUi {
   }
   /** This extension's data on desks and panes (tetherd keeps it; this is a mirror). */
   objects: ExtObjects
+  /**
+   * This extension's daemon half (N1): `request` asks the handler it registered with `api.requests.handle(name, ...)` and
+   * rejects with an `ExtRequestError` (`code`: `unknown-request`, `bad-request`, ...); `onEvent` hears its `api.events.emit`,
+   * across reconnections. The core puts the extension's id on both.
+   */
+  daemon: ExtDaemon
   /**
    * The window's projects (F8; VS Code's IWorkspaceContextService): folders inferred from the AI agents' panes plus the
    * pinned ones, in order of arrival. The core owns them; an extension (the explorer) shows and edits them.

@@ -9,6 +9,7 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import { OwnershipStore, takesByTyping } from './daemon/ownership.ts'
 import { Reconciler } from './daemon/reconcile.ts'
 import { WriteGate } from './daemon/guard.ts'
+import { bindDeskOwners } from './desk-owners.ts'
 import { registerNotices } from './daemon/notices.ts'
 import { registerVerbs } from './daemon/verbs.ts'
 import { registerWatch } from './daemon/watch.ts'
@@ -42,6 +43,7 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
     store.markEnded(slotId, name).catch((e: unknown) => api.log(`marcar o fim de ${slotId} falhou: ${(e as Error).message}`))
   }
   const disposables: IDisposable[] = [
+    ...bindDeskOwners(api.objects),
     api.objects.onDidChange((e) => reconciler.objectChanged(e)),
     api.objects.onDidDrop((e) => { if (e.kind === 'pane') reconciler.paneDropped(e.id) }),
     api.desks.onDidChange((map) => reconciler.deskMapChanged(map)),

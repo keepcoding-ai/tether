@@ -168,8 +168,12 @@ test('door menus K1.1: heading, submenu and the top of the tab menu come and go 
     // ---- the tab menu: the owner's group on top, the heading first ----
     await probe(page, 'ownerMenus', true)
     const tabOn = await tabMenu()
-    assert.deepEqual(tabOn.slice(0, 5), ['# Sonda: comanda 4 guias, vê 2', 'Tomar (sonda)', 'O que é da sonda', 'Submenu vazio (sonda)', '—'], `the group is on top (${tabOn.join(' | ')})`)
-    assert.deepEqual(tabOn.slice(5), tabBefore, 'and the rest is today\'s menu')
+    // The for-agents extension owns the very first row of every tab menu ("Dar esta guia a um agente…", also a `place: 'top'`
+    // group, loaded before the probe), so the probe's group comes right after it and closes with the separator.
+    const giveRow = 'Dar esta guia a um agente…'
+    assert.equal(tabBefore[0], giveRow, `today's tab menu opens with the for-agents row (${tabBefore.join(' | ')})`)
+    assert.deepEqual(tabOn.slice(0, 6), [giveRow, '# Sonda: comanda 4 guias, vê 2', 'Tomar (sonda)', 'O que é da sonda', 'Submenu vazio (sonda)', '—'], `the group is on top (${tabOn.join(' | ')})`)
+    assert.deepEqual(tabOn.slice(5), tabBefore.slice(1), 'and the rest is today\'s menu')
     assert.equal(await page.locator('#ctx-menu > li.sub[aria-disabled="true"]').count(), 1, 'an empty submenu is drawn disabled')
     // The submenu opens on a click, its heading lines are not items, and a child runs.
     await page.locator('#ctx-menu > li.sub', { hasText: 'O que é da sonda' }).click()
@@ -192,6 +196,8 @@ test('door menus K1.1: heading, submenu and the top of the tab menu come and go 
     // Keyboard: → on the submenu row opens it on its first item, ← goes back to the row.
     await tab.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
+    // The submenu row is the third item now ("Dar esta guia…", "Tomar (sonda)", "O que é da sonda").
+    await page.keyboard.press('ArrowDown')
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('ArrowRight')
     await page.waitForFunction(() => document.activeElement?.closest('ul.submenu') != null && document.activeElement?.textContent === 'mesa da sonda')

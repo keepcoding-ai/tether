@@ -10,12 +10,13 @@ import type { SlotState } from '../protocol.ts'
 import { type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
 import { DeliveryService } from './delivery.ts'
 import { DeskService } from './desks.ts'
+import { ExtRequestService } from './ext-requests.ts'
 import { DoorMcp } from './mcp.ts'
 import { AttentionRouteService } from './attention-route.ts'
 import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
 import { SlotsService } from './slots.ts'
-import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorObjects, type DoorSlots, type DoorVerbs } from './types.ts'
+import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorEvents, type DoorObjects, type DoorRequests, type DoorSlots, type DoorVerbs } from './types.ts'
 import { VerbRegistry } from './verbs.ts'
 
 export interface DoorHostOptions {
@@ -42,11 +43,13 @@ export class DoorHost implements DoorSeams {
   readonly mcp: DoorMcp
   /** The delivery (D6): inside through `mcp`, through the terminal of a held pane, or queued in <home>/slots/<slot>.inbox.jsonl. */
   readonly delivery: DeliveryService
+  /** The extensions' own requests and events (N1): `ext-request` reaches the handler of that extension and name; `ext-event` goes to every client. */
+  private readonly extRequests = new ExtRequestService(() => this.portRef)
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
     this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
-    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user') }))
+    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user'), typedAt: (slotId) => this.delivery.presence.typedAt(slotId, 'user') }))
     this.requests.register('read-screen', this.slotsService.handleReadScreen)
     this.desks = new DeskService({ log: (msg) => this.log(msg) })
     this.requests.register('desk-map', this.desks.handleMap)
@@ -57,6 +60,7 @@ export class DoorHost implements DoorSeams {
     this.desks.onDidChange((map) => { this.objects.handleDeskMap(map).catch((e: unknown) => this.log(`objects: ${(e as Error).message}`)) })
     this.requests.register('verb-list', this.verbs.handleList)
     this.requests.register('verb', this.verbs.handleRun)
+    this.requests.register('ext-request', this.extRequests.handleRequest)
     this.mcp = new DoorMcp({ log: (msg) => this.opts.log(msg), verbs: this.verbs, port: () => this.portRef })
     this.delivery = new DeliveryService({ log: (msg) => this.opts.log(msg), mcp: this.mcp, port: () => this.portRef })
   }
@@ -165,7 +169,9 @@ export class DoorHost implements DoorSeams {
     }
     const attention: DoorAttention = this.attentionService.apiFor(ext, own)
     const objects: DoorObjects = this.objects.apiFor(ext, own)
-    return { slots, desks, verbs, delivery, attention, objects }
+    const requests: DoorRequests = this.extRequests.requestsFor(ext, own)
+    const events: DoorEvents = this.extRequests.eventsFor(ext, own)
+    return { slots, desks, verbs, delivery, attention, objects, requests, events }
   }
 
   /** Logs through tetherd's log (for the services the next slices add). */

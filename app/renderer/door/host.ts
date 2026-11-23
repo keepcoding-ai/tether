@@ -11,6 +11,7 @@ import { DeskMapSender, deskMapOf } from './desk-map.ts'
 import { deskSeals } from './desk-seal-rules.ts'
 import { collect } from './menus.ts'
 import { ObjectMirrors, rendererAsk, type DaemonAsk, type ObjectEventBody } from './objects.ts'
+import { ExtRequests, type ExtDaemon, type ExtEventBody } from './ext-requests.ts'
 import { Picker } from './picker.ts'
 import { AttentionStamps, slotFactsOf } from './slot-facts.ts'
 import { applyPaneRequests, type PaneRequestPort } from './pane-requests.ts'
@@ -42,6 +43,8 @@ export class DoorHost {
   private readonly port: DoorPort | undefined
   /** The extensions' object data, mirrored from tetherd. */
   private readonly objects: ObjectMirrors
+  /** The extensions' requests to their daemon half and the listeners of its events. */
+  private readonly extRequests: ExtRequests
   /**
    * Slots whose pane entered asleep (a hibernated desk) and whose process is still coming up: the core wakes a pane when its
    * process goes stopped -> starting, and here the process is meant to run, so the sleep is set again until it is running.
@@ -51,6 +54,7 @@ export class DoorHost {
   constructor(port?: DoorPort, ask: DaemonAsk = rendererAsk()) {
     this.port = port
     this.objects = new ObjectMirrors(ask)
+    this.extRequests = new ExtRequests(ask)
     this.emblems = new TabEmblemBoard(paneId => { this.emblemPainter.repaint(paneId); this.marksChanged(paneId) })
     this.emblemPainter = new TabEmblemPainter(this.emblems)
     this.heads = new HeadItemBoard(paneId => { this.headPainter.repaint(paneId); this.marksChanged(paneId) })
@@ -245,6 +249,12 @@ export class DoorHost {
 
   /** An extension's data on desks and panes. */
   objectsFor(ext: string): ExtObjects { return this.objects.apiFor(ext) }
+
+  /** An extension's way to its daemon half (requests and events, N1). */
+  daemonFor(ext: string): ExtDaemon { return this.extRequests.apiFor(ext) }
+
+  /** The daemon's `ext-event`. */
+  extEvent(e: ExtEventBody): void { this.extRequests.apply(e) }
 }
 
 export { withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop } from './menus.ts'

@@ -8,7 +8,7 @@
 // - the body loses every control character but the line break and the tab: an ESC would let it end the bracketed paste
 //   (`ESC[201~`) and submit half a message, or move the cursor over the user's screen; CR and CRLF become LF.
 // Pure: no state, no I/O.
-import { oneLine } from './channel-meta.ts'
+import { oneLine, toNames } from './channel-meta.ts'
 import type { DeliveryMessage } from './types.ts'
 
 export const HEADER_TAG = '[tether ·'
@@ -23,11 +23,12 @@ function field(value: string): string {
 /** `[tether · <origin> · #<room> · de <from> (<role>) · <id>]`; the room part is left out when there is none. */
 export function terminalHeader(msg: DeliveryMessage, origin: string, id: string): string {
   const room = msg.room ? field(msg.room) : ''
+  const to = field(toNames(msg, ', ') ?? '')
   const parts = [
     field(origin),
     ...(room ? [`#${room}`] : []),
-    `de ${field(msg.from.name) || field(msg.from.id)} (${field(msg.from.role)})`,
-    field(id),
+    `de ${field(msg.from.name) || field(msg.from.id)} (${field(msg.from.role)})${to ? ` → ${to}` : ''}`,
+    (msg.ref && field(msg.ref)) || field(id),
   ]
   return `${HEADER_TAG} ${parts.join(' · ')}]`
 }

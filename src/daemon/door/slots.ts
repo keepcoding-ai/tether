@@ -16,7 +16,11 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export interface PaneRequester { paneRequestFor(deskId: string): { deskId: string } }
 
 /** What `userFree` reads: the delivery's user interlock (UserPresence), for the person alone, at the present moment. */
-export interface UserFreeness { isFree(slotId: string): boolean }
+export interface UserFreeness {
+  isFree(slotId: string): boolean
+  /** When the person (never the agent) last typed, ms epoch; undefined when never. */
+  typedAt?(slotId: string): number | undefined
+}
 
 export class SlotsService {
   private readonly port: () => SlotPort | undefined
@@ -93,6 +97,7 @@ export class SlotsService {
         return own.add(toDisposable(() => { this.typedListeners.delete(listener) }))
       },
       userFree: (slotId) => this.presence()?.isFree(slotId) ?? true,
+      userTypedAt: (slotId) => this.presence()?.typedAt?.(slotId),
     }
   }
 

@@ -2035,6 +2035,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
     case 'proc': case 'proc-removed': case 'proc-data': procsStore.onEvent(ev); break
     case 'desks': door.desksEvent(ev.map); break
     case 'object': door.objectEvent(ev); break
+    case 'ext-event': door.extEvent(ev); break
     case 'state': applyState(ev.slot); break
     case 'removed': {
       slots.delete(ev.slotId)
@@ -4376,6 +4377,7 @@ function activateRendererExtensions(): void {
         steps: (first, second) => door.pickSteps(first, second),
       },
       objects: door.objectsFor(id),
+      daemon: door.daemonFor(id),
       workspace: {
         folders: () => projectFolders,
         onDidChange: listener => { workspaceListeners.add(listener); return add(toDisposable(() => { workspaceListeners.delete(listener) })) },

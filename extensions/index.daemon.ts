@@ -14,6 +14,7 @@ import * as conductorTerminal from './conductor-terminal/daemon.ts'
 import * as conductorClaude from './conductor-claude/daemon.ts'
 import * as conductorSoul from './conductor-soul/daemon.ts'
 import * as conductorCodex from './conductor-codex/daemon.ts'
+import * as channels from './channels/daemon.ts'
 
 export const extensions: readonly ExtensionEntry<TetherDaemon>[] = [
   { manifest: claude.manifest, activate: claude.activate },
@@ -27,4 +28,5 @@ export const extensions: readonly ExtensionEntry<TetherDaemon>[] = [
   { manifest: conductorClaude.manifest, activate: conductorClaude.activate },
   { manifest: conductorSoul.manifest, activate: conductorSoul.activate },
   { manifest: conductorCodex.manifest, activate: conductorCodex.activate },
+  { manifest: channels.manifest, activate: channels.activate },
 ]

@@ -62,6 +62,8 @@ export interface DoorSlots {
    * it is now, for the person alone: an agent's writes through the door do not count here, though the delivery waits for them).
    */
   userFree(slotId: string): boolean
+  /** When (ms epoch) the person last typed into the slot; undefined when she never did. The agent's own keys do not count. */
+  userTypedAt(slotId: string): number | undefined
 }
 
 // ---- 2. desks --------------------------------------------------------------------------------
@@ -141,6 +143,10 @@ export interface DeliveryMessage {
   body: string
   /** To answer an earlier message. */
   inReplyTo?: string
+  /** The names the message is addressed to (an address, not a secret: everyone in the room still hears it). */
+  to?: readonly string[]
+  /** The message's own id in its room, the same for every addressee (unlike the delivery id, one per addressee). */
+  ref?: string
 }
 
 export type DeliveryState =
@@ -204,6 +210,33 @@ export interface DoorObjects {
   onDidDrop(listener: (e: { kind: ObjectKind; id: string; data: Record<string, unknown> }) => void): IDisposable
 }
 
+// ---- 8. extension requests and events (the pipe between an extension's two halves) -----------
+
+/** Who asked, as the handler sees it: the asking client's kind from its hello ('app' | 'cli' | 'test'). */
+export interface ExtRequestContext {
+  client: string | undefined
+}
+
+/** The answer of `ext-request`: any JSON (it goes back as the reply's `result`); `undefined` sends no `result`. */
+export type ExtRequestHandler<A = unknown> = (args: A, ctx: ExtRequestContext) => unknown | Promise<unknown>
+
+export interface DoorRequests {
+  /**
+   * Answers the pipe's `{ t: 'ext-request', ext, name, args }` for this extension (`ext` is set by the core: one extension
+   * never answers for another). One handler per name per extension: a repeated name throws. A handler that throws becomes
+   * the request's error (a DoorError keeps its code, anything else is `bad-request`); the daemon carries on.
+   */
+  handle<A = unknown>(name: string, handler: ExtRequestHandler<A>): IDisposable
+}
+
+export interface DoorEvents {
+  /**
+   * Sends `{ t: 'ext-event', ext, name, payload }` to every client of the pipe, `ext` set by the core. Fire-and-forget: a
+   * no-op in a satellite and after the extension was disposed. `payload`: any JSON.
+   */
+  emit(name: string, payload?: unknown): void
+}
+
 /** What one daemon extension gets of the door (spread into TetherDaemon). */
 export interface DoorApi {
   slots: DoorSlots
@@ -212,4 +245,6 @@ export interface DoorApi {
   delivery: DoorDelivery
   attention: DoorAttention
   objects: DoorObjects
+  requests: DoorRequests
+  events: DoorEvents
 }
