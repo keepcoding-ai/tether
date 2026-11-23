@@ -1,10 +1,10 @@
 # A cena dos canais (S2)
 
-Roteiro manual da seção 8 do contrato dos canais (`D:/atrium/.tmp/tether-agents/onda-3/canais.md`). Quem roda é a regência, com o Guga na tela.
+Roteiro manual da seção 8 do contrato dos canais (`C:/atrium/.tmp/tether-agents/onda-3/canais.md`). Quem roda é a regência, com o Guga na tela.
 
-Atores: **U** = o Guga (moderador, na tela); **A** = a Atrium, um Claude Code numa guia da mesa `atrium` (dona da mesa `cena`); os três agentes que A abre: `claude · conferente`, `soul · bancada`, `codex · conferência`. Um tether à parte (home e pipe da bancada), janela visível, agentes em pastas de bancada fora de `D:/atrium`, `D:/agentes`, `D:/kai` e `workspace/lar`. O ser Soul nasce novo e vazio pelos verbos do motor. A cena usa mais de um agente de LLM vivo (exceção C11, haiku onde o motor deixa).
+Atores: **U** = o Guga (moderador, na tela); **A** = a Atrium, um Claude Code numa guia da mesa `atrium` (dona da mesa `cena`); os três agentes que A abre: `claude · conferente`, `soul · bancada`, `codex · conferência`. Um tether à parte (home e pipe da bancada), janela visível, agentes em pastas de bancada fora de `C:/atrium`, `C:/agentes`, `C:/kai` e `workspace/lar`. O ser Soul nasce novo e vazio pelos verbos do motor. A cena usa mais de um agente de LLM vivo (exceção C11, haiku onde o motor deixa).
 
-Evidência (prints, logs): `D:/atrium/.tmp/tether-agents/onda-3/cena/`.
+Evidência (prints, logs): `C:/atrium/.tmp/tether-agents/onda-3/cena/`.
 
 ## Nomes que valem (decisões da regência, onde diferem do contrato)
 
@@ -14,10 +14,10 @@ Evidência (prints, logs): `D:/atrium/.tmp/tether-agents/onda-3/cena/`.
 
 ## Como rodar
 
-Abreviações: `CLI` = `node D:/atrium/.tmp/wt/tether-channels/bin/tether.mjs`. `$B` = a raiz de agentes que `setup.mjs` imprime (`scene.json` tem `dirs.c1`, `dirs.ser`, `dirs.c3`). Os comandos `agents ...` e `channels ...` de A rodam DENTRO da guia de A (herda `TETHER_SLOT_ID`, `TETHER_SLOT_KEY`, home e pipe da bancada).
+Abreviações: `CLI` = `node C:/atrium/.tmp/wt/tether-channels/bin/tether.mjs`. `$B` = a raiz de agentes que `setup.mjs` imprime (`scene.json` tem `dirs.c1`, `dirs.ser`, `dirs.c3`). Os comandos `agents ...` e `channels ...` de A rodam DENTRO da guia de A (herda `TETHER_SLOT_ID`, `TETHER_SLOT_KEY`, home e pipe da bancada).
 
 ```
-cd D:/atrium/.tmp/wt/tether-channels
+cd C:/atrium/.tmp/wt/tether-channels
 node test/manual/channels-scene/setup.mjs            # cria a bancada, liga for-agents, channels e skills, diz as pastas
 node test/manual/channels-scene/setup.mjs up         # daemon (modo serve) + build + app visível, tudo por spawn com home e pipe da bancada
 node test/manual/channels-scene/check.mjs --before   # antes do passo
@@ -78,4 +78,4 @@ soul profiles create <id> --name "<nome>"
 
 `node teardown.mjs`: encerra o app e seus relançamentos, depois o daemon (`daemon stop` incluso), depois o que tem as raízes da bancada na linha de comando; repete por até 20 s; apaga a pasta de trabalho dos agentes (system temp, `tether-canais-*`) e a raiz da bancada em `.tmp/.../cena/bench-*`, o `scene.json` e o `check-before.json`. Recusa se achar link ou raízes fora do esperado. Se uma pasta continuar presa, imprime quem a segura e sai com código 1.
 
-Nunca toca o tether real do Guga (home, pipe e processos próprios), nem `D:/agentes`, `D:/kai`, `workspace/lar`.
+Nunca toca o tether real do Guga (home, pipe e processos próprios), nem `C:/agentes`, `C:/kai`, `workspace/lar`.

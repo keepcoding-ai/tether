@@ -24,10 +24,10 @@ if (cmd === 'record') {
   process.exit(0)
 }
 
-// The agents work in folders OUTSIDE D:/atrium, D:/agentes and D:/kai (system temp); the home and the evidence stay in .tmp.
+// The agents work in folders OUTSIDE C:/atrium, C:/agentes and C:/kai (system temp); the home and the evidence stay in .tmp.
 function createBench() {
   const work = realpathSync(mkdtempSync(join(tmpdir(), 'tether-canais-')))
-  if (/^d:[\\/](atrium|agentes|kai)([\\/]|$)/i.test(work)) { console.error(`pasta de trabalho em lugar proibido: ${work}`); process.exit(1) }
+  if (/^c:[\\/](atrium|agentes|kai)([\\/]|$)/i.test(work)) { console.error(`pasta de trabalho em lugar proibido: ${work}`); process.exit(1) }
   const suffix = basename(work).slice('tether-canais-'.length)
   mkdirSync(OUT, { recursive: true })
   const root = join(OUT, `bench-${suffix}`)
@@ -94,7 +94,7 @@ if (cmd === 'up') {
 const { scene, fresh } = ensureBench()
 console.log(`${fresh ? 'bancada criada' : 'bancada ja existia (reaproveitada)'}: ${scene.root}`)
 console.log(`home:    ${scene.home}\npipe:    ${scene.pipe}\ncena:    ${SCENE}`)
-console.log(`pastas dos agentes (fora de D:/atrium):\n  claude  ${scene.dirs.c1}\n  soul    ${scene.dirs.ser}   (o ser nasce novo e vazio, pelos verbos do motor)\n  codex   ${scene.dirs.c3}`)
+console.log(`pastas dos agentes (fora de C:/atrium):\n  claude  ${scene.dirs.c1}\n  soul    ${scene.dirs.ser}   (o ser nasce novo e vazio, pelos verbos do motor)\n  codex   ${scene.dirs.c3}`)
 console.log(`extensoes ligadas: ${scene.extensions.join(', ')} (settings.json do home da bancada)`)
 
 if (cmd !== 'print') {

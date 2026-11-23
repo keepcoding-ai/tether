@@ -7,7 +7,7 @@ import { CLI, WT, listProcs, norm, readJson, selfChain } from '../for-agents-sce
 export { CLI, WT, listProcs, norm, readJson, selfChain }
 
 /** Everything the scene keeps of its own (home, logs, evidence) lives under here, inside .tmp. */
-export const OUT = 'D:/atrium/.tmp/tether-agents/onda-3/cena'
+export const OUT = (process.env.TETHER_SCENE_OUT ?? 'C:/atrium/.tmp/tether-agents/onda-3/cena').replaceAll('\\', '/')
 export const SCENE = join(OUT, 'scene.json')
 /** The names the scene gives to the three guides A opens (step 2). */
 export const GUIDE_NAMES = { claude: 'claude · conferente', soul: 'soul · bancada', codex: 'codex · conferência' }

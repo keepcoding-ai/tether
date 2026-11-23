@@ -1,7 +1,7 @@
 // Ends what the channels scene started and removes what it created. Processes are chosen by the PIDs the scene recorded and
 // by a command line that carries the bench's own unique paths (never by executable name alone); the Electron relaunch chain
 // (--relaunched-from=<pid>) of a bench app counts too. Folders go by absolute path, and only the two roots setup made:
-// the bench under D:/atrium/.tmp/tether-agents/onda-3/cena/bench-* and the work folders in the system temp (tether-canais-*).
+// the bench under C:/atrium/.tmp/tether-agents/onda-3/cena/bench-* and the work folders in the system temp (tether-canais-*).
 // Refuses when either root holds a link (junction or symlink) or sits where it must not.
 //   node teardown.mjs
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
