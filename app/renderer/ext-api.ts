@@ -293,6 +293,11 @@ export interface PickSpec<T> {
   featured?: PickItem<T>
   items: readonly PickItem<T>[] | (() => Promise<readonly PickItem<T>[]>)
   emptyText?: string
+  /**
+   * The row the typed text makes ("Criar #obra"), drawn last while the field is not empty; `undefined` draws none. It is how a
+   * picker asks for a new name: its `value` is what the picker resolves with (usually the text itself).
+   */
+  create?: (query: string) => PickItem<T> | undefined
 }
 
 export interface TetherUi {

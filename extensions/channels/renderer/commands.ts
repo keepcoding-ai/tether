@@ -6,7 +6,7 @@ import type { Disposable, PickSpec, TetherUi } from '../../../app/renderer/ext-a
 import type { ChannelSummary } from '../daemon/requests.ts'
 import { CMD } from '../manifest.ts'
 import {
-  PICK, agentLabel, channelPick, closeDialog, failedDialog, findChannel, joinItems, memberItems, muteDialog, needsNameDialog, removeDialog,
+  NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, memberItems, muteDialog, removeDialog,
   type AgentChoice, type ChannelScope, type MemberGesture,
 } from './texts.ts'
 import type { MembersAnswer } from './view-model.ts'
@@ -81,7 +81,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   /** A request of the moderator; a refusal is told to the person and the answer is undefined. */
   const act = async <T>(what: string, name: string, args: object): Promise<T | undefined> => {
     try { return await ui.daemon.request<T>(name, args) } catch (e) {
-      await ui.dialogs.ask(failedDialog(what, codeOf(e))).catch(() => undefined)
+      await ui.dialogs.ask(failedDialog(what, codeOf(e), e instanceof Error ? e.message : undefined)).catch(() => undefined)
       return undefined
     }
   }
@@ -122,8 +122,10 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   }
 
   const create = async (arg: ChannelArg): Promise<void> => {
-    if (arg.name === undefined) { await ui.dialogs.ask(needsNameDialog()).catch(() => undefined); return }
-    const r = await act<{ channel: ChannelSummary }>('Criar canal', 'create', { name: arg.name, ...(arg.title !== undefined ? { title: arg.title } : {}) })
+    // Without a name the picker asks for it: the typed text makes the row "Criar #nome".
+    const name = arg.name ?? await ui.pick.list<string>({ title: NAME_PICK.title, placeholder: NAME_PICK.placeholder, emptyText: NAME_PICK.empty, items: [], create: createRow })
+    if (name === undefined) return
+    const r = await act<{ channel: ChannelSummary }>('Criar canal', 'create', { name, ...(arg.title !== undefined ? { title: arg.title } : {}) })
     if (r) { await dir.refresh().catch(() => {}); deps.open(r.channel.id, r.channel.name) }
   }
 

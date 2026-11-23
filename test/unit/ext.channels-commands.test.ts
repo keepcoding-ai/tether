@@ -6,7 +6,7 @@ import { CMD, manifest } from '../../extensions/channels/manifest.ts'
 import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import {
-  channelDetail, channelPick, closeDialog, failedDialog, findChannel, inScope, joinItems, memberItems, muteDialog, removeDialog,
+  channelDetail, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, muteDialog, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -107,6 +107,22 @@ test('the confirmations say the consequence; remove, mute and close are declared
   assert.match(cl.message!, /os 4 membros recebem um aviso/)
   assert.match(closeDialog({ channel: 'x', members: 1 }).message!, /o 1 membro recebe/)
   assert.deepEqual(cl.choices.map(c => c.id), ['close'])
+})
+
+test('createRow: the typed text makes the row "Criar #nome"; the rule shows while it is not a name; nothing for blank text', () => {
+  assert.deepEqual(createRow('sala-nova'), { value: 'sala-nova', label: 'Criar #sala-nova', icon: 'chats-circle' })
+  assert.equal(createRow('  #sala  ')!.value, 'sala', 'trimmed, one leading # dropped')
+  assert.equal(createRow('  '), undefined)
+  assert.equal(createRow('#'), undefined)
+  const bad = createRow('Nova Sala!')!
+  assert.equal(bad.value, 'Nova Sala!', 'the daemon judges: it goes as typed')
+  assert.match(bad.detail!, /minúsculas, números e hífen/)
+  assert.equal(createRow('a'.repeat(41))!.detail !== undefined, true)
+})
+
+test('failedDialog: the daemon\'s own message is told with the words', () => {
+  assert.match(failedDialog('Criar canal', 'bad-name', 'recusado: bad-name').message!, /letras minúsculas.*O tetherd respondeu: recusado: bad-name/)
+  assert.doesNotMatch(failedDialog('Criar canal', 'bad-name').message!, /tetherd respondeu/)
 })
 
 test('failedDialog: a refusal in plain words, an unknown code still says something', () => {

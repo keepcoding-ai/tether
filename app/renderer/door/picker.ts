@@ -127,6 +127,8 @@ export class Picker {
 
       const draw = (keep?: PickItem<T>): void => {
         rows = rankPicks(spec.featured, items, input.value)
+        const made = spec.create && input.value.trim() !== '' ? spec.create(input.value) : undefined
+        if (made) rows.push({ item: made, featured: false, runs: [{ text: made.label, hit: false }] })
         list.replaceChildren()
         if (rows.length === 0) {
           empty.textContent = items.length === 0 && !spec.featured ? (spec.emptyText ?? NOTHING_TEXT) : `Nada para “${input.value.trim()}”.`

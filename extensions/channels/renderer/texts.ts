@@ -5,6 +5,7 @@ import { agentHue } from '../../../app/shared/agent-color.ts'
 import type { DialogSpec } from '../../../app/shared/dialog.ts'
 import type { PickItem } from '../../../app/renderer/ext-api.ts'
 import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
+import { isRoomName } from '../rules.ts'
 import { membersCount } from './view-model.ts'
 
 /** The picker's icon for a channel row, and the icons of the menus (names of app/renderer/icons.ts: the core's table). */
@@ -169,26 +170,34 @@ const REFUSALS: Record<string, string> = {
   'unknown-agent': 'Esse agente não existe mais.',
   'unknown-channel': 'Esse canal não existe mais.',
   'name-taken': 'Já há um canal aberto com esse nome.',
-  'bad-name': 'Esse nome de canal não serve.',
+  'bad-name': 'Use letras minúsculas, números e hífen (1 a 40), começando e terminando com letra ou número.',
   'not-member': 'Esse agente não está no canal.',
   'no-daemon': 'O tetherd não respondeu.',
 }
 
-export function failedDialog(what: string, code: string): DialogSpec {
+/** `reason` is the daemon's own message, told together with the plain words. */
+export function failedDialog(what: string, code: string, reason?: string): DialogSpec {
+  const words = REFUSALS[code] ?? `Não foi possível (${code}).`
   return {
     situation: 'channels.failed', tone: 'warn', icon: 'shield-warning',
-    title: what, message: REFUSALS[code] ?? `Não foi possível (${code}).`,
+    title: what, message: reason !== undefined && reason !== '' ? `${words} O tetherd respondeu: ${reason}` : words,
     choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi alterado.', tone: 'safe' }],
   }
 }
 
-/** Without a name there is nothing to create: the way to name a channel today. */
-export function needsNameDialog(): DialogSpec {
+/** The picker that asks for the name of a new channel: the row is made by the typed text (PickSpec.create). */
+export const NAME_PICK = { title: 'Criar canal', placeholder: 'Nome do canal (ex.: conferencia)', empty: 'Digite o nome do novo canal.' } as const
+
+/**
+ * The row "Criar #nome". The name goes as typed (trimmed, one leading `#` dropped): the daemon is the one that judges it, so the
+ * rule's words show under the row while the text is not a name, and a refusal still comes back in a dialog.
+ */
+export function createRow(query: string): PickItem<string> | undefined {
+  const name = query.trim().replace(/^#/, '')
+  if (name === '') return undefined
   return {
-    situation: 'channels.needs-name', tone: 'info', icon: 'chats-circle',
-    title: 'Criar canal',
-    message: 'Dê o nome ao chamar o comando: channels.create com { name }. Pela linha de comando, `tether channels create <nome>`.',
-    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi criado.', tone: 'safe' }],
+    value: name, label: `Criar #${name}`, icon: ICON.channel,
+    ...(isRoomName(name) ? {} : { detail: 'Só letras minúsculas, números e hífen (1 a 40)' }),
   }
 }
 

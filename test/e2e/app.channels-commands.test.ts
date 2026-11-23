@@ -266,6 +266,38 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     assert.deepEqual((await page.locator('dialog.picker li.pk-item .pk-label').allInnerTexts()).map(t => t.trim()), ['#revisao'])
     await page.keyboard.press('Escape')
     await picker.waitFor({ state: 'detached' })
+
+    // ---- 5. create without an argument: the picker asks for the name ----
+    console.log('step 5')
+    await run('channels.create')
+    await picker.waitFor()
+    assert.equal(await title(), 'Criar canal')
+    assert.equal(await page.locator('dialog.picker .pk-empty').innerText(), 'Digite o nome do novo canal.')
+    await page.keyboard.type('Nova Sala!')
+    assert.equal(await page.locator('dialog.picker li.pk-item .pk-label').innerText(), 'Criar #Nova Sala!')
+    assert.match(await page.locator('dialog.picker li.pk-item .pk-detail').innerText(), /minúsculas, números e hífen/)
+    await page.screenshot({ path: join(SHOTS, 'seletor-criar.png') })
+    await page.keyboard.press('Enter')
+    await ask('channels.failed').waitFor()
+    assert.match(await ask('channels.failed').innerText(), /O tetherd respondeu: .*bad-name/)
+    await page.screenshot({ path: join(SHOTS, 'criar-recusado.png') })
+    await ask('channels.failed').locator('button.choice[data-choice="ok"]').click()
+    assert.equal(ch.store.channels().some(x => x.name === 'Nova Sala!'), false)
+    await run('channels.create')
+    await picker.waitFor()
+    await page.keyboard.type('sala-nova')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => ch.store.channels().some(x => x.name === 'sala-nova'), 10_000, 'sala-nova created')
+    const novo = ch.store.channels().find(x => x.name === 'sala-nova')!
+    assert.equal(novo.owner.kind, 'user')
+    await page.waitForFunction(p => window.__tether.panelIds().includes(p), `channel:${novo.id}`)
+    // Esc leaves it as it was.
+    await run('channels.create')
+    await picker.waitFor()
+    await page.keyboard.type('outra')
+    await page.keyboard.press('Escape')
+    await picker.waitFor({ state: 'detached' })
+    assert.equal(ch.store.channels().some(x => x.name === 'outra'), false)
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
