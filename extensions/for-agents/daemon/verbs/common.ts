@@ -10,8 +10,9 @@ import type { ScreenReaders } from '../../screen/index.ts'
 import type { WriteGate } from '../guard.ts'
 import type { OwnershipStore } from '../ownership.ts'
 import type { PendingCommands } from './command.ts'
+import type { SleepBridge } from './hibernate.ts'
 
-export type VerbApi = Pick<TetherDaemon, 'slots' | 'desks' | 'delivery' | 'attention' | 'objects' | 'agents' | 'profiles' | 'io' | 'home' | 'log'>
+export type VerbApi = Pick<TetherDaemon, 'slots' | 'desks' | 'delivery' | 'attention' | 'objects' | 'agents' | 'profiles' | 'io' | 'home' | 'log' | 'events' | 'requests'>
 
 export interface VerbDeps {
   api: VerbApi
@@ -19,6 +20,8 @@ export interface VerbDeps {
   gate: WriteGate
   readers: ScreenReaders
   pending: PendingCommands
+  /** The bridge to the app's sleep of panes (hibernate). */
+  sleep: SleepBridge
 }
 
 /** One verb of the `agents` namespace, before it is registered (verbs.ts adds the namespace and the shared handling). */

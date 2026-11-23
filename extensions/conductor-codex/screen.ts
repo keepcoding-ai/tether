@@ -15,7 +15,7 @@
 // A text outside those markers is `unknown`: the conductor never guesses. No state, no I/O.
 import type { DetectedCard } from '../for-agents/conductor-api.ts'
 
-export type Role = 'yes' | 'always' | 'no'
+export type Role = 'yes' | 'session' | 'always' | 'no'
 
 export interface ParsedOption {
   n: number
@@ -27,21 +27,30 @@ export interface ParsedOption {
 }
 
 export type Seen =
-  | { kind: 'permission' | 'dialog'; card: DetectedCard; options: ParsedOption[] }
+  | { kind: 'permission' | 'dialog'; card: DetectedCard; options: ParsedOption[]; list?: { selected: number } }
   | { kind: 'busy' | 'idle' | 'interrupted' | 'unknown' }
 
-const FOOTER = /press enter to confirm or esc to cancel|enter (?:select|continue)\s*·\s*esc (?:back|skip)/i
+// The MCP tool card (`Field 1/1`, `Allow the <server> MCP server to run tool "<tool>"?`) is a list with no key per option: the
+// selected row is marked `›` and the footer is `enter to submit | esc to cancel`; options are chosen by moving the selection.
+const FOOTER = /press enter to confirm or esc to cancel|enter (?:select|continue)\s*·\s*esc (?:back|skip)|enter to submit\s*\|\s*esc to cancel/i
+const LIST_FOOTER = /enter to submit\s*\|\s*esc to cancel/i
 const OPTION = /^\s*(?:›\s*)?(\d+)\.\s+(\S.*)$/
 const KEY_SUFFIX = /\s\((y|p|esc)\)\s*$/
 const BUSY = /esc to interrupt/i
 const INTERRUPTED = /^\s*■\s*Conversation interrupted/i
 const COMPOSER = /^\s*›(?!\s*\d+\.)/
-const TITLE = /^\s*Would you like to\b/i
+const TITLE = /^\s*(?:Would you like to\b|Allow the .+ MCP server to run tool\b)/i
 const TAIL_ROWS = 10
 
 const isBlank = (l: string): boolean => l.trim() === ''
 
-function roleOf(label: string, key: string | undefined): Role | undefined {
+function roleOf(full: string, key: string | undefined): Role | undefined {
+  // The MCP card puts a description after the label, two or more spaces apart.
+  const label = full.split(/\s{2,}/)[0]!
+  if (/^Allow$/i.test(label)) return 'yes'
+  if (/^Allow for this session$/i.test(label)) return 'session'
+  if (/^Always allow$/i.test(label)) return 'always'
+  if (/^Cancel$/i.test(label)) return 'no'
   if (key === 'y') return 'yes'
   if (key === 'p') return 'always'
   if (key === 'esc' && /^No\b/i.test(label)) return 'no'
@@ -52,7 +61,7 @@ function roleOf(label: string, key: string | undefined): Role | undefined {
 }
 
 /** The numbered options of a card: from the last `1.` to the footer; wrapped lines join the option they continue. */
-function numbered(rows: readonly string[], footer: number): { first: number; options: ParsedOption[] } | undefined {
+function numbered(rows: readonly string[], footer: number): { first: number; options: ParsedOption[]; selected: number } | undefined {
   let first = -1
   for (let i = footer - 1; i >= 0; i--) {
     const m = OPTION.exec(rows[i]!)
@@ -60,9 +69,11 @@ function numbered(rows: readonly string[], footer: number): { first: number; opt
   }
   if (first < 0) return undefined
   const labels: { n: number; label: string }[] = []
+  let selected = 1
   for (let i = first; i < footer; i++) {
     const row = rows[i]!
     const m = OPTION.exec(row)
+    if (m && /^\s*›/.test(row)) selected = Number(m[1])
     if (m) labels.push({ n: Number(m[1]), label: m[2]!.trim() })
     else if (!isBlank(row) && labels.length > 0) labels[labels.length - 1]!.label += ` ${row.trim()}`
   }
@@ -72,7 +83,7 @@ function numbered(rows: readonly string[], footer: number): { first: number; opt
     const key = KEY_SUFFIX.exec(o.label)?.[1]
     return { n: o.n, label: o.label, key, role: roleOf(o.label, key) }
   })
-  return { first, options }
+  return { first, options, selected }
 }
 
 function cardOf(rows: readonly string[], footer: number): Seen | undefined {
@@ -92,7 +103,8 @@ function cardOf(rows: readonly string[], footer: number): Seen | undefined {
   const shown = permission
     ? menu.options.filter((o) => o.role !== undefined).map((o) => ({ id: o.role!, label: o.label }))
     : menu.options.map((o) => ({ id: String(o.n), label: o.label }))
-  return { kind: permission ? 'permission' : 'dialog', card: { title, text: lines.join('\n'), options: shown }, options: menu.options }
+  const list = LIST_FOOTER.test(rows[footer]!) ? { list: { selected: menu.selected } } : {}
+  return { kind: permission ? 'permission' : 'dialog', card: { title, text: lines.join('\n'), options: shown }, options: menu.options, ...list }
 }
 
 /** What the screen shows now. `screen` is `ScreenText.screen`: the rows of the terminal as the person sees it. */

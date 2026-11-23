@@ -108,7 +108,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const members: MemberInfo[] = Object.entries(ch.members).map(([id, m]) => {
         const slot = api.slots.get(id)
         const alive = slot !== undefined && slotIsLive(slot)
-        return { id, name: c.nameOf(id), muted: m.muted !== undefined, since: m.since, by: m.by, alive, path: alive ? api.delivery.pathOf(id) : 'away' }
+        return { id, name: c.nameOf(id), muted: m.muted !== undefined, since: m.since, by: m.by, alive, path: alive ? api.delivery.routeOf(id) : 'away' }
       })
       return { channel: summaryOf(ch), members, removed: ch.removed ?? [] }
     }],

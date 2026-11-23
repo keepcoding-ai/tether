@@ -139,13 +139,17 @@ export interface DeskMapDesk {
   name: string
   kind: 'queue' | 'system'
   asleep?: true
-  /** Every pane of the desk. `type`: 'terminal' for a slot's pane (id = slotId), else the pane type id ('note', 'browser.tab'...). */
-  panes: { id: string; type: string }[]
+  /**
+   * Every pane of the desk. `type`: 'terminal' for a slot's pane (id = slotId), else the pane type id ('note', 'browser.tab'...).
+   * `asleep`: the pane is hibernated in the app (layout `asleepPanes`).
+   */
+  panes: DeskMapPane[]
 }
+export interface DeskMapPane { id: string; type: string; asleep?: true }
 export interface DeskMap {
   desks: DeskMapDesk[]
   /** The drawer, which is not a desk. */
-  drawer: { id: string; type: string }[]
+  drawer: DeskMapPane[]
 }
 
 /** The objects an extension keeps data on (agent door, objects). */

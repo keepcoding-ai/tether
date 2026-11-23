@@ -7,7 +7,7 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../../app/sh
 import type { LaunchPlan } from '../../agents/types.ts'
 import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
-import { type DoorRequestHandler, type DoorSeams, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
+import { type DoorRequestHandler, type DoorSeams, type InputMark, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
 import { DeliveryService } from './delivery.ts'
 import { DeskService } from './desks.ts'
 import { ExtRequestService } from './ext-requests.ts'
@@ -101,7 +101,7 @@ export class DoorHost implements DoorSeams {
 
   stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state); this.delivery.stateChanged(state) }
 
-  input(slotId: string, data: string, origin: InputOrigin): void { this.delivery.input(slotId, data, origin); this.slotsService.input(slotId, data, origin) }
+  input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void { this.delivery.input(slotId, data, origin, mark);this.slotsService.input(slotId, data, origin) }
 
   /**
    * A new slot key goes into the run's environment, after the profile's env (a profile cannot set it). Then the `tether` MCP

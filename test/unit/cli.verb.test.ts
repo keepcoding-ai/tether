@@ -104,8 +104,8 @@ describe('cli: tether <ns> <verbo>', () => {
   })
 
   test('without tetherd: an unknown command that says what a verb needs (usage error); verbsHelp is empty then', async () => {
-    const r = { stdout: '', stderr: '', env: {}, out: () => {}, err: (t: string) => { r.stderr += t }, connect: async () => undefined }
-    await assert.rejects(cmdVerb('agents', ['send'], r), (e: unknown) => e instanceof UsageError && /comando desconhecido: agents.*o tether precisa estar rodando/.test(e.message))
+    const r = { stdout: '', stderr: '', env: {}, out: () => {}, err: (t: string) => { r.stderr += t }, connect: async () => undefined, failure: () => ({ pipe: '\\\\.\\pipe\\tether-x', cause: 'ENOENT' }) }
+    await assert.rejects(cmdVerb('agents', ['send'], r), (e: unknown) => e instanceof UsageError && /^comando desconhecido: agents\. Se é um comando de extensão, não consegui falar com o tether em .*tether-x: ENOENT\.$/.test(e.message))
     assert.equal(await verbsHelp(async () => undefined), '')
   })
 

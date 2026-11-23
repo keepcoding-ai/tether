@@ -19,6 +19,7 @@ const SOUL_BIN = process.env.E2_SOUL_BIN ?? 'D:/atrium/workspace/soul-cli/bin/so
 const [engine, repsArg, evArg] = [process.argv[2], process.argv[3], process.argv[4]]
 if (engine !== 'codex' && engine !== 'soul') { console.error('usage: run.mjs <codex|soul> [reps] [evidenceDir]'); process.exit(2) }
 const REPS = Number(repsArg ?? 2)
+const ONE_PANE = process.env.E2_ONE_PANE === '1' // one new pane per line, no Enter rescue
 const EV = evArg ?? `D:/atrium/.tmp/tether-agents/onda-3/e2/${engine}`
 mkdirSync(EV, { recursive: true })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -191,7 +192,8 @@ try {
     await waitFor('the line on the screen', async () => (screens.get(pane)?.text() ?? '').includes(tag), 60_000, 300).catch(() => undefined)
     // a turn may start; wait for it to end, then calm
     await sleep(5000)
-    await waitFor('turn end', async () => { const s = await stateOf(pane); return s && s.turn !== 'busy' }, 150_000, 500)
+    // a stuck line leaves the daemon's turn mark busy: never fail the run on it, the verdict comes from the screen
+    await waitFor('turn end', async () => { const s = await stateOf(pane); return s && s.turn !== 'busy' }, ONE_PANE ? 60_000 : 150_000, 500).catch(() => undefined)
     await sleep(4000)
     clearInterval(watch)
     const screen = screens.get(pane)?.text() ?? '(none)'
@@ -202,7 +204,7 @@ try {
     const rec = { n: results.length + 1, tag, kind, chars: text?.length, lines: text?.split('\n').length, receipt, verdict, daemonBusySeen: busySeen, busyAfterMs: busyAt, tagOnScreenLines: tagLines, lastAnswerRow: lastAnswer }
     results.push(rec)
     writeFileSync(join(EV, `screen-${String(rec.n).padStart(2, '0')}-${kind}.txt`), `# ${JSON.stringify(rec)}\n# sent text (JSON): ${JSON.stringify(text ?? null)}\n${screen}\n`)
-    if (verdict === 'stuck') {
+    if (verdict === 'stuck' && !ONE_PANE) {
       client.input(pane, '\r')
       await sleep(8000)
       await waitFor('turn end after the rescue', async () => { const s = await stateOf(pane); return s && s.turn !== 'busy' }, 150_000, 500)
@@ -227,6 +229,15 @@ try {
       n++
       const tag = `E2${engine === 'codex' ? 'C' : 'S'}${String(n).padStart(2, '0')}`
       const text = body(kind, tag)
+      if (ONE_PANE && n > 1) {
+        // a brand-new pane (and channel) per line, no rescue: the entry notice is measured on each, then the line
+        await client.request({ t: 'stop', slotId: pane }).catch(() => {})
+        const again = await verb(...openArgs())
+        if (!again.ok) throw new Error(`open: ${again.err}`)
+        pane = String(again.data.pane)
+        await ready()
+        await measure('entry', 'você entrou em', undefined, async () => 'n/a (join notice)')
+      }
       await measure(kind, tag, text, async () => {
         const said = await req('say', { channel, text })
         return Object.values(said.receipts ?? {})[0]

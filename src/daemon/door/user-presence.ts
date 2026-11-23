@@ -11,15 +11,26 @@
 //   Backspace (DEL or BS) takes 1 down to zero; Enter (CR or LF), Ctrl+C or Ctrl+U zero it, and so does the turn turning busy
 //   (the line was taken). There is a draft while the count is above zero, so typing a letter and erasing it frees the slot.
 //   Arrows and Delete in mid-line are not counted: when unsure the count errs toward "a draft" (never type over the person).
+// - A marked card answer (`activity`) is not typing: it holds only ANSWER_QUIET_MS; typing keeps USER_QUIET_MS, and the later
+//   of the two deadlines rules (an answer never shortens a typing deadline).
 // Pure state with the clock passed in; no timer here (delivery.ts keeps the one silence timer).
 
 export const USER_QUIET_MS = 10_000
+/**
+ * The hold of a marked card answer: one act of an agent, not typing in progress, so it only waits for the card to leave the
+ * screen. Typing (of the person or of an agent) keeps USER_QUIET_MS; the later of the two deadlines rules.
+ */
+export const ANSWER_QUIET_MS = 3_000
 
 const PASTE_RE = /\x1b\[200~[\s\S]*?(?:\x1b\[201~|$)/g
 // An escape sequence inside a chunk: CSI (ESC [ ... final byte), SS3 (ESC O x), or ESC plus one byte.
 const ESCAPE_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|O.|[\s\S])?/g
 
-interface Presence { typedAt: number; draft: number }
+// typedAt: last activity of any kind; keysAt: last real typing (USER_QUIET_MS); answerAt: last marked card answer (ANSWER_QUIET_MS).
+interface Presence { typedAt: number; keysAt?: number; answerAt?: number; draft: number }
+
+/** Which wait holds the slot: typing, or the settling of a card answer. */
+export type QuietKind = 'typing' | 'answer'
 
 /** Who typed: the person (the pipe) or an agent (the door). */
 export type Typist = 'user' | 'agent'
@@ -49,7 +60,9 @@ export class UserPresence {
   private readonly bySlot = new Map<string, Partial<Record<Typist, Presence>>>()
   private readonly quietMs: number
 
-  constructor(quietMs = USER_QUIET_MS) { this.quietMs = quietMs }
+  private readonly answerMs: number
+
+  constructor(quietMs = USER_QUIET_MS, answerMs = ANSWER_QUIET_MS) { this.quietMs = quietMs; this.answerMs = answerMs }
 
   /** Keys of the person (or, `who: 'agent'`, of the pane's holder) reached the slot at `now` (ms). */
   input(slotId: string, data: string, now: number, who: Typist = 'user'): void {
@@ -57,7 +70,21 @@ export class UserPresence {
     const slot = this.bySlot.get(slotId) ?? {}
     const p = slot[who] ?? { typedAt: now, draft: 0 }
     p.typedAt = now
+    p.keysAt = now
     p.draft = draftAfter(p.draft, data)
+    slot[who] = p
+    this.bySlot.set(slotId, slot)
+  }
+
+  /**
+   * Activity of `who` at `now` that leaves nothing in the box (a card answer): a short hold (ANSWER_QUIET_MS) starts, the
+   * draft stays as it is, and a typing deadline already running is never shortened.
+   */
+  activity(slotId: string, now: number, who: Typist): void {
+    const slot = this.bySlot.get(slotId) ?? {}
+    const p = slot[who] ?? { typedAt: now, draft: 0 }
+    p.typedAt = now
+    p.answerAt = now
     slot[who] = p
     this.bySlot.set(slotId, slot)
   }
@@ -81,9 +108,22 @@ export class UserPresence {
    * that typist counts; without it, both (the later of the two).
    */
   freeAt(slotId: string, who?: Typist): number | undefined {
+    return this.hold(slotId, who)?.at
+  }
+
+  /** Same as freeAt, with which wait it is (the later deadline; typing wins a tie). */
+  hold(slotId: string, who?: Typist): { at: number; kind: QuietKind } | undefined {
     const ps = this.typists(slotId, who)
     if (ps.length === 0) return undefined
-    return Math.max(...ps.map((p) => p.draft > 0 ? Infinity : p.typedAt + this.quietMs))
+    let best = { at: -Infinity, kind: 'typing' as QuietKind }
+    for (const p of ps) {
+      if (p.draft > 0) return { at: Infinity, kind: 'typing' }
+      const typing = p.keysAt === undefined ? -Infinity : p.keysAt + this.quietMs
+      const answer = p.answerAt === undefined ? -Infinity : p.answerAt + this.answerMs
+      if (typing > best.at || (typing === best.at && best.at === -Infinity)) best = { at: typing, kind: 'typing' }
+      if (answer > best.at) best = { at: answer, kind: 'answer' }
+    }
+    return best
   }
 
   /** When (ms epoch) `who` (default: the person) last typed; undefined when never. Not affected by a draft in the box. */

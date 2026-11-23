@@ -25,6 +25,22 @@ if (process.stdin.setRawMode) process.stdin.setRawMode(true)
 process.stdin.on('data', (d) => append('stdin.jsonl', d.toString()))
 setInterval(() => {}, 60000)
 
+// ---- the start the SessionStart hook would report (src/report/claude-hook.mjs toEvent): one line appended to the slot's events
+// file. Without it the daemon's awaitKillable (src/daemon/server.ts) treats the agent as still starting and a stop waits
+// KILL_WAIT_CAP_MS. ----
+fs.mkdirSync(path.join(home, 'slots'), { recursive: true })
+fs.appendFileSync(path.join(home, 'slots', `${slot}.jsonl`), JSON.stringify({
+  v: 1,
+  ts: new Date().toISOString(),
+  slotId: slot,
+  agent: 'claude',
+  kind: 'start',
+  source: 'startup',
+  sessionId: require('node:crypto').randomUUID(),
+  cwd: process.cwd(),
+  resume: { cwd: process.cwd(), args: ['--resume', 'fake'] },
+}) + '\n')
+
 // ---- the turn the hook would report ----
 let lastTs = 0
 const attention = (kind) => {

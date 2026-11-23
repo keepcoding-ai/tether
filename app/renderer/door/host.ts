@@ -35,7 +35,25 @@ export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
   ownerName(slotId: string): string | undefined
   /** Closes the pane of a slot with no question; 'stop' stops the process first. */
   closeGuide(paneId: string, process: 'keep' | 'stop'): Promise<void>
+  /**
+   * "Hibernar guia" with no question (an owner asked through the door): the process stops and the pane sleeps (`asleepPanes`).
+   * 'already' when it sleeps already; 'no-pane' when the slot has no pane in the window. Absent: 'no-pane'.
+   */
+  hibernate?(slotId: string): Promise<PaneSleep>
+  /**
+   * "Hibernar mesa" with no question and no switch of the visible desk, leaving `spare` as they are. With a spared pane in it
+   * the desk is not marked asleep: only its other panes sleep. `panes`: the ones put to sleep. Absent: 'no-desk'.
+   */
+  hibernateDesk?(deskId: string, spare: readonly string[]): Promise<{ state: DeskSleep; panes: string[] }>
+  /** Waking a desk without switching to it: the panes its sleep put down start again, but `spare`. `panes`: the ones started. */
+  wakeDesk?(deskId: string, spare: readonly string[]): Promise<{ state: DeskWake; panes: string[] }>
 }
+
+export type DeskSleep = 'asleep' | 'partial' | 'already' | 'last-desk' | 'in-view' | 'no-desk'
+export type DeskWake = 'woke' | 'already' | 'no-desk'
+
+/** What hibernating a pane from an extension did. */
+export type PaneSleep = 'asleep' | 'already' | 'no-pane'
 
 export class DoorHost {
   private readonly mapSender: DeskMapSender | undefined
@@ -216,6 +234,21 @@ export class DoorHost {
   /** Closes the pane of a slot with no question (the extension asked already). */
   closeGuide(paneId: string, process: 'keep' | 'stop' = 'keep'): Promise<void> {
     return this.port ? this.port.closeGuide(paneId, process) : Promise.resolve()
+  }
+
+  /** Hibernates the pane of a slot with no question (an owner asked through the door). */
+  hibernate(paneId: string): Promise<PaneSleep> {
+    return this.port?.hibernate ? this.port.hibernate(paneId) : Promise.resolve('no-pane')
+  }
+
+  /** Hibernates a desk with no question, sparing `spare` (an owner asked through the door). */
+  hibernateDesk(deskId: string, spare: readonly string[] = []): Promise<{ state: DeskSleep; panes: string[] }> {
+    return this.port?.hibernateDesk ? this.port.hibernateDesk(deskId, spare) : Promise.resolve({ state: 'no-desk', panes: [] })
+  }
+
+  /** Wakes a desk without switching to it, sparing `spare`. */
+  wakeDesk(deskId: string, spare: readonly string[] = []): Promise<{ state: DeskWake; panes: string[] }> {
+    return this.port?.wakeDesk ? this.port.wakeDesk(deskId, spare) : Promise.resolve({ state: 'no-desk', panes: [] })
   }
 
   /** A slot went away. */

@@ -35,9 +35,9 @@ export type KeyName =
 export interface DoorSlots {
   create(input: SlotCreate): Promise<SlotState>
   /** Raw bytes into the PTY. Rejects `door-no-pty` when the slot has no live process and none is coming. Counts as AGENT typing. */
-  write(slotId: string, data: string): Promise<void>
-  /** Named keys, in order, `gapMs` apart (default 0). */
-  keys(slotId: string, keys: readonly KeyName[], opts?: { gapMs?: number }): Promise<void>
+  write(slotId: string, data: string, opts?: { answer?: boolean }): Promise<void>
+  /** Named keys, in order, `gapMs` apart (default 0). `answer: true` declares them the answer to a permission card (activity, never a draft). */
+  keys(slotId: string, keys: readonly KeyName[], opts?: { gapMs?: number; answer?: boolean }): Promise<void>
   /** Reads the screen without attaching and without resizing. `since`: an offset a previous read returned. */
   readScreen(slotId: string, opts?: { since?: number }): ScreenRead
   start(slotId: string, choice?: 'resume' | 'new'): Promise<SlotState>
@@ -160,13 +160,46 @@ export interface DeliveryReceipt {
   slotId: string
   state: DeliveryState
   at: string
-  /** `typed` only: the text was typed and the Enter was not (the person typed in between); the text stays in the box. */
+  /**
+   * `typed` only: the text was typed and not submitted (the person typed in between, or the engine's typist saw the Enter not
+   * taken); the text stays in the box.
+   */
   unsent?: true
+}
+
+/** One write of a typist: `waitMs` waits BEFORE the data (the Enter's delay is on the Enter's chunk). */
+export interface TypistChunk { data: string; waitMs?: number }
+
+/** What the terminal path hands a typist for one delivery. */
+export interface TypistContext {
+  readonly slotId: string
+  /**
+   * The only write a typist has, through the delivery's interlocks. Before the first byte of the delivery the terminal path's
+   * conditions are checked again (held, alive, running, idle, not `waiting`, the user free, settled); before every chunk after
+   * it, the pane still held, the process alive and the user silent since the first byte. A failed check writes nothing more
+   * of this delivery, ever: it resolves `false` and every later call resolves `false` at once. `true`: all chunks written.
+   */
+  write(chunks: readonly TypistChunk[]): Promise<boolean>
+  log(msg: string): void
+}
+
+/**
+ * How one engine types and submits a delivery's text in its terminal (contract N5), in place of its `typing`: a typist may
+ * look at the screen and press Enter again until the engine took the text. `'unsent'`: the text may sit in the box, not
+ * submitted (the receipt says `unsent`). A typist that wrote nothing leaves the item queued, whatever it answers or throws.
+ */
+export interface Typist {
+  type(ctx: TypistContext, text: string): Promise<'sent' | 'unsent'>
 }
 
 export interface DoorDelivery {
   /** Turns delivery on for this extension: from then on the `tether` server is offered to agents even with no tool. */
   enable(): IDisposable
+  /**
+   * The typist of an engine (`SlotMeta.agent`: 'codex', 'soul'...) for the terminal path. One per engine: a later one replaces
+   * it, and disposing removes only the one in place. None: the engine's `typing` (as before this seam).
+   */
+  useTypist(agent: string, typist: Typist): IDisposable
   /** Never rejects for lack of a path: answers 'queued' and delivers when it can. */
   deliver(slotId: string, msg: DeliveryMessage, opts?: { paths?: readonly ('inside' | 'terminal')[] }): Promise<DeliveryReceipt>
   /** What waits for a slot (this extension's). */
@@ -176,6 +209,8 @@ export interface DoorDelivery {
   onDidDeliver(listener: (r: DeliveryReceipt) => void): IDisposable
   /** How a slot receives now. */
   pathOf(slotId: string): 'inside' | 'terminal' | 'wait'
+  /** The route a slot has, ignoring the interlock (busy, draft, settle): `pathOf` is the instant, `routeOf` is the road. */
+  routeOf(slotId: string): 'inside' | 'terminal' | 'wait'
 }
 
 // ---- 5. rerouted attention -------------------------------------------------------------------

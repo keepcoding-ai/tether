@@ -26,14 +26,14 @@ describe('for-agents: send with the envelope (X5)', () => {
 
   const fake: Conductor = {
     id: 'fake',
-    match: (t) => (t.slot?.kind === 'soul' ? 10 : undefined),
+    match: (t) => (t.slot?.kind === 'soul' || t.slot?.kind === 'shell' ? 10 : undefined),
     capabilities: [{ id: 'send', label: 'Enviar' }],
     detect: async () => detected,
     send: async (_ctx, text) => { await sendImpl(text); typed.push(text); return { value: undefined, proven: true } },
   }
 
   const caller = { slotId: OWNER } as VerbCaller
-  const slot = { slotId: PANE, kind: 'soul', name: 'p1', cwd: '/x' }
+  const slot = { slotId: PANE, kind: 'soul' as string, name: 'p1', cwd: '/x' }
   const deps = {
     api: {
       slots: { get: (id: string) => (id === PANE ? slot : { slotId: OWNER, kind: 'soul', name: 'Atrium', cwd: '/x' }) },
@@ -72,6 +72,7 @@ describe('for-agents: send with the envelope (X5)', () => {
     ;(conductorRegistry as unknown as { list: Conductor[] }).list.push(...setAside)
   })
   beforeEach(() => {
+    slot.kind = 'soul'
     path = 'terminal'; hand = 'owner'; detected = { state: 'idle' }; typed = []; delivered = []; logs = []; outcomes = []
     sendImpl = async () => {}
     receipt = { id: 'm_x', slotId: PANE, state: 'typed', at: '' }
@@ -128,6 +129,16 @@ describe('for-agents: send with the envelope (X5)', () => {
 
     sendImpl = async () => { throw new ConductError('busy', 'o motor está em turno') }
     assert.equal(codeOf(await run()), 'busy')
+  })
+
+  test('a shell pane takes the plain text without the header, with no --raw: the raw way, not the delivery', async () => {
+    slot.kind = 'shell'
+    path = 'wait'
+    const r = await run()
+    assert.equal(r.isError, undefined, r.text)
+    assert.deepEqual(typed, ['olá'])
+    assert.equal(delivered.length, 0)
+    assert.equal((r.data as { state: string }).state, 'typed')
   })
 
   test('a receipt `unsent` from the delivery is an error of the verb, not a success', async () => {

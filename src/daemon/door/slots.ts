@@ -77,8 +77,8 @@ export class SlotsService {
     }
     return {
       create: (input) => act('slots.create', (port) => port.create(createInput(ext, input, this.desks()))),
-      write: (slotId, data) => act('slots.write', (port) => port.write(slotId, data, 'agent')),
-      keys: (slotId, keys, opts) => act('slots.keys', (port) => typeKeys(port, slotId, keys, opts?.gapMs ?? 0)).then(() => undefined),
+      write: (slotId, data, opts) => act('slots.write', (port) => opts?.answer ? port.write(slotId, data, 'agent', { answer: true }) : port.write(slotId, data, 'agent')),
+      keys: (slotId, keys, opts) => act('slots.keys', (port) => typeKeys(port, slotId, keys, opts?.gapMs ?? 0, opts?.answer === true)).then(() => undefined),
       readScreen: (slotId, opts) => live('slots.readScreen').readScreen(slotId, opts?.since),
       start: (slotId, choice) => act('slots.start', (port) => port.start(slotId, choice)),
       stop: (slotId) => act('slots.stop', (port) => port.stop(slotId)),
@@ -126,11 +126,12 @@ function createInput(ext: string, input: SlotCreate, desks: PaneRequester | unde
   }
 }
 
-async function typeKeys(port: SlotPort, slotId: string, keys: readonly KeyName[], gapMs: number): Promise<void> {
+async function typeKeys(port: SlotPort, slotId: string, keys: readonly KeyName[], gapMs: number, answer: boolean): Promise<void> {
   // Translate first: a typo in the last key must not leave the first ones typed.
   const bytes = keys.map((k) => keyBytes(k))
   for (let i = 0; i < bytes.length; i++) {
-    port.write(slotId, bytes[i]!, 'agent')
+    if (answer) port.write(slotId, bytes[i]!, 'agent', { answer: true })
+    else port.write(slotId, bytes[i]!, 'agent')
     if (gapMs > 0 && i < bytes.length - 1) await sleep(gapMs)
   }
 }

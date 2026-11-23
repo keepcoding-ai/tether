@@ -381,6 +381,12 @@ export interface TetherUi {
      */
     closeGuide(paneId: string, opts?: { process?: 'keep' | 'stop' }): Promise<void>
     /**
+     * "Hibernar guia" for the pane of a slot, as an extension acting for an owner, with no question and without bringing it
+     * forward: its process stops and the pane sleeps (not started on launch) until a `start` wakes it. Resolves with
+     * 'asleep', 'already' (it slept already) or 'no-pane' (no pane of that slot in the window).
+     */
+    hibernate(paneId: string): Promise<'asleep' | 'already' | 'no-pane'>
+    /**
      * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
      * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider
      * gets the pane and returns its rows (none: an empty list); it runs each time the menu opens. Headings and submenus are
@@ -399,6 +405,14 @@ export interface TetherUi {
     setSeal(deskId: string, seal: DeskSeal | undefined): void
     /** This extension's rows in a desk pill's menu (headings and submenus too), in a group of their own before "Hibernar mesa". */
     menu(provider: (deskId: string) => ContextMenuRow[]): IDisposable
+    /**
+     * "Hibernar mesa" as an extension acting for an owner: no question and the visible desk never changes ('in-view' when the
+     * person is looking at it). `spare` are left as they are; with one of them in the desk the desk stays awake and only its
+     * other panes sleep ('partial'). 'last-desk': the last awake desk never sleeps. `panes`: the ones put to sleep.
+     */
+    hibernate(deskId: string, opts?: { spare?: readonly string[] }): Promise<{ state: 'asleep' | 'partial' | 'already' | 'last-desk' | 'in-view' | 'no-desk'; panes: string[] }>
+    /** Waking a desk without switching to it: the panes its sleep put down start again, but `spare`. `panes`: the ones started. */
+    wake(deskId: string, opts?: { spare?: readonly string[] }): Promise<{ state: 'woke' | 'already' | 'no-desk'; panes: string[] }>
   }
   /** A list picker, filtered by typing. */
   pick: {

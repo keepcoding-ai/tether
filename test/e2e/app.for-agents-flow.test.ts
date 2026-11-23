@@ -39,6 +39,7 @@ type Hooks = {
   renameDesk(id: string, name: string): void
   openSlot(id: string): Promise<void>
   panelIds(): string[]
+  layout(): { asleepPanes?: string[]; desks: { id: string; asleep?: boolean }[] }
 }
 declare const window: { __tether: Hooks; tether: { attentionGet(): Promise<{ items: { slotId: string }[] }> }; innerWidth: number }
 
@@ -342,6 +343,61 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     const panes = (last.data.desks as { id: string; panes: { id: string; type: string; relation: string }[] }[]).find(d => d.id === D2)!.panes
     assert.deepEqual(panes.filter(p => p.type !== 'empty').map(p => p.relation).sort(), ['command', 'command', 'command'])
     assert.deepEqual([...last.data.panes ?? []].filter((p: any) => p.pending), [])
+
+    // ---- 9. hibernate and wake a guia: the app's sleep (layout asleepPanes), the process, and nothing comes forward ----
+    const beforeSleep = await view()
+    const asleep = (): Promise<string[]> => page.evaluate(() => window.__tether.layout().asleepPanes ?? [])
+    const h1 = await verb('hibernate', P1)
+    assert.ok(h1.ok, h1.err)
+    assert.deepEqual([h1.data.state, h1.data.already], ['asleep', false])
+    // Stopped: no process ('exited', or 'unconfirmed' when the fake engine cannot confirm the session).
+    await until(() => ['exited', 'unconfirmed'].includes(api.slots.get(P1)?.status ?? ''), 'the hibernated guia stopped')
+    assert.ok((await asleep()).includes(P1), 'the pane sleeps in the layout')
+    const h2 = await verb('hibernate', P1)
+    assert.ok(h2.ok, h2.err)
+    assert.equal(h2.data.already, true)
+    const own = await verb('hibernate', A)
+    assert.ok(!own.ok, 'the owner does not hibernate its own pane')
+    // The fake never binds a session, so its stopped slot is 'unconfirmed': waking it needs the person's choice (resume or
+    // new), as the moon's pick does; the verb says so and the pane keeps sleeping.
+    const w0 = await verb('wake', P1)
+    assert.equal(w0.data.error, 'unconfirmed', JSON.stringify(w0))
+    assert.ok((await asleep()).includes(P1), 'a refused wake leaves the pane asleep')
+    // A start from anywhere wakes the pane in the app; then the verb answers already.
+    await api.slots.start(P1, 'new')
+    await until(() => api.slots.get(P1)?.status === 'running', 'the woken guia runs')
+    await page.waitForFunction(id => !(window.__tether.layout().asleepPanes ?? []).includes(id), P1)
+    const w2 = await verb('wake', P1)
+    assert.ok(w2.ok, w2.err)
+    assert.equal(w2.data.already, true)
+    assert.deepEqual(await view(), beforeSleep, 'hibernating and waking changed neither the visible desk nor the active pane')
+
+    // ---- 10. hibernate and wake the desk `cena`: never the desk the person is looking at; the sleep reaches `agents list` ----
+    const deskAsleep = (id: string): Promise<boolean> => page.evaluate(id => window.__tether.layout().desks.find(d => d.id === id)?.asleep === true, id)
+    await page.evaluate(id => window.__tether.switchDesk(id), D2)
+    const inView = await verb('hibernate', '--desk', D2)
+    assert.equal(inView.data.error, 'in-view', JSON.stringify(inView))
+    assert.equal(await deskAsleep(D2), false)
+    await page.evaluate(id => window.__tether.switchDesk(id), D1)
+    const hd = await verb('hibernate', '--desk', D2)
+    assert.ok(hd.ok, hd.err)
+    assert.deepEqual([hd.data.state, hd.data.already], ['asleep', false], JSON.stringify(hd.data))
+    assert.deepEqual([...hd.data.slept].sort(), [P1, P2, P3].sort())
+    await page.waitForFunction(id => window.__tether.layout().desks.find(d => d.id === id)?.asleep === true, D2)
+    const live = (id: string): boolean => ['running', 'starting', 'queued'].includes(api.slots.get(id)?.status ?? '')
+    await until(() => [P1, P2, P3].every(p => !live(p)), 'the desk hibernation stopped its guias')
+    await until(() => api.desks.map()?.desks.find(d => d.id === D2)?.panes.filter(p => p.type === 'terminal').every(p => p.asleep === true) === true, 'the map tells the daemon the guias sleep')
+    const ls = await verb('list')
+    const cena = (ls.data.desks as { id: string; asleep?: boolean; panes: { id: string; type: string; asleep?: boolean }[] }[]).find(d => d.id === D2)!
+    assert.equal(cena.asleep, true)
+    assert.deepEqual(cena.panes.filter(p => p.type !== 'empty').map(p => p.asleep), [true, true, true])
+    const hd2 = await verb('hibernate', '--desk', D2)
+    assert.equal(hd2.data.already, true)
+    const wd = await verb('wake', '--desk', D2)
+    assert.ok(wd.ok, wd.err)
+    assert.deepEqual([wd.data.state, [...wd.data.woke].sort()], ['awake', [P1, P2, P3].sort()])
+    await page.waitForFunction(id => window.__tether.layout().desks.find(d => d.id === id)?.asleep !== true, D2)
+    // The fakes never bind a session: their start waits for the person's choice, so they stay down (a real engine resumes).
     await sleep(0)
   } finally {
     if (app) await killElectron(app, root).catch(() => {})

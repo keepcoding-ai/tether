@@ -23,11 +23,12 @@ export function chunksOf(list: readonly { data: string; waitMs?: number }[]): Wr
   return out
 }
 
-export function buildContext(deps: ContextDeps, owner: OwnerId, target: ConductorTarget): ConductorContext {
+/** `answer: true`: everything the conductor types through this context is the answer to a permission card (`agents answer`). */
+export function buildContext(deps: ContextDeps, owner: OwnerId, target: ConductorTarget, opts: { answer?: boolean } = {}): ConductorContext {
   const { api, gate, readers } = deps
   const paneId = target.paneId
   const through = async (chunks: readonly WriteChunk[]): Promise<void> => {
-    const r = await gate.write(paneId, owner, chunks)
+    const r = await gate.write(paneId, owner, chunks, opts)
     if (!r.ok) throw new ConductError(r.why, r.why === 'with-user' ? 'a guia está com a pessoa agora; nada foi digitado' : 'esta guia não é sua para comandar')
   }
   const kind = target.slot?.kind

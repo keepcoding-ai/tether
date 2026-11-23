@@ -17,7 +17,8 @@ export const answerVerb: VerbDef = {
     const { paneId, target } = commanded(deps, caller, wantString(args, 'guia'), 'answer')
     const conductor = conductorFor(target, 'answer')
     const detector = conductorFor(target, 'detect')
-    const ctx = buildContext(deps, caller.slotId, target)
+    // Only this verb declares its typing a card answer: the door then counts it as activity, never as a draft.
+    const ctx = buildContext(deps, caller.slotId, target, { answer: true })
     const why = deps.gate.check(paneId, caller.slotId)
     if (why) refuse(why, 'a guia está com a pessoa agora; nada foi enviado')
     const seen = await detector.detect!(ctx)

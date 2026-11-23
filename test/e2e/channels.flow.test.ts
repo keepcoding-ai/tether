@@ -150,6 +150,10 @@ class Rig {
 
   private async command(slot: string, c: Record<string, unknown>): Promise<Record<string, any>> {
     const id = this.nextId++
+    const t0 = Date.now()
+    try { return await this.command0(slot, c, id) } finally { const ms = Date.now() - t0; if (ms > 3000) console.log(`[v1-time] slow command ${id} ${JSON.stringify(c).slice(0, 70)}: ${(ms / 1000).toFixed(1)} s`) }
+  }
+  private async command0(slot: string, c: Record<string, unknown>, id: number): Promise<Record<string, any>> {
     mkdirSync(join(this.home, 'bench'), { recursive: true })
     appendFileSync(this.bench(slot, 'cmd.jsonl'), JSON.stringify({ id, ...c }) + '\n')
     return this.waitFor(`the outcome of command ${id} (${JSON.stringify(c).slice(0, 80)})`, () => this.lines<{ id: number }>(slot, 'out.jsonl').find((o) => o.id === id), 60_000) as Promise<Record<string, any>>
@@ -175,7 +179,16 @@ class Rig {
   }
 
   /** The end of a step: every fake turn is over and the daemon reacted to it; nothing was ever lit, and nothing is lit now. */
+  private mark = Date.now()
+  /** Prints how long the step since the last mark took (stdout, one line per step) so the slow ones show. */
+  lap(step: string): void {
+    const now = Date.now()
+    console.log(`[v1-time] ${step}: ${((now - this.mark) / 1000).toFixed(1)} s`)
+    this.mark = now
+  }
+
   async quiet(step: string): Promise<void> {
+    this.lap(`before quiet of ${step}`)
     await sleep(SETTLE_MS)
     const now = (await this.states()).filter((s) => s.attention || s.attentionFor).map((s) => `${s.slotId}:${s.attention}`)
     assert.deepEqual(now, [], `${step}: a pane shows attention`)
@@ -186,18 +199,24 @@ class Rig {
   }
 
   async teardown(): Promise<string[]> {
+    this.lap('end of the test body')
     try {
-      for (const s of await this.states()) if (s.pid) await this.client.request({ t: 'stop', slotId: s.slotId }).catch(() => undefined)
+      // Each stop of a young agent waits for its start report (up to 30 s, the product's guard): ask all of them together.
+      await Promise.all((await this.states()).filter((s) => s.pid).map((s) => this.client.request({ t: 'stop', slotId: s.slotId }).catch(() => undefined)))
+      this.lap('teardown: stop requests')
       for (const end = Date.now() + 30_000; Date.now() < end; await sleep(250)) {
         if ((await this.states().catch(() => [])).every((s) => !s.pid)) break
       }
+      this.lap('teardown: panes gone')
     } catch { /* daemon gone */ }
     try { this.app?.close() } catch { /* gone */ }
     try { await this.client.request({ t: 'shutdown' }) } catch { /* gone */ }
     try { this.client.close() } catch { /* gone */ }
+    this.lap('teardown: shutdown')
     const host = await HostClient.ping(this.ptydPipe).catch(() => undefined)
     if (host) this.seen.add(host.pid)
     for (const end = Date.now() + 15_000; [...this.seen].some(pidAlive) && Date.now() < end; await sleep(200));
+    this.lap('teardown: processes gone by themselves')
     for (const pid of [...this.seen].reverse()) {
       if (!pidAlive(pid)) continue
       const owned = await claim(pid, { what: 'channels flow process' }).catch(() => undefined)
@@ -225,11 +244,15 @@ test('channels flow: create, join, say, many channels, mute, remove, close, reop
   const NAME_A = 'claude · conferente'
   const NAME_B = 'claude · bancada'
   const NAME_C = 'claude · conferência'
-  const A = await rig.agent(NAME_A, 'conferente')
-  const B = await rig.agent(NAME_B, 'bancada')
+  // The three panes start together (each start is a real process boot; they do not depend on one another).
   // C opens no MCP stream (a Claude launched before the extension, as the contract's 2.5): the delivery says `wait` for it.
-  const C = await rig.agent(NAME_C, 'sem-canal-conferencia')
+  const [A, B, C] = await Promise.all([
+    rig.agent(NAME_A, 'conferente'),
+    rig.agent(NAME_B, 'bancada'),
+    rig.agent(NAME_C, 'sem-canal-conferencia'),
+  ]) as [string, string, string]
   note(`agents ${A} ${B} ${C}`)
+  rig.lap('connect + 3 agents')
 
   // ---- 1. create ----
   const empty = await rig.cli(A, 'list')
@@ -417,9 +440,13 @@ test('channels flow: create, join, say, many channels, mute, remove, close, reop
   await rig.quiet('9 close and reopen')
 
   // ---- 10. a member that stopped is away, and gets one notice when it is back ----
+  rig.lap('10 start')
   await rig.client.request({ t: 'stop', slotId: B })
+  rig.lap('10 stop request')
   await rig.waitFor('B stopped', async () => (await rig.state(B))?.status !== 'running')
+  rig.lap('10 B stopped')
   await rig.waitFor('the daemon sees B gone', async () => (await rig.ask('members', { channel: MESA })).members.find((m: { id: string }) => m.id === B).alive === false)
+  rig.lap('10 daemon sees B gone')
   const away1 = await rig.cli(A, 'say', 'mesa', 'Enquanto você dormia.')
   const away2 = await rig.ask('say', { channel: MESA, text: 'E mais isto.' })
   assert.equal(away1.data.delivered.find((d: { id: string }) => d.id === B).state, 'away')
@@ -429,7 +456,9 @@ test('channels flow: create, join, say, many channels, mute, remove, close, reop
   rig.clearReady(B)
   const before = rig.notes(B).length
   await rig.client.request({ t: 'start', slotId: B, choice: 'new' })
+  rig.lap('10 start request')
   await rig.up(B)
+  rig.lap('10 B up')
   await rig.waitFor('B gets the notice of its return', () => rig.notes(B).slice(before).some((n) => n.content.startsWith('você voltou · #mesa')), 45_000)
   await sleep(1_000)
   const returned = rig.notes(B).slice(before).filter((n) => n.content.startsWith('você voltou'))

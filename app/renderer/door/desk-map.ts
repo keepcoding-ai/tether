@@ -1,6 +1,6 @@
 // The desk map the app tells the daemon (`desk-map`): which panes sit in which desk, read off the layout the app is about to
 // save. Pure: no DOM, no daemon. The sender decides when the map goes (changed since the last one, or forced by a reconnection).
-import type { DeskMap, DeskMapDesk } from '../../../src/daemon/protocol.ts'
+import type { DeskMap, DeskMapDesk, DeskMapPane } from '../../../src/daemon/protocol.ts'
 import type { DeskLayout, DrawerLayout, Layout } from '../layout.ts'
 
 /** The type a pane reports: 'terminal' for a slot's pane, else the id of its pane type. */
@@ -45,17 +45,20 @@ function padPanesOf(desk: { pads?: Record<string, unknown>; frames?: DeskLayout[
  * keeps no name for it); a desk with no name falls back to its id.
  */
 export function deskMapOf(layout: Layout, typeOf: PaneTypeOf, nameOf: (systemDeskId: string) => string | undefined = () => undefined): DeskMap {
+  // A hibernated pane (layout `asleepPanes`) says so in the map: the daemon has no other way to know.
+  const asleep = new Set(layout.asleepPanes ?? [])
+  const mark = (panes: DeskMapPane[]): DeskMapPane[] => panes.map(p => (asleep.has(p.id) ? { ...p, asleep: true as const } : p))
   const desks: DeskMapDesk[] = layout.desks.map(d => ({
     id: d.id,
     name: d.name || d.id,
     kind: 'queue' as const,
     ...(d.asleep === true ? { asleep: true as const } : {}),
-    panes: [...panesOf(d.frames, typeOf), ...padPanesOf(d, layout, typeOf)].sort(byId),
+    panes: mark([...panesOf(d.frames, typeOf), ...padPanesOf(d, layout, typeOf)].sort(byId)),
   }))
   for (const [id, sd] of Object.entries(layout.systemDesks ?? {})) {
-    desks.push({ id, name: nameOf(id) || id, kind: 'system', panes: [...panesOf(sd.frames, typeOf), ...padPanesOf(sd, layout, typeOf)].sort(byId) })
+    desks.push({ id, name: nameOf(id) || id, kind: 'system', panes: mark([...panesOf(sd.frames, typeOf), ...padPanesOf(sd, layout, typeOf)].sort(byId)) })
   }
-  return { desks, drawer: layout.drawer ? panesOf(layout.drawer.frames, typeOf) : [] }
+  return { desks, drawer: layout.drawer ? mark(panesOf(layout.drawer.frames, typeOf)) : [] }
 }
 
 /** The text two maps are compared by. */
