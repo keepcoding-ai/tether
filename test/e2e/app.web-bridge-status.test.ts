@@ -139,7 +139,7 @@ async function menuAction(page: Page, action: string): Promise<void> {
   await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
   await pop(page).locator(`.wb-menu .wb-action[data-action="${action}"]`).click()
 }
-const menuEntry = async (page: Page, action: string) => { await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click(); return pop(page).locator(`.wb-menu .wb-action[data-action="${action}"]`) }
+async function footAction(page: Page, action: string): Promise<void> { await pop(page).locator(`.wb-foot .wb-action[data-action="${action}"]`).click() }
 
 /** Opens the popover (which polls at once) unless open, then waits for `cond` on the hook. */
 async function openAndWait(page: Page, cond: (s: Status) => boolean, what: string): Promise<Status> {
@@ -311,30 +311,28 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await btn(page).getAttribute('data-state'), 'normal')
 
     // ---- 4. Pausar / Retomar ----
-    await menuAction(page, "pause")
+    await footAction(page, "pause")
     s = await openAndWait(page, x => x.snapshot.paused, 'paused')
     assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/pause'), 'POST /pause')
     assert.equal(s.state, 'warn')
     assert.equal(s.title, 'Tether Bridge pausado')
     assert.equal(await btn(page).getAttribute('data-state'), 'warn')
-    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
-    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="pause"]').count(), 0)
-    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="resume"]').count(), 1, 'paused: the menu offers Retomar')
-    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+    assert.equal(await pop(page).locator('.wb-foot .wb-action[data-action="pause"]').count(), 0)
+    assert.equal(await pop(page).locator('.wb-foot .wb-action[data-action="resume"]').count(), 1, 'paused: the foot offers Retomar')
+    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="resume"]').count(), 0, 'never in a browser menu')
     assert.equal(await pop(page).locator('.wb-notice.ok').textContent(), 'Tether Bridge pausado: os agentes esperam.')
-    await menuAction(page, "resume")
+    await footAction(page, "resume")
     s = await openAndWait(page, x => !x.snapshot.paused, 'resumed')
     assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/resume'), 'POST /resume')
     assert.equal(s.state, 'normal')
     // An older daemon: 404.
     fake.pauseStatus = 404
-    await menuAction(page, "pause")
+    await footAction(page, "pause")
     await pop(page).locator('.wb-notice.warn').waitFor()
     assert.match((await pop(page).locator('.wb-notice.warn').textContent()) ?? '', /indisponível nesta versão/)
     s = await openAndWait(page, x => !x.snapshot.pauseSupported, 'pause unsupported remembered')
-    assert.ok(await (await menuEntry(page, 'pause')).isDisabled(), 'Pausar disabled once the daemon said 404')
-    assert.equal(await pop(page).locator('.wb-menu .wb-hint').count(), 1, 'the menu says why Pausar is unavailable')
-    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+    assert.ok(await pop(page).locator('.wb-foot .wb-action[data-action="pause"]').isDisabled(), 'Pausar disabled once the daemon said 404')
+    assert.equal(await pop(page).locator('.wb-hint').count(), 1, 'the foot says why Pausar is unavailable')
     fake.pauseStatus = 200
 
     // ---- 5. Retomar todas as abas, Instalar em outro navegador…, Opções da extensão ----

@@ -381,16 +381,19 @@ export function agentGroups(s: Pick<StatusSnapshot, 'browsers' | 'agents'>): Age
 export interface BrowserMenuItem { id: 'options' | 'pause' | 'resume' | 'reload'; label: string; disabled?: boolean }
 
 /**
- * The "⋯" menu of a browser: its extension's options page, pause/resume (the pause is the daemon's, global: every
- * browser's menu offers the same one) and "Recarregar extensão" only when this browser's extension differs from the vendored one.
+ * The "⋯" menu of a browser: its extension's options page and "Recarregar extensão" only when this browser's extension differs from the vendored one.
  */
-export function browserMenu(b: BrowserView, s: Pick<StatusSnapshot, 'daemon' | 'paused' | 'pauseSupported' | 'version'>): BrowserMenuItem[] {
-  const up = s.daemon === 'up'
+export function browserMenu(b: BrowserView, s: Pick<StatusSnapshot, 'version'>): BrowserMenuItem[] {
   const items: BrowserMenuItem[] = [{ id: 'options', label: 'Opções da extensão' }]
-  items.push(s.paused ? { id: 'resume', label: 'Retomar', disabled: !up } : { id: 'pause', label: 'Pausar', disabled: !up || !s.pauseSupported })
   const vendored = s.version.vendored
   if (b.extensionVersion && vendored !== undefined && b.extensionVersion !== vendored) items.push({ id: 'reload', label: 'Recarregar extensão' })
   return items
+}
+
+/** Pause/resume is the daemon's, global: it lives in the popover foot, never in a browser's menu. */
+export function pauseAction(s: Pick<StatusSnapshot, 'daemon' | 'paused' | 'pauseSupported'>): BrowserMenuItem {
+  const up = s.daemon === 'up'
+  return s.paused ? { id: 'resume', label: 'Retomar todos', disabled: !up } : { id: 'pause', label: 'Pausar todos', disabled: !up || !s.pauseSupported }
 }
 
 /** "Soltar todas as abas" closes the Agentes section, and only while there is a live agent. */

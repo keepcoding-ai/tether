@@ -16,7 +16,7 @@ import { clientIdOf } from '../../extensions/web-bridge/agents.ts'
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { createStatusPoller } from '../../extensions/web-bridge/status-poll.ts'
 import { readUpdateMarker, settleUpdateMarker, writeUpdateMarker } from '../../extensions/web-bridge/update.ts'
-import { activeAgents, agentGroups, ago, badgeOf, browserAlert, browserLabel, browserMenu, markerSettled, showReleaseAll, EMPTY_SNAPSHOT, fallbackLine, reduceStatus, slotIdOf, stateMarks, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
+import { activeAgents, agentGroups, ago, badgeOf, browserAlert, browserLabel, browserMenu, pauseAction, markerSettled, showReleaseAll, EMPTY_SNAPSHOT, fallbackLine, reduceStatus, slotIdOf, stateMarks, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
 
 const NOW = 1_800_000_000_000
 const snap = (patch: Partial<StatusSnapshot>): StatusSnapshot => ({ ...EMPTY_SNAPSHOT, at: NOW, daemon: 'up', everUp: true, version: { vendored: '0.1.0', installed: '0.1.0', pendingReload: false }, ...patch })
@@ -323,14 +323,15 @@ describe('web-bridge status: each action in its section', () => {
   const ver = (vendored: string) => ({ vendored, installed: vendored, pendingReload: false })
   const base = { daemon: 'up' as const, paused: false, pauseSupported: true }
 
-  test('the browser menu: options, pause/resume (global), reload only when the version differs', () => {
+  test('the browser menu: options, reload only when the version differs; pause/resume is global, in the foot', () => {
     const same = { ...chrome, extensionVersion: '0.2.0.6871' }
-    assert.deepEqual(browserMenu(same, { ...base, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'pause'])
-    assert.deepEqual(browserMenu(same, { ...base, paused: true, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'resume'])
-    assert.deepEqual(browserMenu({ ...chrome, extensionVersion: '0.1.0' }, { ...base, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'pause', 'reload'])
-    assert.deepEqual(browserMenu(chrome, { ...base, version: ver('0.2.0') }).map(i => i.id), ['options', 'pause'], 'no reported version: no reload')
-    assert.ok(browserMenu(same, { ...base, pauseSupported: false, version: ver('0.2.0.6871') })[1]!.disabled)
-    assert.ok(browserMenu(same, { ...base, daemon: 'down', version: ver('0.2.0.6871') })[1]!.disabled)
+    assert.deepEqual(browserMenu(same, { version: ver('0.2.0.6871') }).map(i => i.id), ['options'])
+    assert.deepEqual(browserMenu({ ...chrome, extensionVersion: '0.1.0' }, { version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'reload'])
+    assert.deepEqual(browserMenu(chrome, { version: ver('0.2.0') }).map(i => i.id), ['options'], 'no reported version: no reload')
+    assert.equal(pauseAction(base).id, 'pause')
+    assert.equal(pauseAction({ ...base, paused: true }).id, 'resume')
+    assert.ok(pauseAction({ ...base, pauseSupported: false }).disabled)
+    assert.ok(pauseAction({ ...base, daemon: 'down' }).disabled)
   })
 
   test('"Soltar todas as abas" only with a live agent', () => {
