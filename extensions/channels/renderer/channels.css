@@ -100,4 +100,23 @@
 .ch-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
 .dv-active-tab .ch-tab .close, .ch-tab:hover .close, .ch-tab .close:focus-visible { visibility: inherit; }
 body.no-tab-close .ch-tab .close { display: none; }
+
+/* U3, the marks. The only orange of the channels is what is said to the person (P1): the bar "novas para você", the "para você" of
+   a line, the popover row and the seal the app draws on the tab. Lines for everyone are the quiet ring (no colour, no number). */
+.ch-newbar.me { background: var(--x-alert); color: var(--x-alert-foreground, var(--bg)); }
+.ch-msg.to-me .ch-dest { color: var(--x-alert); font-weight: 600; }
+.ch-ring { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-dim); flex: none; display: inline-block; box-sizing: border-box; opacity: .85; }
+
+.ch-pop { padding: 6px 0; font-size: 12.5px; }
+.ch-pop-head { margin: 0; padding: 6px 12px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); }
+.ch-pop-empty { margin: 0; padding: 8px 12px; color: var(--fg-dim); }
+.ch-pop-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 12px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.ch-pop-row:hover, .ch-pop-row:focus-visible { background: var(--bg-hover); }
+.ch-pop-row svg.ph { width: 14px; height: 14px; flex: none; color: var(--fg-dim); }
+.ch-pop-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-pop-meta { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.ch-pop-tail { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.ch-pop-tail.me { color: var(--x-alert); font-weight: 600; }
+.ch-pop-more { display: block; width: 100%; margin-top: 4px; padding: 6px 12px; border: 0; border-top: 1px solid var(--border); background: none; color: var(--fg-dim); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; }
+.ch-pop-more:hover { background: var(--bg-hover); color: var(--fg); }
 @media (prefers-reduced-motion: reduce) { .ch-pane * { transition: none !important; animation: none !important; } }

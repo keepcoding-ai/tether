@@ -136,6 +136,17 @@ export function dayLabel(at: string, now: Date): string {
   return d.getFullYear() === now.getFullYear() ? base : `${base}/${d.getFullYear()}`
 }
 
+/**
+ * A system line names the person by her moderator name ("usuário abriu #obra", "calado por usuário"); on the screen she is "Você"
+ * (P12). Whole words only, capital at the start of a sentence; a room (`#usuário`) or a longer word is left alone.
+ */
+export function nameYou(text: string, moderator: string): string {
+  const name = moderator.trim()
+  if (name === '') return text
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_#@-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_-])`, 'gu')
+  return text.replace(re, (m, offset: number, whole: string) => (offset === 0 || /[.!?:]\s+$/.test(whole.slice(0, offset)) ? 'Você' : 'você'))
+}
+
 export interface RowsOptions {
   /** name → agent id of the members (to give a name in a `to` its hue). */
   idByName?: ReadonlyMap<string, string>
@@ -156,7 +167,7 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
     const day = dayKey(new Date(l.at))
     if (day !== lastDay && !day.includes('NaN')) { rows.push({ kind: 'day', key: day, label: dayLabel(l.at, now) }); lastDay = day; prev = undefined }
     if (l.kind === 'notice') {
-      rows.push({ kind: 'notice', seq: l.seq, at: l.at, time: timeOf(l.at), glyph: noticeGlyph(l.event?.type), text: l.body })
+      rows.push({ kind: 'notice', seq: l.seq, at: l.at, time: timeOf(l.at), glyph: noticeGlyph(l.event?.type), text: nameYou(l.body, moderator) })
       prev = undefined
       continue
     }
@@ -260,3 +271,31 @@ export const isNearBottom = (scrollTop: number, clientHeight: number, scrollHeig
   scrollHeight - (scrollTop + clientHeight) <= slack
 
 export const unreadLabel = (n: number): string => (n === 1 ? '1 fala nova' : `${n} falas novas`)
+
+/** The bar for the lines addressed to the person (the only orange of the channels, P1). */
+export const forYouLabel = (n: number): string => (n === 1 ? '1 nova para você' : `${n} novas para você`)
+
+// ---------- the top bar icon (U3) ----------
+
+export type StatusLook = 'idle' | 'normal' | 'warn'
+
+/** What the marks hold of a channel (marks.ts), as far as the popover needs. */
+export interface MarksOf { unread: number; toMe: number }
+
+/** Grey with nothing, normal with unread lines, amber (`warn`) only for a line addressed to her. */
+export const stateOf = (t: MarksOf): StatusLook => (t.toMe > 0 ? 'warn' : t.unread > 0 ? 'normal' : 'idle')
+
+export const titleOf = (t: MarksOf): string =>
+  t.toMe > 0 ? `Canais: ${t.toMe === 1 ? '1 fala' : `${t.toMe} falas`} para você` : t.unread > 0 ? `Canais: ${unreadLabel(t.unread)}` : 'Canais'
+
+export interface PopRow { id: string; name: string; members: string; unread: number; toMe: number; text: string }
+
+/** The popover's rows: the open channels, the ones with a line for her first, then the most unread, then by name. */
+export function popRows(list: readonly ChannelSummary[], marksOf: (id: string) => MarksOf): PopRow[] {
+  return list.filter(c => !c.closed).map((c): PopRow => {
+    const m = marksOf(c.id)
+    const plain = m.unread - m.toMe
+    const text = m.toMe > 0 ? (m.toMe === 1 ? 'para você' : `${m.toMe} para você`) : plain > 0 ? unreadLabel(plain) : ''
+    return { id: c.id, name: c.name, members: membersCount(c.members), unread: m.unread, toMe: m.toMe, text }
+  }).sort((a, b) => (b.toMe > 0 ? 1 : 0) - (a.toMe > 0 ? 1 : 0) || b.unread - a.unread || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}

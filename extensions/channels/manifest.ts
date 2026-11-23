@@ -28,6 +28,9 @@ export const CMD = {
   reopen: 'channels.reopen',
 } as const
 
+/** The top bar icon (`contributes.status`), never renamed. */
+export const STATUS_ID = 'channels.status'
+
 /** The palette's group of every channel command. */
 export const CATEGORY = 'Canais'
 
@@ -49,6 +52,7 @@ export const manifest: ExtensionManifest = {
       { command: CMD.close, title: 'Encerrar canal…', category: CATEGORY, icon: 'prohibit' },
       { command: CMD.reopen, title: 'Reabrir canal…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
     ],
+    status: [{ id: STATUS_ID, icon: 'chats-circle', order: 60 }],
     paneTypes: [{
       id: 'channel', idPrefix: CHANNEL_PANE_PREFIX, component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB,
       optionsOf: p => ({

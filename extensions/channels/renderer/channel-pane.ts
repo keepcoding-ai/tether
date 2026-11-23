@@ -14,9 +14,10 @@ import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
+import type { Marks } from './marks.ts'
 import {
-  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, olderCursor,
-  rowsOf, unreadLabel, type HistoryPage, type MembersAnswer, type Row, type Timeline,
+  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
+  olderCursor, rowsOf, unreadLabel, type HistoryPage, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
 /** Lines asked per page (the daemon's ceiling is 200). */
@@ -59,6 +60,11 @@ export interface PaneSnapshot {
   hasComposerSlot: boolean
   /** The speaking box; absent while the channel is closed. */
   composer?: ComposerSnapshot
+  /** The bar over the conversation ("N novas para você" or "N falas novas"); '' while hidden. `barMe`: the one for her. */
+  bar: string
+  barMe: boolean
+  /** Unseen lines addressed to the person, as the marks hold them. */
+  toMe: number
 }
 
 export interface ChannelPanes {
@@ -68,7 +74,7 @@ export interface ChannelPanes {
   snapshot(channelId: string): PaneSnapshot | undefined
 }
 
-export function createChannelPanes(ui: TetherUi): ChannelPanes {
+export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
   const live = new Set<ChannelPane>()
   const kept = new Map<string, Kept>()
   const type = manifest.contributes!.paneTypes![0]!
@@ -129,7 +135,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       live.add(this)
 
       this.newBar.type = 'button'
-      this.newBar.addEventListener('click', () => this.toEnd())
+      this.newBar.addEventListener('click', () => this.onBar())
       this.composerSlot.dataset.slot = 'composer'
       this.foot.append(this.composerSlot)
       this.conv.append(this.msgs, this.newBar, this.muteBox, this.foot)
@@ -142,12 +148,21 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       this.ro = new ResizeObserver(() => this.onResize())
       this.ro.observe(this.element)
       this.membersOpen = this.element.clientWidth === 0 || this.element.clientWidth >= NARROW_PX
+      // The person may see the end of the conversation by the window coming back to the front, with no scroll or line.
+      window.addEventListener('focus', this.onWatch)
+      document.addEventListener('visibilitychange', this.onWatch)
+      this.subs.push(marks.onDidChange(() => this.paintNewBar()))
       this.paint()
       void this.load()
+      marks.paneChanged(this.channelId)
     }
+
+    private readonly onWatch = (): void => this.checkSeen()
 
     dispose(): void {
       this.disposed = true
+      window.removeEventListener('focus', this.onWatch)
+      document.removeEventListener('visibilitychange', this.onWatch)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       this.ro?.disconnect()
       for (const s of this.subs) s.dispose()
@@ -155,6 +170,17 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
       // (The scroll is read from the last scroll event: by now the element has left the page and says 0.)
       if (this.loaded) keep(this.channelId, { timeline: this.timeline, scrollTop: this.lastTop, stick: this.stick })
+      marks.paneChanged(this.channelId)
+    }
+
+    /**
+     * The person sees the end of the conversation: the pane is shown (active tab of the visible desk), the window is in front and
+     * the view is at the end. Then up to the newest line is seen: the marks go and the daemon is told (`seen`).
+     */
+    private checkSeen(): void {
+      if (!this.loaded || this.disposed || !this.stick || !this.visible()) return
+      if (!document.hasFocus() || document.visibilityState !== 'visible') return
+      marks.viewed(this.channelId, this.timeline.last)
     }
 
     // ---------- data ----------
@@ -188,6 +214,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       }
       this.paint()
       if (this.loaded && this.stick && this.pendingScroll === undefined) this.scrollEnd()
+      this.checkSeen()
     }
 
     private async refreshMembers(): Promise<void> {
@@ -238,6 +265,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       if (this.stick) this.scrollEnd()
       this.paintNewBar()
       this.scheduleMembers()
+      this.checkSeen()
     }
 
     onChannel(): void { if (this.loaded) void this.refreshMembers() }
@@ -252,6 +280,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         this.paintMsgs()
         if (this.stick) this.scrollEnd()
         this.paintNewBar()
+        this.checkSeen()
       } catch { /* the next line asks again */ }
     }
 
@@ -269,6 +298,22 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       this.unread = 0
       this.scrollEnd()
       this.paintNewBar()
+      this.checkSeen()
+    }
+
+    /**
+     * The bar's click: with lines for her unseen, first to the first of them (centred); once it is on screen, or when it is not held,
+     * to the end (which is where they are seen).
+     */
+    private onBar(): void {
+      const first = marks.of(this.channelId).firstToMe
+      const row = first === undefined ? null : this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${first}"]`)
+      if (row) {
+        const r = row.getBoundingClientRect()
+        const v = this.msgs.getBoundingClientRect()
+        if (r.top < v.top || r.bottom > v.bottom) { row.scrollIntoView({ block: 'center' }); return }
+      }
+      this.toEnd()
     }
 
     private onScroll(): void {
@@ -278,6 +323,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       this.stick = isNearBottom(m.scrollTop, m.clientHeight, m.scrollHeight)
       if (this.stick && this.unread > 0) this.unread = 0
       this.paintNewBar()
+      this.checkSeen()
       if (m.scrollTop <= TOP_SLACK_PX) void this.loadOlder()
     }
 
@@ -300,6 +346,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         // A hidden pane loses its scroll (and a repaint while hidden resets it): what it was reading is `lastTop`, the end is `stick`.
         this.msgs.scrollTop = this.stick ? this.msgs.scrollHeight : this.lastTop
       } else if (this.stick) this.msgs.scrollTop = this.msgs.scrollHeight
+      this.checkSeen()
     }
 
     // ---------- paint ----------
@@ -357,10 +404,19 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       this.membersBtn?.classList.toggle('on', this.membersOpen)
     }
 
+    /** "N novas para você" (the lines addressed to her, unseen) beats "N falas novas"; neither shows while reading the end. */
+    private barText(): { text: string; me: boolean } {
+      if (this.stick) return { text: '', me: false }
+      const toMe = marks.of(this.channelId).toMe
+      if (toMe > 0) return { text: forYouLabel(toMe), me: true }
+      return { text: this.unread > 0 ? unreadLabel(this.unread) : '', me: false }
+    }
+
     private paintNewBar(): void {
-      const n = this.stick ? 0 : this.unread
-      this.newBar.hidden = n === 0
-      this.newBar.replaceChildren(glyph('arrow-line-down'), document.createTextNode(unreadLabel(n)))
+      const { text, me } = this.barText()
+      this.newBar.hidden = text === ''
+      this.newBar.classList.toggle('me', me)
+      this.newBar.replaceChildren(glyph('arrow-line-down'), document.createTextNode(text))
     }
 
     private paintMuteBar(): void {
@@ -443,7 +499,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         e.append(glyph(NOTICE_ICON[r.glyph]), el('span', 'ch-sys-text', r.text), el('time', '', r.time))
         return e
       }
-      const e = el('div', `ch-msg${r.mine ? ' mod' : ''}${r.continued ? ' continued' : ''}`)
+      const e = el('div', `ch-msg${r.mine ? ' mod' : ''}${r.continued ? ' continued' : ''}${r.to.some(t => t.you) ? ' to-me' : ''}`)
       e.dataset.seq = String(r.seq)
       hueStyle(e, r.hue)
       if (!r.continued) {
@@ -528,6 +584,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,
         hasComposerSlot: this.element.querySelector('.ch-composer-slot') !== null,
         ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
+        bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe,
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }

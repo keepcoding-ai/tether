@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  applyLine, applyPage, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, olderCursor, rowsOf, dayLabel,
+  applyLine, applyPage, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -152,4 +152,21 @@ test('scroll: near the bottom only inside the slack', () => {
   assert.equal(isNearBottom(900, 100, 1000), true)
   assert.equal(isNearBottom(880, 100, 1000), true)
   assert.equal(isNearBottom(500, 100, 1000), false)
+})
+
+test('P12: a system line calls the person "Você", never her moderator name', () => {
+  const rows = rowsOf([
+    notice(1, 'create', 'usuário abriu #obra'),
+    notice(2, 'mute', 'codex foi calado em #obra por usuário'),
+    notice(3, 'owner-ended', 'Atrium deixou de ser o owner de #obra; quem o comanda agora é usuário'),
+    notice(4, 'info' as never, 'usuário-bot entrou em #usuário'),
+  ], { moderatorName: 'usuário' })
+  assert.deepEqual(rows.filter(r => r.kind === 'notice').map(r => (r as { text: string }).text), [
+    'Você abriu #obra',
+    'codex foi calado em #obra por você',
+    'Atrium deixou de ser o owner de #obra; quem o comanda agora é você',
+    'usuário-bot entrou em #usuário',
+  ])
+  assert.equal(nameYou('Guga abriu #obra. Guga calou x', 'Guga'), 'Você abriu #obra. Você calou x')
+  assert.equal(nameYou('nada a trocar', ''), 'nada a trocar')
 })
