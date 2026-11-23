@@ -1,0 +1,90 @@
+/* The channel's pane (slice U1a). Only the app's tokens: the hue of an agent comes in `--oh` (agentHue) through the same --mark-*
+   tokens as the tab emblems (door/door.css). Nothing here is orange: the "to me" mark belongs to the U3. */
+.ch-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--frame-bg); color: var(--fg); font: 13px var(--ui); overflow: hidden; }
+.ch-pane svg.ph { width: 14px; height: 14px; flex: none; fill: currentColor; }
+
+.ch-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.ch-title { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-weight: 600; font-size: 14px; }
+.ch-title svg.ph { width: 15px; height: 15px; color: var(--fg-dim); }
+.ch-sub { font-weight: 400; font-size: 12px; color: var(--fg-dim); }
+.ch-bar { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.ch-act { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 26px; min-width: 28px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: 12px var(--ui); cursor: pointer; }
+.ch-act svg.ph { width: 15px; height: 15px; }
+.ch-act:hover { background: var(--bg-hover); color: var(--fg); }
+.ch-act.on { background: var(--bg-hover); color: var(--fg); }
+.ch-pane button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.ch-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 276px; }
+.ch-pane.narrow .ch-body, .ch-pane.members-off .ch-body { grid-template-columns: minmax(0, 1fr); }
+.ch-pane.narrow .ch-members:not([hidden]) { grid-column: 1; grid-row: 1; z-index: 1; border-left: 0; }
+.ch-conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
+.ch-pane.narrow .ch-conv, .ch-pane.members-off .ch-conv { border-right: 0; }
+.ch-pane.narrow .ch-conv { grid-column: 1; grid-row: 1; }
+.ch-msgs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+
+.ch-day { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 600; color: var(--fg-dim); }
+.ch-day::before, .ch-day::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.ch-sys { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; text-align: center; padding: 2px 0; }
+.ch-sys svg.ph { width: 13px; height: 13px; }
+.ch-sys time { opacity: .85; }
+
+.ch-msg { display: flex; flex-direction: column; gap: 3px; padding: 6px 10px 7px 10px; min-width: 0; flex: none;
+  border-left: 3px solid hsl(var(--oh, 0) var(--mark-solid-s) var(--mark-solid-l)); border-radius: 3px 8px 8px 3px; }
+.ch-msg.continued { margin-top: -6px; }
+.ch-msg.mod { border-left-color: var(--fg-dim); background: var(--bg-2); }
+.ch-msg p { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ch-who { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.ch-who time { margin-left: auto; font-size: 11px; color: var(--fg-dim); }
+.ch-author { font-weight: 600; }
+.ch-msg:not(.mod) .ch-author, .ch-oname { color: hsl(var(--oh, 0) var(--mark-s) var(--mark-fg-l)); font-weight: 600; }
+.ch-pane :is(.ch-mrow .ch-author) { color: var(--fg); }
+.ch-dest { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--fg-dim); white-space: nowrap; min-width: 0; }
+.ch-dest svg.ph { width: 12px; height: 12px; }
+.ch-dest .ch-oname { font-weight: 500; }
+.ch-role { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); font-size: 10.5px; line-height: 15px; white-space: nowrap; flex: none; }
+.ch-role svg.ph { width: 10px; height: 10px; }
+.ch-role.mod { background: var(--bg-3); color: var(--fg); }
+.ch-role.mute { border-style: dashed; }
+.ch-em { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; flex: none;
+  color: hsl(var(--oh, 0) var(--mark-s) var(--mark-fg-l)); background: hsl(var(--oh, 0) var(--mark-s) 50% / var(--mark-bg-a));
+  border: 1px solid hsl(var(--oh, 0) var(--mark-s) 50% / var(--mark-line-a)); }
+.ch-em svg.ph { width: 10px; height: 10px; }
+.ch-em.crown { box-shadow: 0 0 0 1.5px hsl(var(--oh, 0) var(--mark-solid-s) var(--mark-solid-l)); }
+.ch-em.me { background: var(--bg-3); color: var(--fg); border: 1px solid var(--border); }
+
+.ch-newbar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 12px; border: 0; border-radius: 13px; background: var(--accent); color: var(--on-accent); font: 600 12px var(--ui); cursor: pointer; box-shadow: var(--shadow); }
+.ch-newbar[hidden], .ch-members[hidden], .ch-mutebar[hidden] { display: none; }
+.ch-mutebar { display: flex; align-items: center; gap: 7px; padding: 5px 14px; border-top: 1px solid var(--border); background: var(--bg-2); font-size: 11.5px; color: var(--fg-dim); }
+.ch-mutebar svg.ph { width: 13px; height: 13px; }
+.ch-foot { flex: none; }
+.ch-composer-slot:empty { display: none; }
+.ch-closed { padding: 8px 14px; border-top: 1px solid var(--border); background: var(--bg-2); font-size: 12px; color: var(--fg-dim); }
+
+.ch-btn { align-self: center; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--border); background: var(--frame-bg); color: var(--fg); font-size: 12px; cursor: pointer; flex: none; }
+.ch-btn:hover { background: var(--bg-3); }
+.ch-empty { display: grid; place-items: center; text-align: center; padding: 30px 20px; gap: 6px; min-height: 160px; color: var(--fg-dim); }
+.ch-empty p { margin: 0; max-width: 340px; line-height: 1.5; }
+.ch-empty p.t { font-weight: 650; font-size: 14px; color: var(--fg); }
+
+.ch-members { padding: 6px 6px 10px; background: var(--bg-2); min-width: 0; min-height: 0; overflow-y: auto; }
+.ch-sec { padding: 10px 4px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); }
+.ch-mrow { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; border-radius: 6px; }
+.ch-mrow:hover { background: var(--bg-hover); }
+.ch-l1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ch-l1 .ch-oname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.ch-link:hover { text-decoration: underline; }
+.ch-l2 { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding-left: 23px; min-height: 20px; }
+.ch-state { font-size: 11px; color: var(--fg-dim); }
+.ch-state[data-tone="on"]::before, .ch-state[data-tone="wait"]::before, .ch-state[data-tone="off"]::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--fg-dim); }
+.ch-state[data-tone="on"]::before { background: var(--ok); }
+.ch-state[data-tone="wait"]::before { background: var(--warn); }
+
+.ch-tab { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 2px; font: 12.5px var(--ui); }
+.ch-tab svg.ph { width: 13px; height: 13px; flex: none; }
+.ch-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-tab .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; cursor: pointer; }
+.ch-tab .close:hover { background: var(--bg-hover-2); color: var(--fg); }
+.dv-active-tab .ch-tab .close, .ch-tab:hover .close, .ch-tab .close:focus-visible { visibility: inherit; }
+body.no-tab-close .ch-tab .close { display: none; }
+@media (prefers-reduced-motion: reduce) { .ch-pane * { transition: none !important; animation: none !important; } }

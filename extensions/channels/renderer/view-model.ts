@@ -37,6 +37,17 @@ export function applyPage(t: Timeline, page: Pick<HistoryPage, 'lines' | 'more' 
   return { lines: mergeLines(t.lines, page.lines), more: page.more, last: Math.max(t.last, page.last) }
 }
 
+/**
+ * The newest page again, over what a pane already holds (it came back to a desk, or it missed lines): the held lines stay, and
+ * the page fills the end. A page that does not touch what is held (more than a page was missed) replaces it.
+ */
+export function mergeNewest(t: Timeline, page: Pick<HistoryPage, 'lines' | 'more' | 'last'>): Timeline {
+  const held = t.lines
+  const first = page.lines[0]?.seq
+  if (held.length === 0 || first === undefined || first > t.last + 1) return applyPage(emptyTimeline(), page, false)
+  return { lines: mergeLines(held, page.lines), more: held[0]!.seq <= first ? t.more : page.more, last: Math.max(t.last, page.last) }
+}
+
 /** The `before` of the next older page, or undefined when there is none. */
 export function olderCursor(t: Timeline): number | undefined {
   return t.more && t.lines.length > 0 ? t.lines[0]!.seq : undefined

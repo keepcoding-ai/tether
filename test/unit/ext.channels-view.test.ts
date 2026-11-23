@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  applyLine, applyPage, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, muteBar, olderCursor, rowsOf, dayLabel,
+  applyLine, applyPage, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, olderCursor, rowsOf, dayLabel,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -105,6 +105,16 @@ test('timeline: a new line appends; a repeat is ignored; a hole asks for the new
   assert.deepEqual([again.added, again.timeline === t], [false, true])
   const hole = applyLine(t, say(6, 'b2', 'x', 'member', 'f'))
   assert.deepEqual([hole.added, hole.gap], [true, true])
+})
+
+test('timeline: the newest page over what is held fills the end; a page that does not touch it replaces', () => {
+  const held = applyPage(emptyTimeline(), { lines: [say(3, 'b2', 'x', 'member', 'c'), say(4, 'b2', 'x', 'member', 'd')], more: true, last: 4 }, false)
+  const filled = mergeNewest(held, { lines: [say(4, 'b2', 'x', 'member', 'd'), say(5, 'b2', 'x', 'member', 'e')], more: true, last: 5 })
+  assert.deepEqual(filled.lines.map(l => l.seq), [3, 4, 5])
+  assert.equal(olderCursor(filled), 3, 'the held older end is kept')
+  const far = mergeNewest(held, { lines: [say(9, 'b2', 'x', 'member', 'i'), say(10, 'b2', 'x', 'member', 'j')], more: true, last: 10 })
+  assert.deepEqual(far.lines.map(l => l.seq), [9, 10])
+  assert.deepEqual(mergeNewest(emptyTimeline(), { lines: [], more: false, last: 0 }).lines, [])
 })
 
 test('members: the owner first, the state of each, muted marked', () => {
