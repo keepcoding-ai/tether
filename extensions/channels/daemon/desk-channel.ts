@@ -92,8 +92,9 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
 
   /**
    * The members follow the desk's panes. A pane that left the desk (against the last panes followed) leaves the channel if
-   * the desk brought it and out of `removed`; one in the desk joins unless removed. Without a last look (tetherd started,
-   * the channel open or reopening), every member the desk brought that is not in the desk leaves, the owner apart.
+   * the desk brought it and out of `removed`; one in the desk joins unless removed. Without a last look (tetherd started),
+   * the desk's panes are only recorded and nobody leaves: a member by the desk outside it may be an old owner, which stays.
+   * Accepted: a pane that left the desk while the tetherd was down stays a member until someone takes it out.
    */
   async function followPanes(c: Channels, deskId: string, desk: DeskMapDesk): Promise<void> {
     const id = deskChannelId(deskId)
@@ -101,9 +102,7 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
     if (!ch || ch.closed) return
     const inDesk = new Set(desk.panes.filter((p) => p.type === 'terminal').map((p) => p.id))
     const prev = seen.get(deskId)
-    const left = new Set(prev
-      ? [...prev].filter((a) => !inDesk.has(a))
-      : Object.entries(ch.members).filter(([a, m]) => m.by === 'desk' && !inDesk.has(a)).map(([a]) => a))
+    const left = new Set(prev ? [...prev].filter((a) => !inDesk.has(a)) : [])
     for (const a of ch.removed ?? []) if (!inDesk.has(a)) left.add(a)
     for (const a of left) refused(`saída de ${a} de ${id}`, await c.desk.exit(id, a))
     for (const a of agentPanes(desk)) if (joinsByDesk(ch, a)) refused(`entrada de ${a} em ${id}`, await c.desk.enter(id, a))
