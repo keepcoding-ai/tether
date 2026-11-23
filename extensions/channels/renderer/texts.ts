@@ -9,8 +9,8 @@ import { membersCount } from './view-model.ts'
 
 /** The picker's icon for a channel row, and the icons of the menus (names of app/renderer/icons.ts: the core's table). */
 export const ICON = {
-  channel: 'chats-circle', join: 'plugs-connected', remove: 'minus-circle', mute: 'bell-slash', unmute: 'arrow-counter-clockwise',
-  close: 'stop-circle', reopen: 'arrow-counter-clockwise',
+  channel: 'chats-circle', join: 'user-plus', remove: 'user-minus', mute: 'speaker-slash', unmute: 'speaker-high',
+  close: 'prohibit', reopen: 'arrow-counter-clockwise', closed: 'lock',
 } as const
 
 /** What each command asks in its pickers. */
@@ -57,7 +57,7 @@ export function channelDetail(c: ChannelSummary): string {
 export function channelItem(c: ChannelSummary): PickItem<string> {
   return {
     value: c.id, label: `#${c.name}`, detail: channelDetail(c),
-    icon: c.closed ? 'chats-circle' : ICON.channel,
+    icon: c.closed ? ICON.closed : ICON.channel,
     ...(c.owner.kind === 'agent' ? { hue: agentHue(c.owner.id) } : {}),
   }
 }
@@ -127,9 +127,9 @@ export function removeDialog(t: MemberText): DialogSpec {
   const message = ['Ele deixa de ouvir o canal e recebe um aviso da sala. A conversa continua com os outros.']
   if (t.fromDesk) message.push('Ele é membro da mesa, mas pode sair do canal mesmo assim. Fica de fora até ser juntado de novo, ou até sair da mesa e voltar.')
   return {
-    situation: 'channels.remove', tone: 'danger', icon: 'minus-circle',
+    situation: 'channels.remove', tone: 'danger', icon: ICON.remove,
     title: `Tirar ${t.member} de #${t.channel}?`, message: message.join(' '),
-    choices: [{ id: 'remove', icon: 'minus-circle', label: 'Tirar do canal', consequence: `${t.member} deixa de ouvir #${t.channel} até ser juntado de novo.`, tone: 'destructive' }],
+    choices: [{ id: 'remove', icon: ICON.remove, label: 'Tirar do canal', consequence: `${t.member} deixa de ouvir #${t.channel} até ser juntado de novo.`, tone: 'destructive' }],
     cancelLabel: 'Cancelar',
   }
 }
@@ -137,10 +137,10 @@ export function removeDialog(t: MemberText): DialogSpec {
 /** "Calar": the member keeps hearing and stops speaking. */
 export function muteDialog(t: MemberText): DialogSpec {
   return {
-    situation: 'channels.mute', tone: 'warn', icon: 'bell-slash',
+    situation: 'channels.mute', tone: 'warn', icon: ICON.mute,
     title: `Calar ${t.member} em #${t.channel}?`,
     message: 'Ele continua ouvindo tudo e deixa de falar neste canal. Você pode devolver a voz quando quiser.',
-    choices: [{ id: 'mute', icon: 'bell-slash', label: 'Calar', consequence: `${t.member} segue ouvindo #${t.channel}, mas não consegue falar nele.`, tone: 'neutral' }],
+    choices: [{ id: 'mute', icon: ICON.mute, label: 'Calar', consequence: `${t.member} segue ouvindo #${t.channel}, mas não consegue falar nele.`, tone: 'neutral' }],
     cancelLabel: 'Cancelar',
   }
 }
@@ -150,10 +150,10 @@ export interface CloseText { channel: string; members: number }
 /** "Encerrar": nobody speaks any more, the history stays readable and can be reopened (P6). */
 export function closeDialog(t: CloseText): DialogSpec {
   return {
-    situation: 'channels.close', tone: 'danger', icon: 'stop-circle',
+    situation: 'channels.close', tone: 'danger', icon: ICON.close,
     title: `Encerrar #${t.channel}?`,
     message: `Ninguém mais fala nele, e ${t.members === 1 ? 'o 1 membro recebe' : `os ${t.members} membros recebem`} um aviso da sala. A conversa fica guardada e legível; você, ou o dono, pode reabrir o canal depois.`,
-    choices: [{ id: 'close', icon: 'stop-circle', label: 'Encerrar canal', consequence: `#${t.channel} fica só para leitura até ser reaberto.`, tone: 'destructive' }],
+    choices: [{ id: 'close', icon: ICON.close, label: 'Encerrar canal', consequence: `#${t.channel} fica só para leitura até ser reaberto.`, tone: 'destructive' }],
     cancelLabel: 'Cancelar',
   }
 }

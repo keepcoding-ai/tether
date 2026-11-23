@@ -560,7 +560,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
 
   const disposables: Disposable[] = [
     ui.panes.register({
-      ...type, hasSlot: false, icon: 'clipboard-text',
+      ...type, hasSlot: false, icon: 'chats-circle',
       create: () => new ChannelPane(),
       createTab: () => new ChannelTab() as unknown as ITabRenderer,
       has: id => id.startsWith(CHANNEL_PANE_PREFIX) && paneOf(channelIdOfPane(id)) !== undefined,

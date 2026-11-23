@@ -30,6 +30,12 @@ import sidebarSimple from '@phosphor-icons/core/assets/regular/sidebar-simple.sv
 import arrowsLeftRight from '@phosphor-icons/core/assets/regular/arrows-left-right.svg'
 import clipboardText from '@phosphor-icons/core/assets/regular/clipboard-text.svg'
 import chatsCircle from '@phosphor-icons/core/assets/regular/chats-circle.svg'
+import userPlus from '@phosphor-icons/core/assets/regular/user-plus.svg'
+import userMinus from '@phosphor-icons/core/assets/regular/user-minus.svg'
+import speakerSlash from '@phosphor-icons/core/assets/regular/speaker-slash.svg'
+import speakerHigh from '@phosphor-icons/core/assets/regular/speaker-high.svg'
+import lock from '@phosphor-icons/core/assets/regular/lock.svg'
+import prohibit from '@phosphor-icons/core/assets/regular/prohibit.svg'
 import globeSimple from '@phosphor-icons/core/assets/regular/globe-simple.svg'
 import chalkboardSimple from '@phosphor-icons/core/assets/regular/chalkboard-simple.svg'
 // The side bars' open pads wear the fill weight of their icon (sidebars.ts): `<name>-fill` next to each pad icon.
@@ -264,6 +270,12 @@ const SVG = {
   'arrows-left-right': arrowsLeftRight,
   'clipboard-text': clipboardText,
   'chats-circle': chatsCircle,
+  'user-plus': userPlus,
+  'user-minus': userMinus,
+  'speaker-slash': speakerSlash,
+  'speaker-high': speakerHigh,
+  lock,
+  prohibit,
   'globe-simple': globeSimple,
   'chalkboard-simple': chalkboardSimple,
   'clipboard-text-fill': clipboardTextFill,

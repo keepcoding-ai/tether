@@ -42,11 +42,11 @@ export const manifest: ExtensionManifest = {
     commands: [
       { command: CMD.open, title: 'Abrir canal…', category: CATEGORY, icon: 'chats-circle' },
       { command: CMD.create, title: 'Criar canal…', category: CATEGORY, icon: 'chats-circle' },
-      { command: CMD.join, title: 'Juntar agente a um canal…', category: CATEGORY, icon: 'plugs-connected' },
-      { command: CMD.remove, title: 'Tirar agente de um canal…', category: CATEGORY, icon: 'minus-circle' },
-      { command: CMD.mute, title: 'Calar agente num canal…', category: CATEGORY, icon: 'bell-slash' },
-      { command: CMD.unmute, title: 'Devolver a voz a um agente…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
-      { command: CMD.close, title: 'Encerrar canal…', category: CATEGORY, icon: 'stop-circle' },
+      { command: CMD.join, title: 'Juntar agente a um canal…', category: CATEGORY, icon: 'user-plus' },
+      { command: CMD.remove, title: 'Tirar agente de um canal…', category: CATEGORY, icon: 'user-minus' },
+      { command: CMD.mute, title: 'Calar agente num canal…', category: CATEGORY, icon: 'speaker-slash' },
+      { command: CMD.unmute, title: 'Devolver a voz a um agente…', category: CATEGORY, icon: 'speaker-high' },
+      { command: CMD.close, title: 'Encerrar canal…', category: CATEGORY, icon: 'prohibit' },
       { command: CMD.reopen, title: 'Reabrir canal…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
     ],
     paneTypes: [{
