@@ -16,6 +16,21 @@ export const CHANNEL_TAB = 'channels-pane-tab'
 export const channelPaneId = (channelId: string): string => `${CHANNEL_PANE_PREFIX}${channelId}`
 export const channelIdOfPane = (paneId: string): string => paneId.slice(CHANNEL_PANE_PREFIX.length)
 
+/** The commands' ids. Ids never change: keybindings.json names them. */
+export const CMD = {
+  open: 'channels.open',
+  create: 'channels.create',
+  join: 'channels.join',
+  remove: 'channels.remove',
+  mute: 'channels.mute',
+  unmute: 'channels.unmute',
+  close: 'channels.close',
+  reopen: 'channels.reopen',
+} as const
+
+/** The palette's group of every channel command. */
+export const CATEGORY = 'Canais'
+
 export const manifest: ExtensionManifest = {
   id: EXT_ID,
   version: '0.1.0',
@@ -24,6 +39,16 @@ export const manifest: ExtensionManifest = {
   hosts: ['daemon', 'renderer'],
   optional: true,
   contributes: {
+    commands: [
+      { command: CMD.open, title: 'Abrir canal…', category: CATEGORY, icon: 'chats-circle' },
+      { command: CMD.create, title: 'Criar canal…', category: CATEGORY, icon: 'chats-circle' },
+      { command: CMD.join, title: 'Juntar agente a um canal…', category: CATEGORY, icon: 'plugs-connected' },
+      { command: CMD.remove, title: 'Tirar agente de um canal…', category: CATEGORY, icon: 'minus-circle' },
+      { command: CMD.mute, title: 'Calar agente num canal…', category: CATEGORY, icon: 'bell-slash' },
+      { command: CMD.unmute, title: 'Devolver a voz a um agente…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
+      { command: CMD.close, title: 'Encerrar canal…', category: CATEGORY, icon: 'stop-circle' },
+      { command: CMD.reopen, title: 'Reabrir canal…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
+    ],
     paneTypes: [{
       id: 'channel', idPrefix: CHANNEL_PANE_PREFIX, component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB,
       optionsOf: p => ({
