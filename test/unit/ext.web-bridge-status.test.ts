@@ -243,6 +243,22 @@ describe('web-bridge status: the poller', () => {
     assert.deepEqual(await poller.activate('gone'), { ok: false, message: 'Esse navegador não está mais conectado.' })
   })
 
+  test('older daemon: the shape of /status flags it; activate 404 names the service; the build record flags it too; old Agentes filter', async () => {
+    const { fake, poller } = setup('k', 'old')
+    fake.status = () => ({ ok: true, paused: false, browsers: [{ id: 'b1', name: 'Chrome', tabs: [] }], clients: [{ id: 'tether:s1', name: 'A', lastTool: 'navigate' }, { id: 'tether:s2', name: 'B', lastTool: 'release' }] })
+    const snapOld = await poller.refresh()
+    assert.equal(snapOld.daemonOutdated, true)
+    fake.activate = 404
+    assert.deepEqual(await poller.activate('b1'), { ok: false, message: 'O serviço do Bridge está desatualizado; reinicie o tether.' })
+    assert.deepEqual(agentGroups(snapOld).map(g => g.agents.map(x => x.clientId)), [['tether:s1']], 'old filter: lastTool !== release')
+    assert.deepEqual(browserMenu({ ...snapOld.browsers[0]!, extensionVersion: '0.0.1' }, { version: { vendored: '9.9.9', pendingReload: false }, daemonOutdated: true }).map(i => i.id), ['options'], 'no reload item')
+    assert.equal(reduceStatus({ browsers: [{ id: 'b1', name: 'Chrome', tabs: [], active: true }], activeBrowserId: 'b1', clients: [] }).daemonOutdated, undefined)
+    const { fake: f2 } = setup('k', 'stale')
+    f2.status = () => ({ ok: true, browsers: [], clients: [] })
+    const stale = createStatusPoller({ port: 1, bridgeHome: join(tmp, 'stale'), fetch: async () => new Response('{"browsers":[],"clients":[]}'), log: () => {}, now: () => NOW, version: () => ({ pendingReload: false }), onChange: () => {}, daemonBuildStale: () => true })
+    assert.equal((await stale.refresh()).daemonOutdated, true)
+  })
+
   test('focusTab: POST /browsers/<id>/tabs/<tab>/focus; 422 out of scope, 504 an older extension', async () => {
     const { fake, poller } = setup('k', 'e')
     assert.deepEqual(await poller.focusTab('b1', 7), { ok: true })

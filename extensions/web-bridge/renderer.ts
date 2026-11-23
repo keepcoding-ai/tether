@@ -20,7 +20,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { activeAgents, agentGroups, badgeOf, browserAlert, browserMenu, pauseAction, EMPTY_SNAPSHOT, fallbackLine, showReleaseAll, stateMarks, stateOf, titleOf, type AgentView, type BrowserMenuItem, type BrowserView } from './status.ts'
+import { DAEMON_OUTDATED_TEXT, activeAgents, agentGroups, badgeOf, browserAlert, browserMenu, pauseAction, EMPTY_SNAPSHOT, fallbackLine, showReleaseAll, stateMarks, stateOf, titleOf, type AgentView, type BrowserMenuItem, type BrowserView } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -273,11 +273,15 @@ export function activate(ui: TetherUi): IDisposable[] {
   const browserRow = (b: BrowserView): HTMLElement => {
     const box = el('div', `wb-browser${b.active ? ' active' : ''}`); box.dataset.browser = b.id
     const line = el('div', 'wb-browser-line')
-    const label = document.createElement('label'); label.className = 'wb-radio'
-    const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'wb-active-browser', value: b.id, checked: !!b.active, disabled: acting })
-    radio.addEventListener('change', () => { void act(() => ipc.invoke('activate', b.id), `Agentes passam a usar o ${b.name}.`) })
-    label.append(radio, el('span', 'wb-name', b.name))
-    line.append(label)
+    const outdated = !!snapshot.daemonOutdated
+    if (outdated) line.append(el('span', 'wb-name', b.name))
+    else {
+      const label = document.createElement('label'); label.className = 'wb-radio'
+      const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'wb-active-browser', value: b.id, checked: !!b.active, disabled: acting })
+      radio.addEventListener('change', () => { void act(() => ipc.invoke('activate', b.id), `Agentes passam a usar o ${b.name}.`) })
+      label.append(radio, el('span', 'wb-name', b.name))
+      line.append(label)
+    }
     if (b.focusTabId !== undefined) { const tabId = b.focusTabId; line.append(goButton(`Trazer o ${b.name} para a frente`, () => focusTab(b.id, tabId))) }
     const more = el('button', 'wb-menu-btn') as HTMLButtonElement
     more.type = 'button'
@@ -303,7 +307,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       }
       box.append(menu)
     }
-    const alert = browserAlert(b, snapshot.version.vendored)
+    const alert = outdated ? undefined : browserAlert(b, snapshot.version.vendored)
     if (alert) {
       const row = el('div', 'wb-alert')
       row.append(el('span', 'wb-alert-text', `⚠ ${alert.text}`))
@@ -359,6 +363,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     pop.append(head)
 
     if (snapshot.daemon === 'up') {
+      if (snapshot.daemonOutdated) { const w = el('p', 'wb-alert wb-daemon-outdated', `⚠ ${DAEMON_OUTDATED_TEXT}`); w.setAttribute('role', 'status'); pop.append(w) }
       // Navegadores: every connected one; the radio picks the active browser at once.
       const bSec = el('section', 'wb-sec'); bSec.dataset.section = 'browsers'
       bSec.append(heading('Navegadores'))

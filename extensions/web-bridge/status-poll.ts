@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { releaseClient } from './agents.ts'
 import { folderCount } from '../../src/trace/timeline.ts'
 import type { DaemonCheck } from '../../src/daemon/ext-api.ts'
-import { debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type ReducedStatus, type StatusSnapshot } from './status.ts'
+import { DAEMON_OUTDATED_ACTIVATE, debugOf, EMPTY_SNAPSHOT, pendingOf, reduceStatus, type DaemonReach, type ReducedStatus, type StatusSnapshot } from './status.ts'
 
 export const POLL_IDLE_MS = 15_000
 export const POLL_OPEN_MS = 2_000
@@ -24,6 +24,8 @@ export interface StatusPollerDeps {
   version(browsers: StatusSnapshot['browsers']): StatusSnapshot['version'] | Promise<StatusSnapshot['version']>
   /** The disk (`api.io`); default node's async file API. */
   io?: DaemonIo
+  /** True when the daemon runs a bundle other than the vendored one (daemon.build.json vs the vendored sha): the best signal, joined with the shape of /status. */
+  daemonBuildStale?(): boolean | Promise<boolean>
   /** The browser "Opções da extensão" opens in, if any. */
   options?(): StatusSnapshot['options']
   onChange(snapshot: StatusSnapshot): void
@@ -145,6 +147,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       } catch { daemon = 'down' }
     }
     if (daemon === 'up') everUp = true
+    if (daemon === 'up' && !reduced.daemonOutdated && await Promise.resolve(deps.daemonBuildStale?.()).catch(() => false) === true) reduced = { ...reduced, daemonOutdated: true }
     const version = await deps.version(reduced.browsers)
     const next: StatusSnapshot = { at: now(), daemon, everUp, pauseSupported, ...reduced, version, ...(deps.options?.() ? { options: deps.options() } : {}) }
     const changed = JSON.stringify({ ...snapshot, at: 0 }) !== JSON.stringify({ ...next, at: 0 })
@@ -204,7 +207,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       return { ok: false, message: `O daemon recusou soltar ${bad.length} de ${ids.length} agente(s).` }
     },
     activate: async browserId => {
-      const r = await act('ativar navegador', `/browsers/${encodeURIComponent(browserId)}/activate`, { 404: 'Esse navegador não está mais conectado.' })
+      const r = await act('ativar navegador', `/browsers/${encodeURIComponent(browserId)}/activate`, { 404: snapshot.daemonOutdated ? DAEMON_OUTDATED_ACTIVATE : 'Esse navegador não está mais conectado.' })
       await refresh().catch(() => undefined)
       return r
     },
