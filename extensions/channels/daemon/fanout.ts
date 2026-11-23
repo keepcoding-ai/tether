@@ -10,8 +10,12 @@
 //     new line go as it came.
 //   - `missed`: what a member whose process does not run did not get, per channel (2.5): nothing is delivered to it, and ONE
 //     notice per channel goes when it runs again.
-//   - `woke`: the members a delivery of ours woke from idle (2.6). The next `done` of that turn is cleared (`attention.seen`)
-//     unless the person typed in it; `waiting` is never cleared, and a commanded pane (`attentionFor`) is never touched.
+//   - `turns`: one record per member a delivery of ours reached (2.6), dropped when its pane is forgotten. Who opened a turn
+//     is decided at its START edge (`busySince` changes): a line went in (inside or typed) since the previous start edge and
+//     the person typed nothing after the latest such line nor since the member went idle, so the line opened it, even a line
+//     taken while the agent was busy, which Claude answers in a turn of its own right after its current one ends. The `done`
+//     that ends such a turn is cleared (`attention.seen`) unless the person typed in it; a turn she opened by typing is never
+//     cleared, lines in the middle or not; `waiting` is never cleared, and a commanded pane (`attentionFor`) is never touched.
 // All of it is lost on a tetherd restart (the record and the core's queue stay on disk): at worst one return notice is missed.
 import { slotIsLive, slotTitle } from '../../../app/shared/agent-info.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
@@ -120,6 +124,18 @@ interface Waiting extends Tally {
   receipt: string
 }
 
+/** The turn edges of one member and the lines between them (2.6). */
+interface TurnWatch {
+  /** `busySince` of the turn in progress when last seen; absent while idle. */
+  busy?: string
+  /** When the member last went idle (ms): the end of its previous turn. */
+  idle?: number
+  /** The latest line that went in (inside or typed) since the last start edge (ms). */
+  line?: number
+  /** The turn in progress was opened by a line: its start (ms). */
+  opened?: number
+}
+
 const keyOf = (agent: AgentId, id: ChannelId): string => `${agent} ${id}`
 
 export function createChannels(api: ChannelsApi, store: ChannelStore): Channels {
@@ -141,7 +157,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   const pending = new Map<string, Waiting>()
   const byReceipt = new Map<string, string>()
   const missed = new Map<AgentId, Map<ChannelId, Tally>>()
-  const woke = new Map<AgentId, { at: number; armed: boolean }>()
+  const turns = new Map<AgentId, TurnWatch>()
 
   const lanes = new Map<ChannelId, Promise<unknown>>()
   /** One gesture at a time per channel: the pending check and its delivery never race another line of the same channel. */
@@ -286,27 +302,51 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   const isAgent = (id: AgentId): boolean => { const s = slotOf(id); return s !== undefined && s.kind !== 'shell' }
 
   // ---- the done of a turn a line opened (2.6) ----
+  /** Follows one state of a watched member: a start edge decides who opened the turn; its end clears a line's `done`. */
+  function observe(s: SlotState, w: TurnWatch): void {
+    if (s.attentionFor) w.opened = undefined
+    if (s.turn === 'busy') {
+      if (!s.busySince || s.busySince === w.busy) return
+      const start = Date.parse(s.busySince)
+      const line = w.line
+      w.busy = s.busySince
+      w.line = undefined
+      w.opened = undefined
+      if (line === undefined || s.attentionFor) return
+      // The turn is hers when she typed after the latest line or since the member went idle (her prompt, even one sent
+      // just before a line came in); otherwise the line opened it.
+      const typed = api.slots.userTypedAt(s.slotId)
+      if (typed === undefined || typed < Math.min(line, w.idle ?? line)) w.opened = start
+      return
+    }
+    w.busy = undefined
+    if (s.idleSince) w.idle = Date.parse(s.idleSince)
+    const opened = w.opened
+    w.opened = undefined
+    // `waiting` keeps the turn busy, so only a finished turn gets here; a reset (no `done`) just ends the watch of the turn.
+    if (opened === undefined || s.attention !== 'done' || s.attentionFor) return
+    const typed = api.slots.userTypedAt(s.slotId)
+    if (typed !== undefined && typed >= opened) return
+    try { api.attention.seen(s.slotId) } catch (e) { api.log(`attention.seen ${s.slotId}: ${(e as Error).message}`) }
+  }
   own.add(api.delivery.onDidDeliver((r) => {
     const key = byReceipt.get(r.id)
     if (key !== undefined && pending.get(key)?.receipt === r.id) untrack(key)
     if (r.unsent || (r.state !== 'inside' && r.state !== 'typed')) return
     const s = slotOf(r.slotId)
     if (!s) return
-    // The terminal path only types into an idle pane; inside, a busy agent takes the line between tools (no new turn).
-    if (r.state === 'inside' && (s.turn === 'busy' || s.attention === 'waiting')) return
-    woke.set(r.slotId, { at: Date.now(), armed: s.attention !== 'done' })
+    let w = turns.get(r.slotId)
+    if (w) observe(s, w) // a start edge not seen yet belongs to the window before this line
+    else {
+      // First line: the turn in progress (if any) is not this line's; the idle clock comes from the slot.
+      w = s.turn === 'busy' ? (s.busySince ? { busy: s.busySince } : {}) : (s.idleSince ? { idle: Date.parse(s.idleSince) } : {})
+      turns.set(r.slotId, w)
+    }
+    w.line = Date.now()
   }))
   own.add(api.slots.onState((s) => {
-    const w = woke.get(s.slotId)
-    if (!w) return
-    if (s.attentionFor) { woke.delete(s.slotId); return }
-    if (s.attention !== 'done') { w.armed = true; return }
-    if (!w.armed) return
-    woke.delete(s.slotId)
-    const typed = api.slots.userTypedAt(s.slotId)
-    if (typed === undefined || typed < w.at) {
-      try { api.attention.seen(s.slotId) } catch (e) { api.log(`attention.seen ${s.slotId}: ${(e as Error).message}`) }
-    }
+    const w = turns.get(s.slotId)
+    if (w) observe(s, w)
   }))
 
   const fail = (error: Refusal): { ok: false; error: Refusal } => ({ ok: false, error })
@@ -607,7 +647,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     },
 
     async forgotten(agent, name) {
-      woke.delete(agent)
+      turns.delete(agent)
       forgetMissed(agent)
       for (const key of [...pending.keys()]) if (key.startsWith(`${agent} `)) untrack(key)
       const ids = store.channelsOf(agent).map((c) => c.id)
@@ -643,7 +683,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
       pending.clear()
       byReceipt.clear()
       missed.clear()
-      woke.clear()
+      turns.clear()
     },
   }
   return channels

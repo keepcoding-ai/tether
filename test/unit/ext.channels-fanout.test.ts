@@ -375,6 +375,65 @@ describe('channels fan-out (H2)', () => {
     await doorApi.slots.forget(g)
   })
 
+  test('a line taken while busy opens the next turn: its done goes; the turn the person opened keeps its done; her key or a waiting stays', async () => {
+    const g = await running('dentro-ocupado')
+    const id = await channel(owner, 'ocupado')
+    await addMember(id, g)
+    const turn = async (what: string): Promise<void> => {
+      report(g, 'start')
+      await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, `${what}: busy`)
+    }
+    const finish = async (what: string): Promise<void> => {
+      const mark = states.length
+      report(g, 'done')
+      await waitUntil(() => statesOf(g, mark).some((s) => s.attention === 'done'), 10_000, `${what}: the done edge`)
+    }
+    const lineWhileBusy = async (body: string): Promise<void> => {
+      const said = await ch.say(owner, id, { body })
+      assert.ok(said.ok && said.receipts[g] === 'inside', JSON.stringify(said))
+    }
+
+    // The person opens a turn by typing; a line comes in the middle of it: her done stays.
+    rec.client.input(g, 'x')
+    await waitUntil(() => doorApi.slots.userTypedAt(g) !== undefined, 10_000, 'the user key counted')
+    await sleep(20)
+    await turn('her turn')
+    await lineWhileBusy('no meio')
+    await finish('her turn')
+    await sleep(800)
+    assert.equal(doorApi.slots.get(g)?.attention, 'done', 'the turn she opened keeps its done')
+
+    // The agent opens a turn of its own for the line right after: that done goes (the measured defect).
+    await turn('the line turn')
+    await finish('the line turn')
+    await waitUntil(() => doorApi.slots.get(g)?.attention === undefined, 10_000, 'the done of the turn the line opened cleared')
+
+    // A turn nobody's line opened, a line in it, then the line's turn: the person types in that one, so its done stays.
+    await turn('a plain turn')
+    await lineWhileBusy('outra no meio')
+    await finish('a plain turn')
+    await turn('the line turn, she types')
+    await sleep(20)
+    rec.client.input(g, 'y')
+    const typed = doorApi.slots.userTypedAt(g)
+    await waitUntil(() => doorApi.slots.userTypedAt(g) !== typed, 10_000, 'the second user key counted')
+    await finish('the line turn, she types')
+    await sleep(800)
+    assert.equal(doorApi.slots.get(g)?.attention, 'done', 'she typed in the turn the line opened: the done stays')
+    doorApi.attention.seen(g)
+
+    // The line's turn asks for permission: waiting is never cleared.
+    await turn('a plain turn')
+    await lineWhileBusy('mais uma no meio')
+    await finish('a plain turn')
+    await turn('the line turn, waiting')
+    report(g, 'waiting')
+    await waitUntil(() => doorApi.slots.get(g)?.attention === 'waiting', 10_000, 'waiting')
+    await sleep(800)
+    assert.equal(doorApi.slots.get(g)?.attention, 'waiting', 'waiting stays')
+    await doorApi.slots.forget(g)
+  })
+
   test('the desk gestures (F1): open by the desk, owner changes, panes in and out, closed and reopened with the history; no hand close', async () => {
     const p = await running('fora-mesa')
     const shell = (await doorApi.slots.create({ kind: 'shell', cwd: home, start: false })).slotId
@@ -457,6 +516,20 @@ describe('channels fan-out (H2)', () => {
     await waitUntil(() => doorApi.slots.get(g)?.attentionFor?.value === 'done', 10_000, 'the done goes to the owner')
     await sleep(800)
     assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'done', 'left for the owner')
+    // A line while busy, then the turn it opens: still left for the owner.
+    report(g, 'start')
+    await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'busy')
+    const busySaid = await ch.say(owner, id, { body: 'no meio, comandada' })
+    assert.ok(busySaid.ok && busySaid.receipts[g] === 'inside')
+    const mark = states.length
+    report(g, 'done')
+    await waitUntil(() => statesOf(g, mark).some((s) => s.turn === undefined), 10_000, 'the turn ended')
+    report(g, 'start')
+    await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'the line turn')
+    report(g, 'done')
+    await waitUntil(() => doorApi.slots.get(g)?.attentionFor?.value === 'done', 10_000, 'the done goes to the owner')
+    await sleep(800)
+    assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'done', 'the line turn of a commanded pane: left for the owner')
     await doorApi.attention.unroute(g)
     await doorApi.slots.forget(g)
   })
