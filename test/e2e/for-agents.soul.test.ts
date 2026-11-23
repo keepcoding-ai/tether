@@ -26,7 +26,7 @@ import { Screen } from './harness.ts'
 import { pidAlive } from './daemon-driver.ts'
 
 const MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
-const SOUL_BIN = process.env.C2_SOUL_BIN ?? 'D:/atrium/workspace/soul-cli/bin/soul'
+const SOUL_BIN = process.env.C2_SOUL_BIN ?? 'C:/atrium/workspace/soul-cli/bin/soul'
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 const runRoot = process.env.C2_RUN_ROOT ?? tmpdir()

@@ -6,7 +6,7 @@
 //   stopped: the preview of who goes back) · many (20 live sessions: the list scrolls, the footer stays).
 // Asserts the header is a direct child of the dialog on top, no horizontal scroll, a dignified height, the footer inside the
 // dialog, the groups and the footer texts of each situation, and that opening/selecting/Enter never send a request.
-// Captures go to SESSIONS_POPUP_DIR (default D:/atrium/.tmp/sessions-popup-proof, outside the repo).
+// Captures go to SESSIONS_POPUP_DIR (default C:/atrium/.tmp/sessions-popup-proof, outside the repo).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -32,7 +32,7 @@ declare const document: { documentElement: { dataset: Record<string, string> }; 
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
-const shots = process.env.SESSIONS_POPUP_DIR ?? 'D:/atrium/.tmp/sessions-popup-proof'
+const shots = process.env.SESSIONS_POPUP_DIR ?? 'C:/atrium/.tmp/sessions-popup-proof'
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')

@@ -30,7 +30,7 @@ const logFile = (name: string) => (logDir ? join(logDir, `${name}-${Date.now()}.
 // ---------- the agent under test ----------
 
 /** The agent folder soul runs in (sessions are registered per folder: -c picks the last one opened here). */
-const work = resolve(process.env.E2E_SOUL_DIR ?? 'D:/agentes/serpente')
+const work = resolve(process.env.E2E_SOUL_DIR ?? 'C:/agentes/serpente')
 const PROFILE = 'guga@codr.studio'
 /** Slot args: global config, the profile, and the cheapest strategy/model. */
 const SLOT_ARGS = ['-g', '-P', PROFILE, '--strategy', 'anthropic', '--model', 'cheap']

@@ -14,13 +14,13 @@ import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 
 for (const k of Object.keys(process.env)) if (/^(CLAUDE|TETHER_|CODEX_HOME$|NODE_TEST_CONTEXT$)/i.test(k)) delete process.env[k]
-const WT = process.env.E2_WORKTREE ?? 'D:/atrium/.tmp/wt/tether-channels'
-const SOUL_BIN = process.env.E2_SOUL_BIN ?? 'D:/atrium/workspace/soul-cli/bin/soul'
+const WT = process.env.E2_WORKTREE ?? 'C:/atrium/.tmp/wt/tether-channels'
+const SOUL_BIN = process.env.E2_SOUL_BIN ?? 'C:/atrium/workspace/soul-cli/bin/soul'
 const [engine, repsArg, evArg] = [process.argv[2], process.argv[3], process.argv[4]]
 if (engine !== 'codex' && engine !== 'soul') { console.error('usage: run.mjs <codex|soul> [reps] [evidenceDir]'); process.exit(2) }
 const REPS = Number(repsArg ?? 2)
 const ONE_PANE = process.env.E2_ONE_PANE === '1' // one new pane per line, no Enter rescue
-const EV = evArg ?? `D:/atrium/.tmp/tether-agents/onda-3/e2/${engine}`
+const EV = evArg ?? `C:/atrium/.tmp/tether-agents/onda-3/e2/${engine}`
 mkdirSync(EV, { recursive: true })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const imp = (p) => import(pathToFileURL(join(WT, p)).href)

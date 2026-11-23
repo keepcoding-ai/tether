@@ -68,7 +68,7 @@ const readPid = (bridgeHome: string): number | undefined => { try { return Numbe
 
 /** A Chromium build (not the branded Chrome: it refuses --load-extension since 137): CHROME_PATH, Playwright's, or the bridge tests' golden copy. */
 function findChromium(): string | undefined {
-  const candidates = [process.env.CHROME_PATH, chromium.executablePath(), 'D:/atrium/.tmp/atrium-browser-e7a/golden/browsers/chromium-1243/chrome-win64/chrome.exe']
+  const candidates = [process.env.CHROME_PATH, chromium.executablePath(), 'C:/atrium/.tmp/atrium-browser-e7a/golden/browsers/chromium-1243/chrome-win64/chrome.exe']
   return candidates.find((c): c is string => !!c && existsSync(c))
 }
 
@@ -263,7 +263,7 @@ test('web-bridge: Pausar no popover pausa o daemon real — a extensão solta as
       assert.ok(!text.includes(apiKey), 'api key leaked')
       assert.ok(!text.includes(config.pairingToken), 'pairing token leaked')
     }
-    const copyDir = 'D:/atrium/.tmp/tether-f7'
+    const copyDir = 'C:/atrium/.tmp/tether-f7'
     try { mkdirSync(copyDir, { recursive: true }); copyFileSync(join(artifacts, 'web-bridge-pause-paused.png'), join(copyDir, 'web-bridge-pause-paused.png')) } catch { /* optional copy */ }
   } finally {
     if (context) await context.close().catch(() => {})

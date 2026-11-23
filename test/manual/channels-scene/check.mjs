@@ -123,7 +123,7 @@ if (mode === 'after') {
   if (!was) say('   sem --before salvo')
   else {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
-    tick('mesa visivel e quadro ativo iguais ao antes', same(was.visible, snap.visible), same(was.visible, snap.visible) ? '' : `antes ${JSON.stringify(was.visible)}, depois ${JSON.stringify(snap.visible)}`)
+    tick('mesa visivel e quadro ativo iguais ao antes', was.visible === null ? null : same(was.visible, snap.visible), was.visible === null ? 'o antes foi tirado sem layout' :same(was.visible, snap.visible) ? '' : `antes ${JSON.stringify(was.visible)}, depois ${JSON.stringify(snap.visible)}`)
     for (const [name, s] of Object.entries(snap.channels)) {
       const b = was.channels?.[name]
       say(`   #${name}: ${b ? `ultima linha ${b.last} -> ${s.last}, membros ${b.members} -> ${s.members}` : `novo (ultima linha ${s.last}, membros ${s.members})`}`)
@@ -141,6 +141,8 @@ if (mode === 'after') {
     const names = Object.values(GUIDE_NAMES)
     const disabled = settings?.extensions?.disabled ?? []
     const eye = 'so a tela mostra'
+    // for-agents.json holds { owner: { owner: <agent id>, since, givenBy } }; tolerate a bare id too
+    const deskOwnerId = rec => (typeof rec?.owner === 'object' ? rec.owner?.owner : rec?.owner)
     const guideId = name => memberByName(C, name)?.[0]
     const viaCli = (name) => cliMembers.json?.members?.find(m => m.name === name)?.path
     const beforeLast = was && C ? (was.lastById?.[C.id] ?? 0) : undefined
@@ -154,7 +156,7 @@ if (mode === 'after') {
       tick('a mesa cena existe', !!cena)
       tick(`nasceu o canal da mesa (nome ${DESK_NAME}, sem prefixo mesa-: decisao C14)`, !!C && C.name.startsWith(DESK_NAME), C?.name)
       tick('o canal e da mesa (campo desk) e esta aberto', !!C && C.desk === cena?.id && !C.closed)
-      tick('o dono do canal e A, o dono da mesa', !!A && A === objects?.desk?.[cena?.id]?.owner, A)
+      tick('o dono do canal e A, o dono da mesa', !!A && A === deskOwnerId(objects?.desk?.[cena?.id]), A)
       tick('o historico abre com o aviso de criacao', cl[0]?.kind === 'notice' && cl[0]?.event?.type === 'create', short(cl[0]?.body ?? '', 60))
       tick('A recebeu o aviso por dentro', null, 'confira na sessao de A: kind="notice", role="system"')
     }
@@ -169,7 +171,7 @@ if (mode === 'after') {
       tick('os tres recibos (inside, typed, typed)', null, 'saem no retorno do `channels say`: confira no terminal de A; o Codex deve mostrar o · do cabecalho (N4)')
     }
     if (step === 4) {
-      const mark = cl.filter(l => /^Bom dia/.test(l.body)).at(-1)?.seq ?? 0
+      const mark = cl.filter(l => l.kind === 'message' && l.from.id === A && /^Bom dia/.test(l.body)).at(-1)?.seq ?? 0
       for (const n of names) {
         const l = newer(cl, mark).find(x => x.kind === 'message' && x.from.name === n)
         tick(`${n} respondeu no canal`, !!l, l ? `seq ${l.seq}, papel ${l.from.role}` : '')

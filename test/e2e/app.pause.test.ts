@@ -1,7 +1,7 @@
 // E2E of the polite pause in the app with the REAL Claude Code (--model haiku, CLAUDE* stripped, hidden window, private
 // home/pipe): a Claude runs a long task (turn busy -> the tab ball), the "Pedir pausa" button in the Sessões menu starts the batch, the counter goes
 // 0/1 -> 1/1 as the agent stops by itself, the menu lists it, the pause.manage command opens the "Sessões"
-// popup, whose light/dark captures at 900 and 1280 px go to PAUSE_SHOTS_DIR (default D:/atrium/.tmp/pause-proof, outside the repo);
+// popup, whose light/dark captures at 900 and 1280 px go to PAUSE_SHOTS_DIR (default C:/atrium/.tmp/pause-proof, outside the repo);
 // Retomar brings the turn back. No Claude session is killed before 11 s of life (fullscreen canary).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -29,7 +29,7 @@ declare const document: { querySelectorAll(selector: string): { length: number }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
-const shots = process.env.PAUSE_SHOTS_DIR ?? 'D:/atrium/.tmp/pause-proof'
+const shots = process.env.PAUSE_SHOTS_DIR ?? 'C:/atrium/.tmp/pause-proof'
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')

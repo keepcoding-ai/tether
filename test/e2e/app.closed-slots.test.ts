@@ -6,7 +6,7 @@
 //   5. "Esquecer todas as encerradas" asks once with the app dialog; sessions without a tab are untouched;
 //   6. the icon and Enter do nothing (only a labelled button inside the menu has an effect);
 //   7. "Encerrar os N ociosos sem guia": one confirmation listing the names, then all of them end and show under "Encerradas";
-//   8. screenshots of the menu, light and dark, at 1280 and 400 px (SESSIONS_SHOTS_DIR, default D:/atrium/.tmp/sessions-proof).
+//   8. screenshots of the menu, light and dark, at 1280 and 400 px (SESSIONS_SHOTS_DIR, default C:/atrium/.tmp/sessions-proof).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -30,7 +30,7 @@ declare const document: { querySelectorAll(selector: string): { length: number }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
-const shots = process.env.SESSIONS_SHOTS_DIR ?? 'D:/atrium/.tmp/sessions-proof'
+const shots = process.env.SESSIONS_SHOTS_DIR ?? 'C:/atrium/.tmp/sessions-proof'
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')

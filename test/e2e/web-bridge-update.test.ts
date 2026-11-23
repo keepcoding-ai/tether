@@ -67,7 +67,7 @@ const readPid = (bridgeHome: string): number | undefined => { try { return Numbe
 
 /** A Chromium build (not the branded Chrome: it refuses --load-extension since 137): CHROME_PATH, Playwright's, or the bridge tests' golden copy. */
 function findChromium(): string | undefined {
-  const candidates = [process.env.CHROME_PATH, chromium.executablePath(), 'D:/atrium/.tmp/atrium-browser-e7a/golden/browsers/chromium-1243/chrome-win64/chrome.exe']
+  const candidates = [process.env.CHROME_PATH, chromium.executablePath(), 'C:/atrium/.tmp/atrium-browser-e7a/golden/browsers/chromium-1243/chrome-win64/chrome.exe']
   return candidates.find((c): c is string => !!c && existsSync(c))
 }
 

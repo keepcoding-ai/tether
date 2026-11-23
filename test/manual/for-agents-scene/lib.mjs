@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 export const WT = resolve(import.meta.dirname, '..', '..', '..')
 export const CLI = join(WT, 'bin', 'tether.mjs')
-export const OUT = 'D:/atrium/.tmp/tether-agents/onda-2/cena'
+export const OUT = 'C:/atrium/.tmp/tether-agents/onda-2/cena'
 export const SCENE = join(OUT, 'scene.json')
 
 export function readScene() {

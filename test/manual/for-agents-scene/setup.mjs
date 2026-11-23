@@ -24,7 +24,7 @@ if (cmd === 'record') {
 
 function createBench() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'tether-cena-')))
-  if (/^d:[\\/](atrium|agentes|kai)([\\/]|$)/i.test(root)) { console.error(`raiz de bancada em lugar proibido: ${root}`); process.exit(1) }
+  if (/^c:[\\/](atrium|agentes|kai)([\\/]|$)/i.test(root)) { console.error(`raiz de bancada em lugar proibido: ${root}`); process.exit(1) }
   const home = join(root, 'home')
   const dirs = { c1: join(root, 'c1'), ser: join(root, 'ser'), c3: join(root, 'c3') }
   for (const d of [home, ...Object.values(dirs)]) mkdirSync(d, { recursive: true })
