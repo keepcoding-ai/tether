@@ -145,7 +145,7 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
     await closePane(page, a, 'detach')
     assert.ok(pidAlive(pidA), 'the shell runs on after the pane closes')
     assert.equal(await title(page), 'Sessões: 1 sem guia')
-    assert.equal(await counter(page), '', 'an idle session without a tab is not a call to action')
+    assert.equal(await counter(page), '1', 'an idle session without a tab shows the neutral total')
     await openMenu(page)
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'sessions-list', 'the focus lands on the container')
     assert.equal(await header(page), '1 sem guia')
@@ -278,7 +278,7 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
       await exited(id)
     }
     await closeMenu(page)
-    assert.equal(await counter(page), '1', 'the orange 1: one session without a tab asks for attention')
+    assert.equal(await counter(page), '1', 'the orange 1: the total of sessions without a tab, toned by attention')
     assert.equal(await page.locator('#sessions-count .c-attention').count(), 1)
     for (const width of [1280, 400]) {
       await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0]?.setContentSize(w, 800), width)

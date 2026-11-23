@@ -220,31 +220,32 @@ export function bulkCloseAction(rows: readonly SessionRow[]): BulkCloseAction {
 // ---------- icon counter ----------
 
 export interface CounterSegment {
-  /** attention = orange, running = green (sessions), progress = blue (pause going), done = green (pause ready). */
-  tone: 'attention' | 'running' | 'progress' | 'done'
+  /** attention = orange, running = green (sessions), idle = neutral (sessions), progress = blue (pause going), done = green (pause ready). */
+  tone: 'attention' | 'running' | 'idle' | 'progress' | 'done'
   text: string
 }
 
 /**
- * What the icon shows, at most two segments, only what asks for action. Orange K (sem guia pedindo atenção) always shows
- * and beats the green N (sem guia rodando); a pause on screen adds its own segment (blue x/y, green y/y). Calm = none.
+ * What the icon shows, at most two segments. The first counts every live session without a tab (text = the total) and
+ * takes the tone of the most urgent one: attention, else running (busy), else idle. A pause on screen adds its own
+ * segment after it (blue x/y, green y/y) and does not hide the first. No live session without a tab and no pause = none.
  * Ended sessions and sessions with a tab are not counted.
  */
 export function sessionsCounter(slots: Iterable<SessionSlot>, hasTab: (slotId: string) => boolean, batch: PauseBatch | null | undefined): CounterSegment[] {
-  let attention = 0
-  let running = 0
+  let total = 0
+  let attention = false
+  let busy = false
   for (const s of slots) {
     if (!isLive(s) || hasTab(s.slotId)) continue
-    if (s.attention) attention++
-    else if (s.turn === 'busy') running++
+    total++
+    if (s.attention) attention = true
+    else if (s.turn === 'busy') busy = true
   }
   const out: CounterSegment[] = []
-  if (attention > 0) out.push({ tone: 'attention', text: String(attention) })
+  if (total > 0) out.push({ tone: attention ? 'attention' : busy ? 'running' : 'idle', text: String(total) })
   if (hasBatch(batch)) {
     const c = pauseCounter(batch)
     if (c.total > 0) out.push({ tone: c.stopped === c.total ? 'done' : 'progress', text: `${c.stopped}/${c.total}` })
-  } else if (attention === 0 && running > 0) {
-    out.push({ tone: 'running', text: String(running) })
   }
   return out
 }
