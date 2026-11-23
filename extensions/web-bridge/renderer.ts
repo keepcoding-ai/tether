@@ -279,7 +279,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     label.append(radio, el('span', 'wb-name', b.name))
     line.append(label)
     if (b.focusTabId !== undefined) { const tabId = b.focusTabId; line.append(goButton(`Trazer o ${b.name} para a frente`, () => focusTab(b.id, tabId))) }
-    const more = el('button', 'wb-go wb-menu-btn') as HTMLButtonElement
+    const more = el('button', 'wb-menu-btn') as HTMLButtonElement
     more.type = 'button'
     more.dataset.action = 'browser-menu'
     more.title = `Ações do ${b.name}`
@@ -303,6 +303,7 @@ export function activate(ui: TetherUi): IDisposable[] {
         mi.setAttribute('role', 'menuitem')
         menu.append(mi)
       }
+      if (!snapshot.pauseSupported && !snapshot.paused) menu.append(el('p', 'wb-hint', 'Pausar está indisponível nesta versão do bridge.'))
       box.append(menu)
     }
     const alert = browserAlert(b, snapshot.version.vendored)

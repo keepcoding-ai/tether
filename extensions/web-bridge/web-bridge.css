@@ -54,9 +54,9 @@ dialog.web-bridge-guide .wb-note { margin: 0 0 14px; color: var(--fg-dim); font-
 .wb-pop .wb-mark.off { color: var(--fg-dim); opacity: .75; }
 .wb-pop .wb-alert { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .wb-pop .wb-alert-text { color: var(--warn); }
-.wb-pop .wb-go { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-dim); cursor: pointer; }
+.wb-pop .wb-go, .wb-pop .wb-menu-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-dim); cursor: pointer; }
 .wb-pop .wb-go .ph { width: 13px; height: 13px; }
-.wb-pop .wb-go:hover:not(:disabled), .wb-pop .wb-go:focus-visible { background: var(--bg-hover-2); color: var(--fg); outline: none; }
+.wb-pop .wb-go:hover:not(:disabled), .wb-pop .wb-go:focus-visible, .wb-pop .wb-menu-btn:hover, .wb-pop .wb-menu-btn:focus-visible { background: var(--bg-hover-2); color: var(--fg); outline: none; }
 .wb-pop .wb-go:disabled { opacity: .5; cursor: default; }
 .wb-pop .wb-go-space { width: 22px; flex: none; }
 

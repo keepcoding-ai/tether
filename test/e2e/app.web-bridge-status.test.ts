@@ -134,6 +134,12 @@ async function shotWindowTop(app: ElectronApplication, name: string): Promise<vo
 const status = (page: Page): Promise<Status> => page.evaluate(() => window.__tether.webBridge.status())
 const pop = (page: Page) => page.locator(`${STATUS} .status-pop`)
 const btn = (page: Page) => page.locator(`${STATUS} .status-btn`)
+/** Opens the first browser's "⋯" menu and clicks one entry (the menu closes after the click). */
+async function menuAction(page: Page, action: string): Promise<void> {
+  await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+  await pop(page).locator(`.wb-menu .wb-action[data-action="${action}"]`).click()
+}
+const menuEntry = async (page: Page, action: string) => { await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click(); return pop(page).locator(`.wb-menu .wb-action[data-action="${action}"]`) }
 
 /** Opens the popover (which polls at once) unless open, then waits for `cond` on the hook. */
 async function openAndWait(page: Page, cond: (s: Status) => boolean, what: string): Promise<Status> {
@@ -197,8 +203,9 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await btn(page).getAttribute('title'), s.title)
     assert.equal(await page.locator(`${STATUS} .status-badge`).isHidden(), true)
     assert.equal(await pop(page).locator('[data-section="browsers"] .wb-empty').textContent(), 'Nenhum navegador conectado.')
-    assert.equal(await pop(page).locator('.wb-version').textContent(), `Extensão ${vendoredVersion} · não instalada neste computador`, 'the footer names the vendored EXTENSION version (the manifest version, not the bridge version)')
-    assert.equal(await pop(page).locator('.wb-reload').count(), 0, 'nothing to reload')
+    assert.equal(await pop(page).locator('.wb-version, .wb-reload, .wb-actions').count(), 0, 'no global version line, reload warning or action row')
+    assert.equal(await pop(page).locator('[data-section="browsers"] [data-action="install"]').count(), 1, 'Instalar em outro navegador… closes Navegadores')
+    assert.equal(await pop(page).locator('[data-action="release-all"]').count(), 0, 'no live agent: no Soltar todas')
     assert.ok(s.watching, 'the open popover is watched')
     const key = keyFile()
     assert.ok(key && key.length >= 16, 'the tetherd created api.key')
@@ -304,26 +311,30 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(await btn(page).getAttribute('data-state'), 'normal')
 
     // ---- 4. Pausar / Retomar ----
-    await pop(page).locator('.wb-action[data-action="pause"]').click()
+    await menuAction(page, "pause")
     s = await openAndWait(page, x => x.snapshot.paused, 'paused')
     assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/pause'), 'POST /pause')
     assert.equal(s.state, 'warn')
     assert.equal(s.title, 'Tether Bridge pausado')
     assert.equal(await btn(page).getAttribute('data-state'), 'warn')
-    assert.equal(await pop(page).locator('.wb-action[data-action="pause"]').count(), 0)
+    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="pause"]').count(), 0)
+    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="resume"]').count(), 1, 'paused: the menu offers Retomar')
+    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
     assert.equal(await pop(page).locator('.wb-notice.ok').textContent(), 'Tether Bridge pausado: os agentes esperam.')
-    await pop(page).locator('.wb-action[data-action="resume"]').click()
+    await menuAction(page, "resume")
     s = await openAndWait(page, x => !x.snapshot.paused, 'resumed')
     assert.ok(fake.calls.some(c => c.method === 'POST' && c.path === '/resume'), 'POST /resume')
     assert.equal(s.state, 'normal')
     // An older daemon: 404.
     fake.pauseStatus = 404
-    await pop(page).locator('.wb-action[data-action="pause"]').click()
+    await menuAction(page, "pause")
     await pop(page).locator('.wb-notice.warn').waitFor()
     assert.match((await pop(page).locator('.wb-notice.warn').textContent()) ?? '', /indisponível nesta versão/)
     s = await openAndWait(page, x => !x.snapshot.pauseSupported, 'pause unsupported remembered')
-    assert.ok(await pop(page).locator('.wb-action[data-action="pause"]').isDisabled(), 'Pausar disabled once the daemon said 404')
-    assert.equal(await pop(page).locator('.wb-hint').count(), 1)
+    assert.ok(await (await menuEntry(page, 'pause')).isDisabled(), 'Pausar disabled once the daemon said 404')
+    assert.equal(await pop(page).locator('.wb-menu .wb-hint').count(), 1, 'the menu says why Pausar is unavailable')
+    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
     fake.pauseStatus = 200
 
     // ---- 5. Retomar todas as abas, Instalar em outro navegador…, Opções da extensão ----
@@ -331,16 +342,18 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     s = await openAndWait(page, x => x.snapshot.agents.length === 0, 'released')
     assert.deepEqual(fake.calls.filter(c => c.path.endsWith('/release')).map(c => c.path), [`/clients/${encodeURIComponent(clientA)}/release`])
     assert.equal(s.snapshot.browsers[0]!.tabs, 0)
-    assert.ok(await pop(page).locator('.wb-action[data-action="release-all"]').isDisabled(), 'nothing left to release')
+    assert.equal(await pop(page).locator('.wb-action[data-action="release-all"]').count(), 0, 'nothing left to release: the action goes away')
 
     assert.equal(s.snapshot.options?.browserName, 'Chrome de teste')
-    assert.equal(await pop(page).locator('.wb-action[data-action="options"]').textContent(), 'Opções da extensão (Chrome de teste)')
-    await pop(page).locator('.wb-action[data-action="options"]').click()
+    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+    assert.equal(await pop(page).locator('.wb-menu .wb-action[data-action="options"]').textContent(), 'Opções da extensão')
+    await pop(page).locator('.wb-browser [data-action="browser-menu"]').first().click()
+    await menuAction(page, "options")
     for (let i = 0; i < 40 && !existsSync(argsFile); i++) await sleep(250)
     assert.ok(existsSync(argsFile), 'the browser was launched')
     assert.match(readFileSync(argsFile, 'utf8'), new RegExp(`chrome-extension://${expectedId.extensionId}/options.html`), "at the extension's own options page")
 
-    await pop(page).locator('.wb-action[data-action="install"]').click()
+    await pop(page).locator('[data-section="browsers"] .wb-action[data-action="install"]').click()
     const pick = page.locator('dialog.ask[data-dialog="web-bridge-install"][open]')
     await pick.waitFor()
     assert.equal(await pick.locator('h2').textContent(), 'Em qual navegador?')
@@ -355,7 +368,7 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     assert.equal(s.title, 'O daemon do bridge caiu; a próxima chamada o reinicia')
     assert.equal(await btn(page).getAttribute('data-state'), 'error')
     assert.match((await pop(page).locator('.wb-down').textContent()) ?? '', /parou de responder/)
-    assert.ok(await pop(page).locator('.wb-action[data-action="pause"]').isDisabled())
+    assert.equal(await pop(page).locator('.wb-menu-btn').count(), 0, 'daemon down: no browser, no menu')
     await closePop(page)
 
     // No secret anywhere the renderer or the logs can see.
