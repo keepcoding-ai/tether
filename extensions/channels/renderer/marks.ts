@@ -1,6 +1,6 @@
 // The marks of the channels (slice U3): what the person has not read, and what is said to her.
 //   - A line from an agent is "unread" until the person sees the end of the conversation: it counts on the channel's tab (a quiet
-//     ring, no colour) and in the top bar's popover. It never activates a pane, switches a desk, takes focus or throws a toast.
+//     ring, no colour; drawn by the tab itself) and in the top bar's popover. It never activates a pane, switches a desk, takes focus or throws a toast.
 //   - A line whose `to` includes the moderator also lights the attention seal on the channel's pane (when it is open) and the
 //     top bar icon's state (open or not). The seal is sticky: seeing the pane does not clear it, reaching the end does (P1).
 //   - Nothing is ever marked on the pane of whoever spoke: only the channel's own pane gets a mark.
@@ -11,7 +11,7 @@ import type { LineEvent } from '../daemon/fanout.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
 import type { Line } from '../rules.ts'
 import { channelPaneId } from '../manifest.ts'
-import { DEFAULT_MODERATOR_NAME, unreadLabel, type HistoryPage } from './view-model.ts'
+import { DEFAULT_MODERATOR_NAME, type HistoryPage } from './view-model.ts'
 
 /** Unseen lines kept per channel (the count stops growing past it). */
 export const MAX_HELD = 500
@@ -159,11 +159,7 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     const paneId = channelPaneId(channelId)
     const open = ui.panes.find(paneId) !== undefined
     const m = board.of(channelId)
-    const plain = m.unread - m.toMe
-    try {
-      // The quiet ring: lines for everyone that nobody has seen. Never a colour; the seal says the rest.
-      if (open) ui.panes.setEmblems(paneId, plain > 0 ? [{ icon: 'circle', tooltip: unreadLabel(plain) }] : undefined)
-    } catch (e) { console.error('channels emblem', e) }
+    // The quiet ring on the tab is the tab's own (channel-pane.ts ChannelTab): the core's emblems fill only its own tab headers.
     const handle = seals.get(channelId)
     if (open && m.toMe > 0) {
       const message = `#${nameOf(channelId)}: ${m.toMe === 1 ? 'uma fala para você' : `${m.toMe} falas para você`}`

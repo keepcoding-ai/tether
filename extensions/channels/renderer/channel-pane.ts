@@ -594,8 +594,25 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
   class ChannelTab implements ITabRenderer {
     readonly element = el('div', 'ch-tab')
     private readonly title = el('span', 'ch-tab-title')
+    private readonly ring = el('span', 'ch-ring')
+    private readonly dot = el('span', 'ch-att')
+    private sub: IDisposable | undefined
+    /**
+     * The marks on the tab: the quiet ring for lines nobody has seen (a count in its tooltip, no colour) and the orange dot only for
+     * lines addressed to the person. Drawn here because the core's emblems and seals fill its own tab headers, not an extension's.
+     */
+    private paintMarks(channelId: string): void {
+      const m = marks.of(channelId)
+      const plain = m.unread - m.toMe
+      this.ring.hidden = plain === 0
+      this.ring.title = plain > 0 ? unreadLabel(plain) : ''
+      this.dot.hidden = m.toMe === 0
+      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : ''
+      this.element.dataset.mark = m.toMe > 0 ? 'me' : plain > 0 ? 'plain' : ''
+    }
     init(p: GroupPanelPartInitParameters): void {
       const paneId = p.api.id
+      const channelId = channelIdOfPane(paneId)
       const close = el('button', 'close')
       close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
       close.append(glyph('x'))
@@ -603,10 +620,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(paneId) })
       this.title.textContent = p.api.title ?? `#${channelIdOfPane(paneId)}`
       p.api.onDidTitleChange(() => { this.title.textContent = p.api.title ?? '' })
-      this.element.append(glyph('chats-circle'), this.title, close)
+      this.element.dataset.channel = channelId
+      this.element.append(glyph('chats-circle'), this.title, this.ring, this.dot, close)
       this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(paneId, ev.clientX, ev.clientY) })
+      this.paintMarks(channelId)
+      this.sub = marks.onDidChange(() => this.paintMarks(channelId))
     }
-    dispose(): void {}
+    dispose(): void { this.sub?.dispose() }
   }
 
   const open = (channelId: string, name?: string): void => {
