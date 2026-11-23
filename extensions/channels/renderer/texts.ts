@@ -48,8 +48,8 @@ export function channelDetail(c: ChannelSummary): string {
   const parts: string[] = []
   if (c.closed) parts.push('encerrado · só leitura')
   else if (c.desk !== undefined) parts.push('canal da mesa')
-  parts.push(membersCount(c.members))
-  if (!c.closed) parts.push(`dono: ${ownerName(c)}`)
+  // A closed channel keeps no members: the count would read "0".
+  if (!c.closed) parts.push(membersCount(c.members), `dono: ${ownerName(c)}`)
   return parts.join(' · ')
 }
 

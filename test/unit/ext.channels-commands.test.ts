@@ -54,7 +54,7 @@ test('channelPick: the desk\'s channel on top, the open ones, then the closed on
 test('channelDetail: the members\' count and the owner; the desk channel and the closed one say so', () => {
   assert.equal(channelDetail(CONF), '4 membros · dono: Você')
   assert.equal(channelDetail(OBRA), 'canal da mesa · 3 membros · dono: Atrium')
-  assert.equal(channelDetail(OLD), 'encerrado · só leitura · 2 membros')
+  assert.equal(channelDetail(OLD), 'encerrado · só leitura')
   assert.equal(channelDetail({ ...CONF, members: 1 }), '1 membro · dono: Você')
 })
 
