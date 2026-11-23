@@ -278,7 +278,7 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
       await exited(id)
     }
     await closeMenu(page)
-    assert.equal(await counter(page), '1', 'the orange 1: the total of sessions without a tab, toned by attention')
+    assert.equal(await counter(page), '3', 'the orange 3: the total of live sessions without a tab, toned by the one asking attention')
     assert.equal(await page.locator('#sessions-count .c-attention').count(), 1)
     for (const width of [1280, 400]) {
       await app.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0]?.setContentSize(w, 800), width)
