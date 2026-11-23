@@ -545,6 +545,89 @@ describe('export edge cases', () => {
   })
 })
 
+describe('a file outside every place: the place is its parent folder', () => {
+  const note = (id: string, path: string) => ({ id, contentComponent: 'note', params: { note: { path } }, title: id })
+  const withNotes = (opts: { platform: 'win32' | 'linux'; a: string; b: string }): LayoutJson => ({
+    v: 4, desks: [desk('desk-1', 'M', { n1: note('n1', opts.a), n2: note('n2', opts.b) })], activeDesk: 'desk-1', drawer: null, sidebars: {}, systemDesks: {},
+  })
+
+  test('win32: the place is the folder, the rel is the file name; two notes in one folder share the place', () => {
+    const layout = withNotes({ platform: 'win32', a: 'D:\\docs\\notes\\llm-budget.md', b: 'D:\\docs\\notes\\b.md' })
+    const ex = exportLayout(layout, {}, {}, winOpts())
+    assert.deepEqual(ex.map, { notes: 'D:\\docs\\notes' })
+    const panels = entityDesks(ex.entities).u1.frames.views.f1.panels
+    assert.deepEqual(panels.n1.params.note.path, { place: 'notes', rel: 'llm-budget.md' })
+    assert.deepEqual(panels.n2.params.note.path, { place: 'notes', rel: 'b.md' })
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    assert.deepEqual(im.layout, layout)
+  })
+
+  test('posix: same rule by the platform of the options', () => {
+    const layout = withNotes({ platform: 'linux', a: '/srv/x/docs/a.md', b: '/srv/x/docs/sub/b.md' })
+    const ex = exportLayout(layout, {}, {}, { ...NIX, newUid: counter() })
+    assert.deepEqual(ex.map, { docs: '/srv/x/docs' })
+    const panels = entityDesks(ex.entities).u1.frames.views.f1.panels
+    assert.deepEqual(panels.n1.params.note.path, { place: 'docs', rel: 'a.md' })
+    assert.deepEqual(panels.n2.params.note.path, { place: 'docs', rel: 'sub/b.md' })
+    assert.deepEqual(importLayout(ex.entities, layout, ex.map, ex.ids, NIX).layout, layout)
+  })
+
+  test('a file in a known place keeps that place; a cwd still makes the place on the folder itself', () => {
+    const layout = withNotes({ platform: 'win32', a: 'C:\\atrium\\mind\\a.md', b: 'D:\\docs\\b.md' })
+    deskOf(layout, 'desk-1').frames.views.f1.panels.n1.params.note.cwd = 'D:\\docs\\proj'
+    const ex = exportLayout(layout, WIN_MAP, {}, winOpts())
+    const panels = entityDesks(ex.entities).u1.frames.views.f1.panels
+    assert.deepEqual(panels.n1.params.note.path, { place: 'atrium', rel: 'mind/a.md' })
+    assert.deepEqual(panels.n1.params.note.cwd, { place: 'proj', rel: '' })
+    assert.deepEqual(panels.n2.params.note.path, { place: 'docs', rel: 'b.md' })
+    assert.deepEqual(ex.map, { atrium: 'C:\\atrium', proj: 'D:\\docs\\proj', docs: 'D:\\docs' })
+  })
+
+  test('a pinned project path is a folder: the place is the folder itself', () => {
+    const layout = sample()
+    layout.workspace = { pinned: [{ path: 'D:\\work\\app' }] }
+    const ex = exportWin(layout)
+    assert.deepEqual((ex.entities.layout as any).workspace.pinned[0], { path: { place: 'app', rel: '' } })
+    assert.equal(ex.map.app, 'D:\\work\\app')
+  })
+})
+
+describe('the round trip keeps the key order', () => {
+  /** Keys deliberately out of alphabetical order, `asleep` in the middle of a desk, a pad, a workspace. */
+  function unsorted(): LayoutJson {
+    const d1 = desk('desk-1', 'Mesa 1', {
+      '111': { title: 't', params: { slotId: '111', hint: { unsafe: true, profileName: 'P', kind: 'claude', cwd: 'C:\\atrium\\z' }, emblem: 'e' }, id: '111', contentComponent: 'terminal' },
+      'note:1': { title: 'n', id: 'note:1', params: { note: { minimap: false, path: 'C:\\atrium\\mind\\a.md', cwd: 'C:\\atrium' } } },
+    }, { pads: { zeta: { v: 1, mode: 'x', cwd: 'C:\\atrium\\p' }, alpha: { b: 1, a: 2 } } })
+    const d2 = { name: 'Mesa 2', asleep: true, id: 'desk-2', ...desk('desk-2', 'Mesa 2', { '222': terminal('222', 'C:\\Users\\Ana') }) }
+    return {
+      v: 4, activeDesk: 'desk-2', desks: [d1, d2], emblems: [{ glyph: 'star', id: 'u-abc' }],
+      workspace: { pinned: [{ path: 'C:\\atrium' }] }, zzz: { b: 1, a: 2 }, drawer: null, sidebars: { z: 1, a: 2 }, systemDesks: {},
+      deskSleptPanes: ['222'], asleepPanes: ['222'],
+    }
+  }
+
+  test('same machine: the layout comes back byte for byte', () => {
+    const layout = unsorted()
+    const ex = exportWin(layout)
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    assert.equal(JSON.stringify(im.layout), JSON.stringify(layout))
+  })
+
+  test('keys that only the persistent one has go last, recursively', () => {
+    const layout = unsorted()
+    const ex = exportWin(layout)
+    const e = entityDesks(ex.entities)
+    e.u1.novelty = 1
+    e.u1.frames.views.f1.extra = true
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    const d = deskOf(im.layout, 'desk-1')
+    assert.deepEqual(Object.keys(d), [...Object.keys(deskOf(layout, 'desk-1')), 'novelty'])
+    assert.deepEqual(Object.keys(d.frames.views.f1).slice(-1), ['extra'])
+    assert.deepEqual(Object.keys(d.frames.views.f1.panels['111']), ['title', 'params', 'id', 'contentComponent'])
+  })
+})
+
 describe('purity', () => {
   test('neither layout, current, the maps nor the ids are mutated', () => {
     const layout = deepFreeze(sample())

@@ -9,7 +9,8 @@
 //   - What stays on the machine: activeDesk, drawer, sidebars, systemDesks, asleepPanes, deskSleptPanes, each desk's
 //     `asleep` and any unknown top-level key.
 import { randomUUID } from 'node:crypto'
-import { ensureRef, fromRef, type PlaceMap, type PlaceOpts, type PlaceRef } from '../places.ts'
+import { posix, win32 } from 'node:path'
+import { ensureRef, fromRef, toRef, type PlaceMap, type PlaceOpts, type PlaceRef } from '../places.ts'
 
 /** collection → id → value */
 export type SyncEntities = Record<string, Record<string, unknown>>
@@ -26,6 +27,14 @@ export interface LayoutCodecOpts extends PlaceOpts { newUid?: () => string }
  * path is converted (never a URL).
  */
 export const PATH_KEYS: readonly string[] = ['cwd', 'path']
+
+/**
+ * The PATH_KEYS that name a FILE inside a desk (`note.path`, `preview.path`). A place is always a folder, so a file
+ * outside every known place gets a new place on its parent folder, with the file name as `rel`. The other PATH_KEYS
+ * (`cwd`) name folders and make the place on the folder itself. In `workspace` the same key `path` is a pinned FOLDER,
+ * so the workspace is converted with no file keys.
+ */
+export const FILE_KEYS: readonly string[] = ['path']
 
 const ID_RE = /^[a-z0-9][a-z0-9._@:-]*$/ // same rule as the entity store's names
 const DESKS = 'desks'
@@ -53,7 +62,18 @@ function isPlaceRefShape(x: unknown): x is PlaceRef {
   return keys.length === 2 && keys.includes('place') && keys.includes('rel') && typeof x.place === 'string' && typeof x.rel === 'string'
 }
 
-interface Walk { map: PlaceMap; opts?: PlaceOpts; unmapped: Set<string> }
+interface Walk { map: PlaceMap; opts?: PlaceOpts; unmapped: Set<string>; fileKeys?: readonly string[] }
+
+/** The ref of a file: a known place when one contains it, else a new place on its parent folder (`rel` = file name). */
+function fileRef(path: string, w: Walk): PlaceRef {
+  const found = toRef(path, w.map, w.opts)
+  if (found) return found
+  const p = (w.opts?.platform ?? process.platform) === 'win32' ? win32 : posix
+  const r = ensureRef(p.dirname(path), w.map, w.opts)
+  w.map = r.map
+  const base = p.basename(path)
+  return { place: r.ref.place, rel: r.ref.rel ? `${r.ref.rel}/${base}` : base }
+}
 
 /** A copy of `value` with the absolute paths under PATH_KEYS as PlaceRefs; `w.map` grows with the new places. */
 function toPlaces(value: unknown, w: Walk): unknown {
@@ -62,11 +82,25 @@ function toPlaces(value: unknown, w: Walk): unknown {
   const out: Obj = {}
   for (const [k, v] of Object.entries(value)) {
     if (PATH_KEYS.includes(k) && typeof v === 'string' && isAbsolutePath(v)) {
-      const r = ensureRef(v, w.map, w.opts)
-      w.map = r.map
-      put(out, k, { place: r.ref.place, rel: r.ref.rel })
+      if ((w.fileKeys ?? FILE_KEYS).includes(k)) {
+        put(out, k, fileRef(v, w))
+      } else {
+        const r = ensureRef(v, w.map, w.opts)
+        w.map = r.map
+        put(out, k, { place: r.ref.place, rel: r.ref.rel })
+      }
     } else put(out, k, toPlaces(v, w))
   }
+  return out
+}
+
+/** `value` with its object keys in the order `template` has them (keys only `value` has go last), recursively. */
+function inOrderOf(value: unknown, template: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v, i) => (Array.isArray(template) ? inOrderOf(v, template[i]) : v))
+  if (!isObject(value) || !isObject(template)) return value
+  const out: Obj = {}
+  for (const k of Object.keys(template)) if (Object.hasOwn(value, k)) put(out, k, inOrderOf(value[k], template[k]))
+  for (const k of Object.keys(value)) if (!Object.hasOwn(out, k)) put(out, k, value[k])
   return out
 }
 
@@ -169,7 +203,11 @@ export function exportLayout(
   })
   const meta: Obj = { order: { ids: order } }
   if (Array.isArray(layout.emblems)) meta.emblems = { emblems: structuredClone(layout.emblems) }
-  if (isObject(layout.workspace)) meta.workspace = toPlaces(layout.workspace, w)
+  if (isObject(layout.workspace)) {
+    const folders: Walk = { map: w.map, opts, unmapped: w.unmapped, fileKeys: [] } // pinned `path`s are folders
+    meta.workspace = toPlaces(layout.workspace, folders)
+    w.map = folders.map
+  }
   const entities: SyncEntities = { [DESKS]: desks, [LAYOUT]: meta }
   const leaks: string[] = []
   for (const [collection, byId] of Object.entries(entities)) {
@@ -258,8 +296,9 @@ export function importLayout(
       put(desk, 'asleep', true)
       for (const slot of terminalSlots(desk)) { addTo(asleepPanes(), slot); addTo(slept(), slot) }
     }
-    finalIds[desk.id as string] = uid
-    desks.push(desk)
+    const placed = mine ? (inOrderOf(desk, mine) as Obj) : desk // an existing desk keeps its key order: no change shows
+    finalIds[placed.id as string] = uid
+    desks.push(placed)
   }
 
   for (const [id, mine] of local) {
@@ -275,8 +314,8 @@ export function importLayout(
   const meta = entities[LAYOUT]
   if (isObject(meta)) {
     const emblems = meta.emblems
-    if (isObject(emblems) && Array.isArray(emblems.emblems)) out.emblems = structuredClone(emblems.emblems) // verbatim: emblems hold no machine paths
-    if (isObject(meta.workspace)) out.workspace = fromPlaces(meta.workspace, w)
+    if (isObject(emblems) && Array.isArray(emblems.emblems)) out.emblems = inOrderOf(structuredClone(emblems.emblems), out.emblems) // verbatim: emblems hold no machine paths
+    if (isObject(meta.workspace)) out.workspace = inOrderOf(fromPlaces(meta.workspace, w), out.workspace)
   }
   return { layout: out, ids: finalIds, arrived, removed, unmappedPlaces: [...w.unmapped].sort(), skipped }
 }
