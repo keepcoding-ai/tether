@@ -235,7 +235,7 @@ export type Request =
    * Agents only (adapter `resumes`); refused with `unconfirmed` (nothing touched) when the running agent never reported its session.
    */
   | { t: 'restart'; id: number; slotId: string }
-  /** The user looked at the slot's pane (it got the focus): clears `attention`. Daemons before 0.3.0 answer bad-request. */
+  /** The user looked at the slot's pane (it got the focus): clears `attention`, except a pending 'waiting' (a request the person must resolve). Daemons before 0.3.0 answer bad-request. */
   | { t: 'seen'; id: number; slotId: string }
   /**
    * Agent door: which panes are in which desk. The whole map, sent with the layout save (debounced) and on every reconnect;
@@ -302,7 +302,7 @@ export type Request =
   | { t: 'proc-release'; id: number; name: string; by?: ProcBy }
   /** The ports view: listening ports (managed or outside tether) and declared ones; `check`: that port only. */
   | { t: 'proc-ports'; id: number; check?: number }
-  /** Someone looked: clears `attention`. */
+  /** Someone looked: clears `attention`, except a pending 'waiting' (the owning agent's call clears it too). */
   | { t: 'proc-seen'; id: number; name: string }
   /**
    * Watch a process' output (read only: no request writes to a process). Reply: `scrollback` of its current run, absent

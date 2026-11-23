@@ -540,7 +540,7 @@ class DaemonImpl implements Daemon {
       },
       seen: (slotId) => {
         const slot = this.slot(slotId)
-        if (slot.attention.seen()) this.broadcastState(slot)
+        if (slot.attention.seen(true)) this.broadcastState(slot) // the owner clears a pending request too
       },
       signal: (slotId, kind) => {
         const slot = this.slot(slotId)
@@ -2522,7 +2522,7 @@ class DaemonImpl implements Daemon {
       if (!report || (slot.attentionReportTs && report.ts <= slot.attentionReportTs)) return
       slot.attentionReportTs = report.ts
       if (!isAlive(slot) || (slot.spawnedAt && report.ts < slot.spawnedAt)) return
-      if (slot.attention.hook(report.kind)) this.broadcastState(slot)
+      if (slot.attention.hook(report.kind, report.reason)) this.broadcastState(slot)
       this.scheduleWake(slot)
     }, () => undefined) // no file (yet): nothing to apply
   }

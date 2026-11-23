@@ -92,7 +92,7 @@ export function toEvent(hookName, payload, slotId, ts) {
  * the idle prompt, a question). `auth_success` is only informative. Undefined for any other hook, and for
  * payloads with `agent_id` (a subagent's hook, not the main turn).
  * @param {string} hookName @param {Payload} payload @param {string} ts
- * @returns {{ ts: string, kind: 'start' | 'done' | 'waiting', sessionId?: string } | undefined} */
+ * @returns {{ ts: string, kind: 'start' | 'done' | 'waiting', sessionId?: string, reason?: string } | undefined} */
 export function toAttention(hookName, payload, ts) {
   if (str(payload.agent_id)) return undefined
   /** @type {'start' | 'done' | 'waiting' | undefined} */
@@ -102,7 +102,9 @@ export function toAttention(hookName, payload, ts) {
   else if (hookName === 'Notification') kind = str(payload.notification_type) === 'auth_success' ? undefined : 'waiting'
   if (!kind) return undefined
   const sessionId = str(payload.session_id)
-  return sessionId ? { ts, kind, sessionId } : { ts, kind }
+  // A Notification's type tells a pending request (permission_prompt, elicitation_dialog) from a plain idle wait.
+  const reason = hookName === 'Notification' ? str(payload.notification_type) : undefined
+  return { ts, kind, ...(sessionId ? { sessionId } : {}), ...(reason ? { reason } : {}) }
 }
 
 

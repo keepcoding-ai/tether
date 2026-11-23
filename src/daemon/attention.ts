@@ -13,7 +13,9 @@
 // tracks those strings across chunks.
 //
 // Cleared by: the user typing into the slot (input that is not a terminal reply), `seen` (the pane got the
-// focus), a new launch and the process exit.
+// focus), a new launch and the process exit. A 'waiting' that is a pending request (a hook report with a `reason` other
+// than 'idle_prompt': a permission prompt, a question) is the exception: focus does not clear it, only the request
+// being resolved does (typing, a new turn, a finished turn, a reset). The owning agent's `seen(true)` clears it too.
 
 import '../agents/load.ts'
 import { agentRegistry } from '../agents/registry.ts'
@@ -42,6 +44,8 @@ type Scan = 'text' | 'esc' | 'string' | 'string-esc'
 
 export class AttentionState {
   value: Attention | undefined
+  /** `value` is a 'waiting' that stands for a pending request: only resolving it clears it, not focus. Never true while `value` is not 'waiting'. */
+  pending = false
   /** Is a turn in progress? Claude: UserPromptSubmit→busy, Stop→idle. Soul: its `turn` events, else Enter→busy, quiet→idle. Shells never. */
   turn: Turn = 'idle'
   /** ISO time the turn last became idle (a finished turn, a signal, a reset); undefined while busy or when it never changed here. */
@@ -68,15 +72,20 @@ export class AttentionState {
   }
 
   /** A hook reported the turn's end or a wait. Returns true when the value changed. */
-  hook(kind: HookKind): boolean {
+  hook(kind: HookKind, reason?: string): boolean {
     this.disarm()
+    const pending = kind === 'waiting' && reason !== undefined && reason !== 'idle_prompt'
+    // A softer wait (idle prompt, bell) never downgrades a request still pending.
+    if (kind === 'waiting' && this.pending && !pending) return false
     // A new turn voids the previous 'done' / 'waiting': the agent is working again.
     if (kind === 'start' || kind === 'done') { this.delegating = false; this.wakeFrom = undefined }
     if (kind === 'start') { const t = this.setTurn('busy'); return this.set(undefined) || t }
     // The turn ended but a background subagent still runs: the agent is waiting for it, not stopped.
     if (kind === 'done' && this.background > 0) { this.delegating = true; return this.setTurn('busy') }
     const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
-    return this.set(kind) || t
+    const changed = this.set(kind)
+    this.pending = pending
+    return changed || t
   }
 
   /**
@@ -105,8 +114,9 @@ export class AttentionState {
     return this.set(undefined) || t
   }
 
-  /** The user looked at the pane. */
-  seen(): boolean {
+  /** The user looked at the pane: clears 'done' and a non-pending 'waiting'. `force` (the owning agent) clears a pending one too. */
+  seen(force = false): boolean {
+    if (this.pending && !force) return false
     return this.set(undefined)
   }
 
@@ -134,7 +144,7 @@ export class AttentionState {
       }
     }
     if (this.armed) { this.burst += data.length; this.lastOutputAt = now }
-    if (bell && this.opts.bel) { this.disarm(); return this.set('waiting') }
+    if (bell && this.opts.bel) { this.disarm(); return this.pending ? false : this.set('waiting') }
     return false
   }
 
@@ -211,6 +221,7 @@ export class AttentionState {
   }
 
   private set(v: Attention | undefined): boolean {
+    if (v !== 'waiting') this.pending = false
     if (this.value === v) return false
     this.value = v
     return true
@@ -244,8 +255,8 @@ export function parseTurnReports(text: string): TurnReport[] {
   return out
 }
 
-/** The hook's file (<home>/slots/<id>.attention): `{ ts, kind: start|done|waiting, sessionId? }`; undefined when unreadable. */
-export interface AttentionReport { ts: string; kind: HookKind; sessionId?: string }
+/** The hook's file (<home>/slots/<id>.attention): `{ ts, kind: start|done|waiting, sessionId?, reason? }`; undefined when unreadable. */
+export interface AttentionReport { ts: string; kind: HookKind; sessionId?: string; reason?: string }
 
 export function parseAttentionReport(text: string): AttentionReport | undefined {
   let x: unknown
@@ -253,5 +264,5 @@ export function parseAttentionReport(text: string): AttentionReport | undefined 
   if (!x || typeof x !== 'object' || Array.isArray(x)) return undefined
   const r = x as Record<string, unknown>
   if (typeof r.ts !== 'string' || (r.kind !== 'done' && r.kind !== 'waiting' && r.kind !== 'start')) return undefined
-  return { ts: r.ts, kind: r.kind, ...(typeof r.sessionId === 'string' ? { sessionId: r.sessionId } : {}) }
+  return { ts: r.ts, kind: r.kind, ...(typeof r.sessionId === 'string' ? { sessionId: r.sessionId } : {}), ...(typeof r.reason === 'string' && r.reason ? { reason: r.reason } : {}) }
 }

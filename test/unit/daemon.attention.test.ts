@@ -13,6 +13,51 @@ const HOOK = resolve(import.meta.dirname, '../../src/report/claude-hook.mjs')
 const homes = tempDirs('tether-attn-')
 after(() => homes.cleanup())
 
+describe('attention: a pending waiting survives focus', () => {
+  const mk = () => new AttentionState(attentionOptions('claude'))
+  test('seen leaves a pending waiting; the owner force clears it', () => {
+    const a = mk()
+    a.hook('waiting', 'permission_prompt')
+    assert.equal(a.seen(), false)
+    assert.equal(a.value, 'waiting')
+    assert.equal(a.seen(true), true)
+    assert.equal(a.value, undefined)
+    assert.equal(a.pending, false)
+  })
+  test('a pending waiting falls on input, start, done and reset', () => {
+    for (const end of [(a: AttentionState) => a.input('x'), (a: AttentionState) => a.hook('start'), (a: AttentionState) => a.hook('done'), (a: AttentionState) => a.reset()]) {
+      const a = mk()
+      a.hook('waiting', 'elicitation_dialog')
+      assert.equal(end(a), true)
+      assert.equal(a.value === 'done' ? 'done' : a.value, a.value)
+      assert.equal(a.pending, false)
+      a.hook('waiting', 'idle_prompt')
+      assert.equal(a.seen(), true, 'a later idle wait is not pending')
+    }
+  })
+  test('idle_prompt, no reason and BEL are not pending; idle_prompt does not downgrade a pending one', () => {
+    const a = mk()
+    a.hook('waiting', 'idle_prompt')
+    assert.equal(a.pending, false)
+    a.hook('waiting')
+    assert.equal(a.pending, false)
+    assert.equal(a.seen(), true)
+    const s = new AttentionState({ idle: false, bel: true })
+    s.output('', 0)
+    assert.equal(s.value, 'waiting')
+    assert.equal(s.pending, false)
+    assert.equal(s.seen(), true)
+    a.hook('waiting', 'permission_prompt')
+    assert.equal(a.hook('waiting', 'idle_prompt'), false)
+    assert.equal(a.pending, true)
+    assert.equal(a.seen(), false)
+  })
+  test('parseAttentionReport carries reason when present', () => {
+    assert.equal(parseAttentionReport('{"ts":"x","kind":"waiting","reason":"permission_prompt"}')?.reason, 'permission_prompt')
+    assert.deepEqual(parseAttentionReport('{"ts":"x","kind":"waiting"}'), { ts: 'x', kind: 'waiting' })
+  })
+})
+
 describe('attention: claude (hooks only)', () => {
   test('a hook sets the value; typing clears it; seen clears it; a reset clears it', () => {
     const a = new AttentionState(attentionOptions('claude'))
@@ -186,9 +231,11 @@ describe('attention report', () => {
     const stop = { session_id: 'abc', transcript_path: 'x', cwd: 'D:\\w', hook_event_name: 'Stop', stop_hook_active: false }
     assert.deepEqual(toAttention('Stop', stop, ts), { ts, kind: 'done', sessionId: 'abc' })
     const perm = { session_id: 'abc', hook_event_name: 'Notification', message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' }
-    assert.deepEqual(toAttention('Notification', perm, ts), { ts, kind: 'waiting', sessionId: 'abc' })
-    assert.equal(toAttention('Notification', { ...perm, notification_type: 'idle_prompt' }, ts)?.kind, 'waiting')
-    assert.equal(toAttention('Notification', { message: 'x' }, ts)?.kind, 'waiting', 'older Claude without notification_type')
+    assert.deepEqual(toAttention('Notification', perm, ts), { ts, kind: 'waiting', sessionId: 'abc', reason: 'permission_prompt' })
+    assert.equal(toAttention('Notification', { ...perm, notification_type: 'idle_prompt' }, ts)?.reason, 'idle_prompt')
+    assert.equal(toAttention('Notification', { ...perm, notification_type: '' }, ts)?.reason, undefined)
+    assert.equal(toAttention('UserPromptSubmit', { session_id: 'abc', notification_type: 'x' }, ts)?.reason, undefined)
+    assert.deepEqual(toAttention('Notification', { message: 'x' }, ts), { ts, kind: 'waiting' }, 'older Claude without notification_type')
     assert.equal(toAttention('Notification', { ...perm, notification_type: 'auth_success' }, ts), undefined)
     assert.equal(toAttention('SessionStart', stop, ts), undefined)
   })
