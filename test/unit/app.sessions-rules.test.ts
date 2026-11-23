@@ -174,14 +174,17 @@ describe('pauseAction (from pause-rules)', () => {
 describe('sessionsCounter', () => {
   const t = (...ids: string[]) => tabs(...ids)
   test('calm shows nothing; ended and tabbed sessions do not count', () => {
-    assert.deepEqual(sessionsCounter([mk('a'), mk('b', { status: 'exited' })], none, null), [])
-    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { attention: 'done' })], t('a', 'b'), null), [])
+    assert.deepEqual(sessionsCounter([mk('a', { status: 'exited' })], none, null), [])
+    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { attention: 'done' }), mk('c')], t('a', 'b', 'c'), null), [])
   })
-  test('N sem guia running: green N', () => {
-    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { turn: 'busy' }), mk('c')], none, null), [{ tone: 'running', text: '2' }])
+  test('one idle session without a tab: neutral 1', () => {
+    assert.deepEqual(sessionsCounter([mk('a'), mk('b', { status: 'exited' })], none, null), [{ tone: 'idle', text: '1' }])
   })
-  test('K sem guia asking attention: orange K, which beats the green N', () => {
-    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { attention: 'waiting' }), mk('c', { attention: 'done' })], none, null), [{ tone: 'attention', text: '2' }])
+  test('busy sessions without a tab: green, the text is the total including idle ones', () => {
+    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { turn: 'busy' }), mk('c')], none, null), [{ tone: 'running', text: '3' }])
+  })
+  test('attention wins the tone and the text is still the total', () => {
+    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' }), mk('b', { attention: 'waiting' }), mk('c')], none, null), [{ tone: 'attention', text: '3' }])
   })
   test('pause going: blue x/y; pause ready: green y/y', () => {
     assert.deepEqual(sessionsCounter([], none, batchOf('stopped', 'listening', 'stopped')), [{ tone: 'progress', text: '2/3' }])
@@ -191,10 +194,11 @@ describe('sessionsCounter', () => {
     assert.deepEqual(sessionsCounter([], none, batchOf('stopped', 'removed')), [{ tone: 'done', text: '1/1' }])
     assert.deepEqual(sessionsCounter([], none, { ...batchOf('stopped'), state: 'closed' } as PauseBatch), [])
   })
-  test('pause plus attention: two segments, orange first; pause hides the green N', () => {
-    const slots = [mk('a', { turn: 'busy' }), mk('b', { attention: 'done' })]
-    assert.deepEqual(sessionsCounter(slots, none, batchOf('listening')), [{ tone: 'attention', text: '1' }, { tone: 'progress', text: '0/1' }])
-    assert.deepEqual(sessionsCounter([mk('a', { turn: 'busy' })], none, batchOf('listening')), [{ tone: 'progress', text: '0/1' }])
+  test('pause plus sessions without a tab: two segments, sem guia first; pause alone: one segment', () => {
+    const slots = [mk('a', { turn: 'busy' }), mk('b', { attention: 'done' }), mk('c')]
+    assert.deepEqual(sessionsCounter(slots, none, batchOf('listening')), [{ tone: 'attention', text: '3' }, { tone: 'progress', text: '0/1' }])
+    assert.deepEqual(sessionsCounter([mk('a')], none, batchOf('listening')), [{ tone: 'idle', text: '1' }, { tone: 'progress', text: '0/1' }])
+    assert.deepEqual(sessionsCounter([mk('a')], t('a'), batchOf('listening')), [{ tone: 'progress', text: '0/1' }])
   })
 })
 

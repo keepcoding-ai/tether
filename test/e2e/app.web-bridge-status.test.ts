@@ -8,7 +8,7 @@
 //   4. Pausar → POST /pause → amber "Tether Bridge pausado" and the button turns into Retomar → POST /resume;
 //      a daemon answering 404 → "indisponível nesta versão" and the button disabled;
 //   5. Retomar todas as abas → one release per client; Instalar em outro navegador… opens the picker;
-//      Opções da extensão opens chrome://extensions/?id=<id> in the (fake) browser;
+//      Opções da extensão opens chrome-extension://<id>/options.html in the (fake) browser;
 //   6. the daemon dies → red "O daemon do bridge caiu…";
 //   7. the poll: ≥2 /status within 5 s while the popover is open, the key never in the snapshot;
 //   8. screenshots web-bridge-status-{light,dark}.png (icon + badge + open popover).
@@ -338,7 +338,7 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     await pop(page).locator('.wb-action[data-action="options"]').click()
     for (let i = 0; i < 40 && !existsSync(argsFile); i++) await sleep(250)
     assert.ok(existsSync(argsFile), 'the browser was launched')
-    assert.match(readFileSync(argsFile, 'utf8'), new RegExp(`chrome://extensions/\\?id=${expectedId.extensionId}`), 'at the extension\'s own card')
+    assert.match(readFileSync(argsFile, 'utf8'), new RegExp(`chrome-extension://${expectedId.extensionId}/options.html`), "at the extension's own options page")
 
     await pop(page).locator('.wb-action[data-action="install"]').click()
     const pick = page.locator('dialog.ask[data-dialog="web-bridge-install"][open]')

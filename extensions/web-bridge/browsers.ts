@@ -124,3 +124,11 @@ export function browsersFromOverride(json: string, exists: (p: string) => boolea
   }
   return out
 }
+
+/**
+ * The extension's own options page. Chromium browsers ignore chrome:// / edge:// / brave:// URLs given on the
+ * command line (the window lands on a New Tab), but chrome-extension:// is honoured when the extension is installed.
+ */
+export function optionsUrl(extensionId: string): string {
+  return `chrome-extension://${extensionId}/options.html`
+}

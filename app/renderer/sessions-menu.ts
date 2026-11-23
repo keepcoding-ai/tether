@@ -257,7 +257,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const batch = hasBatch(host.batch()) ? host.batch() : null
     const summary = sessionsSummary(slots, host.hasTab, batch)
 
-    // The icon: a tray, or a pause glyph while a batch is on screen; the counter shows only what asks for action.
+    // The icon: a tray, or a pause glyph while a batch is on screen; the counter totals the live sessions without a tab (tone by urgency) and adds the pause progress.
     const name: IconName = batch ? 'pause' : 'tray'
     if (glyph.dataset.icon !== name) { glyph.dataset.icon = name; glyph.replaceChildren(icon(name)) }
     btn.classList.toggle('active', batch !== null)

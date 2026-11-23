@@ -9,7 +9,7 @@ import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { readBuildInfo } from './bridge-home.ts'
-import { browsersFromOverride, detectBrowsers, type DetectedBrowser } from './browsers.ts'
+import { browsersFromOverride, detectBrowsers, optionsUrl, type DetectedBrowser } from './browsers.ts'
 import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
 import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
@@ -49,11 +49,6 @@ export function optionsBrowser(detected: DetectedBrowser[], connected: StatusSna
     if (hit) return hit
   }
   return detected[0]
-}
-
-/** chrome://extensions/?id=<id> on the browser's own scheme (chrome://, edge://, brave://). */
-export function optionsUrl(browser: DetectedBrowser, extensionId: string): string {
-  return `${browser.extensionsUrl.replace(/\/?$/, '')}/?id=${extensionId}`
 }
 
 export function activate(main: TetherMain): IDisposable[] {
@@ -109,7 +104,7 @@ export function activate(main: TetherMain): IDisposable[] {
     if (!browser) return { ok: false, message: 'Nenhum navegador compatível encontrado neste computador.' }
     try {
       const script = /\.(cmd|bat)$/i.test(browser.exe)
-      const child = spawn(browser.exe, [optionsUrl(browser, info.extensionId)], { detached: true, stdio: 'ignore', windowsHide: script, shell: script })
+      const child = spawn(browser.exe, [optionsUrl(info.extensionId)], { detached: true, stdio: 'ignore', windowsHide: script, shell: script })
       child.on('error', () => {})
       child.unref()
       main.log(`opções da extensão abertas no ${browser.name}`)

@@ -1,0 +1,6 @@
+export { storageRoots } from './areas.ts'
+export type { StorageArea, StorageRoots } from './areas.ts'
+export { createEntityStore, serializeEntity, StorageError } from './entity-store.ts'
+export type { EntityStore, EntityStoreOptions, StorageErrorCode } from './entity-store.ts'
+export { createExtStorage, SYNC_EXT_MAX_BYTES, SYNC_KEY_MAX_BYTES } from './ext-storage.ts'
+export type { KeyValueArea } from './ext-storage.ts'

@@ -164,9 +164,10 @@ body { display: flex; flex-direction: column; }
 .ib-count b:empty { display: none; }
 .ib-count[hidden] { display: none; }
 /* The Sessões counter: orange = a session without a tab asks for attention (the only use of orange here), green = running
-   without a tab, blue = a pause going, green = a pause ready. */
+   without a tab, grey = only idle ones without a tab, blue = a pause going, green = a pause ready. */
 .ib-count .c-attention { background: var(--x-alert); color: var(--bg); }
 .ib-count .c-running, .ib-count .c-done { background: var(--ok); color: var(--bg); }
+.ib-count .c-idle { background: var(--fg-dim); color: var(--bg); }
 .ib-count .c-progress { background: var(--accent); color: var(--on-accent); }
 #btn-sessions.active { color: var(--accent); }
 

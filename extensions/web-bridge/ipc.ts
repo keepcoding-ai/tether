@@ -43,7 +43,7 @@ export interface WebBridgeChannels {
     pause(on: boolean): Promise<ActionOutcome>
     /** "Retomar todas as abas": POST /clients/<id>/release for every client the last snapshot listed. */
     releaseAll(): Promise<ActionOutcome>
-    /** "Opções da extensão": opens chrome://extensions/?id=<id> in the browser named (a connected one's label), else the snapshot's `options` browser. */
+    /** "Opções da extensão": opens chrome-extension://<id>/options.html in the browser named (a connected one's label), else the snapshot's `options` browser. */
     openOptions(browserName?: string): Promise<ActionOutcome>
     /** The radio of Navegadores: makes a connected browser the active one. */
     activate(browserId: string): Promise<ActionOutcome>
