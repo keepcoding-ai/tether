@@ -52,6 +52,22 @@ describe('attention: a pending waiting survives focus', () => {
     assert.equal(a.pending, true)
     assert.equal(a.seen(), false)
   })
+  test('a lone ESC clears done and a pending waiting without touching the turn; sequences do nothing', () => {
+    const a = mk()
+    a.hook('done')
+    assert.equal(a.input('\x1b'), true)
+    assert.equal(a.value, undefined)
+    a.hook('waiting', 'permission_prompt')
+    const turn = a.turn
+    assert.equal(a.input('\x1b'), true)
+    assert.equal(a.value, undefined)
+    assert.equal(a.pending, false)
+    assert.equal(a.turn, turn)
+    a.hook('waiting', 'permission_prompt')
+    assert.equal(a.input('\x1b[I'), false)
+    assert.equal(a.input('\x1b[A'), false)
+    assert.equal(a.value, 'waiting')
+  })
   test('parseAttentionReport carries reason when present', () => {
     assert.equal(parseAttentionReport('{"ts":"x","kind":"waiting","reason":"permission_prompt"}')?.reason, 'permission_prompt')
     assert.deepEqual(parseAttentionReport('{"ts":"x","kind":"waiting"}'), { ts: 'x', kind: 'waiting' })

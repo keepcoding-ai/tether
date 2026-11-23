@@ -105,9 +105,12 @@ export class AttentionState {
   /**
    * Input from a client. Typing clears the attention; a line submitted (Enter) arms the idle heuristic.
    * Input that starts with ESC is not counted as typing: terminals answer queries (DA, cursor position,
-   * focus reports) through the same channel, even from a pane nobody looks at.
+   * focus reports) and arrow keys through the same channel, even from a pane nobody looks at. A lone ESC is the
+   * person's key (refusing a permission prompt fires no Stop hook): it clears the value, pending or not, but arms
+   * nothing and leaves the turn alone.
    */
   input(data: string): boolean {
+    if (data === '\x1b') return this.set(undefined)
     if (data.startsWith('\x1b')) return false
     if (this.opts.idle && !this.signaled && /[\r\n]/.test(data)) { this.armed = true; this.burst = 0 }
     const t = this.armed ? this.setTurn('busy') : false
