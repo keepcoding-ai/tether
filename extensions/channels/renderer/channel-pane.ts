@@ -10,6 +10,7 @@ import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } fro
 import type { Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
+import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import {
@@ -90,6 +91,11 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
     private membersOpen = true
     private membersTouched = false
     private loadingOlder = false
+    private wasVisible = false
+    /** Lines heard before the first page came. */
+    private early: Line[] = []
+    /** The scroll the person left it at, as of the last scroll event seen while shown. */
+    private lastTop = 0
     private pendingScroll: number | 'end' | undefined
     private membersTimer: ReturnType<typeof setTimeout> | undefined
     private disposed = false
@@ -114,7 +120,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       this.channelId = String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(p.api.id))
       this.element.dataset.channel = this.channelId
       const k = kept.get(this.channelId)
-      if (k) { this.timeline = k.timeline; this.stick = k.stick; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
+      if (k) { this.timeline = k.timeline; this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
       else this.pendingScroll = 'end'
       live.add(this)
 
@@ -143,7 +149,8 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       for (const s of this.subs) s.dispose()
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
-      if (this.loaded) keep(this.channelId, { timeline: this.timeline, scrollTop: this.msgs.scrollTop, stick: this.stick })
+      // (The scroll is read from the last scroll event: by now the element has left the page and says 0.)
+      if (this.loaded) keep(this.channelId, { timeline: this.timeline, scrollTop: this.lastTop, stick: this.stick })
     }
 
     // ---------- data ----------
@@ -164,12 +171,19 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         this.error = ''
         this.loaded = true
         this.syncTitle()
+        const early = this.early
+        this.early = []
+        for (const line of early) {
+          const r = applyLine(this.timeline, line)
+          if (r.added) this.timeline = r.timeline
+        }
       } catch (e) {
         if (this.disposed) return
         const code = (e as { code?: string }).code
         this.error = code === 'unknown-channel' ? 'Este canal não existe mais.' : `Não consegui ler o canal: ${(e as Error).message}`
       }
       this.paint()
+      if (this.loaded && this.stick && this.pendingScroll === undefined) this.scrollEnd()
     }
 
     private async refreshMembers(): Promise<void> {
@@ -208,7 +222,8 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
     }
 
     onLine(ev: LineEvent): void {
-      if (!this.loaded) return
+      // Before the first answer the line may or may not be in it: keep it, and apply it when the page is in (a repeat is ignored).
+      if (!this.loaded) { if (this.early.length < PAGE_SIZE * 4) this.early.push(ev.line); return }
       const r = applyLine(this.timeline, ev.line)
       if (!r.added) return
       this.timeline = r.timeline
@@ -254,6 +269,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
     private onScroll(): void {
       if (!this.visible()) return
       const m = this.msgs
+      this.lastTop = m.scrollTop
       this.stick = isNearBottom(m.scrollTop, m.clientHeight, m.scrollHeight)
       if (this.stick && this.unread > 0) this.unread = 0
       this.paintNewBar()
@@ -264,12 +280,20 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
       const narrow = this.element.clientWidth > 0 && this.element.clientWidth < NARROW_PX
       this.element.classList.toggle('narrow', narrow)
       if (!this.membersTouched && this.element.clientWidth > 0 && this.membersOpen === narrow) { this.membersOpen = !narrow; this.paintSide() }
-      if (!this.visible()) return
+      const vis = this.visible()
+      const shown = vis && !this.wasVisible
+      this.wasVisible = vis
+      if (!vis) return
       // First time it has a size (the tab was hidden, or the pane was just rebuilt): put it where the person left it.
       if (this.pendingScroll !== undefined) {
+        // Not before there is something to scroll: a fresh pane waits for its first page.
+        if (!this.loaded && this.timeline.lines.length === 0) return
         const to = this.pendingScroll
         this.pendingScroll = undefined
         this.msgs.scrollTop = to === 'end' ? this.msgs.scrollHeight : to
+      } else if (shown) {
+        // A hidden pane loses its scroll (and a repaint while hidden resets it): what it was reading is `lastTop`, the end is `stick`.
+        this.msgs.scrollTop = this.stick ? this.msgs.scrollHeight : this.lastTop
       } else if (this.stick) this.msgs.scrollTop = this.msgs.scrollHeight
     }
 
@@ -359,7 +383,13 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
 
     private paintMsgs(): void {
       const m = this.msgs
+      // Emptying the box resets its scroll: while shown, what the person was reading is put back (the end is the caller's).
+      const keepTop = this.visible() ? m.scrollTop : undefined
       m.replaceChildren()
+      try { this.fillMsgs(m) } finally { if (keepTop !== undefined && this.visible()) m.scrollTop = keepTop }
+    }
+
+    private fillMsgs(m: HTMLElement): void {
       if (this.error) {
         const box = el('div', 'ch-empty')
         box.append(el('p', 't', this.error))
@@ -370,7 +400,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         m.append(box)
         return
       }
-      if (!this.loaded) { m.append(el('div', 'ch-empty', 'Lendo o canal…')); return }
+      if (!this.loaded && this.timeline.lines.length === 0) { m.append(el('div', 'ch-empty', 'Lendo o canal…')); return }
       if (this.timeline.more) {
         const older = el('button', 'ch-btn ch-older', 'Ver anteriores')
         older.type = 'button'
@@ -529,16 +559,12 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
   ]
 
   // Test hooks: text and flags of a pane, plus the minimum to drive it (open, scroll, ask the daemon as the app does).
-  ui.test.expose('channels', {
-    open,
-    view: (channelId: string): PaneSnapshot | undefined => paneOf(channelId)?.snapshot(),
-    kept: (channelId: string): boolean => kept.has(channelId),
-    scrollTo: (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top),
-    loadOlder: (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve(),
-    ask: async (name: string, args?: unknown): Promise<{ ok: boolean; result?: unknown; code?: string }> => {
-      try { return { ok: true, result: await ui.daemon.request(name, args) } } catch (e) { return { ok: false, code: (e as { code?: string }).code ?? String(e) } }
-    },
-  })
+  // Read at window.__tether.ext.channels.<name>.
+  ui.test.expose('open', open)
+  ui.test.expose('view', (channelId: string): PaneSnapshot | undefined => paneOf(channelId)?.snapshot())
+  ui.test.expose('kept', (channelId: string): boolean => kept.has(channelId))
+  ui.test.expose('scrollTo', (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top))
+  ui.test.expose('loadOlder', (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve())
 
   return { disposables, open, snapshot: channelId => paneOf(channelId)?.snapshot() }
 }

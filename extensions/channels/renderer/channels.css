@@ -36,8 +36,9 @@
 .ch-who { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
 .ch-who time { margin-left: auto; font-size: 11px; color: var(--fg-dim); }
 .ch-author { font-weight: 600; }
-.ch-msg:not(.mod) .ch-author, .ch-oname { color: hsl(var(--oh, 0) var(--mark-s) var(--mark-fg-l)); font-weight: 600; }
-.ch-pane :is(.ch-mrow .ch-author) { color: var(--fg); }
+/* A name takes its agent's hue only when it has one (`--oh` set inline): the person's own, and a name no agent owns, stay in --fg. */
+.ch-oname { font-weight: 600; color: var(--fg); }
+.ch-oname[style*="--oh"], [style*="--oh"] > .ch-who > .ch-author, [style*="--oh"] > .ch-l1 > .ch-oname { color: hsl(var(--oh) var(--mark-s) var(--mark-fg-l)); }
 .ch-dest { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--fg-dim); white-space: nowrap; min-width: 0; }
 .ch-dest svg.ph { width: 12px; height: 12px; }
 .ch-dest .ch-oname { font-weight: 500; }
