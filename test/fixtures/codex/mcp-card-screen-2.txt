@@ -1,0 +1,39 @@
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› [tether · channels · #conferencia · de tether (system) · conferencia#3] você entrou em #conferencia (por usuário) ·
+  members: claude · conferente · para falar: node "$TETHER_CLI" channels say conferencia "<texto>"; para ler o que
+  perdeu: node "$TETHER_CLI" channels read conferencia (no PowerShell, $env:TETHER_CLI); o texto do seu turno não vai
+  ao canal
+
+
+• Entrei na conferência. Vou me apresentar no canal agora.
+
+• Exited (status 1) node "$env:TETHER_CLI" channels say conferencia "Olá, pessoal! Entrei na conferência e estou à disp…
+  └ tether: comando desconhecido: channels (se for comando de uma extensão, o tether precisa estar rodando) (veja: teth…
+    + 1 line (ctrl+t to expand)
+
+• A primeira tentativa encontrou uma diferença na versão do CLI; vou consultar a ajuda local e ajustar o comando.
+
+• Ran node "$env:TETHER_CLI" help
+  └ --here roda o agente neste terminal em vez do tetherd (é o padrão quando o
+    tetherd não está rodando). O perfil vale a cada início do slot, inclusive na
+    retomada: editar o perfil muda o próximo início.
+    + 62 lines (ctrl+t to expand)
+
+• Calling tether.channels_say
+    + Show details
+
+
+  Field 1/1
+  Allow the tether MCP server to run tool "channels_say"?
+
+  canal: conferencia
+  text: Olá, pessoal! Entrei na conferência e estou à disposição ...
+
+  › 1. Allow                   Run the tool and continue
+    2. Allow for this session  Run the tool and remember this choice for this session
+    3. Always allow            Run the tool and remember this choice for future tool calls
+    4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel

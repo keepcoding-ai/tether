@@ -15,7 +15,7 @@ export const membersVerb: VerbDef = {
       const alive = slot !== undefined && slotIsLive(slot)
       return {
         id, name: nameOfAgent(deps, id), kind: slot?.kind ?? 'gone', muted: m.muted !== undefined,
-        since: m.since, by: m.by, alive, path: alive ? deps.api.delivery.pathOf(id) : 'away',
+        since: m.since, by: m.by, alive, path: alive ? deps.api.delivery.routeOf(id) : 'away',
       }
     })
     const owner = ownerRow(deps, ch)

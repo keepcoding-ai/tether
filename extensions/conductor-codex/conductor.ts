@@ -7,6 +7,7 @@
 // it (the watch calls `detect`). The last answer is the K2 file of the pane (`codex-notify`, never the title notice).
 // What no probe proved is marked `proven: false`.
 import { slotAnswerPath } from '../../src/core/paths.ts'
+import type { KeyName } from '../../src/daemon/door/types.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { ConductError, type Conductor, type ConductorContext, type ConductorTarget, type Detected, type LastAnswer, type Proven } from '../for-agents/conductor-api.ts'
 import { winKeyEvents } from '../codex/typing.ts'
@@ -92,9 +93,16 @@ export function sendChunks(text: string, platform: NodeJS.Platform = process.pla
 }
 
 /** What an `answer` choice does on this card: a key named on the screen (`y`, `p`) or Esc, with whether a probe proved it. */
-function actionFor(seen: Extract<Seen, { card: unknown }>, choice: string): { act: 'key' | 'esc'; data: string; proven: boolean } {
+function actionFor(seen: Extract<Seen, { card: unknown }>, choice: string): { act: 'key' | 'esc' | 'move'; data: string; proven: boolean; moves?: KeyName[] } {
   const options: ParsedOption[] = seen.options
-  const viaOption = (o: ParsedOption): { act: 'key' | 'esc'; data: string; proven: boolean } => {
+  const viaOption = (o: ParsedOption): { act: 'key' | 'esc' | 'move'; data: string; proven: boolean; moves?: KeyName[] } => {
+    if (seen.list) {
+      // The MCP tool card has no key per option: Cancel is Esc ("esc to cancel"); the others move the selection, then Enter.
+      if (o.role === 'no') return { act: 'esc', data: '', proven: false }
+      const delta = o.n - seen.list.selected
+      const step: KeyName = delta < 0 ? 'up' : 'down'
+      return { act: 'move', data: '', proven: false, moves: [...Array<KeyName>(Math.abs(delta)).fill(step), 'enter'] }
+    }
     if (o.key === 'esc') return { act: 'esc', data: '', proven: seen.kind === 'permission' }
     if (o.key) return { act: 'key', data: o.key, proven: seen.kind === 'permission' }
     // No key on the screen for this option: the digit is the way (unproven on Codex's lists).
@@ -107,7 +115,7 @@ function actionFor(seen: Extract<Seen, { card: unknown }>, choice: string): { ac
   }
   if (seen.kind === 'permission') {
     const hit = options.find((o) => o.role === choice)
-    if (choice === 'no') return hit ? viaOption(hit) : { act: 'esc', data: '', proven: true }
+    if (choice === 'no') return hit ? viaOption(hit) : { act: 'esc', data: '', proven: !seen.list }
     if (!hit) throw new ConductError('unsupported', `este pedido não tem a opção ${choice}`)
     return viaOption(hit)
   }
@@ -198,6 +206,7 @@ export const codexConductor: Conductor = {
     if (!hasCard(seen)) throw new ConductError('no-request', 'não há pedido na tela desta guia')
     const what = actionFor(seen, choice)
     if (what.act === 'esc') await ctx.keys(['esc'])
+    else if (what.act === 'move') await ctx.keys(what.moves!, { gapMs: 80 })
     else await ctx.write([{ data: what.data }])
     return { value: undefined, proven: what.proven }
   },

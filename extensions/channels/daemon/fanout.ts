@@ -361,7 +361,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   const refused = (v: Channel | { ok: false; error: Refusal }): v is { ok: false; error: Refusal } => 'ok' in v
   /** The join notice of each joiner, for the fan-out of the line that brought them. */
   const joinNotices = (ch: Channel, joined: readonly AgentId[]): Map<AgentId, string> =>
-    new Map(joined.map((a) => [a, joinedNotice(ch.name, DESK_JOINER, Object.keys(ch.members).filter((m) => m !== a).map(nameOf), api.delivery.pathOf(a))]))
+    new Map(joined.map((a) => [a, joinedNotice(ch.name, DESK_JOINER, Object.keys(ch.members).filter((m) => m !== a).map(nameOf), api.delivery.routeOf(a))]))
   /** Joins `agent` by 'desk' in the store; whether it is new. Inside the lane. */
   async function deskJoin(ch: Channel, agent: AgentId): Promise<boolean> {
     const done = await store.join(ch.id, agent, nameOf(agent), 'desk')
@@ -542,7 +542,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
         const line = await notice(ch, joinedLine(ch.name, nameOf(target)), 'join', target, who)
         emitChannel(ch)
         const members = Object.keys(ch.members).filter((m) => m !== target).map(nameOf)
-        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.pathOf(target))
+        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target))
         await fanout(ch, line, undefined, new Map([[target, text]]))
         return { ok: true as const, channel: ch, already: false, line }
       })

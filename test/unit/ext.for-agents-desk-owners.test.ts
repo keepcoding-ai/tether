@@ -86,4 +86,26 @@ describe('desk owner feed', () => {
     await feed.ready
     assert.equal(feed.get('d1')?.owner, 's1')
   })
+
+  test('onDidActivate: once per activation, when its first publication is done, even with no desk owned', async () => {
+    const feed = createDeskOwnerFeed()
+    const fired: string[] = []
+    feed.onDidActivate(() => fired.push(`active=${feed.active} facts=${feed.all().length}`))
+    const first = fakeObjects()
+    const bound = bindDeskOwners(first.objects, feed)
+    await new Promise((r) => setImmediate(r))
+    assert.deepEqual(fired, [], 'not before the objects are read')
+    first.release()
+    await feed.ready
+    assert.deepEqual(fired, ['active=true facts=0'])
+    feed.markReady()
+    assert.equal(fired.length, 1, 'once per activation')
+    for (const d of bound) d.dispose()
+    assert.equal(fired.length, 1, 'turning off does not fire')
+    const again = fakeObjects()
+    bindDeskOwners(again.objects, feed)
+    again.release()
+    await feed.ready
+    assert.deepEqual(fired, ['active=true facts=0', 'active=true facts=0'], 'on again: fires again')
+  })
 })

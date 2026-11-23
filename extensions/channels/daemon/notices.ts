@@ -65,7 +65,7 @@ export const ownerEndedLine =(room: string, who: string, moderator: string): str
 export const createdNotice = (room: string): string => `você abriu #${room} e é o owner dele`
 
 /**
- * To the agent that joined. `by` absent: it joined itself. `path` is the delivery's `pathOf` now: a pane that does not hear
+ * To the agent that joined. `by` absent: it joined itself. `path` is the delivery's `routeOf` (the road, not the instant): a pane that does not hear
  * inside learns how to speak by the CLI, and one that hears nothing now (`wait`) is told the lines wait for it.
  */
 export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait'): string {

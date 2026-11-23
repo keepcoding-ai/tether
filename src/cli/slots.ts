@@ -22,10 +22,15 @@ export function context(): Context {
 
 /** Connects to a running tetherd; undefined when nothing answers (never spawns one). */
 export async function tryConnect(ctx: Context): Promise<DaemonClient | undefined> {
+  return (await connectWithCause(ctx)).client
+}
+
+/** Like tryConnect, but a failed attempt also reports the pipe tried and why it failed. */
+export async function connectWithCause(ctx: Context): Promise<{ client?: DaemonClient; pipe: string; cause?: string }> {
   try {
-    return await DaemonClient.connect({ home: ctx.home, pipe: ctx.pipe, client: 'cli', spawn: false })
-  } catch {
-    return undefined
+    return { client: await DaemonClient.connect({ home: ctx.home, pipe: ctx.pipe, client: 'cli', spawn: false }), pipe: ctx.pipe }
+  } catch (e) {
+    return { pipe: ctx.pipe, cause: e instanceof Error ? e.message : String(e) }
   }
 }
 

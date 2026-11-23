@@ -50,7 +50,9 @@ export class WriteGate {
    * the person during the write stops the rest (the Enter included), in a pane commanded from outside (which she also takes,
    * `onUserTyped`) and in the agent's own pane alike. A door error (no process) rejects as it is.
    */
-  async write(paneId: string, caller: OwnerId, chunks: readonly WriteChunk[]): Promise<GuardedWrite> {
+  async write(paneId: string, caller: OwnerId, chunks: readonly WriteChunk[], opts: { answer?: boolean } = {}): Promise<GuardedWrite> {
+    // The mark goes to the door only when set, so every other write reaches it exactly as before.
+    const mark = opts.answer ? { answer: true } : undefined
     let written = 0
     const gate = (): GateRefusal | undefined => this.check(paneId, caller)
     for (const chunk of chunks) {
@@ -58,7 +60,8 @@ export class WriteGate {
       if ('text' in chunk) {
         const why = gate()
         if (why) return { ok: false, why, written }
-        await this.slots.write(paneId, chunk.text)
+        if (mark) await this.slots.write(paneId, chunk.text, mark)
+        else await this.slots.write(paneId, chunk.text)
       } else {
         // Keys with a gap between them are checked one by one: the person may start typing in the gap.
         const step = chunk.gapMs !== undefined && chunk.gapMs > 0 ? 1 : Math.max(1, chunk.keys.length)
@@ -66,7 +69,8 @@ export class WriteGate {
           if (i > 0) await sleep(chunk.gapMs ?? 0)
           const why = gate()
           if (why) return { ok: false, why, written }
-          await this.slots.keys(paneId, chunk.keys.slice(i, i + step))
+          if (mark) await this.slots.keys(paneId, chunk.keys.slice(i, i + step), mark)
+          else await this.slots.keys(paneId, chunk.keys.slice(i, i + step))
         }
       }
       written++
@@ -76,6 +80,6 @@ export class WriteGate {
 }
 
 /** The contract's name for the gate's write. */
-export function guardedWrite(gate: WriteGate, paneId: string, caller: OwnerId, chunks: readonly WriteChunk[]): Promise<GuardedWrite> {
-  return gate.write(paneId, caller, chunks)
+export function guardedWrite(gate: WriteGate, paneId: string, caller: OwnerId, chunks: readonly WriteChunk[], opts?: { answer?: boolean }): Promise<GuardedWrite> {
+  return gate.write(paneId, caller, chunks, opts)
 }

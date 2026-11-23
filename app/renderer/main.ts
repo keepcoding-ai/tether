@@ -85,7 +85,7 @@ import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
 import type { DeskView, PaneInfo } from './ext-api.ts'
-import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop } from './door/host.ts'
+import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
@@ -142,6 +142,20 @@ const door = new DoorHost({
   slot: slotId => slots.get(slotId),
   ownerName: slotId => { const o = slots.get(slotId); return o ? panelTitle(o) : undefined },
   closeGuide: (paneId, process) => closeGuideQuiet(paneId, process),
+  hibernate: async slotId => {
+    const s = slots.get(slotId)
+    if (!s || !findPanel(slotId)) return 'no-pane'
+    if (asleepPanes.has(slotId)) return 'already'
+    await hibernatePanes([slotId], `da guia "${panelTitle(s)}"`, undefined, false)
+    return 'asleep'
+  },
+  hibernateDesk: (deskId, spare) => hibernateDeskFor(deskId, spare),
+  wakeDesk: async (deskId, spare) => {
+    if (!desks.desk(deskId) || desks.isSystem(deskId)) return { state: 'no-desk', panes: [] }
+    const was = desks.desks.find(d => d.id === deskId)?.asleep === true
+    const started = wakeDesk(deskId, new Set(spare))
+    return { state: was || started.length > 0 ? 'woke' : 'already', panes: started }
+  },
   log: message => console.warn(message),
 })
 const sealActivations = new Map<number, Set<() => void>>()
@@ -1095,7 +1109,7 @@ async function closeDesk(id: string): Promise<void> {
  * session is saved), the desk leaves the capsule for the moon menu, and the app does not start its panes on launch.
  * Agents mid-turn are only stopped after the person confirms. The last awake desk never sleeps.
  */
-async function hibernateDesk(id: string): Promise<void> {
+async function hibernateDesk(id: string, ask = true): Promise<void> {
   if (desks.isSystem(id)) return
   const awake = desks.desks.filter(d => !d.asleep)
   if (awake.length <= 1 || !awake.some(d => d.id === id)) return
@@ -1107,18 +1121,19 @@ async function hibernateDesk(id: string): Promise<void> {
     // Only the panes awake now are the desk's to wake later; panes hibernated one by one stay asleep.
     for (const p of deskPanes(id)) if (!asleepPanes.has(p.id)) deskSleptPanes.add(p.id)
     desks.setAsleep(id, true)
-  })
+  }, ask)
 }
 
 /**
  * Hibernating panes (one, or a desk's): each process is stopped (the daemon's `stop`: the slot stays, the session is
  * saved) and the pane is marked asleep (layout `asleepPanes`), so the app does not start it on launch. A `start` from
  * anywhere wakes it. Agents mid-turn are only stopped after the person confirms; `before` runs once confirmed.
+ * `ask: false`: an owner asked through the door, so no dialog comes forward (the owner decided).
  */
-async function hibernatePanes(ids: string[], where: string, before?: () => void): Promise<void> {
+async function hibernatePanes(ids: string[], where: string, before?: () => void, ask = true): Promise<void> {
   const states = ids.map(id => slots.get(id)).filter((s): s is SlotState => s !== undefined)
   const busy = states.filter(s => isLiveSlot(s) && s.turn === 'busy')
-  if (busy.length > 0 && (await askDialog(hibernateSituation(where, busy))).choice !== 'hibernate') return
+  if (ask && busy.length > 0 && (await askDialog(hibernateSituation(where, busy))).choice !== 'hibernate') return
   before?.()
   for (const s of states) asleepPanes.add(s.slotId)
   scheduleSave()
@@ -1129,15 +1144,39 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void)
 
 /**
  * Waking a desk: back in the capsule, the panes its hibernation put to sleep (`deskSleptPanes`) resume through `start`
- * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep.
+ * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep. `spare` (an owner's
+ * wake through the door) stay as they are. Returns the panes started.
  */
-function wakeDesk(id: string): void {
-  desks.setAsleep(id, false)
+function wakeDesk(id: string, spare: ReadonlySet<string> = new Set()): string[] {
+  if (desks.desks.find(d => d.id === id)?.asleep) desks.setAsleep(id, false)
+  const started: string[] = []
   for (const p of deskPanes(id)) {
-    if (!deskSleptPanes.delete(p.id)) continue
-    if (asleepPanes.has(p.id)) void startSlot(p.id)
+    if (spare.has(p.id) || !deskSleptPanes.delete(p.id)) continue
+    if (asleepPanes.has(p.id)) { started.push(p.id); void startSlot(p.id) }
   }
   scheduleSave()
+  return started
+}
+
+/**
+ * "Hibernar mesa" for an owner (the door): no dialog, and the visible desk never changes ('in-view' instead). With a spared
+ * pane in the desk the desk stays awake and only the others sleep, counted as put down by the desk (its wake resumes them).
+ */
+async function hibernateDeskFor(id: string, spare: readonly string[]): Promise<{ state: DeskSleep; panes: string[] }> {
+  if (!desks.desk(id) || desks.isSystem(id)) return { state: 'no-desk', panes: [] }
+  if (desks.desks.find(d => d.id === id)?.asleep) return { state: 'already', panes: [] }
+  const keep = new Set(spare)
+  const ids = deskPanes(id).map(p => p.id)
+  const targets = ids.filter(p => slots.has(p) && !keep.has(p) && !asleepPanes.has(p))
+  if (ids.some(p => keep.has(p))) {
+    if (targets.length === 0) return { state: 'already', panes: [] }
+    await hibernatePanes(targets, `da mesa "${deskName(id)}"`, () => { for (const t of targets) deskSleptPanes.add(t) }, false)
+    return { state: 'partial', panes: targets }
+  }
+  if (desks.desks.filter(d => !d.asleep).length <= 1) return { state: 'last-desk', panes: [] }
+  if (desks.activeDeskId === id) return { state: 'in-view', panes: [] }
+  await hibernateDesk(id, false)
+  return { state: 'asleep', panes: targets }
 }
 
 /**
@@ -4363,6 +4402,7 @@ function activateRendererExtensions(): void {
         onDidChangeMarks: listener => add(door.onMarksChange(listener)),
         slotFacts: paneId => door.slotFacts(paneId),
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
+        hibernate: paneId => door.hibernate(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {
@@ -4371,6 +4411,8 @@ function activateRendererExtensions(): void {
         onDidChange: listener => add(door.onDesksChange(listener)),
         setSeal: (deskId, seal) => door.setSeal(id, deskId, seal),
         menu: provider => add(door.deskMenu(id, provider)),
+        hibernate: (deskId, opts) => door.hibernateDesk(deskId, opts?.spare),
+        wake: (deskId, opts) => door.wakeDesk(deskId, opts?.spare),
       },
       pick: {
         list: spec => door.pickList(spec),

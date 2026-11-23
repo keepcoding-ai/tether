@@ -64,6 +64,13 @@ describe('the desk channel (F1)', () => {
 
   const bind = (): void => { binding = bindDeskOwners(forAgents.objects, feed) }
   const unbind = (): void => { for (const d of binding) d.dispose(); binding = [] }
+  /** The desk channel's wiring; a new one is the desk channel after the tetherd restarts (nothing seen, the store on disk). */
+  let wiring: { dispose(): void }[] = []
+  let store: ChannelStore
+  const rewire = (): void => {
+    for (const d of wiring) d.dispose()
+    wiring = wireDeskChannels({ desks: doorApi.desks, slots: doorApi.slots, log: (m) => logs.push(m) }, Promise.resolve({ ...ch, store }), feed)
+  }
 
   before(async () => {
     home = tempHome()
@@ -84,13 +91,14 @@ describe('the desk channel (F1)', () => {
     ch = createChannels(api, await openStore(fsIo, home))
     // The desk channel sees the store through a counter: it proves which channels it looks at.
     const real = ch.store
-    const store: ChannelStore = { ...real, get: (id) => { asked.add(id); return real.get(id) }, channels: () => { listed++; return real.channels() } }
+    store = { ...real, get: (id) => { asked.add(id); return real.get(id) }, channels: () => { listed++; return real.channels() } }
     feed = createDeskOwnerFeed()
     bind()
-    for (const d of wireDeskChannels({ desks: doorApi.desks, slots: doorApi.slots, log: (m) => logs.push(m) }, Promise.resolve({ ...ch, store }), feed)) own.add(d)
+    rewire()
   })
   after(async () => {
     unbind()
+    for (const d of wiring) d.dispose()
     ch?.dispose()
     await door.delivery.flush().catch(() => {})
     own.dispose()
@@ -356,5 +364,40 @@ describe('the desk channel (F1)', () => {
     await sleep(200)
     assert.ok(!asked.has(deskChannelId('d9')))
     assert.equal(channelOf('d9'), undefined)
+  })
+
+  test('the tetherd restarted: the first pass takes no member the desk brought out (in the desk, or the old owner from outside)', async () => {
+    const outsider = await running('antigo')
+    const p = await running('sexta-a')
+    const q = await running('sexta-b')
+    desks.d6 = deskOf('d6', 'Sexta', [p, q])
+    await sendMap()
+    await give('d6', outsider)
+    await said('#sexta nasceu com a mesa · owner: antigo', 'd6')
+    await give('d6', p)
+    await said('#sexta agora é de sexta-a', 'd6')
+    assert.equal(channelOf('d6')!.members[outsider]?.by, 'desk', 'the old owner from outside stays a member by the desk')
+    const from = await lastSeq('d6')
+    rewire()
+    desks.d6 = deskOf('d6', 'Sexta Feira', [p, q])
+    await sendMap()
+    await until('title', (x) => x!.title === 'Sexta Feira', 'd6')
+    await sleep(300)
+    const c = channelOf('d6')!
+    assert.deepEqual(lines.filter((e) => e.channelId === deskChannelId('d6') && e.line.seq > from).map((e) => e.line.body), [], 'no line: nobody left')
+    assert.ok(isMember(c, q), 'the pane in the desk stays')
+    assert.ok(isMember(c, outsider), 'the old owner from outside stays, as before the restart')
+  })
+
+  test('for-agents on again with no desk owned: one pass reconciles at once, with no change of the desk map', async () => {
+    unbind()
+    // While off, every desk loses its owner: on again, the feed publishes nothing.
+    for (const d of ['d1', 'd2', 'd4', 'd5', 'd6', 'sys']) await revoke(d)
+    await sleep(200)
+    assert.equal(channelOf('d6')!.closed, undefined, 'nothing follows while off')
+    const from = await lastSeq('d6')
+    bind()
+    await said('#sexta foi encerrado: a mesa ficou sem dono', 'd6', from)
+    assert.equal(channelOf('d6')!.closed!.by, USER)
   })
 })

@@ -50,7 +50,7 @@ async function typeThroughConductor(deps: VerbDeps, caller: VerbCaller, paneId: 
 
 export const sendVerb: VerbDef = {
   name: 'send',
-  description: "Send a message to the agent in one of your panes, as its owner (it arrives in your envelope; it does not touch what the person is typing). With the pane in the person's hands it waits (`queued`). `raw: true` types the text exactly as a person would, to correct an agent in the middle of a turn: it refuses with `with-user` when the person is typing.",
+  description: "Send a message to the agent in one of your panes, as its owner (it arrives in your envelope; it does not touch what the person is typing). With the pane in the person's hands it waits (`queued`). `raw: true` types the text exactly as a person would, to correct an agent in the middle of a turn: it refuses with `with-user` when the person is typing. A shell pane always gets the plain text, with no header, so `raw` is not needed there.",
   help: 'Envia uma mensagem ao agente de uma guia (raw: digita como a pessoa).',
   input: { type: 'object', properties: { guia: GUIA_PROP, text: { type: 'string' }, raw: { type: 'boolean', description: 'Type the text raw instead of delivering it.' } }, required: ['guia', 'text'] },
   positional: ['guia', 'text'],
@@ -66,7 +66,8 @@ export const sendVerb: VerbDef = {
     const endSend = deps.store.beginSend(paneId)
     let failed = false
     try {
-      return await sendOn(deps, caller, paneId, target, conductor, ctx, text, raw)
+      // A shell would run the envelope header as a command, so a shell pane always takes the plain text (raw).
+      return await sendOn(deps, caller, paneId, target, conductor, ctx, text, raw || target.slot?.kind === 'shell')
     } catch (e) {
       const code = (e as { code?: unknown } | null)?.code
       failed = code !== 'busy' && code !== 'with-user'

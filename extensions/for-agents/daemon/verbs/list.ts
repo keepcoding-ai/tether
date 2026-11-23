@@ -7,6 +7,13 @@ import { ok, me, offOf, optFlag, optString, paneName, paneTypeOf, targetOf, type
 
 type Relation = 'command' | 'see' | 'self'
 
+/** Whether the app's desk map shows the pane asleep (in a desk or in the drawer). */
+function asleepIn(deps: VerbDeps, paneId: string): boolean {
+  const map = deps.api.desks.map()
+  const hit = map?.desks.flatMap((d) => d.panes).find((p) => p.id === paneId) ?? map?.drawer.find((p) => p.id === paneId)
+  return hit?.asleep === true
+}
+
 function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string, unknown> | undefined {
   const eff = deps.store.effectiveOf(paneId)
   let relation: Relation
@@ -33,6 +40,8 @@ function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string
   }
   // 'waiting' is a permission card; telling a question from it takes the screen (`read-screen` says which).
   if (asks) entry.asks = asks === 'waiting' ? 'permission' : 'done'
+  // The sleep is the app's: it publishes it in the desk map (`asleep` on the pane).
+  if (asleepIn(deps, paneId)) entry.asleep = true
   if (last) entry.last = last
   return entry
 }
@@ -58,7 +67,7 @@ export const listVerb: VerbDef = {
         const hand = deps.store.deskFacts(deskId).hand
         // The empty board of a desk is no pane of the owner's: it is neither listed nor counted.
         const panes = d.panes.filter((p) => p.type !== 'empty').map((p) => { inDesks.add(p.id); return paneEntry(deps, owner, p.id) }).filter(keep)
-        return [{ id: d.id, name: d.name, hand: hand ? hand.why : 'owner', panes }]
+        return [{ id: d.id, name: d.name, hand: hand ? hand.why : 'owner', ...(d.asleep ? { asleep: true } : {}), panes }]
       })
     const panes = wantDesk ? [] : deps.store.ownedPanes()
       .filter(([id, o]) => o.owner === owner && !o.ended && !inDesks.has(id))
@@ -66,9 +75,9 @@ export const listVerb: VerbDef = {
       .map(([id]) => paneEntry(deps, owner, id)).filter(keep)
     // The owner's own pane, "de si", is in `ownedPanes` already (its owner is itself).
     const total = desks.reduce((n, d) => n + d.panes.length, 0) + panes.length
-    const line = (e: Record<string, unknown>): string => `  - ${e.name} (${e.kind ?? e.type}, ${e.turn === 'busy' ? 'em turno' : 'parada'})`
+    const line = (e: Record<string, unknown>): string => `  - ${e.name} (${e.kind ?? e.type}, ${e.asleep ? 'hibernada' : e.turn === 'busy' ? 'em turno' : 'parada'})`
     const lines = [
-      ...desks.flatMap((d) => [`Mesa "${d.name}":`, ...(d.panes.length === 0 ? ['  sem guias'] : d.panes.map(line))]),
+      ...desks.flatMap((d) => [`Mesa "${d.name}"${'asleep' in d ? ' (hibernada)' : ''}:`, ...(d.panes.length === 0 ? ['  sem guias'] : d.panes.map(line))]),
       ...(panes.length > 0 ? ['Guias fora de mesas:', ...panes.map(line)] : []),
     ]
     const text = total === 0 && desks.length === 0 ? 'Você não é dono de nenhuma mesa nem de nenhuma guia.' : [`${desks.length} mesa(s), ${total} guia(s).`, ...lines].join('\n')

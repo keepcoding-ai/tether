@@ -5,7 +5,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
-import type { DeskMap, DeskMapDesk } from '../protocol.ts'
+import type { DeskMap, DeskMapDesk, DeskMapPane } from '../protocol.ts'
 import { DoorError, type DoorReplyBody, type DoorRequestHandler, type SlotPort } from './port.ts'
 import type { DoorDesks } from './types.ts'
 
@@ -20,6 +20,9 @@ export function desksPath(home: string): string {
 const isPane = (p: unknown): p is { id: string; type: string } =>
   typeof p === 'object' && p !== null && typeof (p as { id?: unknown }).id === 'string' && typeof (p as { type?: unknown }).type === 'string'
 
+/** A pane of the map, normalised: `asleep` kept only when it is `true`. */
+const paneOf = (p: DeskMapPane): DeskMapPane => ({ id: p.id, type: p.type, ...(p.asleep === true ? { asleep: true as const } : {}) })
+
 /** Validates and normalises what the app sent (or what the disk holds); undefined when it is not a desk map. */
 export function parseDeskMap(raw: unknown): DeskMap | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
@@ -31,9 +34,9 @@ export function parseDeskMap(raw: unknown): DeskMap | undefined {
     const x = d as Partial<DeskMapDesk>
     if (typeof x.id !== 'string' || typeof x.name !== 'string' || (x.kind !== 'queue' && x.kind !== 'system')) return undefined
     if (!Array.isArray(x.panes) || !x.panes.every(isPane)) return undefined
-    desks.push({ id: x.id, name: x.name, kind: x.kind, ...(x.asleep === true ? { asleep: true as const } : {}), panes: x.panes.map((p) => ({ id: p.id, type: p.type })) })
+    desks.push({ id: x.id, name: x.name, kind: x.kind, ...(x.asleep === true ? { asleep: true as const } : {}), panes: x.panes.map(paneOf) })
   }
-  return { desks, drawer: (r.drawer as { id: string; type: string }[]).map((p) => ({ id: p.id, type: p.type })) }
+  return { desks, drawer: (r.drawer as DeskMapPane[]).map(paneOf) }
 }
 
 export class DeskService implements DoorDesks {

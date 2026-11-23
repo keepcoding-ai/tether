@@ -58,7 +58,7 @@ import { osUser, ProcManager, type GuardOptions } from './proc-manager.ts'
 import { ProcError, WAIT_MAX_MS, type ProcAuthor, type ProcBy } from './procs.ts'
 import { DoorHost } from './door/host.ts'
 import { typingOf } from './door/typing.ts'
-import { DoorError, type DoorSeams, type InputOrigin, type SlotCreateInput, type SlotPort } from './door/port.ts'
+import { DoorError, type DoorSeams, type InputMark, type InputOrigin, type SlotCreateInput, type SlotPort } from './door/port.ts'
 
 export const DAEMON_VERSION = '0.3.7'
 
@@ -512,10 +512,10 @@ class DaemonImpl implements Daemon {
       restart: (slotId) => this.restartById(slotId),
       forget: (slotId) => this.forgetById(slotId),
       rename: (slotId, name) => this.renameById(slotId, name),
-      write: (slotId, data, origin) => {
+      write: (slotId, data, origin, mark) => {
         const slot = this.slot(slotId)
         if (!isAlive(slot) && !this.awaitsPty(slot)) throw new DoorError('door-no-pty', `o slot ${slotId} não tem processo rodando`)
-        this.typeInto(slot, data, undefined, 0, origin)
+        this.typeInto(slot, data, undefined, 0, origin, mark)
       },
       readScreen: (slotId, since) => {
         const slot = this.slot(slotId)
@@ -1846,10 +1846,10 @@ class DaemonImpl implements Daemon {
   }
 
   /** Keystrokes for the slot: to its pty (writeInput), to its attention, and to the agent door with who typed them. */
-  private typeInto(slot: Slot, data: string, probe: unknown, arrive: number, origin: InputOrigin): void {
+  private typeInto(slot: Slot, data: string, probe: unknown, arrive: number, origin: InputOrigin, mark?: InputMark): void {
     this.writeInput(slot, data, probe, arrive)
     if (slot.attention.input(data)) this.broadcastState(slot)
-    this.door.input(slot.meta.slotId, data, origin)
+    this.door.input(slot.meta.slotId, data, origin, mark)
   }
 
   private queueInput(slot: Slot, data: string, probe: unknown, arrive: number): void {

@@ -25,6 +25,9 @@ export function doorUnavailable(what: string): DoorError {
 /** Who typed: the person through the pipe (`input`/`typed`), or an agent through the door (slots.write/keys, delivery). */
 export type InputOrigin = 'user' | 'agent'
 
+/** What the writer declares about its input: `answer` = the answer to a permission card (`agents answer`), not text for the box. */
+export interface InputMark { answer?: boolean }
+
 /** The `create` the pipe runs, plus the door's meta fields, written before the reply (and before any launch). */
 export interface SlotCreateInput {
   kind: SlotKind
@@ -47,7 +50,7 @@ export interface SlotPort {
   forget(slotId: string): Promise<void>
   rename(slotId: string, name: string): Promise<SlotState>
   /** Bytes into the PTY (held while a launch brings it) and into the slot's attention. Throws `door-no-pty` when no process is or will be there. */
-  write(slotId: string, data: string, origin: InputOrigin): void
+  write(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void
   /** The ring and the PTY size, without attaching or resizing. */
   readScreen(slotId: string, since?: number): ScreenRead
   stateOf(slotId: string): SlotState | undefined
@@ -108,7 +111,7 @@ export interface DoorSeams {
   /** A slot's state went to the clients. */
   stateChanged(state: SlotState): void
   /** Keystrokes reached the slot, with who typed them. */
-  input(slotId: string, data: string, origin: InputOrigin): void
+  input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void
   /** After the ronda's offer in `launch`: the door may add to the plan. A promise is awaited; a plain value is not. */
   prepareLaunch(plan: LaunchPlan, ctx: LaunchContext): LaunchGrant | Promise<LaunchGrant>
   /** The slot's process ended (`paneExit`). */

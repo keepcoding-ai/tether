@@ -92,6 +92,29 @@ test('for-agents: only the soul engine receives it; the others keep the rest', a
   assert.match(text, /node "\$TETHER_CLI" agents list/)
 })
 
+test('channels: only the soul engine receives it; header, roles, CLI and muted are there', async () => {
+  const skills = loadSkills(libraryDir())
+  const ch = skills.find(s => s.name === 'channels')
+  assert.ok(ch)
+  assert.deepEqual(ch.agents, ['soul'])
+  assert.match(ch.description, /\[tether · channels/)
+  const home = mkdtempSync(join(tmpdir(), 'home-'))
+  const soulDir = (await soulSkills.inject(plan(), bundleOf(home))).env[SOUL_SHARED_FOLDERS_ENV]!
+  const claudeDir = (await claudeSkills.inject(plan(), bundleOf(home))).args[1]!
+  assert.ok(existsSync(join(soulDir, 'skills', 'channels', 'SKILL.md')))
+  assert.ok(!existsSync(join(claudeDir, 'skills', 'channels')))
+  const text = readFileSync(join(soulDir, 'skills', 'channels', 'SKILL.md'), 'utf8')
+  assert.match(text, /\[tether · channels · #canal/)
+  assert.match(text, /gravado pelo tether/)
+  for (const role of ['moderator', 'user', 'owner', 'member', 'system']) assert.match(text, new RegExp('`' + role + '`'))
+  assert.match(text, /não é um ato que peça confirmação|não um ato que peça confirmação/)
+  assert.match(text, /node "\$TETHER_CLI" channels say <canal> "<texto>"/)
+  assert.match(text, /node "\$TETHER_CLI" channels read <canal>/)
+  assert.match(text, /\$env:TETHER_CLI/)
+  assert.match(text, /texto do meu turno não vai ao canal/)
+  assert.match(text, /`muted`/)
+})
+
 test('the library ships processes (tether:processes for claude): when to use it, the CLI, exit 3, no domain words', async () => {
   const skills = loadSkills(libraryDir())
   const proc = skills.find(s => s.name === 'processes')

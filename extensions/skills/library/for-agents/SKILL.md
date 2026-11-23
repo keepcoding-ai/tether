@@ -23,7 +23,7 @@ Comece por `node "$TETHER_CLI" agents list`: mostra suas mesas (cada uma com sua
 |---|---|
 | `list` | Lista o que é seu: mesas, guias e o que você pode fazer em cada uma. |
 | `open <kind> <cwd> [--desk] [--name] [--profile] [--model] [--effort] [--args] [--brief]` | Abre uma guia nova (um agente de um motor, ou um shell) numa das suas mesas. Nasce comandada por você e nunca toma o primeiro plano da pessoa. `--brief` vai ao agente como primeira mensagem. |
-| `send <guia> <text> [--raw]` | Manda uma mensagem ao agente da guia, como dono dela; não toca no que a pessoa digita. Com a guia nas mãos da pessoa, espera (`queued`). `--raw` digita como uma pessoa, para corrigir um agente no meio do turno; recusa com `with-user` se ela está digitando ali. |
+| `send <guia> <text> [--raw]` | Manda uma mensagem ao agente da guia, como dono dela; não toca no que a pessoa digita. Com a guia nas mãos da pessoa, espera (`queued`). `--raw` digita como uma pessoa, para corrigir um agente no meio do turno; recusa com `with-user` se ela está digitando ali. Guia de shell recebe sempre o texto puro, sem cabeçalho e sem precisar de `--raw`. |
 | `interrupt <guia>` | Interrompe o que o agente da guia está fazendo (Esc; Ctrl+C num shell). Recusa com `not-busy` se ele está ocioso. |
 | `read-screen <guia> [--part] [--lines] [--since]` | Lê a tela da guia como texto (também guia que você só vê). `--part`: screen (padrão), history ou both; `--lines N` guarda as últimas N linhas; `--since` é o `end` de uma leitura anterior. `state` diz: busy, idle, permission, question, dialog ou unknown. |
 | `last-answer <guia>` | Lê a última resposta do agente da guia. Ler limpa a atenção que veio a você. |
@@ -33,9 +33,10 @@ Comece por `node "$TETHER_CLI" agents list`: mostra suas mesas (cada uma com sua
 | `keys <guia> <keys>` | Aperta teclas nomeadas em ordem (enter, esc, tab, up, down, ctrl+c, …). Tecla desconhecida faz a chamada não enviar nenhuma. |
 | `close <guia> [--mode]` | Fecha uma guia sua: `--mode forget` (padrão) para e remove; `--mode stop` só para o processo. Recusa fechar a sua própria. |
 | `restart <guia> [--fresh]` | Reinicia o agente da guia retomando a sessão; `--fresh` começa sessão nova. Recusa reiniciar a sua própria. |
+| `hibernate <guia>` / `wake <guia>` (ou `--desk <mesa>`) | Hiberna uma guia ou mesa sua como a pessoa faz (os processos param e não sobem no início do tether) / acorda, retomando a sessão; já dormindo ou já acordada responde `already`; o `list` marca `asleep`. Recusa hibernar a sua própria guia; numa mesa, poupa a sua guia (a mesa segue acordada) e as que estão com a pessoa. |
 | `give <guia> <to>` | Dá uma guia das suas mesas a outro agente (por id ou nome), ou a si mesmo com `self`; quem recebe a comanda e você só vê. A pessoa pode retomá-la quando quiser. |
 | `revoke <guia>` | Retoma uma guia que você deu: volta ao seu comando. Recusa com `not-given` se a guia não tem dono próprio. |
 
-Para mandar um comando a uma guia de shell, use `send <guia> <text> --raw`, ou `type` seguido de `keys <guia> enter`. Sem `--raw`, a mensagem leva um cabeçalho que o shell tenta executar.
+Para mandar um comando a uma guia de shell, use `send <guia> <text>`: a guia de shell recebe o texto puro, sem cabeçalho e sem precisar de `--raw` (ou `type` seguido de `keys <guia> enter`).
 
 Cada verbo diz o porquê quando recusa: leia a recusa antes de insistir.

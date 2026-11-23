@@ -32,7 +32,7 @@ import { cmdUsage } from './usage.ts'
 import { cmdTrace } from './trace.ts'
 import { contributedTraceSources } from '../agents/load.ts'
 import '../agents/load-sync.ts'
-import { context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
+import { connectWithCause, context, lastActivity, resolveSlot, SlotNotFound, statesFromStore, tryConnect, type Context } from './slots.ts'
 
 export const USAGE = `uso: tether <comando> [opções]
 
@@ -140,7 +140,16 @@ export async function main(argv: string[]): Promise<number> {
       case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
         // Not a built-in: a verb an extension contributed (`tether <ns> <verbo>`); the built-ins above always win.
-        return await cmdVerb(command, rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
+        let failed: { pipe: string; cause: string } | undefined
+        return await cmdVerb(command, rest, {
+          out, err, env: process.env,
+          connect: async () => {
+            const r = await connectWithCause(context())
+            if (!r.client) failed = { pipe: r.pipe, cause: r.cause ?? 'sem resposta' }
+            return r.client
+          },
+          failure: () => failed,
+        })
     }
   } catch (e) {
     if (e instanceof UsageError) {

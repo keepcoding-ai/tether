@@ -14,6 +14,8 @@ export interface VerbIo {
   err: (text: string) => void
   env: NodeJS.ProcessEnv
   connect: () => Promise<DaemonClient | undefined>
+  /** Why the last `connect` failed (pipe tried and cause), when known. */
+  failure?: () => { pipe: string; cause: string } | undefined
 }
 
 interface VerbInfo { ns: string; name: string; help: string; input: Record<string, unknown>; positional?: string[] }
@@ -127,7 +129,11 @@ export async function cmdVerb(command: string, argv: string[], io: VerbIo): Prom
   const client = await io.connect()
   // Without tetherd nothing says whether `command` is a verb or a typo: it stays an unknown command (exit 2, as before verbs
   // existed) and the message says what a verb needs.
-  if (!client) throw new UsageError(`comando desconhecido: ${command} (se for comando de uma extensão, o tether precisa estar rodando)`)
+  if (!client) {
+    const f = io.failure?.()
+    if (f) throw new UsageError(`comando desconhecido: ${command}. Se é um comando de extensão, não consegui falar com o tether em ${f.pipe}: ${f.cause}.`)
+    throw new UsageError(`comando desconhecido: ${command} (se for comando de uma extensão, o tether precisa estar rodando)`)
+  }
   try {
     const verbs: VerbInfo[] = (await client.request({ t: 'verb-list' })).verbs ?? []
     const ofNs = verbs.filter((v) => v.ns === command)
