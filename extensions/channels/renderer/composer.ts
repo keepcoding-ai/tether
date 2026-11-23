@@ -47,7 +47,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   sendBtn.type = 'button'
   sendBtn.append(glyph('paper-plane-tilt'), document.createTextNode('Enviar'))
   const who = el('span', 'ch-role mod', 'moderador')
-  head.append('falar como ', who, ' · para ', pick, el('span', 'ch-say-or', 'ou escolha um membro'))
+  head.append('falar como ', who, ' · para ', pick)
   row.append(hint, el('span', 'ch-say-sp'), sendBtn)
   element.append(head, field, error, row)
 
@@ -70,6 +70,7 @@ export function createComposer(opts: ComposerOptions): Composer {
     try {
       await opts.send(text, addresseesOf(pick.value, text, names))
       field.value = ''
+      pick.value = ''
     } catch (e) {
       error.textContent = `Não consegui enviar: ${(e as Error).message}`
       error.hidden = false

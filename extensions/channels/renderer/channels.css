@@ -62,7 +62,7 @@
 .ch-say { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--frame-bg); }
 .ch-say-to { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--fg-dim); }
 .ch-dsel { height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12px var(--ui); max-width: 100%; }
-.ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--ui); }
+.ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--ui); }
 .ch-field:focus-visible, .ch-dsel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-say-error { font-size: 12px; color: var(--fg-dim); border-left: 3px solid var(--fg-dim); padding: 2px 8px; }
 .ch-say-error[hidden] { display: none; }

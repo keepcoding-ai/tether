@@ -324,6 +324,11 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     await page.keyboard.press('Enter')
     await waitView('the picked recipient line', x => x.rows.some(r => r.text === 'para a bancada'))
     assert.deepEqual((await lastSay()).to, [nameB])
+    assert.equal((await view())!.composer!.picked, '', 'after a send the recipient is back to "todos"')
+    await box.fill('de novo, sem escolher')
+    await page.keyboard.press('Enter')
+    await waitView('the next line is for everyone', x => x.rows.some(r => r.text === 'de novo, sem escolher'))
+    assert.deepEqual((await lastSay()).to, [])
     await page.screenshot({ path: join(SHOTS_B, 'guia-caixa.png') })
     // Closed: the box is gone, the closed notice is there.
     assert.ok((await ch.close(USER, id)).ok)
