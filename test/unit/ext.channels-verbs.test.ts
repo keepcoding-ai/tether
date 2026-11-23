@@ -466,7 +466,7 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
       const b = data(await call(G, 'create', { name: 'sala-dois', members: [F] })).channel.id
       assert.equal((await call(E, 'say', { canal: a, text: 'um-chegou' })).isError, undefined)
       assert.equal((await call(G, 'say', { canal: b, text: 'dois-chegou' })).isError, undefined)
-      const toF = (word: string) => sent.filter((s) => s.slotId === F && s.body === word)
+      const toF = (word: string) => sent.filter((s) => s.slotId === F && s.body.split('\n')[0] === word)
       assert.deepEqual(toF('um-chegou').map((s) => s.room), ['sala-um'])
       assert.deepEqual(toF('dois-chegou').map((s) => s.room), ['sala-dois'])
 

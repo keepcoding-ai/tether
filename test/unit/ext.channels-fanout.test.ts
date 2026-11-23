@@ -20,7 +20,7 @@ import { fsIo } from '../../src/daemon/ext-io.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
-import { mergedNotice, returnNotice } from '../../extensions/channels/daemon/notices.ts'
+import { mergedNotice, returnNotice, withReplyHint } from '../../extensions/channels/daemon/notices.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
 import { isMember, USER } from '../../extensions/channels/rules.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -164,6 +164,10 @@ describe('channels fan-out (H2)', () => {
     assert.deepEqual(Object.keys(said.receipts).sort(), [inside, outside].sort(), 'the speaker gets nothing')
     assert.equal(said.receipts[inside], 'inside')
     assert.equal(said.receipts[outside], 'queued')
+    // Not inside: the spoken line ends with the reply hint; the system notices (the join above) do not carry it.
+    const waitingLine = (await inbox(outside)).find((m) => m.kind === 'message' && m.body.startsWith('o teste passou'))!
+    assert.match(waitingLine.body, /^o teste passou\n\(para responder no canal: .*ninguém no canal vê; fale pela ferramenta channels_say \(room "obra"\) ou node "\$TETHER_CLI" channels say obra "<texto>"\)$/)
+    assert.ok(!outJoin.body.includes('para responder no canal:'), 'a notice has no reply hint')
     assert.equal(said.line.from.role, 'owner', 'the record keeps the role in the channel')
     await waitUntil(() => notes(inside).length > before, 10_000, 'the line inside')
     const n = notes(inside).at(-1)!
@@ -217,11 +221,11 @@ describe('channels fan-out (H2)', () => {
     const said = await ch.say(owner, id, { body: 'espera na fila' })
     assert.ok(said.ok && said.receipts[a] === 'queued')
     const waitingIds = doorApi.delivery.pending(a).map((p) => p.id)
-    assert.ok((await inbox(a)).some((m) => m.body === 'espera na fila'))
+    assert.ok((await inbox(a)).some((m) => m.body.startsWith('espera na fila')))
     const gone = await ch.remove(owner, id, a)
     assert.ok(gone.ok)
     const after = await inbox(a)
-    assert.ok(!after.some((m) => m.body === 'espera na fila'), 'the waiting line left the queue')
+    assert.ok(!after.some((m) => m.body.startsWith('espera na fila')), 'the waiting line left the queue')
     assert.ok(after.some((m) => m.body === 'você foi tirado de #tirar por dentro-dono' && m.from.role === 'system'))
     assert.ok(doorApi.delivery.pending(a).length <= waitingIds.length)
     assert.deepEqual(await ch.join(a, id), { ok: false, error: 'removed' }, 'removed does not come back by itself')
@@ -277,15 +281,15 @@ describe('channels fan-out (H2)', () => {
     assert.equal(merged.kind, 'notice')
     assert.equal(merged.from.role, 'system')
     assert.ok(!merged.body.includes('secreta'), merged.body)
-    assert.equal(merged.body, mergedNotice('fusao', { since: s1.line.seq, at: s1.line.at, messages: 3, notices: 0, speakers: ['dentro-dono'], fromUser: 1 }))
-    assert.match(merged.body, /^#fusao: 3 falas novas desde \d\d:\d\d, de dentro-dono \(uma do usuário\); ler: channels read fusao --since \d+$/)
+    assert.equal(merged.body, mergedNotice('fusao', { since: s1.line.seq, at: s1.line.at, messages: 3, notices: 0, speakers: ['dentro-dono'], fromUser: 1 }, 'terminal'))
+    assert.match(merged.body, /^#fusao: 3 falas novas desde \d\d:\d\d, de dentro-dono \(uma do usuário\); ler: pela ferramenta channels_read \(room "fusao", since \d+\) ou node "\$TETHER_CLI" channels read fusao --since \d+$/)
 
     cancelFails = true
     const s4 = await ch.say(owner, id, { body: 'quarta vai como veio' })
     assert.ok(s4.ok)
     const now = (await inbox(q)).slice(base)
     assert.equal(now.length, 2)
-    assert.equal(now[1]!.body, 'quarta vai como veio')
+    assert.equal(now[1]!.body, withReplyHint('quarta vai como veio', 'fusao', 'terminal'))
     assert.equal(now[1]!.ref, `fusao#${s4.line.seq}`)
 
     // Held: what waits is typed, the merged notice and the line, in order.
@@ -318,8 +322,8 @@ describe('channels fan-out (H2)', () => {
     assert.ok(!got[0]!.body.includes('dormia'))
     // It missed its own join too (the join notice is not delivered to a pane that does not run): counted as a notice.
     const joinLine = (await ch.store.history(id)).find((l) => l.event?.type === 'join' && l.event.who === d)!
-    assert.equal(got[0]!.body, returnNotice('parado', { since: joinLine.seq, at: joinLine.at, messages: 2, notices: 1, speakers: ['dentro-dono'], fromUser: 1 }))
-    assert.match(got[0]!.body, new RegExp(`^você voltou · #parado: 2 falas novas e 1 aviso desde \\d\\d:\\d\\d, de dentro-dono \\(uma do usuário\\); ler: channels read parado --since ${joinLine.seq - 1}$`))
+    assert.equal(got[0]!.body, returnNotice('parado', { since: joinLine.seq, at: joinLine.at, messages: 2, notices: 1, speakers: ['dentro-dono'], fromUser: 1 }, 'terminal'))
+    assert.match(got[0]!.body, new RegExp(`^você voltou · #parado: 2 falas novas e 1 aviso desde \\d\\d:\\d\\d, de dentro-dono \\(uma do usuário\\); ler: pela ferramenta channels_read \\(room "parado", since ${joinLine.seq - 1}\\) ou node "\\$TETHER_CLI" channels read parado --since ${joinLine.seq - 1}$`))
     // A third line now fuses into the return notice that waits.
     assert.ok((await ch.say(owner, id, { body: 'terceira' })).ok)
     const fused = await inbox(d)

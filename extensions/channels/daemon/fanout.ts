@@ -29,7 +29,7 @@ import type { ChannelStore, NewLine, StoreError } from './store.ts'
 import {
   closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
   joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
-  removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, type DeskClosedWhy, type Tally,
+  removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, withReplyHint, type DeskClosedWhy, type Tally,
 } from './notices.ts'
 
 /** What the fan-out uses of the daemon API. */
@@ -188,11 +188,11 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     for (const s of t.speakers) if (!into.speakers.includes(s)) into.speakers.push(s)
   }
 
-  const envelopeOf = (ch: Channel, line: Line): DeliveryMessage => {
+  const envelopeOf = (ch: Channel, line: Line, path: 'inside' | 'terminal' | 'wait'): DeliveryMessage => {
     const ref = `${ch.name}#${line.seq}`
     if (line.kind === 'notice') return { kind: 'notice', room: ch.name, from: { ...SYSTEM_FROM }, body: line.body, ref }
     const msg: DeliveryMessage = {
-      kind: 'message', room: ch.name, body: line.body, ref,
+      kind: 'message', room: ch.name, body: withReplyHint(line.body, ch.name, path), ref,
       from: { name: line.from.name, id: line.from.id, role: deliveryRoleOf(line.from.role) },
     }
     if (line.to?.length) msg.to = line.to
@@ -259,12 +259,12 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     const w = untrack(key)
     if (w && api.delivery.cancel(w.receipt)) {
       count(w, line)
-      const r = await send(agent, noticeOf(ch, mergedNotice(ch.name, w), line.seq))
+      const r = await send(agent, noticeOf(ch, mergedNotice(ch.name, w, api.delivery.routeOf(agent)), line.seq))
       if (!r) return 'away'
       track(agent, ch.id, r, w)
       return receiptState(r)
     }
-    const r = await send(agent, envelopeOf(ch, line))
+    const r = await send(agent, envelopeOf(ch, line, api.delivery.routeOf(agent)))
     if (!r) return 'away'
     track(agent, ch.id, r, tallyOf(line))
     return receiptState(r)
@@ -673,7 +673,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
         // What still waited from before it stopped joins the same notice.
         const w = untrack(keyOf(agent, id))
         if (w && api.delivery.cancel(w.receipt)) merge(t, w)
-        const r = await send(agent, noticeOf(ch, returnNotice(ch.name, t)))
+        const r = await send(agent, noticeOf(ch, returnNotice(ch.name, t, api.delivery.routeOf(agent))))
         if (r) track(agent, id, r, t)
       })))
     },
