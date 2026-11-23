@@ -21,7 +21,7 @@ export interface StatusPollerDeps {
   /** <TETHER_HOME>/bridge: api.key lives here. */
   bridgeHome: string
   /** The versions and the C5 marker, read at every poll (cheap; the files are small). */
-  version(): StatusSnapshot['version'] | Promise<StatusSnapshot['version']>
+  version(browsers: StatusSnapshot['browsers']): StatusSnapshot['version'] | Promise<StatusSnapshot['version']>
   /** The disk (`api.io`); default node's async file API. */
   io?: DaemonIo
   /** The browser "Opções da extensão" opens in, if any. */
@@ -145,7 +145,7 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       } catch { daemon = 'down' }
     }
     if (daemon === 'up') everUp = true
-    const version = await deps.version()
+    const version = await deps.version(reduced.browsers)
     const next: StatusSnapshot = { at: now(), daemon, everUp, pauseSupported, ...reduced, version, ...(deps.options?.() ? { options: deps.options() } : {}) }
     const changed = JSON.stringify({ ...snapshot, at: 0 }) !== JSON.stringify({ ...next, at: 0 })
     snapshot = next

@@ -10,8 +10,8 @@
 // headings, radios that act at once, "Mais opções…" at the foot): NAVEGADORES, every connected browser with a radio that
 // makes it the active one, its state line (JS, dev, version) or an alert with its action, and an arrow that focuses its
 // window; AGENTES, the live sessions grouped by browser, each with its tab's title (or "aguardando") and an arrow to that
-// tab, the name revealing the pane. Under "Mais opções…" (Configurações on the Bridge's settings), one line of links:
-// Pausar/Retomar, Soltar todas as abas, Instalar em outro navegador…, Opções da extensão; then the version footer.
+// tab, the name revealing the pane. Each action sits in its section: a browser's "⋯" menu (options, pause, reload), "Instalar em outro navegador…"
+// closing Navegadores, "Soltar todas as abas" closing Agentes (live agents only); the foot is "Mais opções…" alone.
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import type { DialogOption } from '../../app/shared/dialog.ts'
 import { icon, type IconName } from '../../app/renderer/icons.ts'
@@ -20,7 +20,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { activeAgents, agentGroups, badgeOf, browserAlert, EMPTY_SNAPSHOT, fallbackLine, stateMarks, stateOf, titleOf, versionLine, type AgentView, type BrowserView } from './status.ts'
+import { activeAgents, agentGroups, badgeOf, browserAlert, browserMenu, EMPTY_SNAPSHOT, fallbackLine, showReleaseAll, stateMarks, stateOf, titleOf, type AgentView, type BrowserMenuItem, type BrowserView } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -204,6 +204,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let busyTimer: ReturnType<typeof setTimeout> | undefined
   let acting = false
+  /** The browser whose "⋯" menu is open (one at a time). */
+  let menuFor: string | undefined
 
   const el = (tag: string, className?: string, text?: string): HTMLElement => {
     const e = document.createElement(tag)
@@ -277,7 +279,32 @@ export function activate(ui: TetherUi): IDisposable[] {
     label.append(radio, el('span', 'wb-name', b.name))
     line.append(label)
     if (b.focusTabId !== undefined) { const tabId = b.focusTabId; line.append(goButton(`Trazer o ${b.name} para a frente`, () => focusTab(b.id, tabId))) }
+    const more = el('button', 'wb-go wb-menu-btn') as HTMLButtonElement
+    more.type = 'button'
+    more.dataset.action = 'browser-menu'
+    more.title = `Ações do ${b.name}`
+    more.setAttribute('aria-label', `Ações do ${b.name}`)
+    more.setAttribute('aria-haspopup', 'menu')
+    more.setAttribute('aria-expanded', String(menuFor === b.id))
+    more.textContent = '⋯'
+    more.addEventListener('click', ev => { ev.stopPropagation(); menuFor = menuFor === b.id ? undefined : b.id; handle.update() })
+    line.append(more)
     box.append(line)
+    if (menuFor === b.id) {
+      const menu = el('div', 'wb-menu'); menu.setAttribute('role', 'menu'); menu.dataset.menu = b.id
+      const run: Record<BrowserMenuItem['id'], () => void> = {
+        options: () => { void act(() => ipc.invoke('openOptions', b.name), `Página da extensão aberta no ${b.name}.`) },
+        reload: () => { void act(() => ipc.invoke('openOptions', b.name), `Página da extensão aberta no ${b.name}: recarregue a extensão.`) },
+        pause: () => { void act(() => ipc.invoke('pause', true), `${BRIDGE_NAME} pausado: os agentes esperam.`) },
+        resume: () => { void act(() => ipc.invoke('pause', false), `${BRIDGE_NAME} retomado.`) },
+      }
+      for (const item of browserMenu(b, snapshot)) {
+        const mi = button(item.id, item.label, () => { menuFor = undefined; run[item.id]() }, { disabled: item.disabled })
+        mi.setAttribute('role', 'menuitem')
+        menu.append(mi)
+      }
+      box.append(menu)
+    }
     const alert = browserAlert(b, snapshot.version.vendored)
     if (alert) {
       const row = el('div', 'wb-alert')
@@ -344,6 +371,9 @@ export function activate(ui: TetherUi): IDisposable[] {
         for (const b of snapshot.browsers) list.append(browserRow(b))
         bSec.append(list)
       }
+      const add = button('install', '+ Instalar em outro navegador…', () => { closePopover(); void ui.commands.run('web-bridge.install') })
+      add.classList.add('wb-section-action')
+      bSec.append(add)
       pop.append(bSec)
 
       // Agentes: the live sessions, by browser.
@@ -359,6 +389,11 @@ export function activate(ui: TetherUi): IDisposable[] {
         group.append(ul)
         aSec.append(group)
       }
+      if (showReleaseAll(snapshot)) {
+        const rel = button('release-all', 'Soltar todas as abas', () => { void act(() => ipc.invoke('releaseAll'), 'Abas soltas: os agentes abrem outras quando precisarem.') })
+        rel.classList.add('wb-section-action')
+        aSec.append(rel)
+      }
       pop.append(aSec)
     } else {
       pop.append(el('p', 'wb-empty wb-down', snapshot.daemon === 'no-key'
@@ -369,30 +404,13 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     if (notice) { const n = el('p', `wb-notice ${notice.tone}`, notice.text); n.setAttribute('role', 'status'); pop.append(n) }
 
-    // Foot: "Mais opções…", then one line of the less frequent actions, then the versions.
+    // Foot: "Mais opções…" alone.
     const more = el('button', 'wb-more', 'Mais opções…') as HTMLButtonElement
     more.type = 'button'
     more.dataset.action = 'more'
     more.addEventListener('click', ev => { ev.stopPropagation(); closePopover(); ui.configuration.reveal(MORE_OPTIONS_KEY) })
     pop.append(more)
 
-    const up = snapshot.daemon === 'up'
-    const extra = el('div', 'wb-actions')
-    const links: HTMLElement[] = []
-    if (snapshot.paused) links.push(button('resume', 'Retomar', () => { void act(() => ipc.invoke('pause', false), `${BRIDGE_NAME} retomado.`) }, { disabled: !up }))
-    else links.push(button('pause', 'Pausar', () => { void act(() => ipc.invoke('pause', true), `${BRIDGE_NAME} pausado: os agentes esperam.`) }, { disabled: !up || !snapshot.pauseSupported }))
-    links.push(button('release-all', 'Soltar todas as abas', () => { void act(() => ipc.invoke('releaseAll'), 'Abas soltas: os agentes abrem outras quando precisarem.') }, { disabled: !up || !snapshot.agents.length }))
-    links.push(button('install', 'Instalar em outro navegador…', () => { closePopover(); void ui.commands.run('web-bridge.install') }))
-    if (snapshot.options) links.push(button('options', `Opções da extensão (${snapshot.options.browserName})`, () => { void act(() => ipc.invoke('openOptions'), `Página da extensão aberta no ${snapshot.options?.browserName ?? 'navegador'}.`) }))
-    links.forEach((l, i) => { if (i) extra.append(' · '); extra.append(l) })
-    pop.append(extra)
-    if (!snapshot.pauseSupported && !snapshot.paused) pop.append(el('p', 'wb-hint', 'Pausar está indisponível nesta versão do bridge.'))
-
-    const v = versionLine(snapshot.version)
-    const foot = el('footer', 'wb-foot')
-    foot.append(el('span', 'wb-version', v.text))
-    if (v.reload) foot.append(el('span', 'wb-reload', 'Recarregue a extensão no navegador (chrome://extensions) para usar a versão nova.'))
-    pop.append(foot)
   }
 
   const handle = ui.status.register({

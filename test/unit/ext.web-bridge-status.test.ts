@@ -15,7 +15,8 @@ import { join } from 'node:path'
 import { clientIdOf } from '../../extensions/web-bridge/agents.ts'
 import { manifest } from '../../extensions/web-bridge/manifest.ts'
 import { createStatusPoller } from '../../extensions/web-bridge/status-poll.ts'
-import { activeAgents, agentGroups, ago, badgeOf, browserAlert, browserLabel, EMPTY_SNAPSHOT, fallbackLine, reduceStatus, slotIdOf, stateMarks, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
+import { readUpdateMarker, settleUpdateMarker, writeUpdateMarker } from '../../extensions/web-bridge/update.ts'
+import { activeAgents, agentGroups, ago, badgeOf, browserAlert, browserLabel, browserMenu, markerSettled, showReleaseAll, EMPTY_SNAPSHOT, fallbackLine, reduceStatus, slotIdOf, stateMarks, stateOf, TETHER_PREFIX, titleOf, versionLine, type StatusSnapshot } from '../../extensions/web-bridge/status.ts'
 
 const NOW = 1_800_000_000_000
 const snap = (patch: Partial<StatusSnapshot>): StatusSnapshot => ({ ...EMPTY_SNAPSHOT, at: NOW, daemon: 'up', everUp: true, version: { vendored: '0.1.0', installed: '0.1.0', pendingReload: false }, ...patch })
@@ -315,5 +316,42 @@ describe('web-bridge status: presence (the popover\'s two sections)', () => {
     ])
     assert.ok(!groups.some(g => g.browserId === 'b3'), 'a browser whose only agent is not live has no group')
     assert.deepEqual(agentGroups({ browsers: r.browsers, agents: r.agents.map(a => ({ ...a, live: false })) }), [], 'nobody live: the section says so')
+  })
+})
+
+describe('web-bridge status: each action in its section', () => {
+  const ver = (vendored: string) => ({ vendored, installed: vendored, pendingReload: false })
+  const base = { daemon: 'up' as const, paused: false, pauseSupported: true }
+
+  test('the browser menu: options, pause/resume (global), reload only when the version differs', () => {
+    const same = { ...chrome, extensionVersion: '0.2.0.6871' }
+    assert.deepEqual(browserMenu(same, { ...base, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'pause'])
+    assert.deepEqual(browserMenu(same, { ...base, paused: true, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'resume'])
+    assert.deepEqual(browserMenu({ ...chrome, extensionVersion: '0.1.0' }, { ...base, version: ver('0.2.0.6871') }).map(i => i.id), ['options', 'pause', 'reload'])
+    assert.deepEqual(browserMenu(chrome, { ...base, version: ver('0.2.0') }).map(i => i.id), ['options', 'pause'], 'no reported version: no reload')
+    assert.ok(browserMenu(same, { ...base, pauseSupported: false, version: ver('0.2.0.6871') })[1]!.disabled)
+    assert.ok(browserMenu(same, { ...base, daemon: 'down', version: ver('0.2.0.6871') })[1]!.disabled)
+  })
+
+  test('"Soltar todas as abas" only with a live agent', () => {
+    const a = { clientId: 'tether:s1', name: 'x', tabs: 0, calls: 0 }
+    assert.equal(showReleaseAll({ agents: [] }), false)
+    assert.equal(showReleaseAll({ agents: [{ ...a, live: false }] }), false)
+    assert.equal(showReleaseAll({ agents: [{ ...a, live: true }] }), true)
+  })
+
+  test('the update marker is cleared once a connected browser reports the vendored version', async () => {
+    assert.equal(markerSettled([{ extensionVersion: '0.2.0.6871' }], '0.2.0.6871'), true)
+    assert.equal(markerSettled([{ extensionVersion: '0.1.0' }, {}], '0.2.0.6871'), false)
+    assert.equal(markerSettled([{ extensionVersion: '0.2.0.6871' }], undefined), false)
+    const home = mkdtempSync(join(tmpdir(), 'wb-marker-'))
+    try {
+      await writeUpdateMarker(home, { version: '0.2.0.6871', at: new Date().toISOString() })
+      assert.equal(await settleUpdateMarker(home, [{ extensionVersion: '0.1.0' }], '0.2.0.6871'), false, 'old browser: the warning stays')
+      assert.ok(await readUpdateMarker(home))
+      assert.equal(await settleUpdateMarker(home, [{ extensionVersion: '0.2.0.6871' }], '0.2.0.6871'), true)
+      assert.equal(await readUpdateMarker(home), undefined)
+      assert.equal(await settleUpdateMarker(home, [{ extensionVersion: '0.2.0.6871' }], '0.2.0.6871'), false, 'nothing left to clear')
+    } finally { rmSync(home, { recursive: true, force: true }) }
   })
 })

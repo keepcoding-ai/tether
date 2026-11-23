@@ -89,3 +89,8 @@ dialog.web-bridge-guide .wb-note { margin: 0 0 14px; color: var(--fg-dim); font-
 .wb-pop .wb-hint { margin: 4px 6px 0; color: var(--fg-dim); font-size: 11px; white-space: normal; }
 .wb-pop .wb-foot { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px 0; color: var(--fg-dim); font-size: 11px; white-space: normal; }
 .wb-pop .wb-reload { color: var(--warn); }
+
+/* Each action sits in the section it manages: the browser's "⋯" menu, "Instalar…" closing Navegadores, "Soltar…" closing Agentes. */
+.wb-pop .wb-menu-btn { font-size: 15px; line-height: 1; }
+.wb-pop .wb-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin: 2px 0 4px 21px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-2); font-size: 12px; }
+.wb-pop .wb-section-action { display: block; margin: 4px 4px 2px; font-size: 11.5px; }
