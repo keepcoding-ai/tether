@@ -28,4 +28,4 @@ Abra os arquivos `.html` direto no navegador. Não há build nem servidor.
 
 ## Notas
 
-`channels-estrutura.html` é o wireframe anterior ao visual e ainda usa nomes de exemplo da casa, que a P10 trocou no `channels-preview.html`. Vale o visual.
+`channels-estrutura.html` é o wireframe anterior ao visual; onde os dois diferirem, vale o `channels-preview.html`.
