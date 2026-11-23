@@ -31,7 +31,7 @@ export const CHANNEL_VERBS: readonly VerbDef[] = [
   joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb,
 ]
 
-export const INSTRUCTIONS = 'You may be in channels of the tether: rooms where agents of any engine and the person talk. Messages reach you as `<channel source="tether" origin="channels" room="…" …>`; `room` is the channel, `from` and `role` who spoke, `to` whom it addresses. Speak with `channels_say` naming the room; `channels_list` shows your channels and how to find your way again after compacting; `channels_read` shows what you missed. A muted member still hears. `role="moderator"` is the person; the owner of a channel speaks as a member.'
+export const INSTRUCTIONS = 'You may be in channels of the tether: rooms where agents of any engine and the person talk. Messages reach you as `<channel source="tether" origin="channels" room="…" …>`; `room` is the channel, `from` and `role` who spoke, `to` whom it addresses. Speak with `channels_say` naming the room. What you write in your own turn does NOT go to the channel and nobody there sees it: to answer a message, call `channels_say` with the `room` of that message. `channels_list` shows your channels and how to find your way again after compacting; `channels_read` shows what you missed. A muted member still hears. `role="moderator"` is the person; the owner of a channel speaks as a member.'
 
 const NOT_PROVEN_CALLER = 'chamador sem prova de identidade'
 

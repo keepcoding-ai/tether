@@ -64,7 +64,8 @@ export const createdNotice = (room: string): string => `você abriu #${room} e �
  */
 export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait'): string {
   let text = `você entrou em #${room}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
-  if (path !== 'inside') text += ` · ${cliHint(room)}`
+  if (path === 'inside') text += ' · para responder no canal use a ferramenta channels_say; o texto do seu turno não vai ao canal'
+  else text += ` · ${cliHint(room)}; o texto do seu turno não vai ao canal`
   if (path === 'wait') text += ' · agora esta guia não ouve as falas: elas esperam até ela poder ouvir, juntadas num aviso só'
   return text
 }

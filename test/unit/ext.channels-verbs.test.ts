@@ -16,6 +16,7 @@ import { fsIo } from '../../src/daemon/ext-io.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
+import { joinedNotice } from '../../extensions/channels/daemon/notices.ts'
 import { CHANNEL_VERBS, INSTRUCTIONS, registerVerbs } from '../../extensions/channels/daemon/verbs.ts'
 import { EXT_ID } from '../../extensions/channels/manifest.ts'
 import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -420,6 +421,42 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
       assert.equal((await call(E, 'close', { canal: id })).isError, undefined)
       assert.equal(codeOf(await call(E, 'say', { canal: id, text: 'tarde' })), 'closed')
       assert.equal(codeOf(await call(F, 'say', { canal: id, text: 'tarde', to: ['ninguem'] })), 'closed')
+    })
+
+    test('say: `to` by one segment of a name (only when one member has it); ambiguous with the options; unknown lists the valid names; whole name and id still work', async () => {
+      const P = await running('claude · bancada')
+      const Q = await running('codex · bancada')
+      const R = await running('claude · obra')
+      const id = data(await call(E, 'create', { name: 'segmentos', members: [F, P, Q, R] })).channel.id
+      const lineOf = async (r: VerbResult) => (await ch.store.history(id, undefined, 20)).find((l) => l.seq === data(r).seq)!
+      const one = await call(F, 'say', { canal: id, text: 'a', to: ['obra'] })
+      assert.equal(one.isError, undefined, one.text)
+      assert.deepEqual((await lineOf(one)).to, ['claude · obra'], 'the line keeps the whole name')
+      const accent = await call(F, 'say', { canal: id, text: 'b', to: ['OBRÁ'] })
+      assert.deepEqual((await lineOf(accent)).to, ['claude · obra'], 'case and accents do not matter')
+      for (const seg of ['bancada', 'claude']) {
+        const amb = await call(F, 'say', { canal: id, text: 'c', to: [seg] })
+        assert.equal(codeOf(amb), 'ambiguous', seg)
+        assert.ok(data(amb).options.length >= 2, seg)
+      }
+      assert.deepEqual(data(await call(F, 'say', { canal: id, text: 'c', to: ['bancada'] })).options.map((o: { name: string }) => o.name).sort(), ['claude · bancada', 'codex · bancada'])
+      const none = await call(F, 'say', { canal: id, text: 'd', to: ['nenhum'] })
+      assert.equal(codeOf(none), 'unknown-member')
+      assert.ok(['h-dona', 'h-fala', 'claude · bancada', 'codex · bancada', 'claude · obra'].every((n) => data(none).members.includes(n)), 'the valid names')
+      const whole = await call(F, 'say', { canal: id, text: 'e', to: ['claude · bancada', R] })
+      assert.deepEqual((await lineOf(whole)).to, ['claude · bancada', 'claude · obra'], 'whole name and id')
+    })
+
+    test('the text of the turn does not reach the channel: said in the paragraph and in the join notice of both paths', () => {
+      assert.ok(INSTRUCTIONS.includes('does NOT go to the channel and nobody there sees it'))
+      assert.ok(INSTRUCTIONS.includes('call `channels_say` with the `room`'))
+      const inside = joinedNotice('obra', undefined, ['a'], 'inside')
+      assert.ok(inside.includes('para responder no canal use a ferramenta channels_say; o texto do seu turno não vai ao canal'))
+      for (const path of ['terminal', 'wait'] as const) {
+        const text = joinedNotice('obra', undefined, ['a'], path)
+        assert.ok(text.includes('channels say obra') && text.includes('o texto do seu turno não vai ao canal'), path)
+        assert.ok(!text.includes('ferramenta channels_say'), path)
+      }
     })
 
     test('multichannel: one agent in two channels gets each line with the right room, and muting in one does not mute in the other', async () => {

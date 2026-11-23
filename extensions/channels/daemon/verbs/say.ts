@@ -4,7 +4,20 @@ import { isMember, sayRefusal, USER } from '../../rules.ts'
 import { CANAL_PROP, ok, optInt, optStrings, refOf, refuse, resolveChannel, settle, wantString, type VerbDef, type VerbDeps } from './common.ts'
 import type { Channel } from '../../rules.ts'
 
-/** The names a line addresses: the person (`usuário`, or the moderator's name) or a member, by id or name. Anything else is `unknown-member`. */
+/** Lower case, no accents: how a segment of a name is compared with what the agent wrote. */
+const fold = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/** The members whose name, split on " · ", has a segment equal to `ref` (a name like `claude · bancada` is answered to as `bancada`). */
+function bySegment(deps: VerbDeps, ch: Channel, ref: string): string[] {
+  const want = fold(ref)
+  if (want === '') return []
+  return Object.keys(ch.members).filter((id) => deps.channels.nameOf(id).split(' · ').some((seg) => fold(seg) === want))
+}
+
+/**
+ * The names a line addresses: the person (`usuário`, or the moderator's name) or a member, by id, whole name or one segment of
+ * the name (only when a single member has it). Anything else is `unknown-member`, with the valid names in `members`.
+ */
 function addressees(deps: VerbDeps, ch: Channel, refs: readonly string[]): string[] {
   const moderator = deps.channels.nameOf(USER)
   const out: string[] = []
@@ -16,8 +29,16 @@ function addressees(deps: VerbDeps, ch: Channel, refs: readonly string[]): strin
       const hits = Object.keys(ch.members).filter((id) => deps.channels.nameOf(id) === ref)
       if (hits.length > 1) refuse('ambiguous', `mais de um membro se chama ${JSON.stringify(ref)}`, { options: hits.map((id) => ({ id, name: ref })) })
       if (hits.length === 1) name = ref
+      if (name === undefined) {
+        const segs = bySegment(deps, ch, ref)
+        if (segs.length > 1) refuse('ambiguous', `mais de um membro tem ${JSON.stringify(ref)} no nome`, { options: segs.map((id) => ({ id, name: deps.channels.nameOf(id) })) })
+        if (segs.length === 1) name = deps.channels.nameOf(segs[0]!)
+      }
     }
-    if (name === undefined) refuse('unknown-member', `${JSON.stringify(ref)} não é membro do canal nem a pessoa`)
+    if (name === undefined) {
+      const members = Object.keys(ch.members).map((id) => deps.channels.nameOf(id))
+      refuse('unknown-member', `${JSON.stringify(ref)} não é membro do canal nem a pessoa; nomes válidos: ${members.join(', ')}`, { members })
+    }
     if (!out.includes(name)) out.push(name)
   }
   return out
