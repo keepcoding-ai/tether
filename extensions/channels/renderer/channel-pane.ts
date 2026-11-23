@@ -111,6 +111,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private membersTimer: ReturnType<typeof setTimeout> | undefined
     private disposed = false
     private ro: ResizeObserver | undefined
+    private contentRo: ResizeObserver | undefined
     private readonly subs: IDisposable[] = []
 
     private readonly head = el('div', 'ch-head')
@@ -172,6 +173,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       document.removeEventListener('visibilitychange', this.onWatch)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       this.ro?.disconnect()
+      this.contentRo?.disconnect()
       for (const s of this.subs) s.dispose()
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
@@ -468,6 +470,22 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const keepTop = this.visible() ? m.scrollTop : undefined
       m.replaceChildren()
       try { this.fillMsgs(m) } finally { if (keepTop !== undefined && this.visible()) m.scrollTop = keepTop }
+      this.watchContent()
+    }
+
+    /**
+     * While `stick` holds the pane stays at the end whenever the HEIGHT OF THE CONTENT changes (a repaint while hidden, fonts, a row
+     * that grows), not only when the pane itself is resized or shown. Reading above (`stick` false) is never touched.
+     */
+    private watchContent(): void {
+      if (this.disposed) return
+      this.contentRo ??= new ResizeObserver(() => {
+        if (this.disposed || !this.stick || this.pendingScroll !== undefined || !this.visible()) return
+        const m = this.msgs
+        if (m.scrollHeight - (m.scrollTop + m.clientHeight) > 1) m.scrollTop = m.scrollHeight
+      })
+      this.contentRo.disconnect()
+      for (const child of Array.from(this.msgs.children)) this.contentRo.observe(child)
     }
 
     private fillMsgs(m: HTMLElement): void {

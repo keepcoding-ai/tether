@@ -232,6 +232,16 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     await page.waitForFunction(i => { const s = window.__tether.ext.channels.view(i)!.scroll; return s.client > 0 && s.height - (s.top + s.client) <= 24 }, id)
       .catch(async () => { throw new Error(`the pane did not follow the end when shown: ${JSON.stringify((await view())!.scroll)}`) })
     assert.equal((await view())!.unread, 0)
+    // The content grows by itself (no scroll event, no resize of the pane): at the end, it follows.
+    const growLast = (px: number) => page.evaluate(([i, h]) => {
+      const last = document.querySelector<HTMLElement>(`.ch-pane[data-channel="${i}"] .ch-msgs > :last-child`)!
+      last.style.minHeight = `${h}px`
+    }, [id, px] as [string, number])
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))) // scroll events still in flight land first
+    await growLast(900)
+    await page.waitForFunction(i => { const s = window.__tether.ext.channels.view(i)!.scroll; return s.height - (s.top + s.client) <= 24 }, id)
+      .catch(async () => { throw new Error(`the pane did not follow the content growing: ${JSON.stringify((await view())!.scroll)}`) })
+    await growLast(0)
 
     // ---- 4. a new line while the person reads above: the view does not move ----
     console.log('step 4')
@@ -247,6 +257,12 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     v = (await view())!
     assert.ok(Math.abs(v.scroll.top - at0) <= 1, `the view stayed (${at0} -> ${v.scroll.top})`)
     assert.deepEqual(await state(), topBefore)
+    // Mirror: reading above, the content growing does not move the view.
+    await page.evaluate(i => { document.querySelector<HTMLElement>(`.ch-pane[data-channel="${i}"] .ch-msgs > :last-child`)!.style.minHeight = '900px' }, id)
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
+    v = (await view())!
+    assert.ok(Math.abs(v.scroll.top - at0) <= 1, `growth moved the reader (${at0} -> ${v.scroll.top})`)
+    await page.evaluate(i => { document.querySelector<HTMLElement>(`.ch-pane[data-channel="${i}"] .ch-msgs > :last-child`)!.style.minHeight = '' }, id)
     const bar = page.locator(`.ch-pane[data-channel="${id}"] .ch-newbar`)
     assert.equal(await bar.isVisible(), true)
     assert.equal((await bar.textContent())!.trim(), '2 falas novas')
