@@ -25,6 +25,7 @@ import { dirname, join } from 'node:path'
 import { identifyProcess, killProcess, listeningOwner, pidAlive } from './process-info.ts'
 import { hashTree, relPath, sha256, sha256File, walk, type BuildInfo } from './vendor-rules.ts'
 import { bundleSha256Of, readDaemonRecord, type Warmup } from './warmup.ts'
+import { markerSettled } from './status.ts'
 
 /** The seed the install flow writes into the folder (chrome-extensions/bridge daemon/src/install.ts SEED_FILE). */
 export const SEED_FILE = 'bridge.json'
@@ -204,4 +205,14 @@ export async function restartIfOutdated(deps: RestartDeps): Promise<RestartOutco
   if (alive(pid)) { deps.log(`daemon do bridge (pid ${pid}) não encerrou em ${KILL_WAIT_MS} ms; o novo não foi iniciado`); return 'failed' }
   const started = await deps.warmup.ensure()
   return started === 'failed' ? 'failed' : 'restarted'
+}
+
+/**
+ * The marker says "reload the extension"; nothing else ever lifted it, so the warning outlived the reload. A connected
+ * browser that reports the vendored version has reloaded: the marker goes. Returns whether it was cleared.
+ */
+export async function settleUpdateMarker(home: string, browsers: readonly { extensionVersion?: string }[], vendored: string | undefined, io: DaemonIo = fsIo): Promise<boolean> {
+  if (!markerSettled(browsers, vendored) || !await readUpdateMarker(home, io)) return false
+  await clearUpdateMarker(home, io)
+  return true
 }

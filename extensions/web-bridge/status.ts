@@ -374,3 +374,31 @@ export function agentGroups(s: Pick<StatusSnapshot, 'browsers' | 'agents'>): Age
   for (const [browserId, list] of groups) out.push({ browserId, label: 'Navegador desconectado', agents: list })
   return out
 }
+
+// ---- the actions, each in the section it manages ------------------------------------------------------------------
+
+/** One entry of a browser's "⋯" menu. `reload` is only offered when the browser runs a version other than the vendored one. */
+export interface BrowserMenuItem { id: 'options' | 'pause' | 'resume' | 'reload'; label: string; disabled?: boolean }
+
+/**
+ * The "⋯" menu of a browser: its extension's options page, pause/resume (the pause is the daemon's, global: every
+ * browser's menu offers the same one) and "Recarregar extensão" only when this browser's extension differs from the vendored one.
+ */
+export function browserMenu(b: BrowserView, s: Pick<StatusSnapshot, 'daemon' | 'paused' | 'pauseSupported' | 'version'>): BrowserMenuItem[] {
+  const up = s.daemon === 'up'
+  const items: BrowserMenuItem[] = [{ id: 'options', label: 'Opções da extensão' }]
+  items.push(s.paused ? { id: 'resume', label: 'Retomar', disabled: !up } : { id: 'pause', label: 'Pausar', disabled: !up || !s.pauseSupported })
+  const vendored = s.version.vendored
+  if (b.extensionVersion && vendored !== undefined && b.extensionVersion !== vendored) items.push({ id: 'reload', label: 'Recarregar extensão' })
+  return items
+}
+
+/** "Soltar todas as abas" closes the Agentes section, and only while there is a live agent. */
+export function showReleaseAll(s: Pick<StatusSnapshot, 'agents'>): boolean {
+  return s.agents.some(a => a.live)
+}
+
+/** The update marker (a build was written under a loaded extension) is settled once a connected browser reports the vendored version. */
+export function markerSettled(browsers: readonly Pick<BrowserView, 'extensionVersion'>[], vendored: string | undefined): boolean {
+  return vendored !== undefined && browsers.some(b => b.extensionVersion === vendored)
+}

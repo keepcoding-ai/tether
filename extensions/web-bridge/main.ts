@@ -15,7 +15,7 @@ import type { WebBridgeChannels } from './ipc.ts'
 import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
 import { createStatusPoller } from './status-poll.ts'
 import type { StatusSnapshot } from './status.ts'
-import { extensionVersionOf, readUpdateMarker } from './update.ts'
+import { extensionVersionOf, readUpdateMarker, settleUpdateMarker } from './update.ts'
 import { findNode } from './find-node-sync.ts'
 
 export { manifest } from './manifest.ts'
@@ -74,10 +74,12 @@ export function activate(main: TetherMain): IDisposable[] {
   // loaded extension changed).
   // The vendored build's contract, as of the last poll (the options below need it synchronously).
   let buildInfo: Awaited<ReturnType<typeof readBuildInfo>>
-  const version = async (): Promise<StatusSnapshot['version']> => {
+  const version = async (browsers: StatusSnapshot['browsers']): Promise<StatusSnapshot['version']> => {
     buildInfo = await readBuildInfo(vendorDir)
     const vendored = await extensionVersionOf(join(vendorDir, 'extension')) ?? buildInfo?.version
     const installed = await extensionVersionOf(currentDir)
+    // A browser already on the vendored version has reloaded: the marker would otherwise outlive the reload.
+    await settleUpdateMarker(main.home, browsers, vendored).catch(() => false)
     return { ...(vendored ? { vendored } : {}), ...(installed ? { installed } : {}), pendingReload: !!await readUpdateMarker(main.home) }
   }
   const poller = createStatusPoller({
