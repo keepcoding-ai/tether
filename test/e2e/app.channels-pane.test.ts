@@ -40,6 +40,7 @@ type Hooks = {
   deskOf(slotId: string): string | undefined
   switchDesk(id: string): void
   activate(slotId: string): void
+  openSlot(slotId: string): void
   openMove(slotId: string): void
   ext: { channels: {
     open(channelId: string, name?: string): void
@@ -47,6 +48,7 @@ type Hooks = {
     kept(channelId: string): boolean
     scrollTo(channelId: string, top: number): void
     loadOlder(channelId: string): Promise<void>
+    wearEmblem(paneId: string, emblemId: string | undefined): void
   } }
 }
 declare const window: { __tether: Hooks }
@@ -346,6 +348,23 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     await waitView('the next line is for everyone', x => x.rows.some(r => r.text === 'de novo, sem escolher'))
     assert.deepEqual((await lastSay()).to, [])
     await page.screenshot({ path: join(SHOTS_B, 'guia-caixa.png') })
+    // ---- 7. a member whose tab wears an emblem shows its chip in the members column (on the next redraw) ----
+    console.log('step 7')
+    assert.ok((await view())!.members.every(m => m.emblem === ''), 'no emblem before the person puts one')
+    await page.evaluate(i => window.__tether.openSlot(i), a) // the member's tab has to exist to wear an emblem
+    await page.waitForFunction(p => window.__tether.panelIds().includes(p), a)
+    await page.evaluate(([p, e]) => window.__tether.ext.channels.wearEmblem(p!, e), [a, 'b-deploy'] as const)
+    assert.ok((await ch.say(a, id, { body: 'com emblema' })).ok) // a line redraws the members list
+    await waitView('the member wearing an emblem shows its chip', x => x.members.find(m => m.name === nameA)?.emblem === 'Deploy')
+    assert.equal((await view())!.members.find(m => m.name === nameB)!.emblem, '', 'the member without emblem stays as it was')
+    await page.evaluate(p => window.__tether.activate(p), paneId) // opening the member's tab took the front
+    await page.waitForSelector(`.ch-pane[data-channel="${id}"] .ch-mrow[data-member="${a}"] .ch-emblem`)
+    const chip = page.locator(`.ch-pane[data-channel="${id}"] .ch-mrow[data-member="${a}"] .ch-l1 > .ch-emblem`)
+    assert.equal(await chip.count(), 1)
+    assert.equal(await chip.getAttribute('title'), 'Deploy')
+    assert.equal(await page.locator(`.ch-pane[data-channel="${id}"] .ch-mrow:not([data-member]) .ch-emblem`).count(), 0, 'the moderator row has none')
+    await page.screenshot({ path: join(SHOTS_B, 'guia-emblema.png') })
+    await page.evaluate(([p]) => window.__tether.ext.channels.wearEmblem(p!, undefined), [a] as const)
     // Closed: the box is gone, the closed notice is there.
     assert.ok((await ch.close(USER, id)).ok)
     await waitView('closed channel has no box', x => x.closed && x.composer === undefined)
