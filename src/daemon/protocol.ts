@@ -302,7 +302,7 @@ export type Request =
   | { t: 'proc-release'; id: number; name: string; by?: ProcBy }
   /** The ports view: listening ports (managed or outside tether) and declared ones; `check`: that port only. */
   | { t: 'proc-ports'; id: number; check?: number }
-  /** Someone looked: clears `attention`, except a pending 'waiting' (the owning agent's call clears it too). */
+  /** Someone looked: clears `attention`. */
   | { t: 'proc-seen'; id: number; name: string }
   /**
    * Watch a process' output (read only: no request writes to a process). Reply: `scrollback` of its current run, absent
