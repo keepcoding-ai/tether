@@ -83,6 +83,8 @@ test('effectiveAttention: an extension seal waits for the person; the terminal k
   assert.equal(effectiveAttention(undefined, 2), 'waiting')
   assert.deepEqual(attentionLines('done', ['a']), ['Terminou', 'a'])
   assert.deepEqual(attentionLines(undefined, []), [])
+  assert.deepEqual(attentionLines('done', [], true), ['Não lido'], 'a done the person marked unread')
+  assert.deepEqual(attentionLines('waiting', [], true), ['Esperando você'])
 })
 
 test('pillMark: pane seals and the badge add up; the flag alone is a pip', () => {

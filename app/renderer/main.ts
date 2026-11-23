@@ -8,7 +8,7 @@ import type { AskRequest, Confirmations } from '../shared/dialog.ts'
 import { stepFontSize, type FontSizeCommand } from '../shared/font.ts'
 import { DEFAULT_APPEARANCE, terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
 import { normalizeTheme, type ThemeState } from '../shared/theme.ts'
-import { appCommands, GROUP, type CommandHost } from './app-commands.ts'
+import { appCommands, unreadLabel, GROUP, type CommandHost } from './app-commands.ts'
 import { installBuilderGuard, isBuilder, onBuilderChange, setBuilder } from './builder-mode.ts'
 import { commandFromContribution, CommandRegistry, type CommandContext } from './commands.ts'
 import { DUPLICATE_LABEL, duplicateRequest, EMPTY_SUFFIX, NEW_FRAME_LABEL, NEW_PANEL_LABEL, PLACEMENT_LABEL, SPLIT_EMPTY_LABEL, type Direction, type Target } from './create.ts'
@@ -101,7 +101,7 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
-import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation, unseenFailedSituation } from './situations.ts'
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
@@ -301,8 +301,9 @@ function commandContext(): CommandContext {
   const flags: ReadonlySet<string> = new Set(activeId ? type?.contextFlags?.(activeId) ?? [] : [])
   const keybindings = flags.has('keybindings.screen')
   const pad = sidebars?.current()
+  const activeSlot = activeId ? slots.get(activeId) : undefined
   return {
-    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}),
+    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}),
     pads: padRegistry.all().length, ...(pad ? { pad, padMoved: sidebars!.isMoved(pad) } : {}),
   }
 }
@@ -324,7 +325,7 @@ const $ =<T extends HTMLElement>(id: string): T => {
 const host: PanelHost = {
   getSlot: id => slots.get(id),
   isAsleep: id => asleepPanes.has(id),
-  attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id)) }),
+  attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id), slots.get(id)?.attentionHeld) }),
   onSealClick: id => activateSeals(id),
   getStartError: id => startErrors.get(id),
   isStartPending: id => pendingStarts.has(id),
@@ -2613,6 +2614,23 @@ async function restartAgent(slotId: string): Promise<void> {
   }
 }
 
+/** "Marcar como não lido" / "Marcar como lido": the daemon keeps the orange seal until the person types or unmarks it (focus does not clear it). */
+const UNSEEN_OLD_DAEMON = 'Reinicie o tetherd para marcar guias como não lidas'
+async function setUnread(slotId: string, unread: boolean): Promise<void> {
+  const slot = slots.get(slotId)
+  if (!slot || dialogOpen()) return
+  const reply = await window.tether.request({ t: 'unseen', slotId, ...(unread ? {} : { off: true }) })
+  if (reply.t === 'ok') return
+  await askDialog(unseenFailedSituation(slot, reply.code === 'bad-request' ? UNSEEN_OLD_DAEMON : reply.message))
+}
+/** The unread mark's menu entry: terminals and agents only (a slot), live or not; the label follows the daemon's `attentionHeld`. */
+function unreadMenuEntry(slotId: string): MenuEntry[] {
+  const slot = slots.get(slotId)
+  if (!slot) return []
+  const held = !!slot.attentionHeld
+  return [{ icon: 'bell', label: unreadLabel(held), run: () => { void setUnread(slotId, !held) } }]
+}
+
 const RESTART_UNREGISTERED_TIP = 'O agente ainda não registrou a sessão; reiniciar agora perderia a conversa.'
 /** Agents that resume a session (the daemon's `canRestart` is the live truth; this only decides whether to show the entry at all). */
 function restartMenuEntry(slotId: string): MenuEntry[] {
@@ -2894,6 +2912,7 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
     ...restartMenuEntry(slotId),
     ...hibernateMenuEntry(slotId),
+    ...unreadMenuEntry(slotId),
     SEP,
     { icon: 'rows', label: detailsLabel(detailsOpen(panel?.params)), run: () => togglePaneDetails(slotId) },
     { icon: 'link', label: LINK_LABEL, pin: 'icon', standalone: true, run: () => copyPaneLink(slotId) },
@@ -3366,6 +3385,7 @@ const commandHost: CommandHost = {
       : [{ icon: 'moon' as const, label: 'Nenhuma guia hibernada nesta mesa', run: () => {} }]
     showContextMenu(Math.round(innerWidth / 2) - 120, 80, [{ heading: 'Guias hibernadas' }, ...items])
   },
+  toggleUnread: id => { const s = slots.get(id); if (s) void setUnread(id, !s.attentionHeld) },
   hibernatePane: id => { const s = slots.get(id); if (s && isLiveSlot(s)) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),

@@ -10,7 +10,7 @@ import { FOLLOW_LINK_TIP, terminalLinkProvider } from './terminal-links.ts'
 import { isModifierDown } from './link-open.ts'
 import { linkTargetOfUrl } from '../shared/links.ts'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
-import { routedAttention } from './seal-rules.ts'
+import { attentionLines, routedAttention } from './seal-rules.ts'
 import type { ErrorCode, SlotKind, SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { DialogChoice } from '../shared/dialog.ts'
 import { terminalFontOptions, terminalTheme, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -598,7 +598,7 @@ export class TerminalPanel implements IContentRenderer {
     }
     this.head.cwd.textContent = s.cwd
     this.head.cwd.title = s.cwd
-    const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: s.attention === 'waiting' ? ['Esperando você'] : s.attention === 'done' ? ['Terminou'] : [] }
+    const att = this.host.attentionOf?.(this.slotId) ?? { level: s.attention, lines: attentionLines(s.attention, [], s.attentionHeld) }
     // An attention that waits for an agent owner: the diamond and the bell in the owner's colour, in place of the orange (seal-rules.ts routedAttention).
     const routed = routedAttention(s, id => { const o = this.host.getSlot(id); return o ? panelTitle(o) : undefined }, att.level)
     const bellTip = routed ? routed.tooltip : att.lines.join('\n')
@@ -923,7 +923,7 @@ export class SlotTab implements ITabRenderer {
     if (this.unsafe.hidden !== !s?.unsafe) this.unsafe.hidden = !s?.unsafe
     if (this.ronda.hidden !== !s?.ronda) this.ronda.hidden = !s?.ronda
     if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
-    const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: s?.attention === 'waiting' ? ['Esperando você'] : s?.attention === 'done' ? ['Terminou'] : [] }
+    const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: attentionLines(s?.attention, [], s?.attentionHeld) }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
     // An attention that waits for an agent owner, not for the person: a diamond in the owner's colour (door.css), not the orange dot.
     const routed = routedAttention(s, id => { const o = this.host.getSlot(id); return o ? panelTitle(o) : undefined }, att.level)

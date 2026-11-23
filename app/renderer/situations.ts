@@ -306,6 +306,20 @@ export function restartFailedSituation(s: SlotState, message: string): DialogSpe
   }
 }
 
+/** "Marcar como não lido" was refused (an older tetherd answers bad-request) or failed: say why (nothing to decide). */
+export function unseenFailedSituation(s: SlotState, message: string): DialogSpec {
+  return {
+    situation: 'unseen-failed',
+    tone: 'warn',
+    icon: 'warning',
+    title: 'A guia não foi marcada',
+    message,
+    context: panelContext(s),
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'A guia continua como estava.', tone: 'neutral' }],
+    escChoice: 'ok',
+  }
+}
+
 /** A "Mover…" that could not be done: everything is back where it was (no pane is ever lost). */
 export function moveFailedSituation(message: string): DialogSpec {
   return {
