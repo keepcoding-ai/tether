@@ -261,7 +261,46 @@ test('door picker: featured row, filter, keys, back and close, focus, argument c
   })
 })
 
-test('door picker K1.6: group headings and the number keys', { timeout: 300_000 }, async () => {
+test('door picker: the person\'s tab emblem at the right end of a row, and panes.personEmblem', { timeout: 300_000 }, async () => {
+  await withApp(async (page, home) => {
+    const shell = async (name: string): Promise<string> => {
+      const id = await page.evaluate(async ([cwd, n]) => (await window.tether.request({ t: 'create', kind: 'shell', cwd: cwd!, name: n!, start: false })).slot!.slotId, [home, name] as const)
+      await page.waitForTimeout(300)
+      await page.evaluate(i => window.__tether.openSlot(i), id)
+      return id
+    }
+    const worn = await shell('GuiaComEmblema')
+    const bare = await shell('GuiaSemEmblema')
+    assert.equal(await probe(page, 'personEmblem', worn), null, 'no emblem before the person puts one')
+    await probe(page, 'wearEmblem', worn, 'b-deploy')
+    assert.deepEqual(await probe(page, 'personEmblem', worn), { name: 'Deploy', color: 'teal', icon: 'rocket-launch' })
+    assert.equal(await probe(page, 'personEmblem', bare), null)
+    assert.equal(await probe(page, 'personEmblem', 'no-such-pane'), null)
+
+    await probe(page, 'pickEmblems', [bare, worn])
+    await opened(page)
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length === 2)
+    assert.deepEqual(await rowTexts(page), ['atrium', 'atrium'], 'two rows share the name')
+    const chips = rows(page).nth(1).locator('.pk-emblem')
+    assert.equal(await rows(page).nth(0).locator('.pk-emblem').count(), 0, 'a row without an emblem has no chip')
+    assert.equal(await chips.count(), 1)
+    assert.equal(await chips.getAttribute('title'), 'Deploy')
+    assert.equal(await chips.getAttribute('aria-label'), 'Deploy')
+    assert.equal(await rows(page).nth(1).evaluate(li => li.lastElementChild?.classList.contains('pk-emblem')), true, 'the chip is the last thing in the row')
+    assert.equal(await chips.locator('use').getAttribute('href'), '#emb-rocket-launch')
+
+    // The filter finds the row by the emblem's name.
+    await page.keyboard.type('deploy')
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length === 1)
+    assert.equal(await rows(page).first().locator('.pk-emblem').count(), 1)
+    await page.keyboard.press('Enter')
+    await closed(page)
+    await page.waitForFunction(() => (window.__tether.ext['door-probe']!.pickEmblemResults as () => unknown[])().length >= 1)
+    assert.deepEqual(await probe(page, 'pickEmblemResults'), [worn])
+  })
+})
+
+test('door picker K1.6: group headings and the number keys',{ timeout: 300_000 }, async () => {
   await withApp(async page => {
     const groupResults = (): Promise<unknown[]> => probe(page, 'pickGroupResults')
     const numbers = (): Promise<string[]> => rows(page).locator('kbd.pk-num').allInnerTexts()

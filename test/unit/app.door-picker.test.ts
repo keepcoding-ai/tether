@@ -33,6 +33,17 @@ describe('rankPicks', () => {
     assert.deepEqual(labels(rankPicks(featured, items, 'agente')), ['Agente dois'])
   })
 
+  test('the emblem name is searched too, after the label and the detail', () => {
+    const wears = (value: string, label: string, name: string, detail?: string): PickItem<string> => ({ ...it(value, label, detail), emblem: { name, color: 'teal', icon: 'rocket-launch' } })
+    const rows = [wears('a', 'atrium', 'Bug'), wears('b', 'atrium', 'Deploy'), it('c', 'xxx')]
+    assert.deepEqual(rankPicks(undefined, rows, 'deploy').map(r => r.item.value), ['b'])
+    assert.deepEqual(rankPicks(undefined, rows, 'DEPLOY').map(r => r.runs.map(x => x.text).join('')), ['atrium'])
+    assert.deepEqual(rankPicks(undefined, rows, 'zzz'), [])
+    // A label match outranks an emblem-only match; a row with no emblem is untouched.
+    const mixed = [wears('e', 'outro', 'Revisar'), it('l', 'Revisão')]
+    assert.deepEqual(rankPicks(undefined, mixed, 'revis').map(r => r.item.value), ['l', 'e'])
+  })
+
   test('the label comes back split for the highlight', () => {
     const [row] = rankPicks(undefined, [it('a', 'Canal geral')], 'cg')
     assert.equal(row!.runs.map(r => r.text).join(''), 'Canal geral')

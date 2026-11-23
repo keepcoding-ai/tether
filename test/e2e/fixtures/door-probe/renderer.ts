@@ -10,6 +10,7 @@ import { marks } from './marks.ts'
 import { menus } from './menus.ts'
 import { objects } from './objects.ts'
 import { ownerMenus } from './owner-menus.ts'
+import { pickEmblems } from './pick-emblems.ts'
 import { pickGroups } from './pick-groups.ts'
 import { picks } from './picks.ts'
 import { sealStates } from './seal-states.ts'
@@ -29,6 +30,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...tabLine(ui),
     ...headItem(ui),
     ...pickGroups(ui),
+    ...pickEmblems(ui),
     ...extRequests(ui),
   ]
 }
