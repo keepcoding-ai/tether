@@ -100,6 +100,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private membersOpen = true
     private membersTouched = false
     private loadingOlder = false
+    /** The `seq` the separator "novas para você" was last drawn before. */
+    private separatorAt: number | undefined
     private wasVisible = false
     /** Lines heard before the first page came. */
     private early: Line[] = []
@@ -151,7 +153,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       // The person may see the end of the conversation by the window coming back to the front, with no scroll or line.
       window.addEventListener('focus', this.onWatch)
       document.addEventListener('visibilitychange', this.onWatch)
-      this.subs.push(marks.onDidChange(() => this.paintNewBar()))
+      this.subs.push(marks.onDidChange(() => {
+        this.paintNewBar()
+        // The orange separator goes when the person sees the line (the same `seen` rule as the marks).
+        const first = marks.of(this.channelId).firstToMe
+        if (first !== this.separatorAt) this.paintMsgs()
+      }))
       this.paint()
       void this.load()
       marks.paneChanged(this.channelId)
@@ -447,6 +454,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private rows(): Row[] {
       return rowsOf(this.timeline.lines, {
         moderatorName: moderatorName(),
+        ...(marks.of(this.channelId).firstToMe !== undefined ? { firstToMe: marks.of(this.channelId).firstToMe! } : {}),
         ...(this.answer ? { idByName: idByName(this.answer) } : {}),
         ...(this.answer?.channel.owner.kind === 'agent' ? { ownerId: this.answer.channel.owner.id } : {}),
       })
@@ -481,6 +489,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         m.append(older)
       }
       const rows = this.rows()
+      this.separatorAt = marks.of(this.channelId).firstToMe
       if (rows.length === 0) {
         const box = el('div', 'ch-empty')
         box.append(el('p', 't', 'Ninguém falou ainda'), el('p', '', 'O que for dito neste canal aparece aqui.'))
@@ -492,6 +501,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
 
     private rowEl(r: Row): HTMLElement {
       if (r.kind === 'day') return el('div', 'ch-day', r.label)
+      if (r.kind === 'unseen') {
+        const e = el('div', 'ch-day ch-unseen', r.label)
+        e.dataset.seq = String(r.seq)
+        return e
+      }
       if (r.kind === 'notice') {
         const e = el('div', 'ch-sys')
         e.dataset.seq = String(r.seq)
@@ -576,6 +590,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       return {
         loaded: this.loaded, error: this.error, title: h?.title ?? '', sub: h?.sub ?? '', closed: h?.closed ?? false,
         rows: this.rows().map(r => r.kind === 'day' ? { kind: r.kind, text: r.label }
+          : r.kind === 'unseen' ? { kind: r.kind, text: r.label }
           : r.kind === 'notice' ? { kind: r.kind, text: r.text, glyph: r.glyph }
           : { kind: r.kind, text: r.body, name: r.name, role: r.role, crown: r.crown, mine: r.mine, to: r.to.map(t => t.name), continued: r.continued }),
         members: this.answer ? memberRows(this.answer).map(x => ({ name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone })) : [],
@@ -598,15 +613,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private readonly dot = el('span', 'ch-att')
     private sub: IDisposable | undefined
     /**
-     * The marks on the tab: the quiet ring for lines nobody has seen (a count in its tooltip, no colour) and the orange dot only for
-     * lines addressed to the person. Drawn here because the core's emblems and seals fill its own tab headers, not an extension's.
+     * The marks on the tab: the quiet ring for lines nobody has seen (a count in its tooltip, no colour, no number) and the orange
+     * counter only for lines addressed to the person. Drawn here because the core's emblems and seals fill its own tab headers, not an extension's.
      */
     private paintMarks(channelId: string): void {
       const m = marks.of(channelId)
       const plain = m.unread - m.toMe
       this.ring.hidden = plain === 0
       this.ring.title = plain > 0 ? unreadLabel(plain) : ''
+      // The orange counter: how many lines are for her (the plain ones stay the quiet ring, no number).
       this.dot.hidden = m.toMe === 0
+      this.dot.textContent = m.toMe > 0 ? String(m.toMe > 99 ? '99+' : m.toMe) : ''
       this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : ''
       this.element.dataset.mark = m.toMe > 0 ? 'me' : plain > 0 ? 'plain' : ''
     }

@@ -164,9 +164,38 @@ test('P12: a system line calls the person "Você", never her moderator name', ()
   assert.deepEqual(rows.filter(r => r.kind === 'notice').map(r => (r as { text: string }).text), [
     'Você abriu #obra',
     'codex foi calado em #obra por você',
-    'Atrium deixou de ser o owner de #obra; quem o comanda agora é você',
+    'Atrium deixou de ser o dono de #obra; quem o comanda agora é você',
     'usuário-bot entrou em #usuário',
   ])
   assert.equal(nameYou('Guga abriu #obra. Guga calou x', 'Guga'), 'Você abriu #obra. Você calou x')
   assert.equal(nameYou('nada a trocar', ''), 'nada a trocar')
+})
+
+test('P12: the record keeps "owner" for the agents; the screen says "dono"', () => {
+  const lines = [
+    notice(1, 'create', '#obra nasceu com a mesa · owner: Atrium'),
+    notice(2, 'owner-ended', 'owner-bot deixou de ser o owner de #obra; quem o comanda agora é usuário'),
+    notice(3, 'join', 'owner: entrou em #obra'),
+  ]
+  const texts = rowsOf(lines, { moderatorName: 'usuário' }).filter(r => r.kind === 'notice').map(r => (r as { text: string }).text)
+  assert.deepEqual(texts, [
+    '#obra nasceu com a mesa · dono: Atrium',
+    'owner-bot deixou de ser o dono de #obra; quem o comanda agora é você',
+    'owner: entrou em #obra',
+  ])
+  for (const t of texts) assert.doesNotMatch(t, /\b(members?|muted|moderator)\b/)
+})
+
+test('rows: "novas para você · hora" goes right before the first unseen line to her, and breaks a run of the same author', () => {
+  const lines = [
+    say(1, 'a1', 'Atrium', 'owner', 'oi', { to: ['usuário'] }),
+    say(2, 'a1', 'Atrium', 'owner', 'tudo bem?', { to: ['usuário'] }),
+    say(3, 'a1', 'Atrium', 'owner', 'e aí', { to: ['usuário'] }),
+  ]
+  const rows = rowsOf(lines, { moderatorName: 'usuário', firstToMe: 2, now: new Date(2026, 10, 23, 18) })
+  assert.deepEqual(rows.map(r => r.kind), ['day', 'say', 'unseen', 'say', 'say'])
+  assert.deepEqual(rows[2], { kind: 'unseen', seq: 2, label: `novas para você · 14:02` })
+  assert.equal((rows[3] as SayRow).continued, false)
+  assert.equal((rows[4] as SayRow).continued, true)
+  assert.deepEqual(rowsOf(lines, { moderatorName: 'usuário' }).map(r => r.kind), ['day', 'say', 'say', 'say'])
 })

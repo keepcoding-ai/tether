@@ -57,7 +57,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const AGENT = fileURLToPath(new URL('../fixtures/channels/agent.cjs', import.meta.url))
-const SHOTS = 'C:/atrium/.tmp/tether-agents/onda-3/u3'
+const SHOTS = 'C:/atrium/.tmp/tether-agents/onda-3/u3b'
 
 async function launch(home: string, pipe: string): Promise<{ app: ElectronApplication; page: Page }> {
   const env: Record<string, string> = {}
@@ -231,6 +231,8 @@ test('channel marks: unread, "to you", the top bar icon and what makes them go',
     await until('the dot and the seal are on the tab', async () => (await marks(conf)).seal && (await tab(conf).getAttribute('data-mark')) === 'me')
     assert.equal(await tab(conf).locator('.ch-att:not([hidden])').count(), 1, 'the dot is the line to her')
     assert.equal(await tab(conf).locator('.ch-ring:not([hidden])').count(), 1, 'and the ring is for the others')
+    assert.equal(await tab(conf).locator('.ch-att:not([hidden])').textContent(), '1', 'the orange counter: how many lines are for her')
+    assert.equal(await tab(conf).locator('.ch-ring').textContent(), '', 'the quiet ring has no number')
     assert.equal((await marks(conf)).unread, 3)
     assert.equal((await status()).state, 'warn', 'the icon follows too')
     await page.screenshot({ path: join(SHOTS, 'aba-para-voce.png') })
@@ -271,6 +273,20 @@ test('channel marks: unread, "to you", the top bar icon and what makes them go',
     assert.equal((await marks(conf)).firstToMe, toMe)
     assert.equal(await page.locator(`.ch-pane[data-channel="${conf}"] .ch-msg[data-seq="${toMe}"]`).evaluate(e => e.classList.contains('to-me')), true)
     await page.screenshot({ path: join(SHOTS, 'barra-novas-para-voce.png') })
+    const sep = page.locator(`.ch-pane[data-channel="${conf}"] .ch-unseen`)
+    assert.equal(await sep.count(), 1, 'the separator "novas para você" is in the conversation')
+    assert.match((await sep.textContent())!, /^novas para você · \d\d:\d\d$/)
+    assert.equal(await sep.getAttribute('data-seq'), String(toMe))
+    assert.equal(await sep.evaluate(e => e.nextElementSibling?.getAttribute('data-seq')), String(toMe), 'right before the line')
+    // Lines after hers, so the separator can be put in view without reaching the end (the end is where it is seen).
+    for (let i = 0; i < 25; i++) await speak(b, conf, `depois da fala para você ${i + 1}, com um texto um pouco mais comprido para ocupar a tela`)
+    await until('the lines after hers are in', async () => (await view(conf))!.rows.filter(r => r.kind === 'say').length >= 67)
+    await sep.evaluate(e => e.scrollIntoView({ block: 'start' }))
+    await until('reading the separator', async () => (await view(conf))!.scroll.stick === false)
+    assert.equal(await sep.count(), 1, 'it stays while she has not reached the end')
+    await page.screenshot({ path: join(SHOTS, 'separador-novas-para-voce.png') })
+    await page.evaluate(i => window.__tether.ext.channels.scrollTo(i, 0), conf)
+    await until('back at the top, the bar for her again', async () => (await view(conf))!.bar === '1 nova para você')
     await page.locator(`.ch-pane[data-channel="${conf}"] .ch-newbar`).click()
     await until('the click brings the line into view', () => page.locator(`.ch-pane[data-channel="${conf}"] .ch-msg[data-seq="${toMe}"]`).evaluate(e => {
       const r = e.getBoundingClientRect(), v = e.closest('.ch-msgs')!.getBoundingClientRect()
@@ -279,6 +295,7 @@ test('channel marks: unread, "to you", the top bar icon and what makes them go',
     await page.evaluate(i => window.__tether.ext.channels.scrollTo(i, 1e9), conf)
     await until('the end clears everything', async () => { const m = await marks(conf); return m.toMe === 0 && m.unread === 0 && !m.seal })
     assert.equal((await view(conf))!.bar, '')
+    await until('the separator goes when she sees the line', async () => (await sep.count()) === 0)
     assert.equal(await tab(conf).locator('.ch-att:not([hidden])').count(), 0)
     assert.equal((await status()).state, 'idle')
   } finally {

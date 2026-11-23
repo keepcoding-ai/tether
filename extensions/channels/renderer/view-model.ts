@@ -112,7 +112,9 @@ export interface SayRow {
 
 export interface NoticeRow { kind: 'notice'; seq: number; at: string; time: string; glyph: NoticeGlyph; text: string }
 export interface DayRow { kind: 'day'; key: string; label: string }
-export type Row = SayRow | NoticeRow | DayRow
+/** "novas para você · 14:05": drawn right before the first unseen line addressed to the person (the orange line of the conversation). */
+export interface UnseenRow { kind: 'unseen'; seq: number; label: string }
+export type Row = SayRow | NoticeRow | DayRow | UnseenRow
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
@@ -147,7 +149,20 @@ export function nameYou(text: string, moderator: string): string {
   return text.replace(re, (m, offset: number, whole: string) => (offset === 0 || /[.!?:]\s+$/.test(whole.slice(0, offset)) ? 'Você' : 'você'))
 }
 
+/**
+ * The record's own lines are the same text the agents read, which still says "owner" in two of them (the desk channel's birth and
+ * the owner ending). The screen says "dono" (P12): swapped here by the line's type, anchored on the fixed phrase of that line, so
+ * a name or a room that happens to hold the word is left alone.
+ */
+export function screenText(type: LineEventType | undefined, text: string): string {
+  if (type === 'create') return text.replace(/^(#\S+ nasceu com a mesa · )owner:/, '$1dono:')
+  if (type === 'owner-ended') return text.replace(/^(.+ deixou de ser o )owner( de #\S+;)/, '$1dono$2')
+  return text
+}
+
 export interface RowsOptions {
+  /** The `seq` of the first unseen line addressed to the person (marks.ts): the separator goes right before it. */
+  firstToMe?: number
   /** name → agent id of the members (to give a name in a `to` its hue). */
   idByName?: ReadonlyMap<string, string>
   /** The id of the channel's owner agent (draws the crown on its lines even if the line says member). */
@@ -167,9 +182,13 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
     const day = dayKey(new Date(l.at))
     if (day !== lastDay && !day.includes('NaN')) { rows.push({ kind: 'day', key: day, label: dayLabel(l.at, now) }); lastDay = day; prev = undefined }
     if (l.kind === 'notice') {
-      rows.push({ kind: 'notice', seq: l.seq, at: l.at, time: timeOf(l.at), glyph: noticeGlyph(l.event?.type), text: nameYou(l.body, moderator) })
+      rows.push({ kind: 'notice', seq: l.seq, at: l.at, time: timeOf(l.at), glyph: noticeGlyph(l.event?.type), text: nameYou(screenText(l.event?.type, l.body), moderator) })
       prev = undefined
       continue
+    }
+    if (opts.firstToMe !== undefined && l.seq === opts.firstToMe) {
+      rows.push({ kind: 'unseen', seq: l.seq, label: `novas para você · ${timeOf(l.at)}` })
+      prev = undefined
     }
     const mine = l.from.id === 'user' || l.from.role === 'moderator'
     const to: Addressee[] = (l.to ?? []).map(n => {
