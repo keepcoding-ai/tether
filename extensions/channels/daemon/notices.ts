@@ -18,9 +18,26 @@ export const MODERATOR_NAME = 'usuário'
 /** How many speakers a merged notice names before "e mais N". */
 export const NAMES_SHOWN = 5
 
-/** The CLI line a pane that does not hear inside needs (the ronda writes it the same way). */
+// A pane that does not hear inside is taught both ways, tool first: the core does not tell an extension whether the pane's
+// client has the tether's MCP tools (only the delivery path), and a sandboxed client (Codex) may be denied the CLI's pipe while
+// the tool works.
+/** The way to speak in `room` from a pane that does not hear inside (the ronda writes the CLI form the same way). */
+const sayHow = (room: string): string => `pela ferramenta channels_say (room "${room}") ou node "$TETHER_CLI" channels say ${room} "<texto>"`
+/** The way to read `room` from such a pane; `since` narrows it to what came after that seq. */
+const readHow = (room: string, since?: number): string =>
+  `pela ferramenta channels_read (room "${room}"${since === undefined ? '' : `, since ${since}`}) ou node "$TETHER_CLI" channels read ${room}${since === undefined ? '' : ` --since ${since}`}`
+/** The CLI line a pane that does not hear inside needs. */
 function cliHint(room: string): string {
-  return `para falar: node "$TETHER_CLI" channels say ${room} "<texto>"; para ler o que perdeu: node "$TETHER_CLI" channels read ${room} (no PowerShell, $env:TETHER_CLI)`
+  return `para falar: ${sayHow(room)}; para ler o que perdeu: ${readHow(room)} (no PowerShell, $env:TETHER_CLI)`
+}
+
+/**
+ * The last line of a SPOKEN message delivered to a pane that does not hear inside (typed in its terminal): what it writes in its
+ * own tab reaches nobody in the channel, and how to speak there. Notices and the `inside` road are left as they are.
+ */
+export function withReplyHint(body: string, room: string, path: 'inside' | 'terminal' | 'wait'): string {
+  if (path === 'inside') return body
+  return `${body.replace(/\n+$/, '')}\n(para responder no canal: o que você escreve na sua guia ninguém no canal vê; fale ${sayHow(room)})`
 }
 
 /** HH:MM, local time. */
@@ -107,14 +124,18 @@ function amount(t: Tally): string {
   return text
 }
 
-const readHint = (room: string, since: number): string => `ler: channels read ${room} --since ${since - 1}`
+type Path = 'inside' | 'terminal' | 'wait'
+
+/** `inside` keeps the short form; any other road is taught the tool and the CLI. */
+const readHint = (room: string, since: number, path: Path): string =>
+  path === 'inside' ? `ler: channels read ${room} --since ${since - 1}` : `ler: ${readHow(room, since - 1)}`
 
 /** In place of the second line that would wait behind the first: what waits now, and how to read it. */
-export function mergedNotice(room: string, t: Tally): string {
-  return `#${room}: ${amount(t)}; ${readHint(room, t.since)}`
+export function mergedNotice(room: string, t: Tally, path: Path = 'inside'): string {
+  return `#${room}: ${amount(t)}; ${readHint(room, t.since, path)}`
 }
 
 /** The one notice per channel a member gets when its process runs again. */
-export function returnNotice(room: string, t: Tally): string {
-  return `você voltou · #${room}: ${amount(t)}; ${readHint(room, t.since)}`
+export function returnNotice(room: string, t: Tally, path: Path = 'inside'): string {
+  return `você voltou · #${room}: ${amount(t)}; ${readHint(room, t.since, path)}`
 }
