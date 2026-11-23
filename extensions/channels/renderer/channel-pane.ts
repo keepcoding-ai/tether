@@ -9,6 +9,7 @@
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } from 'dockview-core'
 import type { Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
 import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
@@ -50,7 +51,8 @@ export interface PaneSnapshot {
   sub: string
   closed: boolean
   rows: Array<{ kind: Row['kind']; text: string; name?: string; role?: string; crown?: boolean; mine?: boolean; to?: string[]; glyph?: string; continued?: boolean }>
-  members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string }>
+  /** `emblem`: the name on the member's chip as drawn, empty when none. */
+  members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; emblem: string }>
   muteBar: string
   scroll: { top: number; client: number; height: number; stick: boolean }
   unread: number
@@ -562,7 +564,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const side = this.side
       side.replaceChildren()
       if (!this.answer) return
-      const rows = memberRows(this.answer)
+      // The emblems are read at each redraw (no observer): a change shows when the list is drawn again.
+      const rows = memberRows(this.answer, id => ui.panes.personEmblem(id))
       side.append(el('div', 'ch-sec', `Membros · ${rows.length}`))
       for (const m of rows) {
         const row = el('div', 'ch-mrow')
@@ -576,6 +579,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         name.title = 'Ir para a guia deste agente'
         name.addEventListener('click', () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) })
         l1.append(em, name)
+        if (m.emblem) {
+          const chip = emblemBadge(m.emblem)
+          chip.classList.add('ch-emblem')
+          chip.title = m.emblem.name
+          l1.append(chip)
+        }
         const l2 = el('div', 'ch-l2')
         l2.append(el('span', 'ch-role', m.role))
         if (m.muted) {
@@ -611,7 +620,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           : r.kind === 'unseen' ? { kind: r.kind, text: r.label }
           : r.kind === 'notice' ? { kind: r.kind, text: r.text, glyph: r.glyph }
           : { kind: r.kind, text: r.body, name: r.name, role: r.role, crown: r.crown, mine: r.mine, to: r.to.map(t => t.name), continued: r.continued }),
-        members: this.answer ? memberRows(this.answer).map(x => ({ name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone })) : [],
+        members: this.answer ? memberRows(this.answer).map(x => ({ name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone, emblem: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-emblem`)?.getAttribute('aria-label') ?? '' })) : [],
         muteBar: this.answer ? muteBar(this.answer) : '',
         scroll: { top: m.scrollTop, client: m.clientHeight, height: m.scrollHeight, stick: this.stick },
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,
@@ -692,7 +701,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
   // Read at window.__tether.ext.channels.<name>.
   ui.test.expose('open', open)
   ui.test.expose('view', (channelId: string): PaneSnapshot | undefined => paneOf(channelId)?.snapshot())
-  ui.test.expose('kept', (channelId: string): boolean => kept.has(channelId))
+  ui.test.expose('wearEmblem', (paneId: string, emblemId: string | undefined): void => { ui.panes.find(paneId)?.api.updateParameters({ emblem: emblemId }) })
+  ui.test.expose('kept',(channelId: string): boolean => kept.has(channelId))
   ui.test.expose('scrollTo', (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top))
   ui.test.expose('loadOlder', (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve())
 

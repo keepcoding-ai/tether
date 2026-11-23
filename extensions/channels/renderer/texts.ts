@@ -3,10 +3,10 @@
 // membro, moderador, calado).
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import type { DialogSpec } from '../../../app/shared/dialog.ts'
-import type { PickItem } from '../../../app/renderer/ext-api.ts'
+import type { PaneEmblem, PickItem } from '../../../app/renderer/ext-api.ts'
 import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
 import { isRoomName } from '../rules.ts'
-import { membersCount } from './view-model.ts'
+import { membersCount, type EmblemReader } from './view-model.ts'
 
 /** The picker's icon for a channel row, and the icons of the menus (names of app/renderer/icons.ts: the core's table). */
 export const ICON = {
@@ -86,6 +86,12 @@ export function findChannel(list: readonly ChannelSummary[], ref: string): Chann
   return list.find(c => c.name === name && !c.closed) ?? list.find(c => c.name === name)
 }
 
+/** The row's `emblem` field for the agent with this id: the emblem its tab wears, or nothing. */
+function emblemField(id: string, emblemOf: EmblemReader | undefined): { emblem?: PaneEmblem } {
+  const emblem = emblemOf?.(id)
+  return emblem ? { emblem } : {}
+}
+
 /** The agent panes the person can add: alive, not in the channel, not removed from the question (they come back by a join). */
 export interface AgentChoice { slotId: string; kind: string; name: string; deskId?: string; deskTitle?: string; alive: boolean }
 
@@ -94,11 +100,11 @@ export function agentLabel(a: Pick<AgentChoice, 'kind' | 'name'>): string {
 }
 
 /** The join's second step: agents outside the channel, the ones of the active desk first. */
-export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<string>, deskId: string | undefined): PickItem<string>[] {
+export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<string>, deskId: string | undefined, emblemOf?: EmblemReader): PickItem<string>[] {
   const out = agents.filter(a => a.alive && !inside.has(a.slotId))
   const row = (a: AgentChoice, group: string): PickItem<string> => ({
     value: a.slotId, label: agentLabel(a), letter: a.name.charAt(0).toUpperCase() || '?', hue: agentHue(a.slotId),
-    detail: a.deskTitle !== undefined ? a.deskTitle : 'Gaveta', group,
+    detail: a.deskTitle !== undefined ? a.deskTitle : 'Gaveta', group, ...emblemField(a.slotId, emblemOf),
   })
   return [
     ...out.filter(a => a.deskId === deskId).map(a => row(a, 'Nesta mesa')),
@@ -110,12 +116,13 @@ export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<st
 export type MemberGesture = 'remove' | 'mute' | 'unmute'
 
 /** The second step of remove, mute and unmute: the owner first, as the pane lists them; muted ones only for "devolver a voz". */
-export function memberItems(members: readonly MemberInfo[], ownerId: string | undefined, gesture: MemberGesture): PickItem<string>[] {
+export function memberItems(members: readonly MemberInfo[], ownerId: string | undefined, gesture: MemberGesture, emblemOf?: EmblemReader): PickItem<string>[] {
   const kept = members.filter(m => (gesture === 'unmute' ? m.muted : gesture === 'mute' ? !m.muted : true))
   const ordered = [...kept.filter(m => m.id === ownerId), ...kept.filter(m => m.id !== ownerId)]
   return ordered.map(m => ({
     value: m.id, label: m.name, letter: m.name.charAt(0).toUpperCase() || '?', hue: agentHue(m.id),
     detail: [m.id === ownerId ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.by === 'desk' ? ['da mesa'] : [])].join(' · '),
+    ...emblemField(m.id, emblemOf),
   }))
 }
 

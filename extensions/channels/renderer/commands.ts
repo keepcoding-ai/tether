@@ -141,9 +141,10 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
       title: text.title, placeholder: text.placeholder, emptyText: text.empty,
       items: async () => {
         const a = await membersOf(channel.id)
-        if (kind === 'join') return joinItems(agents(), new Set(a.members.map(m => m.id)), ui.desks.activeId())
+        const emblemOf = (id: string) => ui.panes.personEmblem(id)
+        if (kind === 'join') return joinItems(agents(), new Set(a.members.map(m => m.id)), ui.desks.activeId(), emblemOf)
         const ownerId = a.channel.owner.kind === 'agent' ? a.channel.owner.id : undefined
-        return memberItems(a.members, ownerId, kind as MemberGesture)
+        return memberItems(a.members, ownerId, kind as MemberGesture, emblemOf)
       },
     }
   }

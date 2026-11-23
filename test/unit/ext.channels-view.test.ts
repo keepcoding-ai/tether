@@ -130,6 +130,16 @@ test('members: the owner first, the state of each, muted marked', () => {
   assert.deepEqual(away.map(r => [r.state, r.tone]), [['parado', 'off'], ['ouve pelo terminal', 'on']])
 })
 
+test('members: the emblem the reader gives rides on the row; a member without one has no field', () => {
+  const deploy = { name: 'Deploy', color: 'teal', icon: 'rocket-launch' } as const
+  const plain = memberRows(answer())
+  assert.ok(plain.every(r => !('emblem' in r)))
+  const worn = memberRows(answer(), id => (id === 'a1' ? deploy : undefined))
+  assert.deepEqual(worn[0]!.emblem, deploy)
+  assert.ok(worn.slice(1).every(r => !('emblem' in r)))
+  assert.deepEqual(worn.map(r => r.name), plain.map(r => r.name), 'order and the rest are as before')
+})
+
 test('header: title with #, count, owner, closed; the person owns: "Você"', () => {
   const h = headerOf(answer())
   assert.equal(h.title, '#obra')

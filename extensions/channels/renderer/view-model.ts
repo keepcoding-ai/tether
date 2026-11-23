@@ -3,6 +3,7 @@
 // paints these. Words on the screen are Portuguese (P12: dono, membro, moderador, calado); the code says owner, member, moderator,
 // muted. Nothing here is orange: the "to me" mark is the U3's.
 import { agentHue } from '../../../app/shared/agent-color.ts'
+import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import type { Line, LineEventType } from '../rules.ts'
 import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
 
@@ -229,6 +230,8 @@ export interface MemberRow {
   state: string
   /** 'on' it hears, 'wait' it will hear later, 'off' its process does not run. */
   tone: 'on' | 'wait' | 'off'
+  /** The emblem the person put on this member's tab, when it wears one. */
+  emblem?: PaneEmblem
 }
 
 const ROUTE_TEXT: Record<MemberInfo['path'], { state: string; tone: MemberRow['tone'] }> = {
@@ -238,14 +241,18 @@ const ROUTE_TEXT: Record<MemberInfo['path'], { state: string; tone: MemberRow['t
   away: { state: 'parado', tone: 'off' },
 }
 
-/** The owner first, then the others in the order the daemon gave. */
-export function memberRows(answer: MembersAnswer): MemberRow[] {
+/** Reads the emblem the person put on the tab of the pane with this id (the agent's slot id): `ui.panes.personEmblem`. */
+export type EmblemReader = (id: string) => PaneEmblem | undefined
+
+/** The owner first, then the others in the order the daemon gave. `emblemOf` adds the emblem of each member that wears one. */
+export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader): MemberRow[] {
   const ownerId = answer.channel.owner.kind === 'agent' ? answer.channel.owner.id : undefined
   const rows = answer.members.map((m): MemberRow => {
     const route = ROUTE_TEXT[m.path]
+    const emblem = emblemOf?.(m.id)
     return {
       id: m.id, name: m.name, hue: agentHue(m.id), role: m.id === ownerId ? 'dono' : 'membro', crown: m.id === ownerId,
-      muted: m.muted, route: m.path, state: route.state, tone: route.tone,
+      muted: m.muted, route: m.path, state: route.state, tone: route.tone, ...(emblem ? { emblem } : {}),
     }
   })
   return [...rows.filter(r => r.crown), ...rows.filter(r => !r.crown)]

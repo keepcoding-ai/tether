@@ -6,7 +6,7 @@ import { CMD, manifest } from '../../extensions/channels/manifest.ts'
 import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import {
-  channelDetail, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, muteDialog, removeDialog,
+  channelDetail, channelItem, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, muteDialog, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -85,6 +85,21 @@ test('memberItems: the owner first; mute offers the ones who speak, unmute the m
   assert.deepEqual(memberItems(members, 'a', 'unmute').map(i => i.value), ['b'])
   assert.equal(memberItems(members, 'a', 'remove')[0]!.detail, 'dono · da mesa')
   assert.equal(memberItems(members, 'a', 'remove')[1]!.detail, 'membro · calado')
+})
+
+test('agent rows carry the emblem the reader gives, and none when it gives none', () => {
+  const deploy = { name: 'Deploy', color: 'teal', icon: 'rocket-launch' } as const
+  const reader = (id: string) => (id === 's2' || id === 'a' ? deploy : undefined)
+  const join = joinItems([agent('s1', 'conferente', 'desk-1'), agent('s2', 'bancada', 'desk-1')], new Set(), 'desk-1', reader)
+  assert.equal('emblem' in join[0]!, false)
+  assert.deepEqual(join[1]!.emblem, deploy)
+  assert.equal('emblem' in joinItems([agent('s2', 'bancada', 'desk-1')], new Set(), 'desk-1')[0]!, false, 'no reader: no emblem')
+  const m = (id: string, name: string): MemberInfo => ({ id, name, muted: false, since: '', by: 'user', alive: true, path: 'inside' })
+  const rows = memberItems([m('a', 'Atrium'), m('c', 'conferente')], 'a', 'remove', reader)
+  assert.deepEqual(rows[0]!.emblem, deploy)
+  assert.equal('emblem' in rows[1]!, false)
+  // Channel rows never carry one.
+  assert.equal('emblem' in channelItem(sum({ id: 'c9', name: 'obra' })), false)
 })
 
 test('the confirmations say the consequence; remove, mute and close are declared situations with one act each', () => {
