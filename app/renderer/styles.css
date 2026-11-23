@@ -167,7 +167,7 @@ body { display: flex; flex-direction: column; }
    without a tab, grey = only idle ones without a tab, blue = a pause going, green = a pause ready. */
 .ib-count .c-attention { background: var(--x-alert); color: var(--bg); }
 .ib-count .c-running, .ib-count .c-done { background: var(--ok); color: var(--bg); }
-.ib-count .c-idle { background: var(--bg-hover); color: var(--fg-dim); }
+.ib-count .c-idle { background: var(--fg-dim); color: var(--bg); }
 .ib-count .c-progress { background: var(--accent); color: var(--on-accent); }
 #btn-sessions.active { color: var(--accent); }
 
