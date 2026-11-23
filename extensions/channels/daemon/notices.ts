@@ -3,6 +3,12 @@
 // counts, an hour and a seq. Two kinds of text live here: the LINE every member and the channel's pane read (third person:
 // "X entrou em #obra"), and the NOTICE the agent it is about gets ("você entrou em #obra"). Pure: no imports.
 
+import { DOOR_MCP_SERVER } from '../../../src/daemon/door/types.ts'
+import { VERB_NS } from '../manifest.ts'
+
+/** A channels tool as Claude Code names it: `mcp__<server>__<ns>_<verb>` (the registry's own naming). */
+export const claudeToolName = (verb: string): string => `mcp__${DOOR_MCP_SERVER}__${VERB_NS}_${verb}`
+
 /** The sender of every notice of the channels. */
 export const SYSTEM_FROM = { name: 'tether', id: 'tether', role: 'system' } as const
 
@@ -64,7 +70,7 @@ export const createdNotice = (room: string): string => `você abriu #${room} e �
  */
 export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait'): string {
   let text = `você entrou em #${room}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
-  if (path === 'inside') text += ' · para responder no canal use a ferramenta channels_say; o texto do seu turno não vai ao canal'
+  if (path === 'inside') text += ` · para responder no canal chame a ferramenta ${claudeToolName('say')} (se ela não estiver carregada, carregue-a antes pela busca de ferramentas); o texto do seu turno não vai ao canal`
   else text += ` · ${cliHint(room)}; o texto do seu turno não vai ao canal`
   if (path === 'wait') text += ' · agora esta guia não ouve as falas: elas esperam até ela poder ouvir, juntadas num aviso só'
   return text

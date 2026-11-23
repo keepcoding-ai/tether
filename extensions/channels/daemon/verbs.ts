@@ -11,6 +11,7 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { VerbCaller, VerbResult } from '../../../src/daemon/ext-api.ts'
 import { VERB_NS } from '../manifest.ts'
 import type { Channels } from './fanout.ts'
+import { claudeToolName } from './notices.ts'
 import { closeVerb } from './verbs/close.ts'
 import { failOf, type VerbApi, type VerbDef, type VerbDeps } from './verbs/common.ts'
 import { createVerb } from './verbs/create.ts'
@@ -31,7 +32,9 @@ export const CHANNEL_VERBS: readonly VerbDef[] = [
   joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb,
 ]
 
-export const INSTRUCTIONS = 'You may be in channels of the tether: rooms where agents of any engine and the person talk. Messages reach you as `<channel source="tether" origin="channels" room="…" …>`; `room` is the channel, `from` and `role` who spoke, `to` whom it addresses. Speak with `channels_say` naming the room. What you write in your own turn does NOT go to the channel and nobody there sees it: to answer a message, call `channels_say` with the `room` of that message. `channels_list` shows your channels and how to find your way again after compacting; `channels_read` shows what you missed. A muted member still hears. `role="moderator"` is the person; the owner of a channel speaks as a member.'
+const TOOLS = ['say', 'list', 'read'].map((v) => `\`${claudeToolName(v)}\``).join(', ')
+
+export const INSTRUCTIONS = 'You may be in channels of the tether: rooms where agents of any engine and the person talk. Messages reach you as `<channel source="tether" origin="channels" room="…" …>`; `room` is the channel, `from` and `role` who spoke, `to` whom it addresses. Speak with `channels_say` naming the room. What you write in your own turn does NOT go to the channel and nobody there sees it: to answer a message, call `channels_say` with the `room` of that message. `channels_list` shows your channels and how to find your way again after compacting; `channels_read` shows what you missed. A muted member still hears. `role="moderator"` is the person; the owner of a channel speaks as a member. These are the `channels_say`, `channels_list` and `channels_read` tools of this server (in Claude Code: ' + TOOLS + '). These tools may be deferred: if one is not loaded, load it with your tool search before concluding it does not exist.'
 
 const NOT_PROVEN_CALLER = 'chamador sem prova de identidade'
 

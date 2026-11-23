@@ -450,12 +450,14 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
     test('the text of the turn does not reach the channel: said in the paragraph and in the join notice of both paths', () => {
       assert.ok(INSTRUCTIONS.includes('does NOT go to the channel and nobody there sees it'))
       assert.ok(INSTRUCTIONS.includes('call `channels_say` with the `room`'))
+      for (const v of ['say', 'list', 'read']) assert.ok(INSTRUCTIONS.includes(`\`mcp__tether__channels_${v}\``), v)
+      assert.ok(INSTRUCTIONS.includes('These tools may be deferred: if one is not loaded, load it with your tool search before concluding it does not exist.'))
       const inside = joinedNotice('obra', undefined, ['a'], 'inside')
-      assert.ok(inside.includes('para responder no canal use a ferramenta channels_say; o texto do seu turno não vai ao canal'))
+      assert.ok(inside.includes('para responder no canal chame a ferramenta mcp__tether__channels_say (se ela não estiver carregada, carregue-a antes pela busca de ferramentas); o texto do seu turno não vai ao canal'))
       for (const path of ['terminal', 'wait'] as const) {
         const text = joinedNotice('obra', undefined, ['a'], path)
         assert.ok(text.includes('channels say obra') && text.includes('o texto do seu turno não vai ao canal'), path)
-        assert.ok(!text.includes('ferramenta channels_say'), path)
+        assert.ok(!text.includes('ferramenta mcp__tether__channels_say'), path)
       }
     })
 
