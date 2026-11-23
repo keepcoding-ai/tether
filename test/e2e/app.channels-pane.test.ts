@@ -57,6 +57,7 @@ const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const AGENT = fileURLToPath(new URL('../fixtures/channels/agent.cjs', import.meta.url))
 const SHOTS = 'C:/atrium/.tmp/tether-agents/onda-3/u1a'
+const SHOTS_B = 'C:/atrium/.tmp/tether-agents/onda-3/u1b'
 /** Lines seeded straight into the record (more than two pages of 50). */
 const SEEDED = 120
 
@@ -79,6 +80,7 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
   mkdirSync(SHOTS, { recursive: true })
+  mkdirSync(SHOTS_B, { recursive: true })
   const home = tempHome()
   const pipe = uniquePipe(home)
   const logs: string[] = []
@@ -180,7 +182,9 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     assert.ok(v.members.every(m => m.tone === 'on' && m.state === 'ouvindo'), 'both hear from inside')
     assert.match(v.muteBar, /1 calado neste canal/)
     assert.equal(v.hasComposerSlot, true)
-    assert.equal(await page.locator(`.ch-pane[data-channel="${id}"] :is(textarea, input[type=text], [contenteditable])`).count(), 0, 'no speaking box in this slice')
+    assert.equal(await page.locator(`.ch-pane[data-channel="${id}"] .ch-composer-slot textarea`).count(), 1, 'the speaking box is in its slot')
+    assert.equal(v.composer?.options[0], '', 'todos first')
+    assert.deepEqual(new Set(v.composer?.options.slice(1)), new Set([nameA, nameB]))
     await page.waitForFunction(i => { const s = window.__tether.ext.channels.view(i)!.scroll; return s.client > 0 && s.height - (s.top + s.client) <= 24 }, id).catch(async () => { throw new Error(`does not open at the end: ${JSON.stringify((await view())!.scroll)}`) })
     await page.screenshot({ path: join(SHOTS, 'guia-aberta.png') })
 
@@ -284,6 +288,48 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     assert.ok(Math.abs(v.scroll.top - mid.scroll.top) <= 2, `the place was kept (${mid.scroll.top} -> ${v.scroll.top})`)
     assert.equal(await msgs.count(), 1, 'one pane, one channel')
     await page.screenshot({ path: join(SHOTS, 'guia-movida.png') })
+
+    // ---- 6. speaking (U1b): Enter sends, Shift+Enter breaks the line, @name becomes `to`, a closed channel has no box ----
+    console.log('step 6')
+    const box = page.locator(`.ch-pane[data-channel="${id}"] .ch-composer-slot textarea`)
+    const lastSay = async (): Promise<NonNullable<PaneSnapshot['rows'][number]>> => (await view())!.rows.filter(r => r.kind === 'say').at(-1)!
+    await box.click()
+    await box.fill('primeira')
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.type('segunda')
+    assert.equal((await view())!.composer!.text, 'primeira\nsegunda', 'Shift+Enter breaks the line and sends nothing')
+    assert.notEqual((await lastSay()).text, 'primeira\nsegunda')
+    await page.keyboard.press('Enter')
+    await waitView('the moderator line came back', x => x.rows.some(r => r.text === 'primeira\nsegunda'))
+    let mine = await lastSay()
+    assert.equal(mine.mine, true)
+    assert.equal(mine.role, 'moderador')
+    assert.deepEqual(mine.to, [], 'no recipient: for everyone')
+    assert.equal((await view())!.composer!.text, '', 'the box emptied')
+    const seg = nameA.split(/[^\p{L}\p{N}_-]+/u).filter(Boolean).at(-1)!
+    await box.fill(`@${seg.toUpperCase()} confere o log`)
+    await page.keyboard.press('Enter')
+    await waitView('the mention line came back', x => x.rows.some(r => r.text === `@${seg.toUpperCase()} confere o log`))
+    mine = await lastSay()
+    assert.deepEqual(mine.to, [nameA], '@name became `to`, by the name of the member')
+    assert.equal(mine.mine, true)
+    await box.fill('@ninguem oi')
+    await page.keyboard.press('Enter')
+    await waitView('the unmatched mention stays text', x => x.rows.some(r => r.text === '@ninguem oi'))
+    mine = await lastSay()
+    assert.deepEqual(mine.to, [], 'no member by that name: text only')
+    // The recipient picked in the box is the address too.
+    await page.selectOption(`.ch-pane[data-channel="${id}"] .ch-dsel`, nameB)
+    await box.fill('para a bancada')
+    await page.keyboard.press('Enter')
+    await waitView('the picked recipient line', x => x.rows.some(r => r.text === 'para a bancada'))
+    assert.deepEqual((await lastSay()).to, [nameB])
+    await page.screenshot({ path: join(SHOTS_B, 'guia-caixa.png') })
+    // Closed: the box is gone, the closed notice is there.
+    assert.ok((await ch.close(USER, id)).ok)
+    await waitView('closed channel has no box', x => x.closed && x.composer === undefined)
+    assert.equal(await box.count(), 0)
+    await page.screenshot({ path: join(SHOTS_B, 'guia-encerrada.png') })
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})

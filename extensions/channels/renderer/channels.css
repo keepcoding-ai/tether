@@ -59,6 +59,18 @@
 .ch-mutebar svg.ph { width: 13px; height: 13px; }
 .ch-foot { flex: none; }
 .ch-composer-slot:empty { display: none; }
+.ch-say { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--frame-bg); }
+.ch-say-to { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--fg-dim); }
+.ch-dsel { height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12px var(--ui); max-width: 100%; }
+.ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--ui); }
+.ch-field:focus-visible, .ch-dsel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-say-error { font-size: 12px; color: var(--fg-dim); border-left: 3px solid var(--fg-dim); padding: 2px 8px; }
+.ch-say-error[hidden] { display: none; }
+.ch-say-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg-dim); }
+.ch-say-sp { flex: 1; }
+.ch-say-hint kbd { font: 10.5px var(--ui); padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-2); }
+.ch-send { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 12px; border: 0; border-radius: 5px; background: var(--accent); color: var(--on-accent); font: 600 12px var(--ui); cursor: pointer; }
+.ch-send:disabled { opacity: .55; cursor: default; }
 .ch-closed { padding: 8px 14px; border-top: 1px solid var(--border); background: var(--bg-2); font-size: 12px; color: var(--fg-dim); }
 
 .ch-btn { align-self: center; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--border); background: var(--frame-bg); color: var(--fg); font-size: 12px; cursor: pointer; flex: none; }

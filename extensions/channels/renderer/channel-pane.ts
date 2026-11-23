@@ -5,13 +5,14 @@
 //     If the person reads above the end the view does not move (a bar says how many came); at the end it follows.
 //   - Moving the pane to another desk rebuilds it; the place (lines held, scroll, "reading the end") is kept per channel in memory,
 //     up to KEPT_MAX channels, and the newest page is asked again to fill the end.
-//   - The speaking box is the next slice (U1b): its place is `.ch-composer-slot`. Orange is the U3's.
+//   - The speaking box (composer.ts, U1b) sits in `.ch-composer-slot`; a closed channel has none. Orange is the U3's.
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } from 'dockview-core'
 import type { Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
 import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
+import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import {
   applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, olderCursor,
@@ -56,6 +57,8 @@ export interface PaneSnapshot {
   last: number
   membersOpen: boolean
   hasComposerSlot: boolean
+  /** The speaking box; absent while the channel is closed. */
+  composer?: ComposerSnapshot
 }
 
 export interface ChannelPanes {
@@ -114,6 +117,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
     private readonly composerSlot = el('div', 'ch-composer-slot')
     private readonly side = el('div', 'ch-members')
     private membersBtn: HTMLButtonElement | undefined
+    private readonly composer = createComposer({ send: (text, to) => this.say(text, to) })
 
     init(p: GroupPanelPartInitParameters): void {
       this.api = p.api
@@ -195,6 +199,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         this.paintHead()
         this.paintMembers()
         this.paintMuteBar()
+        this.paintFoot()
       } catch { /* the next event asks again */ }
     }
 
@@ -365,10 +370,22 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
     }
 
     private paintFoot(): void {
-      // Reading only: a closed channel says so; the box that speaks fills `.ch-composer-slot` in U1b.
+      // A closed channel says so and has no box; an open one has the box in `.ch-composer-slot` (the draft lives in the box, not here).
       const closed = this.answer?.channel.closed !== undefined
       this.foot.querySelector('.ch-closed')?.remove()
-      if (closed) this.foot.prepend(el('div', 'ch-closed', 'Canal encerrado. A conversa fica guardada para leitura.'))
+      if (closed) {
+        this.foot.prepend(el('div', 'ch-closed', 'Canal encerrado. A conversa fica guardada para leitura.'))
+        this.composerSlot.replaceChildren()
+        return
+      }
+      if (!this.answer) return
+      this.composer.setMembers(this.answer.members.map(m => m.name))
+      if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
+    }
+
+    private async say(text: string, to: string[]): Promise<void> {
+      await this.ask('say', { text, ...(to.length > 0 ? { to } : {}) })
+      this.toEnd()
     }
 
     private rows(): Row[] {
@@ -510,6 +527,7 @@ export function createChannelPanes(ui: TetherUi): ChannelPanes {
         scroll: { top: m.scrollTop, client: m.clientHeight, height: m.scrollHeight, stick: this.stick },
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,
         hasComposerSlot: this.element.querySelector('.ch-composer-slot') !== null,
+        ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }
