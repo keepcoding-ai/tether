@@ -27,11 +27,11 @@ import { pidAlive } from './daemon-driver.ts'
 
 const MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
 const AGENT = resolve(import.meta.dirname, '../fixtures/channels/agent-live.cjs')
-const SOUL_BIN = process.env.E4S_SOUL_BIN ?? 'D:/atrium/workspace/soul-cli/bin/soul'
+const SOUL_BIN = process.env.E4S_SOUL_BIN ?? 'C:/atrium/workspace/soul-cli/bin/soul'
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 const runRoot = process.env.E4S_RUN_ROOT ?? tmpdir()
-const evidenceDir = process.env.E4S_EVIDENCE_DIR ?? `D:/atrium/.tmp/tether-agents/onda-3/e4s/run-${new Date().toISOString().replace(/[:.]/g, '-')}`
+const evidenceDir = process.env.E4S_EVIDENCE_DIR ?? `C:/atrium/.tmp/tether-agents/onda-3/e4s/run-${new Date().toISOString().replace(/[:.]/g, '-')}`
 
 /** Evidence never carries a key: anything that looks like a secret token (32+ url-safe characters mixing letters and digits, once uuids and paths are set aside) is replaced. */
 function sanitized(text: string): string {

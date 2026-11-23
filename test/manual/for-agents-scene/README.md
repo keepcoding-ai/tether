@@ -1,10 +1,10 @@
 # A cena do for-agents (V2)
 
-Roteiro manual da seção 8 do contrato. U = você; A = o Claude Code real numa guia da mesa `atrium`; mesa `cena` começa vazia. Um tether à parte (home e pipe da bancada), janela visível, agentes em pastas de bancada fora de `D:/atrium`, `D:/agentes`, `D:/kai`.
+Roteiro manual da seção 8 do contrato. U = você; A = o Claude Code real numa guia da mesa `atrium`; mesa `cena` começa vazia. Um tether à parte (home e pipe da bancada), janela visível, agentes em pastas de bancada fora de `C:/atrium`, `C:/agentes`, `C:/kai`.
 
-Prints: `D:/atrium/.tmp/tether-agents/onda-2/cena/passo-NN.png`.
+Prints: `C:/atrium/.tmp/tether-agents/onda-2/cena/passo-NN.png`.
 
-Abreviações: `CLI` = `node D:/atrium/.tmp/wt/tether-agents/bin/tether.mjs`. `$B` = a raiz de bancada que `setup.mjs` imprime (`scene.json` tem `dirs.c1`, `dirs.ser`, `dirs.c3`). Os comandos `agents ...` rodam DENTRO da guia de A (herda `TETHER_SLOT_ID`, `TETHER_SLOT_KEY`, home e pipe do tether da cena).
+Abreviações: `CLI` = `node C:/atrium/.tmp/wt/tether-agents/bin/tether.mjs`. `$B` = a raiz de bancada que `setup.mjs` imprime (`scene.json` tem `dirs.c1`, `dirs.ser`, `dirs.c3`). Os comandos `agents ...` rodam DENTRO da guia de A (herda `TETHER_SLOT_ID`, `TETHER_SLOT_KEY`, home e pipe do tether da cena).
 
 ## Preparar (uma vez)
 

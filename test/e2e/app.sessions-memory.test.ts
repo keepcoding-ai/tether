@@ -1,6 +1,6 @@
 // E2E of the memory/time fields in "Sessões" (hidden window, private home/pipe, real tetherd with shells, CLAUDE* stripped):
 // busySince/endedAt/memoryMB are injected with window.__tether.applyState; checks the menu rows, the header total, the tooltip,
-// the popup detail and footer, and takes screenshots into SESSIONS_MEM_SHOTS_DIR (default D:/atrium/.tmp/sessions-mem-proof).
+// the popup detail and footer, and takes screenshots into SESSIONS_MEM_SHOTS_DIR (default C:/atrium/.tmp/sessions-mem-proof).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -24,7 +24,7 @@ declare const document: { querySelectorAll(selector: string): { length: number }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
-const shots = process.env.SESSIONS_MEM_SHOTS_DIR ?? 'D:/atrium/.tmp/sessions-mem-proof'
+const shots = process.env.SESSIONS_MEM_SHOTS_DIR ?? 'C:/atrium/.tmp/sessions-mem-proof'
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')

@@ -31,7 +31,7 @@ const AGENT = resolve(import.meta.dirname, '../fixtures/channels/agent-live.cjs'
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 const runRoot = process.env.E4C_RUN_ROOT ?? tmpdir()
-const evidenceDir = process.env.E4C_EVIDENCE_DIR ?? `D:/atrium/.tmp/tether-agents/onda-3/e4c/run-${new Date().toISOString().replace(/[:.]/g, '-')}`
+const evidenceDir = process.env.E4C_EVIDENCE_DIR ?? `C:/atrium/.tmp/tether-agents/onda-3/e4c/run-${new Date().toISOString().replace(/[:.]/g, '-')}`
 mkdirSync(evidenceDir, { recursive: true })
 
 /** Evidence never carries a key: anything that looks like a secret token (32+ url-safe characters mixing letters and digits, once uuids and paths are set aside) is replaced. */

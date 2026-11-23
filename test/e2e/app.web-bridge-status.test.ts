@@ -375,7 +375,7 @@ test('web-bridge: status icon, popover, Pausar/Retomar, release, foco no painel 
     const appLog = readFileSync(join(home, 'tether-app.log'), 'utf8')
     assert.ok(!appLog.includes(key), 'no api.key in tether-app.log')
     for (const name of ['web-bridge-status-light.png', 'web-bridge-status-dark.png']) assert.ok(existsSync(join(artifacts, name)))
-    const copyDir = 'D:/atrium/.tmp/tether-c4'
+    const copyDir = 'C:/atrium/.tmp/tether-c4'
     try { mkdirSync(copyDir, { recursive: true }); for (const name of ['web-bridge-status-light.png', 'web-bridge-status-dark.png']) copyFileSync(join(artifacts, name), join(copyDir, name)) } catch { /* optional copy */ }
   } finally {
     await fake.close().catch(() => undefined)
