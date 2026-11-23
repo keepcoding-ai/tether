@@ -100,11 +100,12 @@ export function activate(main: TetherMain): IDisposable[] {
   })
   poller.start()
 
-  const openOptions = async (): Promise<{ ok: true } | { ok: false; message: string }> => {
+  const openOptions = async (browserName?: string): Promise<{ ok: true } | { ok: false; message: string }> => {
     const info = await readBuildInfo(vendorDir)
     if (!info) return { ok: false, message: 'A cópia vendorizada do bridge está sem build-info.' }
     const target = poller.current().options
-    const browser = target ? detected().find(b => b.id === target.browserId) : undefined
+    const named = typeof browserName === 'string' && browserName ? optionsBrowser(detected(), [{ id: '', name: browserName, tabs: 0 }]) : undefined
+    const browser = named ?? (target ? detected().find(b => b.id === target.browserId) : undefined)
     if (!browser) return { ok: false, message: 'Nenhum navegador compatível encontrado neste computador.' }
     try {
       const script = /\.(cmd|bat)$/i.test(browser.exe)
@@ -127,7 +128,9 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('status', () => Promise.resolve(poller.current())),
     ipc.handle('pause', on => poller.pause(on === true)),
     ipc.handle('releaseAll', () => poller.releaseAll()),
-    ipc.handle('openOptions', () => openOptions()),
+    ipc.handle('openOptions', name => openOptions(name)),
+    ipc.handle('activate', id => typeof id === 'string' ? poller.activate(id) : Promise.resolve({ ok: false as const, message: 'Navegador inválido.' })),
+    ipc.handle('focusTab', (id, tabId) => typeof id === 'string' && Number.isInteger(tabId) ? poller.focusTab(id, tabId) : Promise.resolve({ ok: false as const, message: 'Aba inválida.' })),
     ipc.on('watch', open => poller.watch(open === true)),
     toDisposable(() => poller.stop()),
   ]

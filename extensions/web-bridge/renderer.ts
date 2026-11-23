@@ -6,9 +6,12 @@
 // app's shortcuts stay quiet while it is open (dialogOpen()) and it shares the dialog's styles; its own pieces live in
 // web-bridge.css.
 // C4: the status icon of the top bar (design §5). Main polls the daemon and pushes a sanitized snapshot (`status` event);
-// this side computes state/badge/tooltip from it (status.ts), and fills the popover: browsers (tabs under control, last
-// activity), agents per `tether:<slot>` (click brings the pane to the front), Pausar/Retomar, Retomar todas as abas,
-// Instalar em outro navegador…, Opções da extensão, and the version footer with the "recarregue" hint (C5 marker).
+// this side computes state/badge/tooltip from it (status.ts), and fills the popover in the bell's rhythm (small upper-case
+// headings, radios that act at once, "Mais opções…" at the foot): NAVEGADORES, every connected browser with a radio that
+// makes it the active one, its state line (JS, dev, version) or an alert with its action, and an arrow that focuses its
+// window; AGENTES, the live sessions grouped by browser, each with its tab's title (or "aguardando") and an arrow to that
+// tab, the name revealing the pane. Under "Mais opções…" (Configurações on the Bridge's settings), one line of links:
+// Pausar/Retomar, Soltar todas as abas, Instalar em outro navegador…, Opções da extensão; then the version footer.
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import type { DialogOption } from '../../app/shared/dialog.ts'
 import { icon, type IconName } from '../../app/renderer/icons.ts'
@@ -17,7 +20,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { activeAgents, ago, badgeOf, DEBUG_LINE, EMPTY_SNAPSHOT, stateOf, tabsLabel, titleOf, versionLine } from './status.ts'
+import { activeAgents, agentGroups, badgeOf, browserAlert, EMPTY_SNAPSHOT, fallbackLine, stateMarks, stateOf, titleOf, versionLine, type AgentView, type BrowserView } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -25,6 +28,9 @@ export const GUIDE_SITUATION = 'web-bridge-guide'
 export const PICK_SITUATION = 'web-bridge-install'
 export const NO_BROWSER_SITUATION = 'web-bridge-no-browser'
 export const FAILED_SITUATION = 'web-bridge-failed'
+
+/** "Mais opções…": the settings page on the Bridge's first setting (its node, "Tether Bridge"). */
+export const MORE_OPTIONS_KEY = 'extensions.web-bridge.serveToAgents'
 
 const POLL_MS = 1000
 const CLOSE_AFTER_MS = 2000
@@ -205,15 +211,35 @@ export function activate(ui: TetherUi): IDisposable[] {
     if (text !== undefined) e.textContent = text
     return e
   }
-  const button = (action: string, iconName: IconName, label: string, run: () => void, opts: { danger?: boolean; disabled?: boolean } = {}): HTMLButtonElement => {
+  /** A link-like action (the bell's `bell-link`): the line under "Mais opções…" and the alerts' actions. */
+  const button = (action: string, label: string, run: () => void, opts: { disabled?: boolean } = {}): HTMLButtonElement => {
     const b = document.createElement('button')
     b.type = 'button'
-    b.className = `wb-action${opts.danger ? ' danger' : ''}`
+    b.className = 'wb-action'
     b.dataset.action = action
     b.disabled = !!opts.disabled || acting
-    b.append(icon(iconName), document.createTextNode(label))
+    b.textContent = label
     b.addEventListener('click', ev => { ev.stopPropagation(); run() })
     return b
+  }
+  /** The arrow that brings a window or a tab to the front. */
+  const goButton = (title: string, run: () => void): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'wb-go'
+    b.dataset.action = 'focus'
+    b.title = title
+    b.setAttribute('aria-label', title)
+    b.disabled = acting
+    b.append(icon('arrow-square-out'))
+    b.addEventListener('click', ev => { ev.stopPropagation(); run() })
+    return b
+  }
+  const heading = (text: string): HTMLElement => el('div', 'wb-label', text)
+  /** The status popover has no close call of its own: the core closes it on Escape. */
+  const closePopover = (): void => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) }
+  const focusTab = (browserId: string, tabId: number): void => {
+    void ipc.invoke('focusTab', browserId, tabId).then(r => { if (!r.ok) say(r.message, 'warn') })
   }
 
   const say = (text: string, tone: 'warn' | 'ok'): void => {
@@ -242,6 +268,61 @@ export function activate(ui: TetherUi): IDisposable[] {
     busyTimer = setTimeout(() => { busyTimer = undefined; handle.update() }, Math.max(50, latest + 10_000 - Date.now() + 20))
   }
 
+  const browserRow = (b: BrowserView): HTMLElement => {
+    const box = el('div', `wb-browser${b.active ? ' active' : ''}`); box.dataset.browser = b.id
+    const line = el('div', 'wb-browser-line')
+    const label = document.createElement('label'); label.className = 'wb-radio'
+    const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'wb-active-browser', value: b.id, checked: !!b.active, disabled: acting })
+    radio.addEventListener('change', () => { void act(() => ipc.invoke('activate', b.id), `Agentes passam a usar o ${b.name}.`) })
+    label.append(radio, el('span', 'wb-name', b.name))
+    line.append(label)
+    if (b.focusTabId !== undefined) { const tabId = b.focusTabId; line.append(goButton(`Trazer o ${b.name} para a frente`, () => focusTab(b.id, tabId))) }
+    box.append(line)
+    const alert = browserAlert(b, snapshot.version.vendored)
+    if (alert) {
+      const row = el('div', 'wb-alert')
+      row.append(el('span', 'wb-alert-text', `⚠ ${alert.text}`))
+      row.append(button(alert.action.id, alert.action.label, () => { void act(() => ipc.invoke('openOptions', b.name), `Página da extensão aberta no ${b.name}.`) }))
+      box.append(row)
+    } else {
+      const marks = stateMarks(b)
+      if (marks.length) {
+        const row = el('div', 'wb-marks')
+        marks.forEach((m, i) => {
+          if (i) row.append(' · ')
+          const span = el('span', `wb-mark${m.tone ? ` ${m.tone}` : ''}`, m.text); span.dataset.mark = m.key; span.title = m.title
+          row.append(span)
+        })
+        box.append(row)
+      }
+    }
+    return box
+  }
+
+  const agentRow = (a: AgentView): HTMLElement => {
+    const pane = a.slotId ? ui.panes.describe(a.slotId) : undefined
+    const li = el('li', `wb-row wb-agent${activeAgents(snapshot, Date.now()).some(x => x.clientId === a.clientId) ? ' active' : ''}`)
+    li.dataset.client = a.clientId
+    if (a.slotId) li.dataset.slot = a.slotId
+    const who = el('span', `wb-who${pane ? ' clickable' : ''}`)
+    who.append(el('span', 'wb-name', a.name))
+    if (pane?.place) who.append(el('span', 'wb-place', `(${pane.place})`))
+    if (pane) {
+      who.tabIndex = 0
+      who.setAttribute('role', 'button')
+      who.title = `Ir para o painel${pane.place ? ` (${pane.place})` : ''}`
+      const go = (): void => { ui.panes.reveal(a.slotId!) }
+      who.addEventListener('click', ev => { ev.stopPropagation(); go() })
+      who.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go() } })
+    }
+    const tab = el('span', `wb-tab${a.tab ? '' : ' waiting'}`, a.tab ? (a.tab.title ? `"${a.tab.title}"` : 'aba sem título') : 'aguardando')
+    if (a.tab?.title) tab.title = a.tab.title
+    li.append(who, tab)
+    if (a.tab) { const t = a.tab; li.append(goButton('Ir para a aba do agente', () => focusTab(t.browserId, t.id))) }
+    else li.append(el('span', 'wb-go-space'))
+    return li
+  }
+
   const render = (pop: HTMLElement): void => {
     const now = Date.now()
     pop.classList.add('wb-pop')
@@ -251,51 +332,32 @@ export function activate(ui: TetherUi): IDisposable[] {
     const head = el('div', 'wb-pop-head')
     head.append(icon('brand'), el('span', 'wb-pop-title', BRIDGE_NAME), el('span', 'wb-pop-state', titleOf(snapshot, now, BRIDGE_NAME)))
     pop.append(head)
-    if (snapshot.debug) { const d = el('p', 'wb-debug', DEBUG_LINE); d.setAttribute('role', 'status'); pop.append(d) }
 
     if (snapshot.daemon === 'up') {
-      // Browsers.
+      // Navegadores: every connected one; the radio picks the active browser at once.
       const bSec = el('section', 'wb-sec'); bSec.dataset.section = 'browsers'
-      bSec.append(el('h3', undefined, 'Navegadores'))
+      bSec.append(heading('Navegadores'))
+      if (snapshot.activeFallback) { const f = el('p', 'wb-fallback', fallbackLine(snapshot.activeFallback)); f.setAttribute('role', 'status'); bSec.append(f) }
       if (!snapshot.browsers.length) bSec.append(el('p', 'wb-empty', 'Nenhum navegador conectado.'))
       else {
-        const ul = el('ul', 'wb-list')
-        for (const b of snapshot.browsers) {
-          const li = el('li', 'wb-row'); li.dataset.browser = b.id
-          li.append(icon('globe-simple'), el('span', 'wb-name', b.name), el('span', 'wb-meta', `${tabsLabel(b.tabs)} sob controle${b.lastActivityAt ? ` · ${ago(b.lastActivityAt, now)}` : ''}`))
-          ul.append(li)
-        }
-        bSec.append(ul)
+        const list = el('div', 'wb-browsers'); list.setAttribute('role', 'radiogroup'); list.setAttribute('aria-label', 'Navegador ativo')
+        for (const b of snapshot.browsers) list.append(browserRow(b))
+        bSec.append(list)
       }
       pop.append(bSec)
 
-      // Agents.
+      // Agentes: the live sessions, by browser.
       const aSec = el('section', 'wb-sec'); aSec.dataset.section = 'agents'
-      aSec.append(el('h3', undefined, 'Agentes'))
-      if (!snapshot.agents.length) aSec.append(el('p', 'wb-empty', 'Nenhum agente usou o navegador ainda.'))
-      else {
+      aSec.append(heading('Agentes'))
+      const groups = agentGroups(snapshot)
+      if (!groups.length) aSec.append(el('p', 'wb-empty', 'Nenhum agente usando o navegador agora'))
+      for (const g of groups) {
+        const group = el('div', 'wb-group'); group.dataset.browser = g.browserId
+        group.append(el('div', 'wb-group-label', g.label))
         const ul = el('ul', 'wb-list')
-        const active = new Set(activeAgents(snapshot, now).map(a => a.clientId))
-        for (const a of snapshot.agents) {
-          const pane = a.slotId ? ui.panes.describe(a.slotId) : undefined
-          const li = el('li', `wb-row wb-agent${active.has(a.clientId) ? ' active' : ''}${pane ? ' clickable' : ''}`)
-          li.dataset.client = a.clientId
-          if (a.slotId) li.dataset.slot = a.slotId
-          const agentIcon: IconName = pane?.agent ? 'sparkle' : 'terminal-window'
-          li.append(icon(agentIcon), el('span', 'wb-name', a.name))
-          const bits = [tabsLabel(a.tabs), a.lastTool ? `${a.lastTool} ${ago(a.lastSeenAt, now)}`.trim() : ago(a.lastSeenAt, now)].filter(Boolean)
-          li.append(el('span', 'wb-meta', bits.join(' · ')))
-          if (pane) {
-            li.tabIndex = 0
-            li.setAttribute('role', 'button')
-            li.title = `Ir para o painel${pane.place ? ` (${pane.place})` : ''}`
-            const go = (): void => { ui.panes.reveal(a.slotId!) }
-            li.addEventListener('click', ev => { ev.stopPropagation(); go() })
-            li.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go() } })
-          }
-          ul.append(li)
-        }
-        aSec.append(ul)
+        for (const a of g.agents) ul.append(agentRow(a))
+        group.append(ul)
+        aSec.append(group)
       }
       pop.append(aSec)
     } else {
@@ -305,20 +367,27 @@ export function activate(ui: TetherUi): IDisposable[] {
           : snapshot.everUp ? 'O daemon do bridge parou de responder. A próxima chamada de um agente o reinicia; "Instalar…" também.' : 'O serviço do bridge ainda não respondeu.'))
     }
 
-    // Actions.
-    const actions = el('div', 'wb-actions')
-    const up = snapshot.daemon === 'up'
-    if (snapshot.paused) actions.append(button('resume', 'play', 'Retomar', () => { void act(() => ipc.invoke('pause', false), `${BRIDGE_NAME} retomado.`) }, { disabled: !up }))
-    else actions.append(button('pause', 'stop-circle', 'Pausar', () => { void act(() => ipc.invoke('pause', true), `${BRIDGE_NAME} pausado: os agentes esperam.`) }, { disabled: !up || !snapshot.pauseSupported }))
-    actions.append(button('release-all', 'arrow-counter-clockwise', 'Retomar todas as abas', () => { void act(() => ipc.invoke('releaseAll'), 'Abas soltas: os agentes abrem outras quando precisarem.') }, { disabled: !up || !snapshot.agents.length }))
-    actions.append(button('install', 'arrow-square-out', 'Instalar em outro navegador…', () => { void ui.commands.run('web-bridge.install') }))
-    if (snapshot.options) actions.append(button('options', 'puzzle-piece', `Opções da extensão (${snapshot.options.browserName})`, () => { void act(() => ipc.invoke('openOptions'), `Página da extensão aberta no ${snapshot.options?.browserName ?? 'navegador'}.`) }))
-    pop.append(actions)
-    if (!snapshot.pauseSupported && !snapshot.paused) pop.append(el('p', 'wb-hint', 'Pausar está indisponível nesta versão do bridge.'))
-
     if (notice) { const n = el('p', `wb-notice ${notice.tone}`, notice.text); n.setAttribute('role', 'status'); pop.append(n) }
 
-    // Footer: versions.
+    // Foot: "Mais opções…", then one line of the less frequent actions, then the versions.
+    const more = el('button', 'wb-more', 'Mais opções…') as HTMLButtonElement
+    more.type = 'button'
+    more.dataset.action = 'more'
+    more.addEventListener('click', ev => { ev.stopPropagation(); closePopover(); ui.configuration.reveal(MORE_OPTIONS_KEY) })
+    pop.append(more)
+
+    const up = snapshot.daemon === 'up'
+    const extra = el('div', 'wb-actions')
+    const links: HTMLElement[] = []
+    if (snapshot.paused) links.push(button('resume', 'Retomar', () => { void act(() => ipc.invoke('pause', false), `${BRIDGE_NAME} retomado.`) }, { disabled: !up }))
+    else links.push(button('pause', 'Pausar', () => { void act(() => ipc.invoke('pause', true), `${BRIDGE_NAME} pausado: os agentes esperam.`) }, { disabled: !up || !snapshot.pauseSupported }))
+    links.push(button('release-all', 'Soltar todas as abas', () => { void act(() => ipc.invoke('releaseAll'), 'Abas soltas: os agentes abrem outras quando precisarem.') }, { disabled: !up || !snapshot.agents.length }))
+    links.push(button('install', 'Instalar em outro navegador…', () => { closePopover(); void ui.commands.run('web-bridge.install') }))
+    if (snapshot.options) links.push(button('options', `Opções da extensão (${snapshot.options.browserName})`, () => { void act(() => ipc.invoke('openOptions'), `Página da extensão aberta no ${snapshot.options?.browserName ?? 'navegador'}.`) }))
+    links.forEach((l, i) => { if (i) extra.append(' · '); extra.append(l) })
+    pop.append(extra)
+    if (!snapshot.pauseSupported && !snapshot.paused) pop.append(el('p', 'wb-hint', 'Pausar está indisponível nesta versão do bridge.'))
+
     const v = versionLine(snapshot.version)
     const foot = el('footer', 'wb-foot')
     foot.append(el('span', 'wb-version', v.text))

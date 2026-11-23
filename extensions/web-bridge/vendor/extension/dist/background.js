@@ -12,7 +12,8 @@ function isClientId(v) {
 }
 function cleanClientName(raw2) {
   if (typeof raw2 !== "string") return void 0;
-  const cleaned = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, CLIENT_NAME_MAX).trim();
+  const spaced = raw2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(new RegExp("\\p{Cf}", "gu"), "").replace(/\s+/g, " ").trim();
+  const cleaned = [...spaced].slice(0, CLIENT_NAME_MAX).join("").trim();
   return cleaned || void 0;
 }
 var SEED_FILE = "bridge.json";
@@ -681,7 +682,7 @@ var TOOL_TEXTS = {
   },
   tabs: {
     name: "WebTabs",
-    description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id.",
+    description: "List your browser tabs with their id, address and title, and which one is active. Tabs opened by pages appear here with a new id. A tab whose title could not be read in time is listed with an empty title and readable: false; open a new tab to replace it.",
     params: {}
   },
   new_tab: {
@@ -799,7 +800,7 @@ var LOCAL_TOOL_TEXTS = {
 var ADOPT_TOOL_TEXTS = {
   ask_user: {
     name: "WebAskUser",
-    description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
+    description: 'Ask the person to do something in the active tab that only they can do, and wait until they hand the tab back. Use it when you are blocked by a login (a password, a two-factor code, a passkey), a captcha or a check that says you are a robot, or when the next step is a decision that belongs to the person (a purchase, sending a message in their name, accepting terms). Do not use it for things you can do yourself, and do not ask twice for the same thing. The tab goes to the person at once and this call WAITS for them, possibly many minutes: you cannot use the tab meanwhile, and the call ends when the person hands the tab back, dismisses the request, or when the wait runs out. Write the message as a short plain sentence that says what you need and why ("Log in to github.com so I can open the repository"); it is shown to the person as plain text and is cut at 500 characters. The answer says how it ended: "returned" (the person handed the tab back), "declined" (the person said they cannot help; the tab is back with you), "dismissed" or "timeout". On "returned" and "declined" the person may add a short note for you (plain text); read it, it may say what happened or what to do next. After the tab comes back the page may have changed: take a new WebSnapshot before acting. Never ask the person to type a secret in the chat; this tool is how they enter it, in the page itself.',
     params: {
       message: "What you need from the person, in one or two plain sentences (text only, cut at 500 characters).",
       kind: '"login" when you need the person to sign in (the host hands the tab over clean of scripts), "other" for anything else. Default "other".'
@@ -1009,10 +1010,6 @@ function ownerGroupColor(clientId) {
 function ownerGroupTitle(client) {
   return agentGroupTitle(client.name ?? client.id);
 }
-var RELEASED_SUFFIX = " (encerrado)";
-function releasedGroupTitle(title) {
-  return title.endsWith(RELEASED_SUFFIX) ? title : `${title}${RELEASED_SUFFIX}`;
-}
 
 // extension/src/settings.ts
 var STATUS_KEY = "status";
@@ -1091,6 +1088,18 @@ async function evaluateMode() {
   if (packaged && EVALUATE_MODES.includes(packaged)) return packaged;
   return "own-tabs";
 }
+async function effectivePolicy() {
+  const [evaluate2, evaluateHandedTabs, upload2, download2, pdf2, readNetwork2, perAgent] = await Promise.all([
+    evaluateMode(),
+    getAllowEvaluate(),
+    capability("upload", true),
+    capability("download", true),
+    capability("pdf", true),
+    capability("readNetwork", true),
+    windowPerAgent()
+  ]);
+  return { evaluate: evaluate2, evaluateHandedTabs, upload: upload2, download: download2, pdf: pdf2, readNetwork: readNetwork2, windowPerAgent: perAgent };
+}
 var HOST_STATUS_KEY = "hostStatus";
 async function saveHostStatus(status) {
   await chrome.storage.session.set({ [HOST_STATUS_KEY]: status });
@@ -1106,6 +1115,7 @@ var CURRENT_KEY = "currentTab";
 var CURRENT_BY_OWNER_KEY = "currentByOwner";
 var CLIENT_NAMES_KEY = "clientNames";
 var WINDOW_BY_OWNER_KEY = "windowByOwner";
+var GROUPS_BY_OWNER_KEY = "groupsByOwner";
 var cache = null;
 async function load() {
   if (!cache) cache = (await chrome.storage.session.get(SCOPE_KEY))[SCOPE_KEY] ?? {};
@@ -1147,7 +1157,7 @@ async function addScope(tabId, owner, handed = false) {
     scope[String(tabId)] = { grouped: false, ...owner ? { owner: owner.id } : {}, ...handed ? { handed: true } : {} };
   }
   await save();
-  if (owner) await rememberClient(owner);
+  await noteCaller(owner);
   scheduleTabs();
 }
 async function removeScope(tabId) {
@@ -1211,11 +1221,19 @@ async function clientNames() {
   return (await chrome.storage.session.get(CLIENT_NAMES_KEY))[CLIENT_NAMES_KEY] ?? {};
 }
 async function rememberClient(client) {
-  if (!client.name) return;
+  if (!client.name) return false;
   const names = await clientNames();
-  if (names[client.id] === client.name) return;
+  if (names[client.id] === client.name) return false;
   names[client.id] = client.name;
   await chrome.storage.session.set({ [CLIENT_NAMES_KEY]: names });
+  return true;
+}
+async function noteCaller(client) {
+  if (!client?.name) return;
+  try {
+    if (await rememberClient(client)) await renameOwnerGroups(client.id);
+  } catch {
+  }
 }
 async function clientName(id) {
   return (await clientNames())[id];
@@ -1257,28 +1275,94 @@ async function groupTitleFor(owner) {
   const name = await clientName(owner);
   return ownerGroupTitle(name ? { id: owner, name } : { id: owner });
 }
+async function groupsByOwner() {
+  return (await chrome.storage.session.get(GROUPS_BY_OWNER_KEY))[GROUPS_BY_OWNER_KEY] ?? {};
+}
+async function ownerGroups(owner, prune = false) {
+  const map = await groupsByOwner();
+  const ids = map[owner] ?? [];
+  const groups = (await Promise.all(ids.map((id) => chrome.tabGroups.get(id).catch(() => null)))).filter((g) => g !== null);
+  if (prune && groups.length !== ids.length) {
+    if (groups.length) map[owner] = groups.map((g) => g.id);
+    else delete map[owner];
+    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+  }
+  return groups;
+}
+async function claimGroup(owner, groupId) {
+  const map = await groupsByOwner();
+  const ids = map[owner] ?? [];
+  if (ids.includes(groupId)) return;
+  map[owner] = [...ids, groupId];
+  await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+}
+async function ownerGroupWindow(owner) {
+  return (await ownerGroups(owner))[0]?.windowId ?? null;
+}
 var grouping = Promise.resolve();
-function groupTab(tabId) {
-  const run = async () => {
+function inGroupQueue(run) {
+  const next = grouping.then(run, run);
+  grouping = next.catch(() => void 0);
+  return next;
+}
+function forgetGroup(groupId) {
+  return inGroupQueue(async () => {
+    const map = await groupsByOwner();
+    const owners = Object.keys(map).filter((o) => map[o].includes(groupId));
+    if (!owners.length) return;
+    for (const o of owners) {
+      const rest = map[o].filter((id) => id !== groupId);
+      if (rest.length) map[o] = rest;
+      else delete map[o];
+    }
+    await chrome.storage.session.set({ [GROUPS_BY_OWNER_KEY]: map });
+  });
+}
+function renameOwnerGroups(owner) {
+  return inGroupQueue(async () => {
+    const title = await groupTitleFor(owner);
+    for (const g of await ownerGroups(owner, true)) if (g.title !== title) await chrome.tabGroups.update(g.id, { title }).catch(() => void 0);
+  });
+}
+function collapseOwnerGroups(owner) {
+  return inGroupQueue(async () => {
+    const groups = await ownerGroups(owner, true);
+    for (const g of groups) await chrome.tabGroups.update(g.id, { collapsed: true }).catch(() => void 0);
+    return groups.length;
+  });
+}
+function groupTab(tabId, opts = {}) {
+  return inGroupQueue(async () => {
     const entry = await entryOf(tabId);
     const owner = entry?.owner;
     const title = await groupTitleFor(owner);
-    const color = owner === void 0 ? await groupColor() : ownerGroupColor(owner);
     const tab = await chrome.tabs.get(tabId);
-    const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
-    const groupId = await chrome.tabs.group(
-      existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
-    );
-    if (!existing) await chrome.tabGroups.update(groupId, { title, color });
+    if (owner === void 0) {
+      const existing = (await chrome.tabGroups.query({ title, windowId: tab.windowId }))[0];
+      const groupId = await chrome.tabs.group(
+        existing ? { tabIds: tabId, groupId: existing.id } : { tabIds: tabId, createProperties: { windowId: tab.windowId } }
+      );
+      if (!existing) await chrome.tabGroups.update(groupId, { title, color: await groupColor() });
+    } else {
+      const groups = await ownerGroups(owner, true);
+      const target = groups.find((g) => g.windowId === tab.windowId) ?? (opts.inPlace ? void 0 : groups[0]);
+      const color = ownerGroupColor(owner);
+      if (target) {
+        await chrome.tabs.group({ tabIds: tabId, groupId: target.id });
+        const retitle = target.title !== title && await clientName(owner) !== void 0;
+        if (target.collapsed || retitle) await chrome.tabGroups.update(target.id, { collapsed: false, ...retitle ? { title } : {} }).catch(() => void 0);
+      } else {
+        const groupId = await chrome.tabs.group({ tabIds: tabId, createProperties: { windowId: tab.windowId } });
+        await chrome.tabGroups.update(groupId, { title, color });
+        await claimGroup(owner, groupId);
+      }
+    }
     const scope = await load();
     if (scope[String(tabId)]) {
       scope[String(tabId)].grouped = true;
       await save();
     }
-  };
-  const next = grouping.then(run, run);
-  grouping = next.catch(() => void 0);
-  return next;
+  });
 }
 
 // extension/src/alert.ts
@@ -1286,16 +1370,19 @@ var ALERT_COLOR = "#f5a524";
 var ALERT_TEXT_COLOR = "#1a1a1a";
 var BADGE_COLOR = brandAccent() ?? "#d7813d";
 var BADGE_TEXT_COLOR = "#ffffff";
-function badgeText(controlled, allowEvaluate) {
+var DEBUG_BADGE_COLOR = "#d93025";
+function badgeText(controlled, allowEvaluate, debug = false) {
+  if (debug) return "DBG";
   if (controlled > 0) return controlled > 99 ? "99+" : String(controlled);
   return allowEvaluate ? "JS" : "";
 }
 async function applyBadge() {
   const allow = await getAllowEvaluate();
+  const debug = (await getDebugChoice())?.enabled === true;
   const controlled = (await listScope()).length;
-  await chrome.action.setBadgeText({ text: badgeText(controlled, allow) });
-  await chrome.action.setBadgeBackgroundColor({ color: allow ? ALERT_COLOR : BADGE_COLOR });
-  await chrome.action.setBadgeTextColor({ color: allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
+  await chrome.action.setBadgeText({ text: badgeText(controlled, allow, debug) });
+  await chrome.action.setBadgeBackgroundColor({ color: debug ? DEBUG_BADGE_COLOR : allow ? ALERT_COLOR : BADGE_COLOR });
+  await chrome.action.setBadgeTextColor({ color: debug ? BADGE_TEXT_COLOR : allow ? ALERT_TEXT_COLOR : BADGE_TEXT_COLOR });
 }
 async function applyAlertState() {
   await applyBadge();
@@ -1316,7 +1403,7 @@ async function scopedTabs() {
   return tabs2.flatMap((tab, i) => {
     if (tab?.id === void 0) return [];
     const owner = entries[i][1].owner;
-    return [{ id: tab.id, url: tab.url ?? "", title: tab.title ?? "", ...owner !== void 0 ? { owner } : {} }];
+    return [{ id: tab.id, url: tab.url ?? "", title: tab.title ?? "", ...owner !== void 0 ? { owner } : {}, windowId: tab.windowId }];
   });
 }
 async function publishTabs() {
@@ -1328,6 +1415,9 @@ async function publishTabs() {
 function scheduleTabs() {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => void publishTabs(), DEBOUNCE_MS);
+}
+async function publishPolicy() {
+  sender?.({ t: "policy", policy: await effectivePolicy() });
 }
 function publishFocus() {
   sender?.({ t: "focus" });
@@ -1594,7 +1684,7 @@ async function takeControl(tabId, owner, opts = {}) {
   const s = sessionFor(tabId);
   try {
     await s.attach();
-    await groupTab(tabId);
+    await groupTab(tabId, { inPlace: opts.inPlace === true || opts.handed === true });
   } catch (e) {
     await releaseControl(tabId);
     throw e;
@@ -1625,7 +1715,6 @@ async function releaseControl(tabId) {
   await s?.detach();
 }
 async function releaseClient(clientId) {
-  const title = await groupTitleFor(clientId);
   const released = [];
   for (const [tabId, entry] of await listEntries()) {
     if (entry.owner !== clientId) continue;
@@ -1633,12 +1722,7 @@ async function releaseClient(clientId) {
     released.push(tabId);
   }
   await clearCurrent(clientId);
-  await clearWindow(clientId);
-  let groups = 0;
-  for (const g of await chrome.tabGroups.query({ title })) {
-    await chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title), collapsed: true }).catch(() => chrome.tabGroups.update(g.id, { title: releasedGroupTitle(title) }));
-    groups++;
-  }
+  const groups = await collapseOwnerGroups(clientId);
   await forgetClient(clientId);
   scheduleTabs();
   return { released, groups };
@@ -1699,6 +1783,9 @@ function watchBrowserEvents() {
   });
   chrome.windows.onRemoved.addListener((windowId) => {
     void forgetWindow(windowId);
+  });
+  chrome.tabGroups.onRemoved.addListener((group) => {
+    void forgetGroup(group.id);
   });
   chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
@@ -1875,6 +1962,173 @@ async function maybeReloadForVersion(expected) {
     chrome.runtime.reload();
   }
   return decision;
+}
+
+// extension/src/navigation.ts
+var NAVIGATION_TIMEOUT_MS = 3e4;
+function assertNavigableUrl(url) {
+  if (url === "about:blank") return;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new BrowserError("INVALID_ARGUMENT", `"${url}" is not an absolute URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new BridgeError("URL_NOT_ALLOWED", `only http(s) and about:blank can be opened, got "${parsed.protocol}"`);
+  }
+}
+async function where(s) {
+  return pageEval(s.transport, "({url:location.href,title:document.title})");
+}
+async function awaitLoaded(s, since, what) {
+  const limit = lockTimeout(NAVIGATION_TIMEOUT_MS);
+  const end = Date.now() + limit;
+  while (Date.now() < end) {
+    if (s.navigations > since && !s.loading) {
+      const ready = await pageEval(s.transport, "document.readyState").catch(() => null);
+      if (ready === "complete") return;
+    }
+    await sleep(50);
+  }
+  throw new BridgeError("NAVIGATION_TIMEOUT", `${what} did not finish loading within ${limit / 1e3} s`);
+}
+async function historyNavigate(s, action) {
+  const since = s.navigations;
+  if (action === "reload") {
+    s.refs.clear();
+    await s.transport.send("Page.reload");
+  } else {
+    const h = await s.transport.send("Page.getNavigationHistory");
+    const entry = h.entries[h.currentIndex + (action === "back" ? -1 : 1)];
+    if (!entry) {
+      throw new BridgeError(
+        "NAVIGATION_FAILED",
+        action === "back" ? "cannot go back: this is the first page in the history of this tab" : "cannot go forward: this is the last page in the history of this tab"
+      );
+    }
+    s.refs.clear();
+    await s.transport.send("Page.navigateToHistoryEntry", { entryId: entry.id });
+  }
+  await awaitLoaded(s, since, action);
+  return { action, ...await where(s) };
+}
+async function navigate(s, a) {
+  if (a.action !== void 0 && a.url !== void 0) throw new BrowserError("INVALID_ARGUMENT", "navigate: give url or action, not both");
+  if (a.action !== void 0) return historyNavigate(s, a.action);
+  if (a.url === void 0) throw new BrowserError("INVALID_ARGUMENT", 'navigate: give url (an absolute URL) or action ("back", "forward" or "reload")');
+  assertNavigableUrl(a.url);
+  const limit = lockTimeout(NAVIGATION_TIMEOUT_MS);
+  const loaded = s.waitFor("Page.loadEventFired", limit);
+  let nav;
+  try {
+    nav = await s.transport.send("Page.navigate", { url: a.url });
+  } catch (e) {
+    loaded.cancel();
+    throw e;
+  }
+  if (nav.errorText) {
+    loaded.cancel();
+    throw new BridgeError("NAVIGATION_FAILED", `navigation to ${a.url} failed: ${nav.errorText}`);
+  }
+  s.refs.clear();
+  if (nav.loaderId) {
+    if (!await loaded.promise) {
+      throw new BridgeError("NAVIGATION_TIMEOUT", `${a.url} did not finish loading within ${limit / 1e3} s`);
+    }
+  } else {
+    loaded.cancel();
+  }
+  return where(s);
+}
+async function listTabs(client) {
+  const current = await getCurrent(client?.id);
+  const rows2 = [];
+  for (const [id, entry] of await listEntries()) {
+    const t = await chrome.tabs.get(id).catch(() => null);
+    if (!t) continue;
+    const mine = canAct(entry, client);
+    const row2 = { tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: mine && id === current };
+    if (entry.handed) row2.handed = true;
+    if (entry.owner !== void 0) {
+      row2.owner = entry.owner;
+      const name = await clientName(entry.owner);
+      if (name) row2.ownerName = name;
+      if (!mine) row2.ownedByOther = true;
+    }
+    rows2.push(row2);
+  }
+  return rows2;
+}
+async function createBlankTab(client, preference) {
+  const groupWindow = client !== void 0 && preference !== "user-window" ? await ownerGroupWindow(client.id) : null;
+  const inAgentWindow = client !== void 0 && preference !== "user-window" && await windowPerAgent();
+  if (!inAgentWindow) {
+    const created = await chrome.tabs.create({ ...groupWindow !== null ? { windowId: groupWindow } : {}, url: "about:blank", active: true });
+    return { id: created.id, windowId: created.windowId };
+  }
+  if (groupWindow !== null) {
+    const created = await chrome.tabs.create({ windowId: groupWindow, url: "about:blank", active: true });
+    await setWindow(client.id, groupWindow);
+    return { id: created.id, windowId: groupWindow };
+  }
+  const existing = await getWindow(client.id);
+  if (existing !== null) {
+    const created = await chrome.tabs.create({ windowId: existing, url: "about:blank", active: true });
+    return { id: created.id, windowId: existing };
+  }
+  const win = await chrome.windows.create({ url: "about:blank", focused: false });
+  const windowId = win.id;
+  const first = win.tabs?.[0] ?? (await chrome.tabs.query({ windowId }))[0];
+  if (!first?.id) throw new BridgeError("INTERNAL", `the new window ${windowId} has no tab`);
+  await setWindow(client.id, windowId);
+  return { id: first.id, windowId };
+}
+async function tabs(a, client) {
+  switch (a.action) {
+    case "list":
+      return { tabs: await listTabs(client) };
+    case "new": {
+      if (a.url !== void 0) assertNavigableUrl(a.url);
+      const { id, windowId } = await createBlankTab(client, a.where);
+      let s;
+      try {
+        s = await takeControl(id, client, { inPlace: a.where === "user-window" });
+      } catch (e) {
+        await chrome.tabs.remove(id).catch(() => void 0);
+        throw e;
+      }
+      await setCurrent(id, client?.id);
+      if (a.url && a.url !== "about:blank") await navigate(s, { url: a.url });
+      return { tab: String(id), windowId, ...await where(s) };
+    }
+    case "close": {
+      if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs close: "tab" is required');
+      const id = await resolveTabId(a.tab, client);
+      await releaseControl(id);
+      await chrome.tabs.remove(id);
+      return { closed: String(id) };
+    }
+    case "activate": {
+      if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs activate: "tab" is required');
+      const id = await resolveTabId(a.tab, client);
+      await showTab(id);
+      await setCurrent(id, client?.id);
+      await attachedSession(id, client);
+      return { activated: String(id) };
+    }
+  }
+}
+async function showTab(id) {
+  const tab = await chrome.tabs.update(id, { active: true });
+  if (!tab) throw new BridgeError("INTERNAL", `tab ${id} could not be activated`);
+  return tab;
+}
+async function focusTab(id) {
+  await assertScoped(id);
+  const tab = await showTab(id);
+  await chrome.windows.update(tab.windowId, { focused: true });
+  return { focused: id, windowId: tab.windowId };
 }
 
 // extension/src/seed.ts
@@ -2520,156 +2774,6 @@ async function pressKey(s, a) {
   return { pressed: [...parsed.modifiers.filter((m) => m !== parsed.main.key), parsed.main.key].join("+") };
 }
 
-// extension/src/navigation.ts
-var NAVIGATION_TIMEOUT_MS = 3e4;
-function assertNavigableUrl(url) {
-  if (url === "about:blank") return;
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new BrowserError("INVALID_ARGUMENT", `"${url}" is not an absolute URL`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new BridgeError("URL_NOT_ALLOWED", `only http(s) and about:blank can be opened, got "${parsed.protocol}"`);
-  }
-}
-async function where(s) {
-  return pageEval(s.transport, "({url:location.href,title:document.title})");
-}
-async function awaitLoaded(s, since, what) {
-  const limit = lockTimeout(NAVIGATION_TIMEOUT_MS);
-  const end = Date.now() + limit;
-  while (Date.now() < end) {
-    if (s.navigations > since && !s.loading) {
-      const ready = await pageEval(s.transport, "document.readyState").catch(() => null);
-      if (ready === "complete") return;
-    }
-    await sleep(50);
-  }
-  throw new BridgeError("NAVIGATION_TIMEOUT", `${what} did not finish loading within ${limit / 1e3} s`);
-}
-async function historyNavigate(s, action) {
-  const since = s.navigations;
-  if (action === "reload") {
-    s.refs.clear();
-    await s.transport.send("Page.reload");
-  } else {
-    const h = await s.transport.send("Page.getNavigationHistory");
-    const entry = h.entries[h.currentIndex + (action === "back" ? -1 : 1)];
-    if (!entry) {
-      throw new BridgeError(
-        "NAVIGATION_FAILED",
-        action === "back" ? "cannot go back: this is the first page in the history of this tab" : "cannot go forward: this is the last page in the history of this tab"
-      );
-    }
-    s.refs.clear();
-    await s.transport.send("Page.navigateToHistoryEntry", { entryId: entry.id });
-  }
-  await awaitLoaded(s, since, action);
-  return { action, ...await where(s) };
-}
-async function navigate(s, a) {
-  if (a.action !== void 0 && a.url !== void 0) throw new BrowserError("INVALID_ARGUMENT", "navigate: give url or action, not both");
-  if (a.action !== void 0) return historyNavigate(s, a.action);
-  if (a.url === void 0) throw new BrowserError("INVALID_ARGUMENT", 'navigate: give url (an absolute URL) or action ("back", "forward" or "reload")');
-  assertNavigableUrl(a.url);
-  const limit = lockTimeout(NAVIGATION_TIMEOUT_MS);
-  const loaded = s.waitFor("Page.loadEventFired", limit);
-  let nav;
-  try {
-    nav = await s.transport.send("Page.navigate", { url: a.url });
-  } catch (e) {
-    loaded.cancel();
-    throw e;
-  }
-  if (nav.errorText) {
-    loaded.cancel();
-    throw new BridgeError("NAVIGATION_FAILED", `navigation to ${a.url} failed: ${nav.errorText}`);
-  }
-  s.refs.clear();
-  if (nav.loaderId) {
-    if (!await loaded.promise) {
-      throw new BridgeError("NAVIGATION_TIMEOUT", `${a.url} did not finish loading within ${limit / 1e3} s`);
-    }
-  } else {
-    loaded.cancel();
-  }
-  return where(s);
-}
-async function listTabs(client) {
-  const current = await getCurrent(client?.id);
-  const rows2 = [];
-  for (const [id, entry] of await listEntries()) {
-    const t = await chrome.tabs.get(id).catch(() => null);
-    if (!t) continue;
-    const mine = canAct(entry, client);
-    const row2 = { tab: String(id), url: t.url ?? t.pendingUrl ?? "", title: t.title ?? "", active: t.active, current: mine && id === current };
-    if (entry.handed) row2.handed = true;
-    if (entry.owner !== void 0) {
-      row2.owner = entry.owner;
-      const name = await clientName(entry.owner);
-      if (name) row2.ownerName = name;
-      if (!mine) row2.ownedByOther = true;
-    }
-    rows2.push(row2);
-  }
-  return rows2;
-}
-async function createBlankTab(client, preference) {
-  const inAgentWindow = client !== void 0 && preference !== "user-window" && await windowPerAgent();
-  if (!inAgentWindow) {
-    const created = await chrome.tabs.create({ url: "about:blank", active: true });
-    return { id: created.id, windowId: created.windowId };
-  }
-  const existing = await getWindow(client.id);
-  if (existing !== null) {
-    const created = await chrome.tabs.create({ windowId: existing, url: "about:blank", active: true });
-    return { id: created.id, windowId: existing };
-  }
-  const win = await chrome.windows.create({ url: "about:blank", focused: false });
-  const windowId = win.id;
-  const first = win.tabs?.[0] ?? (await chrome.tabs.query({ windowId }))[0];
-  if (!first?.id) throw new BridgeError("INTERNAL", `the new window ${windowId} has no tab`);
-  await setWindow(client.id, windowId);
-  return { id: first.id, windowId };
-}
-async function tabs(a, client) {
-  switch (a.action) {
-    case "list":
-      return { tabs: await listTabs(client) };
-    case "new": {
-      if (a.url !== void 0) assertNavigableUrl(a.url);
-      const { id, windowId } = await createBlankTab(client, a.where);
-      let s;
-      try {
-        s = await takeControl(id, client);
-      } catch (e) {
-        await chrome.tabs.remove(id).catch(() => void 0);
-        throw e;
-      }
-      await setCurrent(id, client?.id);
-      if (a.url && a.url !== "about:blank") await navigate(s, { url: a.url });
-      return { tab: String(id), windowId, ...await where(s) };
-    }
-    case "close": {
-      if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs close: "tab" is required');
-      const id = await resolveTabId(a.tab, client);
-      await releaseControl(id);
-      await chrome.tabs.remove(id);
-      return { closed: String(id) };
-    }
-    case "activate": {
-      if (a.tab === void 0) throw new BrowserError("INVALID_ARGUMENT", 'tabs activate: "tab" is required');
-      const id = await resolveTabId(a.tab, client);
-      await chrome.tabs.update(id, { active: true });
-      await setCurrent(id, client?.id);
-      await attachedSession(id, client);
-      return { activated: String(id) };
-    }
-  }
-}
-
 // extension/src/strings.ts
 var B = brandName();
 var P = productName();
@@ -2714,9 +2818,10 @@ var POPUP = {
   browserName: "Nome deste navegador",
   browserNameHelp: "Como os agentes veem este navegador. Enter ou sair do campo salva.",
   // Atualização em lugar (C5): a pasta mudou e a extensão não conseguiu se recarregar sozinha.
-  /** Modo debug ligado pelo hospedeiro (capabilities.debug): uma linha discreta, sem mexer na faixa nem no badge. */
-  debugOn: "Modo de depura\xE7\xE3o ligado",
-  /** O atalho da linha de depuração para a página de opções. */
+  /** Faixa no topo do popup enquanto a depuração (escolha da pessoa nas opções) está ligada. */
+  debugBanner: "Depura\xE7\xE3o LIGADA \u2014 prazos relaxados e chamadas gravadas no disco",
+  debugTurnOff: "Desligar",
+  /** O atalho dentro da faixa para a seção de depuração das opções. */
   debugOptions: "Op\xE7\xF5es de depura\xE7\xE3o",
   reloadHint: (expected, running2) => `Atualiza\xE7\xE3o dispon\xEDvel (${expected}; esta \xE9 ${running2}): clique em Recarregar em chrome://extensions.`
 };
@@ -3666,6 +3771,7 @@ var DaemonConnection = class {
     setTraceSink((events) => this.send({ t: "trace", events }));
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "local" && DEBUG_CHOICE_STORAGE_KEY in changes) void this.sendDebugChoice();
+      if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void publishPolicy();
     });
     void getDebugChoice().then((c) => {
       this.debugChoice ??= c;
@@ -3722,7 +3828,8 @@ var DaemonConnection = class {
         id: await bridgeId(),
         name: settings.name,
         userAgent: navigator.userAgent,
-        token: settings.token
+        token: settings.token,
+        extensionVersion: chrome.runtime.getManifest().version
       };
       ws.send(JSON.stringify(hello));
     };
@@ -3733,7 +3840,7 @@ var DaemonConnection = class {
         this.backoff = BACKOFF_START_MS;
         void setStatus({ state: "connected" });
         void saveHostBrand(msg.brand);
-        void saveHostCapabilities(msg.capabilities);
+        void saveHostCapabilities(msg.capabilities).then(() => publishPolicy());
         this.applyDebug(msg.capabilities);
         void saveHostDebugMode(void 0).then(() => this.sendDebugChoice());
         this.pingTimer = setInterval(() => this.send({ t: "ping" }), PING_MS);
@@ -3747,18 +3854,23 @@ var DaemonConnection = class {
         void setStatus({ state: "denied", detail: msg.reason });
         void applySeed();
       } else if (msg.t === "call") {
-        void this.handleCall(msg.rid, () => runTool(msg.tool, msg.args, msg.client, msg.rid), { tool: msg.tool, client: msg.client?.id });
+        void this.handleCall(msg.rid, async () => {
+          await noteCaller(msg.client);
+          return runTool(msg.tool, msg.args, msg.client, msg.rid);
+        }, { tool: msg.tool, client: msg.client?.id });
       } else if (msg.t === "release") {
         void this.handleCall(msg.rid, () => releaseClient(msg.client), { tool: "release" });
       } else if (msg.t === "release-all") {
         void this.handleCall(msg.rid, () => releaseAll(), { tool: "release-all" });
       } else if (msg.t === "inspect") {
         void this.handleCall(msg.rid, () => inspectCall(msg.call));
+      } else if (msg.t === "focus-tab") {
+        void this.handleCall(msg.rid, () => focusTab(msg.tab));
       } else if (msg.t === "dump-request") {
         void this.handleCall(msg.rid, () => collectDump(msg.call));
       } else if (msg.t === "config") {
         void saveHostBrand(msg.brand);
-        void saveHostCapabilities(msg.capabilities);
+        void saveHostCapabilities(msg.capabilities).then(() => publishPolicy());
         this.applyDebug(msg.capabilities);
         void saveHostDebugMode(msg.debugMode);
       }
@@ -3839,7 +3951,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && SETTINGS_KEYS.some((k) => k in changes)) void connection.restart();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && ALLOW_EVALUATE_STORAGE_KEY in changes) void applyAlertState();
+  if (area === "local" && (ALLOW_EVALUATE_STORAGE_KEY in changes || DEBUG_CHOICE_STORAGE_KEY in changes)) void applyAlertState();
 });
 void applyAlertState();
 async function overview() {
