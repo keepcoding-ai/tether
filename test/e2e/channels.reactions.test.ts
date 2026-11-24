@@ -8,7 +8,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
@@ -48,7 +48,11 @@ class Rig {
   readonly seen = new Set<number>()
   private nextId = 1
 
-  constructor() {
+  /** `for-agents` on: a pane given to an owner is held, so a pane without a stream hears by the terminal (typed). */
+  readonly forAgents: boolean
+
+  constructor(opts: { forAgents?: boolean } = {}) {
+    this.forAgents = opts.forAgents === true
     mkdirSync(this.home); mkdirSync(this.work); mkdirSync(this.shim)
     const id = randomBytes(4).toString('hex')
     const BS = String.fromCharCode(92)
@@ -60,7 +64,8 @@ class Rig {
   async connect(): Promise<void> {
     if (process.platform === 'win32') writeFileSync(join(this.shim, 'claude.cmd'), `@echo off\r\n"${process.execPath}" "${AGENT}" %*\r\n`)
     else writeFileSync(join(this.shim, 'claude'), `#!/bin/sh\nexec "${process.execPath}" "${AGENT}" "$@"\n`, { mode: 0o755 })
-    writeFileSync(join(this.home, 'settings.json'), JSON.stringify({ extensions: { disabled: ['web-bridge', 'browser', 'skills', 'for-agents', 'conductor-terminal', 'conductor-claude', 'conductor-soul', 'conductor-codex'] } }))
+    const off = ['web-bridge', 'browser', 'skills', 'for-agents', 'conductor-terminal', 'conductor-claude', 'conductor-soul', 'conductor-codex'].filter((e) => !(this.forAgents && e === 'for-agents'))
+    writeFileSync(join(this.home, 'settings.json'), JSON.stringify({ extensions: { disabled: off } }))
     const env = cleanDaemonEnv({ TETHER_PANEL_HOST: '1', TETHER_PTYD_PIPE: this.ptydPipe }, this.shim)
     this.client = await DaemonClient.connect({ home: this.home, pipe: this.pipe, client: 'test', mainPath: MAIN, env, startTimeoutMs: 45_000 })
     this.seen.add(this.client.hello.pid)
@@ -91,6 +96,42 @@ class Rig {
   notes(slot: string): Array<{ content: string; meta: Record<string, string> }> {
     return this.lines<{ method?: string; params?: { content: string; meta: Record<string, string> } }>(slot, 'chan.jsonl').filter((n) => n.method === 'notifications/claude/channel').map((n) => n.params!)
   }
+  /** Everything typed into an agent's terminal, joined. */
+  typed(slot: string): string { return this.lines<string>(slot, 'stdin.jsonl').join('') }
+  /** How many times the agent opened its MCP stream. */
+  opens(slot: string): number { return this.lines<{ open?: number }>(slot, 'chan.jsonl').filter((n) => n.open !== undefined).length }
+
+  /** Stops tetherd (same home, same pipe) and starts it again; the panes live on in the pane host. */
+  async restartDaemon(): Promise<void> {
+    const oldPid = this.client.hello.pid
+    this.app.close()
+    await this.client.request({ t: 'shutdown' }).catch(() => undefined)
+    this.client.close()
+    for (const end = Date.now() + 30_000; pidAlive(oldPid) && Date.now() < end; await sleep(200));
+    assert.equal(pidAlive(oldPid), false, 'the old tetherd is gone')
+    await this.connect()
+  }
+
+  /** Restarts a fake agent's process and waits for its stream to open again (a stream does not survive a tetherd restart). */
+  async restartAgent(slot: string): Promise<void> {
+    const opens = this.opens(slot)
+    // The fake reads its commands file from the start: a new process would run the old commands again.
+    const cmds = this.bench(slot, 'cmd.jsonl')
+    if (existsSync(cmds)) renameSync(cmds, `${cmds}.${Date.now()}`)
+    const s0 = await this.state(slot)
+    await this.client.request(s0?.status === 'running' ? { t: 'restart', slotId: slot } : { t: 'start', slotId: slot, choice: 'new' })
+    await this.waitFor(`${slot} running again${this.stream(slot) ? ' with its stream' : ''}`, async () => {
+      const s = await this.state(slot)
+      if (s?.pid) this.seen.add(s.pid)
+      return s?.status === 'running' && (!this.stream(slot) || this.opens(slot) > opens)
+    }, 45_000)
+  }
+  private stream(slot: string): boolean { return this.lines<{ open?: number }>(slot, 'chan.jsonl').some((n) => n.open !== undefined) }
+  /** The status of each slot right after a restart of tetherd (diagnostic). */
+  async statuses(): Promise<string> {
+    return JSON.stringify((await this.states()).map((s) => [s.name, s.status, s.pid, !!s.held]))
+  }
+
   /** What the delivery keeps waiting for a pane (its queue file). */
   inbox(slot: string): unknown[] {
     const f = join(this.home, 'slots', `${slot}.inbox.jsonl`)
@@ -140,7 +181,7 @@ class Rig {
   /** Everything that says "something reached an agent or woke it": its notes, its queue file and its turn clock. */
   async footprint(slot: string): Promise<string> {
     const s = await this.state(slot)
-    return JSON.stringify({ notes: this.notes(slot).length, inbox: this.inbox(slot).length, turn: s?.turn, busySince: s?.busySince, idleSince: s?.idleSince, attention: s?.attention ?? null, attentionFor: s?.attentionFor ?? null })
+    return JSON.stringify({ notes: this.notes(slot).length, typed: this.typed(slot).length, inbox: this.inbox(slot).length, turn: s?.turn, busySince: s?.busySince, idleSince: s?.idleSince, attention: s?.attention ?? null, attentionFor: s?.attentionFor ?? null })
   }
 
   async teardown(): Promise<string[]> {
@@ -253,4 +294,80 @@ test('channels reactions: react, read, take away, restart tetherd and read again
   const back = (again.lines as Array<{ seq: number; reactions?: Array<{ emoji: string; by: string[] }> }>).find((l) => l.seq === SEQ)!
   assert.deepEqual(back.reactions?.map((r) => [r.emoji, r.by]), [['❓', [NAME_A]], ['🎉', [NAME_B]]])
   assert.match(String(again.text), /\[❓ .* · 🎉 .*\]/)
+})
+
+// R3: the ride. A hears inside (stream), C by the terminal (no stream, its pane given to A so it is held: typed), B speaks and
+// reacts, the person reacts. Reactions alone reach nobody; tetherd restarts in the middle; the next line of B carries, once, the
+// reactions to each one's own lines: the `reactions` attribute for A, the header part for C; after a second restart, nothing again.
+test('channels reactions ride: no delivery of their own, the next line carries them inside and typed, once, across tetherd restarts', { timeout: 420_000 }, async () => {
+  const rig = new Rig({ forAgents: true }); rigs.push(rig)
+  await rig.connect()
+  const NAME_A = 'claude · conferente'
+  const NAME_B = 'claude · bancada'
+  const NAME_C = 'codex · conferência'
+  const [A, B, C] = await Promise.all([rig.agent(NAME_A, 'conferente'), rig.agent(NAME_B, 'bancada'), rig.agent(NAME_C, 'sem-canal-conferencia')]) as [string, string, string]
+
+  /** After a tetherd restart (the shutdown stops the panes' processes): each one runs again, A with its stream. */
+  const backAfterRestart = async (): Promise<void> => {
+    for (const s of [A, B, C]) await rig.restartAgent(s)
+    await rig.waitFor('C held again', async () => (await rig.state(C))?.held)
+  }
+
+  // C is given to A: held, so it hears by the terminal.
+  await rig.client.request({ t: 'object-set', ext: 'for-agents', kind: 'pane', objectId: C, key: 'owner', value: { owner: A, since: new Date().toISOString(), givenBy: 'user' } } as never)
+  await rig.waitFor('C held by A', async () => (await rig.state(C))?.held)
+
+  const made = await rig.cli(A, 'create', 'horizontes')
+  assert.ok(made.ok, JSON.stringify(made))
+  assert.ok((await rig.cli(A, 'join', 'horizontes', NAME_B)).ok)
+  assert.ok((await rig.cli(A, 'join', 'horizontes', NAME_C)).ok)
+  const fromA = await rig.cli(A, 'say', 'horizontes', 'Terminei a revisão. Posso subir?')
+  const fromC = await rig.cli(C, 'say', 'horizontes', 'Os testes passam.')
+  assert.ok(fromA.ok && fromC.ok, JSON.stringify([fromA, fromC]))
+  const LA: number = fromA.data.seq
+  const LC: number = fromC.data.seq
+  await rig.waitFor('C heard A by the terminal', () => rig.typed(C).includes('Terminei a revisão'))
+  await rig.waitFor('A heard C inside', () => rig.notes(A).some((n) => n.content.includes('Os testes passam')))
+  await sleep(SETTLE_MS)
+  assert.equal(rig.notes(A).find((n) => n.content.includes('Os testes passam'))!.meta.reactions, undefined, 'no reaction yet: no attribute')
+
+  // Reactions: B on both lines, the person on A's. Nothing reaches anyone (the iron rule).
+  const before = { A: await rig.footprint(A), C: await rig.footprint(C) }
+  assert.ok((await rig.cli(B, 'react', 'horizontes', String(LA), 'question')).ok)
+  assert.ok((await rig.ask('react', { channel: made.data.channel.id, seq: LA, reaction: 'done' })) !== undefined)
+  assert.ok((await rig.cli(B, 'react', 'horizontes', String(LC), 'agree')).ok)
+  await sleep(SETTLE_MS)
+  assert.equal(await rig.footprint(A), before.A, 'A was not reached or woken by a reaction')
+  assert.equal(await rig.footprint(C), before.C, 'C was not reached, typed into or woken by a reaction')
+
+  // tetherd restarts in the middle; A's stream comes back with its process.
+  await rig.restartDaemon()
+  await rig.waitFor('the channels record open again', async () => {
+    try { return (await rig.verb(B, 'read', { canal: 'horizontes' })).lines } catch { return undefined }
+  }, 30_000)
+  await backAfterRestart()
+
+  // B speaks: the ride, nothing lost.
+  assert.ok((await rig.cli(B, 'say', 'horizontes', 'Pode subir agora.')).ok)
+  const note = await rig.waitFor('A got the line', () => rig.notes(A).find((n) => n.content.includes('Pode subir agora')))
+  assert.equal(note.meta.reactions, `${LA} ❓ ${NAME_B}, ✅ usuário`, JSON.stringify({ metas: rig.notes(A).map((n) => n.meta), index: readFileSync(join(rig.home, 'channels', 'index.json'), 'utf8') }))
+  assert.ok(!note.content.includes('❓'), 'never in the body')
+  await rig.waitFor('C got the line typed', () => rig.typed(C).includes('Pode subir agora'))
+  const RIDE = `· reações às suas falas: ${LC} 👍 ${NAME_B}]`
+  const typedAll = rig.typed(C)
+  assert.equal(typedAll.split(RIDE).length - 1, 1, typedAll.slice(-600))
+  assert.ok(typedAll.indexOf(RIDE) < typedAll.lastIndexOf('Pode subir agora') && typedAll.indexOf(RIDE) > typedAll.indexOf('Os testes passam') - 1, 'in the header of that line')
+  await sleep(SETTLE_MS)
+
+  // Restart again: delivered once, never repeated.
+  await rig.restartDaemon()
+  await rig.waitFor('the channels record open again', async () => {
+    try { return (await rig.verb(B, 'read', { canal: 'horizontes' })).lines } catch { return undefined }
+  }, 30_000)
+  await backAfterRestart()
+  assert.ok((await rig.cli(B, 'say', 'horizontes', 'Subiu?')).ok)
+  const second = await rig.waitFor('A got the second line', () => rig.notes(A).find((n) => n.content.includes('Subiu?')))
+  assert.equal(second.meta.reactions, undefined, 'A: no repeat')
+  await rig.waitFor('C got the second line typed', () => rig.typed(C).includes('Subiu?'))
+  assert.equal(rig.typed(C).split('reações às suas falas').length - 1, 1, 'C: no repeat')
 })
