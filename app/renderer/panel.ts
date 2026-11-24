@@ -7,7 +7,9 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { LinkTarget } from '../shared/links.ts'
 import { FOLLOW_LINK_TIP, terminalLinkProvider } from './terminal-links.ts'
-import { isModifierDown } from './link-open.ts'
+import { isModifierDown, isPeekModifier, openLink } from './link-open.ts'
+import { showLinkMenu } from './link-menu.ts'
+import { paneOfLink } from './link-menu-rules.ts'
 import { linkTargetOfUrl } from '../shared/links.ts'
 import { tabMark, tabMarkTip } from './turn-rules.ts'
 import { attentionLines, routedAttention } from './seal-rules.ts'
@@ -376,6 +378,8 @@ export class TerminalPanel implements IContentRenderer {
   private readonly fit = new FitAddon()
   private readonly head: { status: HTMLElement; bell: HTMLElement; ronda: HTMLButtonElement; profile: HTMLElement; unsafe: HTMLElement; cwd: HTMLElement; openFolder: HTMLButtonElement; copyFolder: HTMLButtonElement; switchProfile: HTMLButtonElement }
   private readonly termHost: HTMLElement
+  /** The link under the pointer right now (terminal-links.ts reports it), for the right-click menu and Alt+click. */
+  private hoveredLink: LinkTarget | undefined
   private readonly details: HTMLElement
   private readonly overlay: HTMLElement
   /** The discreet "Suspensa" sign over a suspended pane's last screen. */
@@ -488,7 +492,21 @@ export class TerminalPanel implements IContentRenderer {
     this.term.registerLinkProvider(terminalLinkProvider(this.term, {
       openingCwd: () => this.host.getSlot(this.slotId)?.cwd ?? this.hint?.cwd,
       open: target => this.host.onOpenLink(this.slotId, target),
+      hovered: target => { this.hoveredLink = target },
     }))
+    // Right-click on a link opens the link's menu (link-menu.ts); Alt+click on a link to a pane peeks at it (xterm would take
+    // the Alt+click to move the cursor, so it never sees that press). Anywhere else both are left to the terminal as before.
+    this.termHost.addEventListener('contextmenu', ev => {
+      const target = this.hoveredLink
+      if (!target || !this.slotId) return
+      if (showLinkMenu(ev.clientX, ev.clientY, target, { slotId: this.slotId })) { ev.preventDefault(); ev.stopPropagation() }
+    })
+    this.termHost.addEventListener('mousedown', ev => {
+      const target = this.hoveredLink
+      if (ev.button !== 0 || !target || !this.slotId || !isPeekModifier(ev) || !paneOfLink(target)) return
+      ev.preventDefault(); ev.stopPropagation()
+      openLink(target, { slotId: this.slotId, peek: true })
+    }, true)
     // OSC 8 hyperlinks (the ones agents print, e.g. Claude Code): without a handler xterm falls back to a native
     // window.confirm ("This link could potentially be dangerous"). They follow the same path as every other link:
     // underlined with the pane's tip, followed only by Ctrl (Cmd) + click, opened by the app — no dialog.
@@ -497,8 +515,8 @@ export class TerminalPanel implements IContentRenderer {
       const tip = (text: string | undefined): void => { if (text) term.element?.setAttribute('title', text); else term.element?.removeAttribute('title') }
       term.options.linkHandler = {
         activate: (event, text) => { if (isModifierDown(event)) this.host.onOpenLink(this.slotId, linkTargetOfUrl(text)) },
-        hover: () => tip(FOLLOW_LINK_TIP),
-        leave: () => tip(undefined),
+        hover: (_event, text) => { this.hoveredLink = linkTargetOfUrl(text); tip(FOLLOW_LINK_TIP) },
+        leave: () => { this.hoveredLink = undefined; tip(undefined) },
         allowNonHttpProtocols: true,
       }
     }

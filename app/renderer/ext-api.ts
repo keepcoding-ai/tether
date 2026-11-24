@@ -21,6 +21,8 @@ import type { Keybinding, KeyTable } from './shortcuts.ts'
 import type { PaletteModeProvider } from './palette.ts'
 import type { PaneType } from './pane-registry.ts'
 import type { OpenFileOptions } from './file-open.ts'
+import type { LinkTarget } from '../shared/links.ts'
+import type { LinkOrigin } from './link-open.ts'
 import type { ProjectFolder } from './workspace.ts'
 import type { AgentUi } from './agent-ui.ts'
 import type { ProfileOption } from './profile-options.ts'
@@ -85,6 +87,8 @@ export interface ContextMenuItem {
   disabled?: boolean
   checked?: boolean
   pin?: MenuPin
+  /** The gesture that does the same, written on the right of the row ("Ctrl+clique"). */
+  hint?: string
   children?: readonly ContextMenuRow[]
 }
 export type ContextMenuEntry = ContextMenuItem | 'sep'
@@ -554,6 +558,13 @@ export interface TetherUi {
     app(item: MenuItem<CommandContext>): IDisposable
     /** A floating context menu at page coordinates. */
     context(x: number, y: number, entries: ContextMenuEntry[]): void
+  }
+  /** The app's links (app/renderer/link-open.ts, link-menu.ts): one opener and one right-click menu for every surface. */
+  links: {
+    /** Follows a link the way Ctrl+click does (`peek`: a link to a pane peeks at it; `side`: a file or note opens beside). */
+    follow(target: LinkTarget, origin?: LinkOrigin): void
+    /** The right-click menu of a link at page coordinates; false when the link has none (an anchor, an ignored one). */
+    showMenu(x: number, y: number, target: LinkTarget, origin?: LinkOrigin): boolean
   }
   layout: {
     /** A pane's params changed (dockview's updateParameters): the layout is saved soon. */

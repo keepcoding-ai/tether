@@ -16,7 +16,9 @@ import type { PreviewPane } from './preview-pane.ts'
 import { previewShell, readPreviewTokens, tokensCss } from './preview-style.ts'
 import { noteDirOf } from '../shared/notes.ts'
 import { classifyLink } from '../shared/markdown-links.ts'
-import { openLink } from './link-open.ts'
+import type { LinkTarget } from '../shared/links.ts'
+import { isPeekModifier, openLink } from './link-open.ts'
+import { showLinkMenu } from './link-menu.ts'
 import { renderMarkdown, slugify } from '../shared/markdown-render.ts'
 import { lineAtOffset, offsetOfLine, type LineBlock } from '../shared/markdown-scroll.ts'
 import { previewParams, previewTitle } from '../shared/preview.ts'
@@ -240,7 +242,11 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     doc.addEventListener('contextmenu', ev => {
       ev.preventDefault()
       const f = this.frame.getBoundingClientRect()
-      this.host.onTabMenu(this.id, f.left + ev.clientX, f.top + ev.clientY)
+      const x = f.left + ev.clientX, y = f.top + ev.clientY
+      // On a link: the link's menu (link-menu.ts); anywhere else: the pane's menu.
+      const target = this.linkAt(ev.target)
+      if (target && showLinkMenu(x, y, target, { baseDir: noteDirOf(this.path) })) return
+      this.host.onTabMenu(this.id, x, y)
     })
     win.addEventListener('scroll', () => this.onScroll(), { passive: true })
     // Images and fonts settling, a resized pane: the measured blocks are stale.
@@ -360,6 +366,17 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
 
   // ---------- clicks and keys ----------
 
+  /** The app's link target of the <a> under `node` (an anchor included), when it is one that leads somewhere. */
+  private linkAt(node: EventTarget | null): LinkTarget | undefined {
+    const link = (node as Element | null)?.closest?.('a')
+    const href = link?.getAttribute('href')
+    if (!href) return undefined
+    const target = classifyLink(href, noteDirOf(this.path))
+    if (target.kind === 'external' || target.kind === 'tether') return target
+    if (target.kind === 'file') return { kind: 'file', path: target.path, ...(target.line ? { position: { line: target.line } } : {}) }
+    return undefined
+  }
+
   private onClick(ev: MouseEvent): void {
     const link = (ev.target as Element | null)?.closest?.('a')
     if (!link) return
@@ -367,11 +384,12 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     ev.preventDefault()
     const href = link.getAttribute('href')
     if (!href) return
-    const target = classifyLink(href, noteDirOf(this.path))
+    const classified = classifyLink(href, noteDirOf(this.path))
     // The anchor is the preview's own; the rest goes to the app's single link opener (app/renderer/link-open.ts).
-    if (target.kind === 'anchor') this.scrollToAnchor(target.id)
-    else if (target.kind === 'external' || target.kind === 'tether') openLink(target)
-    else if (target.kind === 'file') openLink({ kind: 'file', path: target.path, ...(target.line ? { position: { line: target.line } } : {}) }, { baseDir: noteDirOf(this.path) })
+    if (classified.kind === 'anchor') { this.scrollToAnchor(classified.id); return }
+    const target = this.linkAt(ev.target)
+    // Alt+click on a link to a pane peeks at it; any other click follows the link.
+    if (target) openLink(target, { baseDir: noteDirOf(this.path), ...(isPeekModifier(ev) ? { peek: true } : {}) })
   }
 
   private scrollToAnchor(id: string): void {

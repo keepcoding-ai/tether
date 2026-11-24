@@ -9,6 +9,7 @@
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } from 'dockview-core'
 import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
 import type { Line } from '../rules.ts'
@@ -808,8 +809,29 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         who.append(em, el('span', 'ch-author', r.name), role, dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
-      e.append(el('p', '', r.body))
+      e.append(this.speech(r.body))
       return e
+    }
+
+    /**
+     * The text of a speech as nodes (never innerHTML): the http(s) and tether:// links in it are links of the app. A plain click
+     * follows (Alt+click on a pane link peeks at it) and the right button opens the link's menu.
+     */
+    private speech(body: string): HTMLParagraphElement {
+      const p = el('p', '')
+      let at = 0
+      for (const l of detectUrlLinks(body)) {
+        if (l.start > at) p.append(body.slice(at, l.start))
+        const target = linkTargetOfUrl(l.url)
+        const a = el('a', 'ch-link', l.url)
+        a.href = '#'
+        a.addEventListener('click', ev => { ev.preventDefault(); ui.links.follow(target, ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}) })
+        a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.links.showMenu(ev.clientX, ev.clientY, target) })
+        p.append(a)
+        at = l.end
+      }
+      if (at < body.length) p.append(body.slice(at))
+      return p
     }
 
     /** A gesture on a member (the commands ask the consequence in their dialog). Taking someone out may leave the list empty: the focus then goes to the accent. */

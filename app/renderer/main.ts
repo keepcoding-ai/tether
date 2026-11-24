@@ -77,7 +77,9 @@ import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { generateSettingsSchema } from '../shared/settings-schema.ts'
 import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
-import { openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
+import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
+import { setLinkMenuHandler, showLinkMenu } from './link-menu.ts'
+import { linkCopyText, linkMenuPlan, paneOfLink } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
@@ -2772,7 +2774,7 @@ function copyPaneLink(id: string): void {
  * searched everywhere in the app. A pane closed but still known is offered back; an unknown one is said so. A note's
  * link reveals the note open on that file or opens it.
  */
-async function followTetherLink(url: string): Promise<void> {
+async function followTetherLink(url: string, side = false): Promise<void> {
   const link = parseTetherUrl(url)
   if (!link) return
   if (link.kind === 'note') {
@@ -2789,7 +2791,7 @@ async function followTetherLink(url: string): Promise<void> {
     }
     // In a pad: the file opens next to the pad's active pane (a blank one is replaced). A note already open anywhere is only revealed.
     const reference = pad?.desk.activePanel?.id
-    void openFile(fileOpenHost, link.path, { side: false, root, ...(reference ? { reference } : {}) }).then(() => {
+    void openFile(fileOpenHost, link.path, { side, root, ...(reference ? { reference } : {}) }).then(() => {
       const id = pad ? panelOfFile(link.path) : currentDesk().activePanel?.id
       if (id) drawAttention(id)
     })
@@ -3175,8 +3177,9 @@ function fromExtMenu(entries: readonly ContextMenuRow[]): MenuEntry[] {
   return entries.map((e): MenuEntry => {
     if (e === 'sep') return SEP
     if ('heading' in e) return { heading: String(e.heading) }
-    const { children, ...item } = e
-    return { ...item, icon: item.icon as IconName, ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
+    const { children, hint, ...item } = e
+    const trail = hint ? Object.assign(document.createElement('kbd'), { textContent: hint }) : undefined
+    return { ...item, icon: item.icon as IconName, ...(trail ? { trail } : {}), ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
   })
 }
 
@@ -3382,7 +3385,12 @@ const emptyHost: EmptyHost = {
  */
 function followLink(target: LinkTarget, origin: LinkOrigin): void {
   if (target.kind === 'external') { window.tether.openExternal(target.url); return }
-  if (target.kind === 'tether') { void followTetherLink(target.url); return }
+  if (target.kind === 'tether') {
+    const pane = origin.peek ? paneOfLink(target) : undefined
+    if (pane && slots.has(pane)) { peek(pane); return }
+    void followTetherLink(target.url, origin.side === true)
+    return
+  }
   if (target.kind !== 'file') return
   if (target.isDirectory) {
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
@@ -3391,9 +3399,30 @@ function followLink(target: LinkTarget, origin: LinkOrigin): void {
   const slotId = origin.slotId
   const reference = slotId && !framePadOf(slotId) ? slotId : undefined
   const root = (slotId ? paneCwdOf(slotId) : undefined) ?? origin.baseDir ?? ''
-  void openFile(fileOpenHost, target.path, { side: false, root, ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
+  void openFile(fileOpenHost, target.path, { side: origin.side === true, root, ...(reference ? { reference } : {}), ...(target.position ? { position: target.position } : {}) })
 }
 setLinkHandler(followLink)
+
+/** The context menu of a link (link-menu-rules.ts has the rows; each one calls the same opener Ctrl+click calls). */
+function linkMenuEntries(target: LinkTarget, origin: LinkOrigin): MenuEntry[] {
+  const pane = paneOfLink(target)
+  const plan = linkMenuPlan(target, { peekable: pane !== undefined && slots.has(pane), mac: IS_MAC })
+  return plan.map((line): MenuEntry => {
+    if (line === 'sep') return SEP
+    const trail = line.hint ? Object.assign(document.createElement('kbd'), { textContent: line.hint }) : undefined
+    const run = (): void => {
+      if (line.action === 'copy') { const text = linkCopyText(target); if (text !== undefined) window.tether.writeClipboard(text); return }
+      openLink(target, { ...origin, ...(line.action === 'follow-side' ? { side: true } : {}), ...(line.action === 'peek' ? { peek: true } : {}) })
+    }
+    return { icon: line.icon as IconName, label: line.label, run, ...(trail ? { trail } : {}) }
+  })
+}
+
+function showLinkMenuAt(x: number, y: number, target: LinkTarget, origin: LinkOrigin): void {
+  const entries = linkMenuEntries(target, origin)
+  if (entries.length) showContextMenu(x, y, entries)
+}
+setLinkMenuHandler(showLinkMenuAt)
 installMonacoLinks()
 
 // ---------- opening a file ----------
@@ -4816,6 +4845,10 @@ function activateRendererExtensions(): void {
       menus: {
         app: (item: RegistryMenuItem<CommandContext>) => add(menuRegistry.appendMenuItem(MenuId.App, item as RegistryMenuItem)),
         context: (x, y, entries: ContextMenuEntry[]) => showContextMenu(x, y, fromExtMenu(entries)),
+      },
+      links: {
+        follow: (target, origin) => openLink(target, origin),
+        showMenu: (x, y, target, origin) => showLinkMenu(x, y, target, origin),
       },
       layout: { scheduleSave: () => scheduleSave() },
       dialogs: { ask: spec => askDialog(spec) },

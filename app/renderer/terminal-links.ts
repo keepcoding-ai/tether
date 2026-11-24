@@ -20,6 +20,8 @@ export interface TerminalLinkHost {
   openingCwd(): string | undefined
   /** A link was Ctrl+clicked. */
   open(target: LinkTarget): void
+  /** The pointer is over this link (the right-click menu and Alt+click read it), or left it (undefined). */
+  hovered?(target: LinkTarget | undefined): void
 }
 
 class FollowLink implements ILink {
@@ -31,13 +33,15 @@ class FollowLink implements ILink {
   private readonly target: LinkTarget
   private readonly open: (target: LinkTarget) => void
   private readonly tip: (text: string | undefined) => void
+  private readonly hovered: (target: LinkTarget | undefined) => void
 
-  constructor(range: IBufferRange, text: string, target: LinkTarget, open: (target: LinkTarget) => void, tip: (text: string | undefined) => void) {
+  constructor(range: IBufferRange, text: string, target: LinkTarget, open: (target: LinkTarget) => void, tip: (text: string | undefined) => void, hovered: (target: LinkTarget | undefined) => void) {
     this.range = range
     this.text = text
     this.target = target
     this.open = open
     this.tip = tip
+    this.hovered = hovered
   }
 
   activate(event: MouseEvent): void {
@@ -54,6 +58,7 @@ class FollowLink implements ILink {
     const onKey = (e: KeyboardEvent): void => { if (!e.repeat) set(isModifierDown(e)) }
     const onMove = (e: MouseEvent): void => set(isModifierDown(e))
     this.tip(FOLLOW_LINK_TIP)
+    this.hovered(this.target)
     document.addEventListener('keydown', onKey)
     document.addEventListener('keyup', onKey)
     document.addEventListener('mousemove', onMove)
@@ -72,6 +77,7 @@ class FollowLink implements ILink {
     this.cleanup?.()
     this.cleanup = undefined
     this.tip(undefined)
+    this.hovered(undefined)
     this.decorations.pointerCursor = false
     this.decorations.underline = false
   }
@@ -104,9 +110,10 @@ export function terminalLinkProvider(term: Terminal, host: TerminalLinkHost): IL
   // xterm has no tooltip of its own for a link: the pane's element carries it while a link is hovered.
   const tip = (text: string | undefined): void => { if (text) term.element?.setAttribute('title', text); else term.element?.removeAttribute('title') }
   const open = (t: LinkTarget): void => host.open(t)
+  const hovered = (t: LinkTarget | undefined): void => host.hovered?.(t)
   return {
     provideLinks(bufferLineNumber, callback) {
-      const web = webLinksAt(term, bufferLineNumber).map(w => new FollowLink(w.range, w.url, linkTargetOfUrl(w.url), open, tip))
+      const web = webLinksAt(term, bufferLineNumber).map(w => new FollowLink(w.range, w.url, linkTargetOfUrl(w.url), open, tip, hovered))
       const cwd = host.openingCwd()
       provideLocalLinks(term, bufferLineNumber, os, async candidates => {
         try { return await window.tether.resolveTerminalLink(cwd, candidates) } catch (err) { console.error('terminal links:', err); return null }
@@ -115,7 +122,7 @@ export function terminalLinkProvider(term: Terminal, host: TerminalLinkHost): IL
           // A URL wins over a path read inside it (`https://x/a.ts` is the URL, not `a.ts`).
           const paths = found
             .filter(l => !web.some(w => overlaps(w.range, l.bufferRange)))
-            .map(l => new FollowLink(l.bufferRange, l.text, { kind: 'file', path: l.path, isDirectory: l.isDirectory, ...(l.position ? { position: l.position } : {}) }, open, tip))
+            .map(l => new FollowLink(l.bufferRange, l.text, { kind: 'file', path: l.path, isDirectory: l.isDirectory, ...(l.position ? { position: l.position } : {}) }, open, tip, hovered))
           const all = [...web, ...paths]
           callback(all.length > 0 ? all : undefined)
         },
