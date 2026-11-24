@@ -165,8 +165,9 @@ export function effectiveAttention(terminal: SlotAttention | undefined, extSeals
 }
 
 /** The tooltip lines of a pane's seal: the terminal's, then each extension message. */
-export function attentionLines(terminal: SlotAttention | undefined, messages: readonly string[]): string[] {
-  return [...(terminal === 'waiting' ? ['Esperando você'] : terminal === 'done' ? ['Terminou'] : []), ...messages]
+export function attentionLines(terminal: SlotAttention | undefined, messages: readonly string[], held = false): string[] {
+  // A 'done' the person marked unread (`attentionHeld`) is not "finished news" any more: it is something left to read.
+  return [...(terminal === 'waiting' ? ['Esperando você'] : terminal === 'done' ? [held ? 'Não lido' : 'Terminou'] : []), ...messages]
 }
 
 /** The mark of an attention the daemon sent to an agent owner instead of the person (`SlotState.attentionFor`). */

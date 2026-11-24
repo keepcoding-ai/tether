@@ -46,6 +46,7 @@ describe('channels fan-out (H2)', () => {
   const states: SlotState[] = []
   /** When set, the next `cancel` answers false (the line left meanwhile) without touching the queue. */
   let cancelFails = false
+  const toolsKnown = new Set<string>()
 
   const echoLog = (slotId: string): string => join(home, `echo-${slotId}.log`)
   const chanLog = (slotId: string): string => join(home, `chan-${slotId}.log`)
@@ -92,6 +93,8 @@ describe('channels fan-out (H2)', () => {
     const delivery = {
       ...doorApi.delivery,
       cancel: (id: string) => { if (cancelFails) { cancelFails = false; return false } return doorApi.delivery.cancel(id) },
+      // The door's own answer, or a slot the test says is known to have the tools (no fake client here opens a stream off the inside road).
+      hasTools: (id: string) => toolsKnown.has(id) || doorApi.delivery.hasTools(id),
     }
     const api: ChannelsApi = {
       slots: doorApi.slots, attention: doorApi.attention, delivery,
@@ -298,6 +301,29 @@ describe('channels fan-out (H2)', () => {
     const typed = chunks(q).join('')
     assert.ok(typed.includes('#fusao: 3 falas novas'), typed)
     assert.ok(!typed.includes('secreta'))
+    await doorApi.slots.forget(q)
+  })
+
+  test('a member known to have the tools: the merged notice and the footer of a line teach only the tool', async () => {
+    const q = await running('fora-ferramenta')
+    toolsKnown.add(q)
+    const id = await channel(owner, 'ferramenta')
+    await addMember(id, q)
+    const base = (await inbox(q)).length
+    const s1 = await ch.say(owner, id, { body: 'primeira' })
+    const s2 = await ch.say(owner, id, { body: 'segunda' })
+    assert.ok(s1.ok && s2.ok)
+    const waiting = (await inbox(q)).slice(base)
+    assert.equal(waiting.length, 1, JSON.stringify(waiting))
+    assert.equal(waiting[0]!.body, mergedNotice('ferramenta', { since: s1.line.seq, at: s1.line.at, messages: 2, notices: 0, speakers: ['dentro-dono'], fromUser: 0 }, 'terminal', true))
+    assert.ok(!waiting[0]!.body.includes('TETHER_CLI'), waiting[0]!.body)
+    cancelFails = true
+    const s3 = await ch.say(owner, id, { body: 'terceira' })
+    assert.ok(s3.ok)
+    const last = (await inbox(q)).at(-1)!
+    assert.equal(last.body, withReplyHint('terceira', 'ferramenta', 'terminal', true))
+    assert.ok(!last.body.includes('TETHER_CLI') && last.body.includes('ninguém no canal vê'), last.body)
+    toolsKnown.delete(q)
     await doorApi.slots.forget(q)
   })
 

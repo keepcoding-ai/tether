@@ -11,6 +11,11 @@ import type { DimLevel } from '../shared/ui-settings.ts'
 import type { Level } from './shortcuts.ts'
 import type { PaletteMode } from './palette-rules.ts'
 
+/** The unread mark's two labels (the tab menu and the palette); the pair follows `SlotState.attentionHeld`. */
+export const UNREAD_LABEL = 'Marcar como não lido'
+export const READ_LABEL = 'Marcar como lido'
+export const unreadLabel = (held: boolean): string => held ? READ_LABEL : UNREAD_LABEL
+
 export interface CommandHost {
   /** The contextless popup ("Novo painel…"): the chooser with the "Onde" row. */
   newPanel(opts?: { target?: Target }): void
@@ -32,6 +37,8 @@ export interface CommandHost {
   restartAgent(id: string): void
   /** "Hibernar guia": stop the pane's process and keep it asleep (not started on launch) until woken. */
   hibernatePane(id: string): void
+  /** "Marcar como não lido" / "Marcar como lido": toggles the unread mark of a slot's pane (the daemon keeps it through focus). */
+  toggleUnread(id: string): void
   /** "Guias hibernadas…": the same list as the tab strip's moon, for the current desk; picking one wakes it. */
   asleepMenu(): void
   toggleDetails(id: string): void
@@ -155,6 +162,9 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.restart', title: 'Reiniciar agente do painel', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.restartAgent(id)) },
     { id: 'pane.asleep', title: 'Guias hibernadas…', group: GROUP.pane, icon: 'moon', run: () => host.asleepMenu() },
     { id: 'pane.hibernate', title: 'Hibernar guia', group: GROUP.pane, icon: 'moon', ...pane, run: withPane(id => host.hibernatePane(id)) },
+    // One command per label of the pair: the palette lists the one that applies to the active slot's pane.
+    { id: 'pane.mark-unread', title: UNREAD_LABEL, group: GROUP.pane, icon: 'bell', when: ctx => ctx.pane && ctx.unread === false, run: withPane(id => host.toggleUnread(id)) },
+    { id: 'pane.mark-read', title: READ_LABEL, group: GROUP.pane, icon: 'bell', when: ctx => ctx.pane && ctx.unread === true, run: withPane(id => host.toggleUnread(id)) },
     { id: 'pane.details', title: 'Mostrar ou ocultar a barra de status do painel', group: GROUP.pane, icon: 'rows', ...pane, run: withPane(id => host.toggleDetails(id)) },
     { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },
     { id: 'pane.copy-folder', title: 'Copiar pasta do painel', group: GROUP.pane, icon: 'copy', ...pane, run: withPane(id => host.copyFolder(id)) },

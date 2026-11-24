@@ -14,6 +14,7 @@ import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
 import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
 import { createStatusPoller } from './status-poll.ts'
+import { bundleSha256Of, readDaemonRecord } from './warmup.ts'
 import type { StatusSnapshot } from './status.ts'
 import { extensionVersionOf, readUpdateMarker, settleUpdateMarker } from './update.ts'
 import { findNode } from './find-node-sync.ts'
@@ -86,6 +87,10 @@ export function activate(main: TetherMain): IDisposable[] {
     port,
     bridgeHome: bridgeHomeOf(main.home),
     version,
+    daemonBuildStale: async () => {
+      const [record, vendored] = await Promise.all([readDaemonRecord(bridgeHomeOf(main.home)), bundleSha256Of(join(vendorDir, 'atrium-bridge.mjs'))])
+      return !!record && !!vendored && record.bundleSha256 !== vendored
+    },
     options: () => {
       // Detected once the daemon is up (reg query costs ~100 ms; the list is cached for the session).
       if (!buildInfo) return undefined

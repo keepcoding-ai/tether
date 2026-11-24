@@ -81,6 +81,8 @@ export interface SlotState {
    * the slot or by `seen`. Absent on daemons older than 0.3.0.
    */
   attention?: 'done' | 'waiting'
+  /** `attention` stands until resolved (a pending request, or the person's unread mark): focus does not clear it. Present only then. */
+  attentionHeld?: true
   /** A turn is in progress (Claude: prompt submitted and not yet Stop; soul: Enter and output not yet quiet). Absent = idle. */
   turn?: 'busy'
   /**
@@ -237,6 +239,12 @@ export type Request =
   | { t: 'restart'; id: number; slotId: string }
   /** The user looked at the slot's pane (it got the focus): clears `attention`, except a pending 'waiting' (a request the person must resolve). Daemons before 0.3.0 answer bad-request. */
   | { t: 'seen'; id: number; slotId: string }
+  /**
+   * The person marks the slot unread (`off` unmarks it): `attention` shows 'done' unless a value is already there, and `attentionHeld` is set, so
+   * `seen` no longer clears it; typing or a new turn does, and `off` does. No-op while the slot's attention is rerouted to an owner. Daemons
+   * before this request answer bad-request.
+   */
+  | { t: 'unseen'; id: number; slotId: string; off?: boolean }
   /**
    * Agent door: which panes are in which desk. The whole map, sent with the layout save (debounced) and on every reconnect;
    * kept in <home>/desks.json. A slot that shows in any desk loses its `paneRequest`.

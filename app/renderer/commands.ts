@@ -28,6 +28,8 @@ export interface CommandContext {
   focus: 'terminal' | 'editor' | 'none'
   /** The active pane is the "Atalhos de teclado" screen (its own keys: record, delete). */
   keybindings?: boolean
+  /** The active pane is a slot (a terminal or an agent): whether the person marked it unread (`SlotState.attentionHeld`). Absent for any other pane. */
+  unread?: boolean
   /** How many pads the side bars have (F10). */
   pads?: number
   /** The current pad: the open one most recently opened or focused. */

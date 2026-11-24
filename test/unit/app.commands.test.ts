@@ -15,7 +15,7 @@ function stubHost(calls: string[]): CommandHost {
   const log = (name: string) => (...args: unknown[]): void => { calls.push([name, ...args.map(a => JSON.stringify(a))].join(' ')) }
   return {
     newPanel: log('newPanel'), newTab: log('newTab'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
-    renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), hibernatePane: log('hibernatePane'), toggleDetails: log('toggleDetails'),
+    renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), hibernatePane: log('hibernatePane'), toggleUnread: log('toggleUnread'), toggleDetails: log('toggleDetails'),
     copyLink: log('copyLink'), copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'), asleepMenu: log('asleepMenu'),
@@ -152,6 +152,24 @@ describe('the app commands', () => {
     const drawer = avail({ pane: true, desks: 3, drawerOpen: true, focus: 'terminal' })
     for (const id of ['desk.next', 'desk.go.1', 'desk.new']) assert.ok(!drawer.has(id), `${id} waits while the drawer is open`)
     assert.ok(drawer.has('drawer.toggle'))
+  })
+
+  test('the unread mark: one command of the pair per slot pane, none for other panes', async () => {
+    calls.length = 0
+    const r = new CommandRegistry(() => CTX)
+    r.register(...list)
+    const ids = (ctx: CommandContext) => r.available(ctx).map(c => c.id).filter(id => id === 'pane.mark-unread' || id === 'pane.mark-read')
+    assert.deepEqual(ids({ ...CTX, unread: false }), ['pane.mark-unread'])
+    assert.deepEqual(ids({ ...CTX, unread: true }), ['pane.mark-read'])
+    assert.deepEqual(ids(CTX), [], 'a pane that is not a slot')
+    assert.equal(await r.run('pane.mark-unread'), 'unavailable')
+    let ctx: CommandContext = { ...CTX, unread: false }
+    const live = new CommandRegistry(() => ctx)
+    live.register(...list)
+    assert.equal(await live.run('pane.mark-unread'), 'ran')
+    assert.equal(calls.at(-1), 'toggleUnread "slot-1"')
+    ctx = { ...ctx, unread: true }
+    assert.equal(await live.run('pane.mark-unread'), 'unavailable')
   })
 
   test('running goes to the host with the payload (duplicate target, desk position, theme)', async () => {

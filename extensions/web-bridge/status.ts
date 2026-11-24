@@ -80,6 +80,8 @@ export interface StatusSnapshot {
   debug: boolean
   /** "Opções da extensão": the browser it opens in (hidden when none). */
   options?: { browserId: string; browserName: string }
+  /** The daemon runs an older build than this tether's (its /status lacks the presence contract, or its bundle differs from the vendored one): the popover warns and hides what needs the new one. */
+  daemonOutdated?: boolean
   /** The chosen active browser (persisted at the daemon), connected or not. */
   activeBrowserId?: string
   /** Present while the chosen one is away and a substitute answers. */
@@ -111,7 +113,7 @@ export function browserLabel(name: string | undefined, userAgent: string | undef
 }
 
 /** What `reduceStatus` returns: the part of the snapshot that comes from the body. */
-export type ReducedStatus = Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents' | 'debug' | 'activeBrowserId' | 'activeFallback'>
+export type ReducedStatus = Pick<StatusSnapshot, 'paused' | 'browsers' | 'agents' | 'debug' | 'activeBrowserId' | 'activeFallback' | 'daemonOutdated'>
 
 const EVALUATE: readonly EvaluateMode[] = ['off', 'own-tabs', 'all']
 const tabIdOf = (v: unknown): number | undefined => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : undefined)
@@ -186,8 +188,11 @@ export function reduceStatus(raw: unknown, knownNames?: ReadonlyMap<string, stri
   const nameOf = (bid: string): string => browsers.find(x => x.id === bid)?.name ?? knownNames?.get(bid) ?? 'O navegador escolhido'
   const at = num(fb.at)
   const activeFallback: FallbackView | undefined = from && to ? { fromId: from, fromName: nameOf(from), toId: to, toName: nameOf(to), ...(at === undefined ? {} : { at }) } : undefined
+  // An older daemon says nothing of the active browser: no `activeBrowserId` and no `active` on any browser it lists.
+  const rawBrowsers = Array.isArray(body.browsers) ? (body.browsers as { active?: unknown }[]) : []
+  const legacyShape = !activeBrowserId && rawBrowsers.length > 0 && rawBrowsers.every(b => typeof b?.active !== 'boolean')
   return {
-    paused: body.paused === true, debug: debugOf(raw).length > 0, browsers, agents,
+    paused: body.paused === true, debug: debugOf(raw).length > 0, browsers, agents, ...(legacyShape ? { daemonOutdated: true } : {}),
     ...(activeBrowserId ? { activeBrowserId } : {}), ...(activeFallback ? { activeFallback } : {}),
   }
 }
@@ -343,6 +348,11 @@ export function browserAlert(b: BrowserView, vendored: string | undefined): Brow
   return { text, action: { id: 'extension-page', label: 'Recarregar…' } }
 }
 
+/** The single warning of the popover while the daemon is older than the tether. */
+export const DAEMON_OUTDATED_TEXT = 'O serviço do Bridge está desatualizado. Reinicie o tether para usar a versão nova.'
+/** The reply to an activate that the older daemon answered 404 to. */
+export const DAEMON_OUTDATED_ACTIVATE = 'O serviço do Bridge está desatualizado; reinicie o tether.'
+
 /** The fallback notice: "<A> desconectou; usando <B>". */
 export function fallbackLine(f: FallbackView): string {
   return `${f.fromName} desconectou; usando ${f.toName}`
@@ -356,7 +366,12 @@ export interface AgentGroup { browserId: string; label: string; agents: AgentVie
  * list (an agent that has not called a tool yet goes with the active browser, where its first call lands). A browser
  * without a live agent has no group; agents whose browser is gone stay under "Navegador desconectado".
  */
-export function agentGroups(s: Pick<StatusSnapshot, 'browsers' | 'agents'>): AgentGroup[] {
+export function agentGroups(s: Pick<StatusSnapshot, 'browsers' | 'agents'> & { daemonOutdated?: boolean }): AgentGroup[] {
+  // An older daemon has no `live`: the old filter, the client is shown unless its last tool was `release`.
+  if (s.daemonOutdated) {
+    const list = s.agents.filter(a => a.lastTool !== 'release')
+    return list.length ? [{ browserId: s.browsers[0]?.id ?? '', label: s.browsers.length === 1 ? s.browsers[0]!.name : 'Navegadores', agents: list }] : []
+  }
   const active = s.browsers.find(b => b.active)?.id
   const groups = new Map<string, AgentView[]>()
   for (const a of s.agents) {
@@ -383,9 +398,10 @@ export interface BrowserMenuItem { id: 'options' | 'pause' | 'resume' | 'reload'
 /**
  * The "⋯" menu of a browser: its extension's options page and "Recarregar extensão" only when this browser's extension differs from the vendored one.
  */
-export function browserMenu(b: BrowserView, s: Pick<StatusSnapshot, 'version'>): BrowserMenuItem[] {
+export function browserMenu(b: BrowserView, s: Pick<StatusSnapshot, 'version'> & { daemonOutdated?: boolean }): BrowserMenuItem[] {
   const items: BrowserMenuItem[] = [{ id: 'options', label: 'Opções da extensão' }]
   const vendored = s.version.vendored
+  if (s.daemonOutdated) return items
   if (b.extensionVersion && vendored !== undefined && b.extensionVersion !== vendored) items.push({ id: 'reload', label: 'Recarregar extensão' })
   return items
 }
