@@ -24,6 +24,8 @@ export interface CommandContext {
   /** How many desks exist. */
   desks: number
   drawerOpen: boolean
+  /** The peek card is open (peek.ts). */
+  peekOpen?: boolean
   /** What owns the keyboard right now. */
   focus: 'terminal' | 'editor' | 'none'
   /** The active pane is the "Atalhos de teclado" screen (its own keys: record, delete). */
@@ -87,6 +89,7 @@ export function contextKey(ctx: CommandContext, key: string): ContextValue {
     case 'focus': return ctx.focus
     case 'desks': return ctx.desks
     case 'drawerOpen': return ctx.drawerOpen
+    case 'peekOpen': return ctx.peekOpen ?? false
     case 'pads': return ctx.pads ?? 0
     case 'pad': return ctx.pad
     case 'padMoved': return ctx.padMoved ?? false

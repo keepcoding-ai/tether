@@ -60,6 +60,8 @@ export interface CommandHost {
   closeDesk(): void
   toggleDrawer(): void
   quickShell(): void
+  /** Closes the peek card (peek.ts); the session it shows keeps running. */
+  closePeek(): void
   setTheme(setting: ThemeSetting): void
   toggleDeskLine(): void
   toggleTabBorder(): void
@@ -192,6 +194,8 @@ export function appCommands(host: CommandHost): Command[] {
     // ----- drawer -----
     { id: 'drawer.toggle', title: 'Abrir ou fechar a gaveta', group: GROUP.drawer, icon: 'lightning', ignoreRepeat: true, run: () => host.toggleDrawer() },
     { id: 'drawer.quick-terminal', title: 'Terminal rápido na gaveta', group: GROUP.drawer, icon: 'terminal-window', run: () => host.quickShell() },
+    // ----- peek card -----
+    { id: 'peek.close', title: 'Fechar o cartão de espiar', group: GROUP.pane, icon: 'x', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => !!ctx.peekOpen, run: () => host.closePeek() },
     // ----- side bars (F10); each pad's own toggle is registered from its manifest (pad.toggle.<id>) -----
     { id: 'sidebar.left.toggle', title: 'Alternar barra lateral esquerda', group: GROUP.sidebars, icon: 'sidebar-simple', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => (ctx.pads ?? 0) > 0, run: () => host.toggleSideBar('left') },
     { id: 'sidebar.right.toggle', title: 'Alternar barra lateral direita', group: GROUP.sidebars, icon: 'sidebar-simple', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => (ctx.pads ?? 0) > 0, run: () => host.toggleSideBar('right') },

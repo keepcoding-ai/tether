@@ -349,6 +349,11 @@ export interface TetherUi {
     focus(id: string): void
     /** Brings a pane to the front wherever it lives (its desk comes forward, the drawer or its pad opens, its tab is activated) and focuses it. */
     reveal(id: string): void
+    /**
+     * Peeks a slot without leaving where the person is: a live slot no tab shows opens in the peek card (its live terminal
+     * over everything, the drawer included); a slot with a tab is revealed there. An unknown or ended slot without a tab: nothing.
+     */
+    peek(slotId: string): void
     /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
     copyLink(id: string): void
     /** Draws the eye to a pane's tab with a short pulse (bring it up first: `reveal`). */

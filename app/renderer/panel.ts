@@ -854,14 +854,18 @@ export class TerminalPanel implements IContentRenderer {
     return this.attaching
   }
 
-  dispose(): void {
+  /**
+   * `detach: false` leaves the slot attached: another view of the same slot (a tab opened while the peek card showed it)
+   * attached on its own, and a late detach would cut its output.
+   */
+  dispose(opts: { detach?: boolean } = {}): void {
     this.disposed = true
     this.observer?.disconnect()
     this.visibility?.dispose()
     if (this.fitTimer) clearTimeout(this.fitTimer)
     if (this.graceTimer) clearTimeout(this.graceTimer)
     if (this.fadeTimer) clearTimeout(this.fadeTimer)
-    if (this.attached && this.slotId) void window.tether.request({ t: 'detach', slotId: this.slotId })
+    if (this.attached && this.slotId && opts.detach !== false) void window.tether.request({ t: 'detach', slotId: this.slotId })
     this.attached = false
     this.term.dispose()
   }

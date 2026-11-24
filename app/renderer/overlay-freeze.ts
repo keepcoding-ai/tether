@@ -22,6 +22,8 @@ const FREEZING: { reason: string; matches(): Element[] }[] = [
   { reason: 'popover', matches: () => visible('.pinned .popover') },
   // The "no connection to tetherd" card covers the whole window.
   { reason: 'dialog', matches: () => visible('#overlay:not([hidden])') },
+  // The peek card (peek.ts): over everything, the open drawer included; it holds no native surface of its own.
+  { reason: 'peek', matches: () => [...document.querySelectorAll('#peek[data-open="true"]')] },
 ]
 
 function visible(selector: string): Element[] {

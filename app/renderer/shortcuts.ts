@@ -259,6 +259,8 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'ctrl+`', command: 'drawer.toggle', literal: true },       // "toggle terminal"
   { key: 'ctrl+shift+g', command: 'drawer.toggle' },                // alias for keyboards where ` is a dead key (ABNT2)
   { key: 'ctrl+shift+`', command: 'drawer.quick-terminal' },        // "new terminal"
+  // ----- the peek card (peek.ts) -----
+  { key: 'ctrl+shift+o', command: 'peek.close' },                   // O of olhar (Ctrl+Shift+E was retired on purpose); everywhere, the card's terminal included (Esc is the agent's there)
   // side bars (F10): VS Code's "toggle primary / secondary side bar". Ctrl+B is a plain Ctrl+letter, so it spares the
   // terminal (^B: Claude Code's "run in background", readline's back-char); Ctrl+K Ctrl+B is its terminal-safe twin.
   // Ctrl+Alt+B goes against the "no Ctrl+Alt+letter" rule above on purpose: it is VS Code's key, and AltGr+B types

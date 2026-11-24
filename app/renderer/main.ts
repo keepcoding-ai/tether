@@ -1,7 +1,7 @@
 // Renderer entry: dockview grid of terminal panels (panel id === slotId), toolbar, new-panel dialog,
 // keyboard shortcuts, layout persistence, the "closed slots" menu, and the start/resume flow of each
 // panel (auto-start of exited slots on launch, the unconfirmed choice, error actions).
-import { type AddPanelOptions, type DockviewTheme, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
+import { type AddPanelOptions, type DockviewTheme, type GroupPanelPartInitParameters, type IDockviewPanel, type SerializedDockview } from 'dockview-core'
 import type { Event as DaemonEvent, Notice, Profile, SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, RequestBody } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
@@ -93,6 +93,8 @@ import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPa
 import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
+import { PeekCard, type PeekHost } from './peek.ts'
+import { PEEK_CLOSE_COMMAND, peekEscAction, peekRoute } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -304,7 +306,7 @@ function commandContext(): CommandContext {
   const pad = sidebars?.current()
   const activeSlot = activeId ? slots.get(activeId) : undefined
   return {
-    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, focus, ...(keybindings ? { keybindings } : {}),
+    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, peekOpen: !!peekCard?.isOpen, focus, ...(keybindings ? { keybindings } : {}),
     pads: padRegistry.all().length, ...(pad ? { pad, padMoved: sidebars!.isMoved(pad) } : {}),
   }
 }
@@ -337,7 +339,10 @@ const host: PanelHost = {
   onRename: (id, name) => { void renameSlot(id, name) },
   onKey: (ev, panel) => {
     if (ev.type !== 'keydown') return false
-    if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) return drawerEscapeInTerminal(panel) || builderEscape()
+    if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) {
+      if (peekCard?.panel === panel) return peekEscapeInTerminal(panel)
+      return drawerEscapeInTerminal(panel) || builderEscape()
+    }
     // Line editing (macOS: Cmd/Option + arrows, Backspace; Shift+Enter everywhere in an agent pane): bytes for the prompt, not app chords.
     const seq = terminalInputOf(ev, slots.get(panel.slotId)?.kind !== 'shell')
     if (seq !== undefined) {
@@ -598,6 +603,7 @@ function setupDock(): void {
   for (const desk of systemDeskRegistry.all()) mirror({ type: 'add', desk })
   systemDeskRegistry.onDidChange(mirror)
   drawer = new Drawer($('drawer'), { deskHost: () => deskHost('drawer'), onMargin: () => setDrawerOpen(false) }, DOCK_THEME)
+  peekCard = new PeekCard(peekHost())
   sidebars = new SideBars($('workbench'), {
     pads: () => padRegistry.all(),
     padType: id => padTypes.get(id),
@@ -1422,6 +1428,8 @@ function focusedDeskPane(): string | undefined {
 /** Opens or closes the drawer. Closing never stops anything; the focus goes back to the pane that had it. */
 function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
+  // The peek card sits over the drawer and owns the inert state of what is behind it: the drawer stays as it is meanwhile.
+  if (peekCard?.isOpen) return
   lastEsc = undefined
   scheduleKeyboardTab()
   // A surface in the drawer goes before the drawer does, not a frame after.
@@ -1533,6 +1541,107 @@ function drawerEscapeOutside(ev: KeyboardEvent): void {
   if (escAction({ open: true, blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
   ev.preventDefault()
   setDrawerOpen(false)
+}
+
+// ---------- the peek card (app/renderer/peek.ts; the rules in peek-rules.ts) ----------
+// A live slot that no tab shows opens in a card over everything, its terminal registered in `panels` like a pane's (the
+// slot has no other view, so the card's terminal is the one the output, the visibility and the pty size follow).
+
+let peekCard: PeekCard | undefined
+/** What the card can make inert: the parts behind the drawer and the drawer itself. */
+const BEHIND_PEEK = [...BEHIND_DRAWER, 'drawer']
+/** The ones the open card made inert (those already inert, behind an open drawer or the closed drawer, stay as they were). */
+let peekInerted: string[] = []
+/** When the last Esc that counts toward a double Esc happened in the card's terminal (a shell at its prompt). */
+let peekLastEsc: number | undefined
+
+/** Peek a slot (TetherUi `panes.peek`): a live slot without a tab opens in the card; one with a tab is revealed there. */
+function peek(slotId: string): void {
+  const route = peekRoute(slots.get(slotId), findPanel(slotId) !== undefined)
+  if (route === 'reveal') { peekCard?.close(); revealPane(slotId); return }
+  if (route === 'card') peekCard?.open(slotId)
+}
+
+function closePeek(): void { peekCard?.close() }
+
+/** A TerminalPanel outside dockview: an always-active api whose parameters never change; registered where `data` is routed. */
+function createPeekPanel(slotId: string): TerminalPanel {
+  const panel = new TerminalPanel(host)
+  const none = { dispose: () => {} }
+  const api = { id: slotId, isActive: true, onDidActiveChange: () => none, onDidParametersChange: () => none }
+  panel.init({ params: { slotId }, api, title: undefined } as unknown as GroupPanelPartInitParameters)
+  panels.set(slotId, panel)
+  return panel
+}
+
+function peekHost(): PeekHost {
+  return {
+    slot: id => slots.get(id),
+    createPanel: createPeekPanel,
+    releasePanel: (panel, detach) => {
+      const id = panel.slotId
+      panel.dispose({ detach })
+      if (panels.get(id) === panel) panels.delete(id)
+    },
+    openHere: slotId => revealPane(slotId),
+    closeHint: () => shortcutHint(PEEK_CLOSE_COMMAND),
+    onOpenChange: open => {
+      peekLastEsc = undefined
+      if (open) {
+        // Menus of the toolbar belong to the window behind: they close, they do not float over the card.
+        $('app-menu').hidden = true
+        $('btn-menu').setAttribute('aria-expanded', 'false')
+        sessionsMenu?.setOpen(false)
+        closeToolbarPopups()
+        peekInerted = BEHIND_PEEK.filter(id => !$(id).hasAttribute('inert'))
+        // Inert to keep the keyboard out, still on screen behind the card: its surfaces freeze to a picture (surface-host.ts).
+        for (const id of peekInerted) { $(id).setAttribute('inert', ''); $(id).setAttribute('data-inert-onscreen', '') }
+      } else {
+        for (const id of peekInerted) { $(id).removeAttribute('inert'); $(id).removeAttribute('data-inert-onscreen') }
+        peekInerted = []
+      }
+      document.body.classList.toggle('peek-open', open)
+    },
+    fallbackFocus: () => { const id = currentDesk().activePanel?.id; if (id) focusPane(id) },
+  }
+}
+
+/** Esc in the card's terminal (peek-rules.ts): true when the card took it (it closes); false hands it to the program. */
+function peekEscapeInTerminal(panel: TerminalPanel): boolean {
+  const now = performance.now()
+  const action = peekEscAction({
+    blocked: escBlocked(),
+    focus: {
+      in: 'terminal',
+      kind: slots.get(panel.slotId)?.kind ?? 'claude', // unknown: treated as an agent, whose Esc is never taken
+      programOwnsScreen: panel.term.buffer.active.type === 'alternate' || panel.term.modes.mouseTrackingMode !== 'none',
+    },
+    now,
+    lastEsc: peekLastEsc,
+  })
+  peekLastEsc = action === 'arm' ? now : undefined
+  if (action !== 'close') return false
+  peekCard?.close()
+  return true
+}
+
+/** Esc anywhere but a terminal while the card is open (its header, its buttons): closes the card, never the drawer under it. */
+function peekEscapeOutside(ev: KeyboardEvent): void {
+  if (ev.defaultPrevented || (ev.target as Element | null)?.closest?.('.xterm')) return
+  if (peekEscAction({ blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
+  ev.preventDefault()
+  peekCard?.close()
+}
+
+/** A tab born for the slot the card shows (an agent, the CLI): the card gives way without detaching, the tab attaches. */
+function peekYieldsTo(panel: TerminalPanel): TerminalPanel {
+  const init = panel.init.bind(panel)
+  panel.init = params => {
+    const id = String((params.params as { slotId?: unknown }).slotId ?? params.api.id)
+    if (peekCard?.slotId === id) peekCard.close({ detach: false })
+    init(params)
+  }
+  return panel
 }
 
 // Moving work between the desks and the drawer: a pane (or its whole frame) is removed from one and added to the
@@ -2064,6 +2173,7 @@ function applyState(slot: SlotState): void {
   // Every queued pane's position may have moved.
   for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
+  if (peekCard?.slotId === slot.slotId) peekCard.render()
   refreshSessions()
   refreshSessionsDialog()
   renderStrip()
@@ -2091,6 +2201,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
       slots.delete(ev.slotId)
       door.slotRemoved(ev.slotId)
       startErrors.delete(ev.slotId)
+      if (peekCard?.slotId === ev.slotId) peekCard.close()
       const panel = findPanel(ev.slotId)
       if (panel) removeAnyPanel(panel)
       refreshSessions()
@@ -3503,6 +3614,7 @@ const commandHost: CommandHost = {
   closeDesk: () => { if (!desks.isSystem(desks.activeDeskId)) void closeDesk(desks.activeDeskId) },
   toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
   quickShell: () => { void quickShell() },
+  closePeek,
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
@@ -3948,7 +4060,7 @@ function setupUi(): void {
   }, true)
   // Esc outside a terminal closes the drawer (the dispatcher left it alone: no chord was pending); after it, the builder
   // mode's (a lower priority: an Esc the drawer, a popup, a menu or a dialog took never leaves the builder).
-  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') drawerEscapeOutside(ev) })
+  document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { if (peekCard?.isOpen) peekEscapeOutside(ev); else drawerEscapeOutside(ev) } })
   document.addEventListener('keydown', ev => {
     if (ev.key !== 'Escape' || ev.defaultPrevented || ev.ctrlKey || ev.altKey || ev.shiftKey || ev.metaKey) return
     if (builderEscape()) ev.preventDefault()
@@ -4116,6 +4228,9 @@ declare global {
       commands(): { id: string; title: string; hint: string; available: boolean }[]
       /** Runs a command by id, as the CLI will (`tether run <id>`). */
       runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
+      /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
+      peek(slotId: string): void
+      peekState(): { open: boolean; slotId?: string; routed: boolean }
       /** The palette: open or not, its mode, the ids on screen in order, the field's text. */
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
@@ -4307,6 +4422,11 @@ function setupTestHooks(): void {
     moveFrameFromDrawer,
     commands: () => { const ctx = commandContext(); return commands.all().map(c => ({ id: c.id, title: c.title, hint: commands.hint(c), available: commands.isAvailable(c, ctx) })) },
     runCommand: id => commands.run(id, 'cli'),
+    peek: slotId => peek(slotId),
+    peekState: () => {
+      const slotId = peekCard?.slotId
+      return { open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel }
+    },
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
     pill: () => pill.snapshot(),
@@ -4359,7 +4479,7 @@ function registerCorePaneTypes(): void {
   }))
   paneTypes.register(live(terminalLayout, {
     icon: 'terminal',
-    create: () => { const p: TerminalPanel = tracked(new TerminalPanel(host), panels, () => p.slotId); return p },
+    create: () => { const p: TerminalPanel = peekYieldsTo(tracked(new TerminalPanel(host), panels, () => p.slotId)); return p },
     createTab: () => trackedTab(new SlotTab(host, id => { void closePanel(id) }), tabs),
     has: id => slots.has(id),
     cwdOf: id => slots.get(id)?.cwd,
@@ -4495,6 +4615,7 @@ function activateRendererExtensions(): void {
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
+        peek: slotId => peek(slotId),
         copyLink: paneId => copyPaneLink(paneId),
         attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
