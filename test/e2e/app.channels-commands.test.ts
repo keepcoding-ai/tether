@@ -218,7 +218,36 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
     await page.evaluate(() => window.__tether.switchDesk('desk-1'))
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
-    const tabOf = (id: string) => page.locator(`.tether-tab[data-slot="${id}"]`)
+
+    // ---- 4a. G5: the join's list in groups: the active desk, the other desk, "tirado deste canal" on the one taken out ----
+    console.log('step 4a')
+    // The daemon learns the new desk from the app's map a moment after the keystroke.
+    let d = ''
+    for (let i = 0; d === '' && i < 40; i++) {
+      try { d = (await doorApi.slots.create({ kind: 'claude', cwd: home, name: 'pesquisa', desk: 'desk-2' })).slotId } catch { await page.waitForTimeout(250) }
+    }
+    assert.notEqual(d, '', 'the daemon knows desk-2')
+    // A pane of a desk out of view is not drawn yet: look at the desk until the agent runs, then come back.
+    await page.evaluate(() => window.__tether.switchDesk('desk-2'))
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-2')
+    await waitUntil(() => doorApi.slots.get(d)?.status === 'running', 30_000, `pesquisa running (now ${doorApi.slots.get(d)?.status}; panels ${d})`)
+    await page.evaluate(() => window.__tether.switchDesk('desk-1'))
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
+    await run('channels.join', { channel: conf })
+    await picker.waitFor()
+    await waitUntil(async () => (await rows.count()) >= 2, 10_000, 'the join list is drawn')
+    assert.equal(await title(), 'Juntar a #conferencia')
+    const groups = await page.locator('dialog.picker li.pk-group').allInnerTexts()
+    assert.match(groups[0]!, /^nesta mesa · /i, `the active desk first: ${groups.join(' | ')}`)
+    assert.match(groups[1]!, /^mesa · /i, `then the other desk: ${groups.join(' | ')}`)
+    const joinRows = await rows.allInnerTexts()
+    assert.ok(joinRows[0]!.includes('tirado deste canal'), `the one taken out is marked: ${joinRows.join(' | ')}`)
+    await page.waitForTimeout(400) // the picker's opening fade
+    await page.screenshot({ path: 'C:/atrium/.tmp/tether-agents/onda-3/gestao/g5-juntar.png' })
+    await page.keyboard.press('Escape')
+    await picker.waitFor({ state: 'detached' })
+
+    const tabOf =(id: string) => page.locator(`.tether-tab[data-slot="${id}"]`)
     await tabOf(b).waitFor()
     await tabOf(b).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
