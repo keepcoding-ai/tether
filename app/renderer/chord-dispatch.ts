@@ -49,6 +49,8 @@ export class ChordDispatcher {
   waiting: Chord | undefined
   /** Where the prefix was pressed. */
   waitingWhere: Where | undefined
+  /** The prefix opened under a `keeps` limit (toward a kept command): its second key completes it under the same limit. */
+  private waitingKept = false
   private readonly hooks: DispatcherHooks
 
   constructor(hooks: DispatcherHooks = {}) {
@@ -60,16 +62,28 @@ export class ChordDispatcher {
   cancel(): void {
     this.waiting = undefined
     this.waitingWhere = undefined
+    this.waitingKept = false
   }
 
   /** A keydown in a scope. */
   press(ev: DispatchEvent, where: Where): DispatchAction {
     if (this.hooks.modalOpen?.()) { this.cancel(); return { type: 'pass' } }
     const keeps = this.hooks.keeps?.()
-    if (keeps) {
+    if (keeps && !(this.waiting && this.waitingKept)) {
+      // A prefix pending from before the limit is dropped. Under the limit a two-key chord opens only outside a terminal
+      // (there ^K stays the program's) and only toward a kept command (a screen's own chord in the card: Ctrl+K Ctrl+K).
       this.cancel()
       if (isModifierOnly(ev.code)) return { type: 'pass' }
       const r = this.table.resolve([ev], where)
+      if (r.kind === 'prefix' && where !== 'terminal') {
+        const next = r.next.filter(b => keeps(b.command))
+        if (next.length) {
+          this.waiting = chordOfEvent(ev)
+          this.waitingWhere = where
+          this.waitingKept = true
+          return { type: 'prefix', first: this.waiting, next }
+        }
+      }
       return r.kind === 'command' && keeps(r.command) ? { type: 'run', command: r.command, binding: r.binding, keys: [chordOfEvent(ev)] } : { type: 'pass' }
     }
     if (this.waiting) {
@@ -81,7 +95,7 @@ export class ChordDispatcher {
       if (where === 'terminal' && matches(first, ev)) return { type: 'pass-prefix-key' }
       if (where === 'note' && this.hooks.editorChord?.(first, ev)) return { type: 'editor', keys }
       const r = this.table.resolve([asKey(first), ev], where)
-      if (r.kind === 'command') return { type: 'run', command: r.command, binding: r.binding, keys }
+      if (r.kind === 'command' && (!keeps || keeps(r.command))) return { type: 'run', command: r.command, binding: r.binding, keys }
       return { type: 'unknown', keys }
     }
     if (isModifierOnly(ev.code)) return { type: 'pass' }

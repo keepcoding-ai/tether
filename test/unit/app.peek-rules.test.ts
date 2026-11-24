@@ -2,7 +2,7 @@
 // foot texts; and the chord that closes the card.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { closeTip, lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, tabInView } from '../../app/renderer/peek-rules.ts'
+import { backButton, closeTip, lentNotice, PEEK_CLOSE_COMMAND, PEEK_SCREEN_COMMANDS, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView } from '../../app/renderer/peek-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
 describe('where a peek goes', () => {
@@ -138,6 +138,48 @@ describe('the card\'s "⋯" menu', () => {
     assert.equal(peekMenuPlan('', false).find(i => i.action === 'close')!.trail, undefined)
     const ended = peekMenuPlan('', true)
     assert.deepEqual(ended.filter(i => i.disabled).map(i => i.action), ['open-here', 'open-other'])
+  })
+})
+
+describe('a system screen in the card', () => {
+  test('the commands that open a screen keep their chords with the card open (the screen opens in the card)', () => {
+    for (const c of PEEK_SCREEN_COMMANDS) assert.equal(peekKeeps(c), true, c)
+    assert.deepEqual([...PEEK_SCREEN_COMMANDS], ['settings.show', 'keybindings.show', 'extensions.show'])
+  })
+  test("the screen's own commands: true only thanks to the screen's flags", () => {
+    const record = (f: ReadonlySet<string>): boolean => f.has('keybindings.screen')
+    assert.equal(screenOwns(record, new Set(), ['keybindings.screen']), true)
+    assert.equal(screenOwns(record, new Set(['keybindings.screen']), ['keybindings.screen']), false, 'already true without the card: not the card\'s doing')
+    assert.equal(screenOwns(record, new Set(), ['settings.screen']), false, 'another screen')
+    assert.equal(screenOwns(undefined, new Set(), ['keybindings.screen']), false, 'no rule, nobody\'s own')
+    assert.equal(screenOwns(() => true, new Set(), ['keybindings.screen']), false, 'always available: not the screen\'s')
+    assert.equal(screenOwns(record, new Set(), []), false)
+  })
+  test('opening a screen: over an agent it stacks one level; over a screen it replaces; on a closed card it just opens', () => {
+    assert.deepEqual(screenOpenPlan('slot'), { under: true, replace: false })
+    assert.deepEqual(screenOpenPlan('screen'), { under: false, replace: true })
+    assert.deepEqual(screenOpenPlan('none'), { under: false, replace: false })
+  })
+  test('closing a screen with an agent under it goes back to the agent; anything else closes the card', () => {
+    assert.equal(peekDismiss('screen', true), 'back')
+    assert.equal(peekDismiss('screen', false), 'close')
+    assert.equal(peekDismiss('slot', false), 'close')
+    assert.equal(peekDismiss('slot', true), 'close')
+  })
+  test('the header: "Abrir nesta mesa" secondary with the ▾; the "⋯": open here, open elsewhere, then close with the chord', () => {
+    const b = screenOpenButton()
+    assert.deepEqual([b.action, b.label, b.primary, b.split], ['open-here', 'Abrir nesta mesa', false, true])
+    const plan = screenMenuPlan('Ctrl+Shift+O')
+    assert.deepEqual(plan.map(i => i.label), ['Abrir nesta mesa', 'Abrir em outra mesa', 'Fechar'])
+    assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['open-other'])
+    assert.equal(plan[2]!.sepBefore, true)
+    assert.equal(plan[2]!.trail, 'Ctrl+Shift+O')
+    assert.equal(screenMenuPlan('')[2]!.trail, undefined)
+  })
+  test('the back button names the agent; the foot says where closing leads', () => {
+    assert.deepEqual(backButton('conferente'), { label: 'conferente', title: 'Voltar para conferente (fechar a tela)', aria: 'Voltar para conferente' })
+    assert.equal(screenFoot(['Ctrl+Shift+O']), 'Feche pelo botão, pela margem ou por Ctrl+Shift+O.')
+    assert.equal(screenFoot([], 'conferente'), 'Feche pelo botão ou pela margem para voltar a conferente.')
   })
 })
 

@@ -178,7 +178,66 @@ export function peekFoot(kind: SlotKind | undefined, hints: readonly string[], e
  */
 export const PEEK_KEEPS: readonly string[] = [PEEK_CLOSE_COMMAND, 'palette.show', 'drawer.toggle']
 
+/**
+ * The commands that open a system screen, which opens in the card itself: their chords keep working with the card open (a
+ * screen over the agent shown, or over another screen). Ids are in people's keybindings.json and never change.
+ */
+export const PEEK_SCREEN_COMMANDS: readonly string[] = ['settings.show', 'keybindings.show', 'extensions.show']
+
 /** Whether a command's chord still fires with the card open. */
 export function peekKeeps(command: string): boolean {
-  return PEEK_KEEPS.includes(command)
+  return PEEK_KEEPS.includes(command) || PEEK_SCREEN_COMMANDS.includes(command)
+}
+
+/**
+ * Whether a command is the screen's own while a screen is in the card (its chord fires there too): its `when` holds with the
+ * screen's context flags and does not without them (Ctrl+K Ctrl+K "record" of the shortcuts screen). A command without a
+ * rule is nobody's own.
+ */
+export function screenOwns(when: ((flags: ReadonlySet<string>) => boolean) | undefined, base: ReadonlySet<string>, screenFlags: readonly string[]): boolean {
+  if (!when || screenFlags.length === 0) return false
+  return when(new Set([...base, ...screenFlags])) && !when(base)
+}
+
+// ---------- a system screen in the card ----------
+// The card also shows a system screen (Configurações, Atalhos de teclado, Extensões): a pane without a slot built outside
+// dockview, ephemeral (never in the saved layout). Over an agent it stacks ONE level: the agent's terminal stays under it
+// (its own terminal attached, or the tab's still lent) and comes back when the screen closes. A screen over a screen
+// replaces it; the agent under stays.
+
+export type PeekTop = 'none' | 'slot' | 'screen'
+
+/** What opening a screen does to what the card shows: `under` = the agent shown goes under the screen. */
+export function screenOpenPlan(top: PeekTop): { under: boolean; replace: boolean } {
+  return { under: top === 'slot', replace: top === 'screen' }
+}
+
+/** What closing (✕, "Fechar", the chord, the margin, Esc on the header) does: back to the agent under the screen, or close the card. */
+export function peekDismiss(top: PeekTop, hasUnder: boolean): 'back' | 'close' {
+  return top === 'screen' && hasUnder ? 'back' : 'close'
+}
+
+/** The card's "Abrir nesta mesa" for a screen: secondary, with the ▾ of the other desks. */
+export function screenOpenButton(): PeekOpenButton {
+  return { action: 'open-here', label: 'Abrir nesta mesa', title: 'Abrir nesta mesa: a tela vira uma guia da mesa em que você está e o cartão fecha', icon: 'plus', primary: false, split: true }
+}
+
+/** The "⋯" of a screen in the card: open here, open on another desk, then close (with the chord when there is one). */
+export function screenMenuPlan(hint: string): PeekMenuItem[] {
+  return [
+    { action: 'open-here', label: 'Abrir nesta mesa' },
+    { action: 'open-other', label: 'Abrir em outra mesa', submenu: true },
+    { action: 'close', label: 'Fechar', sepBefore: true, ...(hint ? { trail: hint } : {}) },
+  ]
+}
+
+/** The header's "← <agent>" over a screen: back to the agent the card showed. */
+export function backButton(name: string): { label: string; title: string; aria: string } {
+  return { label: name, title: `Voltar para ${name} (fechar a tela)`, aria: `Voltar para ${name}` }
+}
+
+/** The foot line of a screen in the card: how to close it, and where closing leads when an agent is under it. */
+export function screenFoot(hints: readonly string[], back?: string): string {
+  const way = hints.length ? `pelo botão, pela margem ou por ${hints.join(' ou ')}` : 'pelo botão ou pela margem'
+  return back ? `Feche ${way} para voltar a ${back}.` : `Feche ${way}.`
 }

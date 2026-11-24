@@ -198,6 +198,24 @@ describe('the dispatch with a prefix', () => {
     if (palette.type === 'run') assert.equal(palette.command, 'palette.show')
   })
 
+  test("with the card open, a chord toward a kept command opens outside a terminal (a screen's own Ctrl+K Ctrl+K) and completes only toward it", () => {
+    const keeps = new Set(['peek.close', 'palette.show', 'keybindings.record'])
+    const d = new ChordDispatcher({ table: () => table, keeps: () => (c: string) => keeps.has(c) })
+    const first = d.press(ev('KeyK', { ctrl: true }), 'window')
+    assert.equal(first.type, 'prefix')
+    if (first.type === 'prefix') assert.deepEqual(first.next.map(b => b.command), ['keybindings.record'], 'the pill lists only what still fires')
+    const record = d.press(ev('KeyK', { ctrl: true }), 'window')
+    assert.equal(record.type, 'run')
+    if (record.type === 'run') assert.equal(record.command, 'keybindings.record')
+    assert.equal(d.waiting, undefined)
+    d.press(ev('KeyK', { ctrl: true }), 'window')
+    assert.equal(d.press(ev('KeyO', { ctrl: true }), 'window').type, 'unknown', 'Ctrl+K Ctrl+O (pane.new, quiet behind the card) is swallowed, never run')
+    assert.deepEqual(d.press(ev('KeyK', { ctrl: true }), 'terminal'), { type: 'pass' }, 'in the card\'s terminal ^K stays the program\'s')
+    assert.equal(d.waiting, undefined)
+    const none = new ChordDispatcher({ table: () => table, keeps: () => (c: string) => c === 'peek.close' })
+    assert.deepEqual(none.press(ev('KeyK', { ctrl: true }), 'window'), { type: 'pass' }, 'no kept continuation: no prefix')
+  })
+
   test('the scope of a key by its target', () => {
     const el = (hit: string): unknown => ({ closest: (sel: string) => (sel === hit ? {} : null) })
     assert.equal(scopeOf(el('.xterm')), 'terminal')
