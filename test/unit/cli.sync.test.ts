@@ -420,3 +420,15 @@ describe('cli: tether sync', () => {
     })
   })
 })
+
+describe('tether sync registered in the real CLI', () => {
+  test('bin/tether.mjs sync status runs the command (not "comando desconhecido")', () => {
+    const b = box()
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, '../../bin/tether.mjs'), 'sync', 'status'], {
+      env: { ...process.env, TETHER_HOME: b.home, TETHER_USER_DIR: b.user }, encoding: 'utf8',
+    })
+    assert.equal(r.status, 0, r.stderr)
+    assert.ok(!/desconhecido/.test(r.stdout + r.stderr))
+    assert.match(r.stdout, /não está configurada/)
+  })
+})
