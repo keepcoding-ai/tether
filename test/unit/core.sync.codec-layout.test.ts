@@ -653,3 +653,69 @@ describe('purity', () => {
     assert.deepEqual(round.layout, sample())
   })
 })
+
+describe('view state stays on the machine', () => {
+  /** sample() with desk-1's group showing `active`, the frame's activeGroup set. */
+  function focused(active: string): LayoutJson {
+    const l = sample()
+    const v = deskOf(l, 'desk-1').frames.views.f1
+    v.grid.root.data.activeView = active
+    v.activeGroup = 'g1'
+    return l
+  }
+  const viewOf = (l: LayoutJson, id: string): Record<string, any> => deskOf(l, id).frames.views.f1
+
+  test('switching only the active tab changes no exported entity', () => {
+    const a = exportWin(focused('111'))
+    const b = exportWin(focused('br1'))
+    assert.deepEqual(a.entities, b.entities)
+    const d = entityDesks(a.entities).u1
+    assert.equal(Object.hasOwn(d, 'activeFrame'), false)
+    assert.equal(Object.hasOwn(d.frames.views.f1, 'activeGroup'), false)
+    assert.equal(Object.hasOwn(d.frames.views.f1.grid.root.data, 'activeView'), false)
+  })
+
+  test('round trip gives the layout back byte for byte, local active tab kept', () => {
+    const layout = focused('br1')
+    const ex = exportWin(layout)
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    assert.equal(JSON.stringify(im.layout), JSON.stringify(layout))
+    // another machine's export (different active tab) does not move the local one
+    const other = exportWin(focused('111'))
+    const im2 = importLayout(other.entities, layout, other.map, other.ids, WIN)
+    assert.equal(JSON.stringify(im2.layout), JSON.stringify(layout))
+  })
+
+  test('a new desk arrives without view state and gets a valid default', () => {
+    const ex = exportWin(focused('br1'))
+    const im = importLayout(ex.entities, emptyPosix(), { ...POSIX_MAP }, {}, NIX)
+    const d = (im.layout.desks as Record<string, any>[])[0]!
+    assert.equal(d.activeFrame, 'f1')
+    assert.equal(d.frames.views.f1.grid.root.data.activeView, d.frames.views.f1.grid.root.data.views[0])
+    assert.equal(Object.hasOwn(d.frames.views.f1, 'activeGroup'), false)
+  })
+
+  test('a local active tab gone from the remote falls back to the first tab', () => {
+    const layout = focused('br1')
+    const ex = exportWin(layout)
+    const g = entityDesks(ex.entities).u1.frames.views.f1.grid.root.data
+    g.views = g.views.filter((x: string) => x !== 'br1')
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    assert.equal(viewOf(im.layout, 'desk-1').grid.root.data.activeView, g.views[0])
+    assert.equal(viewOf(im.layout, 'desk-1').activeGroup, 'g1')
+  })
+
+  test('an old entity carrying view state is read and its view state ignored', () => {
+    const layout = focused('br1')
+    const ex = exportWin(layout)
+    const d = entityDesks(ex.entities).u1
+    d.activeFrame = 'f1'
+    d.frames.views.f1.activeGroup = 'g1'
+    d.frames.views.f1.grid.root.data.activeView = '111'
+    const im = importLayout(ex.entities, layout, ex.map, ex.ids, WIN)
+    assert.deepEqual(im.skipped, [])
+    assert.equal(JSON.stringify(im.layout), JSON.stringify(layout))
+    const again = exportWin(im.layout, im.ids)
+    assert.equal(Object.hasOwn(entityDesks(again.entities).u1.frames.views.f1.grid.root.data, 'activeView'), false)
+  })
+})
