@@ -2,7 +2,7 @@
 // foot texts; and the chord that closes the card.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { closeTip, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekRoute } from '../../app/renderer/peek-rules.ts'
+import { closeTip, lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, tabInView } from '../../app/renderer/peek-rules.ts'
 import { DOUBLE_ESC_MS } from '../../app/renderer/drawer-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
@@ -17,6 +17,64 @@ describe('where a peek goes', () => {
   test('an unknown slot, or an ended one without a tab, goes nowhere', () => {
     assert.equal(peekRoute(undefined, false), 'none')
     assert.equal(peekRoute({ status: 'exited' }, false), 'none')
+  })
+  test('a live slot whose tab is not in view: the card borrows the tab\'s terminal', () => {
+    for (const status of ['running', 'starting', 'queued'] as const) assert.equal(peekRoute({ status }, true, false), 'lend', status)
+  })
+  test('a tab in view only gets the keyboard; an ended slot with a tab out of view still goes to its tab', () => {
+    assert.equal(peekRoute({ status: 'running' }, true, true), 'reveal')
+    assert.equal(peekRoute({ status: 'exited' }, true, false), 'reveal')
+    assert.equal(peekRoute({ status: 'error' }, true, false), 'reveal')
+  })
+  test('without a tab, "in view" does not count', () => {
+    assert.equal(peekRoute({ status: 'running' }, false, false), 'card')
+    assert.equal(peekRoute({ status: 'running' }, false, true), 'card')
+  })
+})
+
+describe('whether a tab is in view', () => {
+  const shown = { inDrawer: false, placeShown: true, activeInFrame: true, drawerOpen: false }
+  test('the active tab of a frame on the active desk, drawer closed', () => {
+    assert.equal(tabInView(shown), true)
+  })
+  test('another desk (or a closed pad), a background tab: not in view', () => {
+    assert.equal(tabInView({ ...shown, placeShown: false }), false)
+    assert.equal(tabInView({ ...shown, activeInFrame: false }), false)
+  })
+  test('the open drawer covers the desks and pads, not its own tabs', () => {
+    assert.equal(tabInView({ ...shown, drawerOpen: true }), false)
+    assert.equal(tabInView({ ...shown, inDrawer: true, drawerOpen: true }), true)
+    assert.equal(tabInView({ ...shown, inDrawer: true, drawerOpen: true, activeInFrame: false }), false)
+  })
+  test('the closed drawer: its tabs are out of view', () => {
+    assert.equal(tabInView({ ...shown, inDrawer: true, placeShown: false }), false)
+  })
+})
+
+describe('a slot with a tab in the card', () => {
+  test('the main button is "Ir para a guia", secondary and without the ▾', () => {
+    assert.deepEqual(peekOpenButton(true), { action: 'go-tab', label: 'Ir para a guia', title: 'Ir para a guia: fecha o cartão, devolve o terminal à guia e mostra a guia', icon: 'arrow-square-out', primary: false, split: false })
+    const own = peekOpenButton(false)
+    assert.equal(own.label, 'Abrir nesta mesa')
+    assert.equal(own.primary, true)
+    assert.equal(own.split, true)
+  })
+  test('the "⋯" has "Ir para a guia" in place of the two ways of opening', () => {
+    const plan = peekMenuPlan('Ctrl+Shift+O', false, true)
+    assert.deepEqual(plan.map(i => i.label), ['Ir para a guia', 'Copiar link do painel', 'Fechar'])
+    assert.deepEqual(plan.map(i => i.action), ['go-tab', 'copy-link', 'close'])
+    assert.equal(plan.some(i => i.submenu), false)
+  })
+  test('the tab says who is being peeked and what the two buttons do', () => {
+    const n = lentNotice('claude · nic')
+    assert.equal(n.title, 'claude · nic está sendo espiado')
+    assert.equal(n.text, 'O terminal dele está no cartão aberto na tela. Quando você fechar o cartão, ele volta para cá.')
+    assert.equal(n.see, 'Ver o cartão')
+    assert.equal(n.close, 'Fechar o cartão')
+  })
+  test('the foot says the terminal goes back to the tab', () => {
+    assert.match(peekFoot('claude', 'Ctrl+Shift+O', false, true), /^O terminal da guia está emprestado ao cartão: ao fechar, ele volta para a guia\. Esc vai para o agente/)
+    assert.doesNotMatch(peekFoot('shell', '', false, true), /Sem guia/)
   })
 })
 

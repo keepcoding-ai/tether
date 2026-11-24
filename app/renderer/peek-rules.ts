@@ -1,8 +1,10 @@
 // The peek card's rules as pure data (unit-tested; app/renderer/peek.ts and main.ts wire them to the DOM):
-//   - where a peek goes: the card (a live slot no tab shows), the slot's tab (it has one), or nowhere;
+//   - where a peek goes: the card (a live slot no tab shows), the card with the tab's terminal lent (a tab not in view),
+//     the slot's tab (in view: only the keyboard goes there), or nowhere;
 //   - who owns an Esc inside the card (the drawer's rule: an agent's terminal keeps it);
-//   - what the card's header and foot say.
-// The card is the only view of a slot without a tab: it attaches the slot's terminal while open and detaches on close.
+//   - what the card's header, its "⋯" and foot say, and what a tab whose terminal is lent says.
+// A slot has one terminal and one pty size: without a tab the card attaches its own terminal and detaches on close; with
+// a tab the card borrows the tab's terminal and gives it back on close (never two views of the same slot at once).
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { escAction, type EscAction, type EscInput } from './drawer-rules.ts'
@@ -14,16 +16,38 @@ export const PEEK_CLOSE_COMMAND = 'peek.close'
 // ---------- where a peek goes ----------
 
 /**
- *   card    a live slot (running, starting or queued) that no tab shows: the card opens with its terminal;
- *   reveal  the slot has a tab (desk, drawer or pad): its tab comes forward (lending the terminal is a later step);
+ *   card    a live slot (running, starting or queued) that no tab shows: the card opens with a terminal of its own;
+ *   lend    a live slot whose tab is NOT in view right now: the card opens with the tab's own terminal, lent (the tab
+ *           shows "sendo espiado" meanwhile and gets the terminal back when the card closes);
+ *   reveal  the slot's tab is in view (only the keyboard goes to it), or it has a tab and has ended (its tab comes
+ *           forward, as opening it always did);
  *   none    unknown slot, or an ended one without a tab (peeking an ended agent is out of scope).
+ * `tabInView` only counts with a tab (see `tabInView`); leaving it out reads as "in view".
  */
-export type PeekRoute = 'card' | 'reveal' | 'none'
+export type PeekRoute = 'card' | 'lend' | 'reveal' | 'none'
 
-export function peekRoute(slot: Pick<SlotState, 'status'> | undefined, hasTab: boolean): PeekRoute {
+export function peekRoute(slot: Pick<SlotState, 'status'> | undefined, hasTab: boolean, tabInView = true): PeekRoute {
   if (!slot) return 'none'
-  if (hasTab) return 'reveal'
-  return slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued' ? 'card' : 'none'
+  const live = slot.status === 'running' || slot.status === 'starting' || slot.status === 'queued'
+  if (hasTab) return live && !tabInView ? 'lend' : 'reveal'
+  return live ? 'card' : 'none'
+}
+
+/** Where a tab is and what is on screen, as main.ts reads it at the instant of the peek. */
+export interface TabPlace {
+  /** The tab lives in the drawer (else on a desk or in a pad's frames). */
+  inDrawer: boolean
+  /** Its place is on screen: the active desk, the open drawer, or a pad that is shown (and belongs to the active desk). */
+  placeShown: boolean
+  /** It is the active tab of its frame (a background tab is display:none). */
+  activeInFrame: boolean
+  /** The drawer is open: it covers the desks and the pads. */
+  drawerOpen: boolean
+}
+
+/** Whether a tab is in view right now: its place is shown, it is its frame's active tab, and the open drawer does not cover it. */
+export function tabInView(p: TabPlace): boolean {
+  return p.placeShown && p.activeInFrame && (p.inDrawer || !p.drawerOpen)
 }
 
 // ---------- Esc ----------
@@ -59,7 +83,7 @@ export function closeTip(hint: string): string {
   return hint ? `Fechar (${hint})` : 'Fechar'
 }
 
-export type PeekMenuAction = 'open-here' | 'open-other' | 'copy-link' | 'close'
+export type PeekMenuAction = 'open-here' | 'open-other' | 'go-tab' | 'copy-link' | 'close'
 
 export interface PeekMenuItem {
   action: PeekMenuAction
@@ -71,14 +95,62 @@ export interface PeekMenuItem {
   disabled?: boolean
 }
 
-/** The "⋯" of the card: open here, open on another desk, copy the pane link, and close (with the chord when there is one). Opening is off once the session ended. */
-export function peekMenuPlan(hint: string, ended: boolean): PeekMenuItem[] {
+/**
+ * The "⋯" of the card: open here, open on another desk, copy the pane link, and close (with the chord when there is one).
+ * Opening is off once the session ended. A slot with a tab (its terminal lent to the card) has "Ir para a guia" in place
+ * of the two ways of opening.
+ */
+export function peekMenuPlan(hint: string, ended: boolean, hasTab = false): PeekMenuItem[] {
+  const open: PeekMenuItem[] = hasTab
+    ? [{ action: 'go-tab', label: GO_TAB_LABEL }]
+    : [
+        { action: 'open-here', label: 'Abrir nesta mesa', disabled: ended },
+        { action: 'open-other', label: 'Abrir em outra mesa', submenu: true, disabled: ended },
+      ]
   return [
-    { action: 'open-here', label: 'Abrir nesta mesa', disabled: ended },
-    { action: 'open-other', label: 'Abrir em outra mesa', submenu: true, disabled: ended },
+    ...open,
     { action: 'copy-link', label: 'Copiar link do painel' },
     { action: 'close', label: 'Fechar', sepBefore: true, ...(hint ? { trail: hint } : {}) },
   ]
+}
+
+export const GO_TAB_LABEL = 'Ir para a guia'
+
+/** The card's main button: "Abrir nesta mesa" (primary, split with ▾ "Abrir em outra mesa") without a tab; "Ir para a guia" (secondary, alone) with one. */
+export interface PeekOpenButton {
+  action: 'open-here' | 'go-tab'
+  label: string
+  title: string
+  icon: 'plus' | 'arrow-square-out'
+  primary: boolean
+  /** The ▾ "Abrir em outra mesa" stuck to it. */
+  split: boolean
+}
+
+export function peekOpenButton(hasTab: boolean): PeekOpenButton {
+  return hasTab
+    ? { action: 'go-tab', label: GO_TAB_LABEL, title: 'Ir para a guia: fecha o cartão, devolve o terminal à guia e mostra a guia', icon: 'arrow-square-out', primary: false, split: false }
+    : { action: 'open-here', label: 'Abrir nesta mesa', title: 'Abrir nesta mesa: o agente ganha uma guia na mesa em que você está', icon: 'plus', primary: true, split: true }
+}
+
+/** What the tab says while its terminal is lent to the card (screen 6 of the preview). */
+export interface LentNotice {
+  title: string
+  text: string
+  see: string
+  close: string
+  /** The tab's eye mark tooltip. */
+  tip: string
+}
+
+export function lentNotice(name: string): LentNotice {
+  return {
+    title: `${name} está sendo espiado`,
+    text: 'O terminal dele está no cartão aberto na tela. Quando você fechar o cartão, ele volta para cá.',
+    see: 'Ver o cartão',
+    close: 'Fechar o cartão',
+    tip: 'Sendo espiado: o terminal está no cartão aberto na tela',
+  }
 }
 
 /** The accessible name of the card. */
@@ -90,9 +162,11 @@ export function peekLabel(title: string): string {
  * The line at the card's foot: the card never ends the session, and, for an agent, Esc is the agent's (said on the
  * screen itself, since Esc does not close here).
  */
-export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean): string {
+export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean, lent = false): string {
   const way = hint ? `pelo ✕ ou por ${hint}` : 'pelo ✕'
   if (ended) return `A sessão terminou. Feche o cartão ${way}.`
-  const keep = 'Sem guia: fechar o cartão não encerra a sessão, ela segue viva em "Sem guia", no painel de sessões.'
+  const keep = lent
+    ? 'O terminal da guia está emprestado ao cartão: ao fechar, ele volta para a guia.'
+    : 'Sem guia: fechar o cartão não encerra a sessão, ela segue viva em "Sem guia", no painel de sessões.'
   return kind === 'shell' ? `${keep} Feche ${way}, ou com Esc duas vezes.` : `${keep} Esc vai para o agente; feche ${way}.`
 }
