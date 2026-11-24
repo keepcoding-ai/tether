@@ -5,7 +5,7 @@
 import { toDisposable, type IDisposable } from '../../../../app/shared/vscode-lifecycle.ts'
 import { conductorFor } from './common.ts'
 import { buildContext, type ContextDeps } from '../context.ts'
-import { ok, commanded, optString, refuse, touch, wantString, GUIA_PROP, targetOf, type VerbDef, type VerbDeps } from './common.ts'
+import { awakeTarget, ok, commanded, optString, refuse, touch, wantString, GUIA_PROP, targetOf, type VerbDef, type VerbDeps } from './common.ts'
 
 const GIVE_UP_MS = 5 * 60_000
 const POLL_MS = 500
@@ -91,6 +91,7 @@ export const commandVerb: VerbDef = {
       touch(deps, paneId, caller.slotId, 'command')
       return ok(`Comando ${name} adiado para o fim do seu turno.`, { deferred: true, proven: true })
     }
+    await awakeTarget(deps, paneId, 'command')
     const r = await runCommand(deps, caller.slotId, paneId, name, extra)
     touch(deps, paneId, caller.slotId, 'command')
     return ok(`Comando ${name} enviado.`, { sent: true, proven: r.proven }, r.proven)

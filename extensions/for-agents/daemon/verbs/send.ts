@@ -11,7 +11,7 @@ import type { VerbCaller, VerbResult } from '../../../../src/daemon/ext-api.ts'
 import { EXT_ID } from '../../manifest.ts'
 import { buildContext } from '../context.ts'
 import { conductorRegistry, type Conductor, type ConductorContext, type ConductorTarget } from '../../conductor-api.ts'
-import { commanded, conductorFor, GUIA_PROP, ok, optFlag, paneName, refuse, touch, wantString, type VerbDef, type VerbDeps } from './common.ts'
+import { awakeTarget, commanded, conductorFor, GUIA_PROP, ok, optFlag, paneName, refuse, touch, wantString, type VerbDef, type VerbDeps } from './common.ts'
 
 /** Delivers `body` to a pane in the owner's envelope; the receipt as the verb's data. */
 export async function deliverAsOwner(deps: VerbDeps, caller: VerbCaller, paneId: string, body: string): Promise<Record<string, unknown>> {
@@ -58,7 +58,8 @@ export const sendVerb: VerbDef = {
     const guia = wantString(args, 'guia')
     const text = wantString(args, 'text')
     const raw = optFlag(args, 'raw')
-    const { paneId, target } = commanded(deps, caller, guia, 'send')
+    const { paneId } = commanded(deps, caller, guia, 'send')
+    const target = await awakeTarget(deps, paneId, 'send')
     const conductor = conductorFor(target, 'send')
     const ctx = buildContext(deps, caller.slotId, target)
     // The notices read this: a `done` that comes from the core's silence heuristic after a send that left the text in the box

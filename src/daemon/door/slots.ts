@@ -8,6 +8,7 @@ import { DoorError, doorUnavailable, type DoorReplyBody, type DoorRequestHandler
 import { keyBytes } from './keys.ts'
 import type { InputOrigin } from './port.ts'
 import { countsAsTyping } from './user-presence.ts'
+import type { SuspendWaker } from './suspend.ts'
 import type { DoorSlots, KeyName, SlotCreate, SlotHold } from './types.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -31,10 +32,12 @@ export class SlotsService {
   /** Held slots whose first user typing of the current held period was already told. `setHeld` takes the slot out. */
   private readonly typedTold = new Set<string>()
   private readonly presence: () => UserFreeness | undefined
+  private readonly waker: () => SuspendWaker | undefined
 
   /** `port` is read at each act: it is undefined in a satellite (and before the server attaches), where every act is `door-unavailable`. */
-  constructor(port: () => SlotPort | undefined, log: (msg: string) => void, desks: () => PaneRequester | undefined = () => undefined, presence: () => UserFreeness | undefined = () => undefined) {
+  constructor(port: () => SlotPort | undefined, log: (msg: string) => void, desks: () => PaneRequester | undefined = () => undefined, presence: () => UserFreeness | undefined = () => undefined, waker: () => SuspendWaker | undefined = () => undefined) {
     this.port = port
+    this.waker = waker
     this.log = log
     this.desks = desks
     this.presence = presence
@@ -98,6 +101,10 @@ export class SlotsService {
       },
       userFree: (slotId) => this.presence()?.isFree(slotId) ?? true,
       userTypedAt: (slotId) => this.presence()?.typedAt?.(slotId),
+      awake: (slotId, why) => {
+        const waker = this.waker()
+        return waker ? waker.awake(slotId, why) : Promise.resolve(this.port()?.stateOf(slotId))
+      },
     }
   }
 

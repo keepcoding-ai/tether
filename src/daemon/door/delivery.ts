@@ -7,6 +7,7 @@
 //    and the last terminal delivery to the slot has settled (DOOR_SETTLE_MS, so the next one never lands before the turn the
 //    previous one opened is seen as busy);
 // 3. wait: a queue per slot, in order, kept in <home>/slots/<slot>.inbox.jsonl (whole file, temp + rename, async only).
+//    A slot whose pane the app suspended (suspend.ts) is resumed then, and its queue goes once the agent is up.
 // The tether never types over the user: no `held`, no terminal path, ever.
 //
 // The queue is looked at again only at edges that already exist, with no timer per slot: a slot's state went out
@@ -64,6 +65,11 @@ export interface DeliveryOptions {
   /** The typing of a slot's agent (tests override); default: the agent contribution's, else the core's. */
   typingFor?(agent: string): Typing
   now?(): number
+  /**
+   * A delivery had to wait: the slot's pane may be suspended by the app (an idle agent stopped to save resources), and then
+   * it is resumed; the queue goes on its own once the agent is up (the `stateChanged` and stream edges).
+   */
+  wake?(slotId: string): void
 }
 
 export function inboxPath(home: string, slotId: string): string {
@@ -292,6 +298,7 @@ export class DeliveryService {
     // Still waiting: it goes to disk before the answer, so a restart does not lose it.
     this.opts.log(`door: entrega ${item.id} (${ext}) enfileirada para ${slotId}: ${this.waitReason(slotId) ?? (paths ? `paths ${paths.join('+')} sem caminho aberto` : 'o digitador não escreveu (fica na fila)')}`)
     await this.persist(slotId)
+    this.opts.wake?.(slotId)
     return this.receipt(item, 'queued', item.at)
   }
 

@@ -10,6 +10,7 @@ import type { ConfigurationNode } from './vscode-configuration-registry.ts'
 import { DEFAULT_UI, DIM_LEVELS, FIXED_DESK_LABELS } from './ui-settings.ts'
 import { DEFAULT_OS_NOTIFY, OS_NOTIFY_LEVELS } from './os-notify.ts'
 import { DEFAULT_THEME, THEME_LABEL, THEME_SETTINGS } from './theme.ts'
+import { DEFAULT_SUSPEND, SUSPEND_ENABLED_KEY, SUSPEND_IDLE_KEY, SUSPEND_IDLE_MAX, SUSPEND_IDLE_MIN } from '../renderer/suspend.ts'
 
 export const CORE_SETTINGS: ConfigurationNode = {
   id: 'core',
@@ -52,6 +53,15 @@ export const CORE_SETTINGS: ConfigurationNode = {
     'notifications.os': {
       type: 'string', default: DEFAULT_OS_NOTIFY, enum: OS_NOTIFY_LEVELS, enumLabels: ['Todas', 'Só quando esperam você', 'Desligadas'],
       title: 'Notificações do sistema', description: 'Avisos do Windows quando um agente termina ou espera você e o Tether não está em primeiro plano.', section: 'Notificações', order: 20,
+    },
+    [SUSPEND_ENABLED_KEY]: {
+      type: 'boolean', default: DEFAULT_SUSPEND.enabled, title: 'Suspender guias ociosas',
+      description: 'Uma guia de agente parada há muito tempo, que você não está usando, é suspensa para economizar recursos: o Tether guarda o motor e a guia fica no lugar, com a última tela. Ela retoma sozinha ao ser usada ou quando alguém fala com o agente.',
+      section: 'Desempenho', order: 30,
+    },
+    [SUSPEND_IDLE_KEY]: {
+      type: 'number', default: DEFAULT_SUSPEND.idleMinutes, min: SUSPEND_IDLE_MIN, max: SUSPEND_IDLE_MAX, title: 'Suspender depois de (minutos)',
+      description: 'Quanto tempo sem turno e sem uso antes de suspender a guia. Só vale com "Suspender guias ociosas" ligado.', section: 'Desempenho', order: 31,
     },
   },
 }

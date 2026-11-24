@@ -16,6 +16,7 @@ import { AttentionRouteService } from './attention-route.ts'
 import { ObjectService } from './objects.ts'
 import { SlotKeys } from './slot-key.ts'
 import { SlotsService } from './slots.ts'
+import { SuspendWaker } from './suspend.ts'
 import { ENV_SLOT_KEY, type DoorApi, type DoorAttention, type DoorDelivery, type DoorDesks, type DoorEvents, type DoorObjects, type DoorRequests, type DoorSlots, type DoorVerbs } from './types.ts'
 import { VerbRegistry } from './verbs.ts'
 
@@ -43,13 +44,16 @@ export class DoorHost implements DoorSeams {
   readonly mcp: DoorMcp
   /** The delivery (D6): inside through `mcp`, through the terminal of a held pane, or queued in <home>/slots/<slot>.inbox.jsonl. */
   readonly delivery: DeliveryService
+  /** Resumes a pane the app suspended (an idle agent stopped to save resources) when something from outside needs it. */
+  readonly suspend: SuspendWaker
   /** The extensions' own requests and events (N1): `ext-request` reaches the handler of that extension and name; `ext-event` goes to every client. */
   private readonly extRequests = new ExtRequestService(() => this.portRef)
 
   constructor(opts: DoorHostOptions) {
     this.opts = opts
+    this.suspend = new SuspendWaker({ port: () => this.portRef, panes: () => this.desks, log: (msg) => this.opts.log(msg) })
     this.verbs = new VerbRegistry({ keys: this.slotKeys, stateOf: (slotId) => this.portRef?.stateOf(slotId) })
-    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user'), typedAt: (slotId) => this.delivery.presence.typedAt(slotId, 'user') }))
+    this.slotsService = new SlotsService(() => this.portRef, (msg) => this.opts.log(msg), () => this.desks, () => ({ isFree: (slotId) => this.delivery.presence.isFree(slotId, Date.now(), 'user'), typedAt: (slotId) => this.delivery.presence.typedAt(slotId, 'user') }), () => this.suspend)
     this.requests.register('read-screen', this.slotsService.handleReadScreen)
     this.desks = new DeskService({ log: (msg) => this.log(msg) })
     this.requests.register('desk-map', this.desks.handleMap)
@@ -62,7 +66,7 @@ export class DoorHost implements DoorSeams {
     this.requests.register('verb', this.verbs.handleRun)
     this.requests.register('ext-request', this.extRequests.handleRequest)
     this.mcp = new DoorMcp({ log: (msg) => this.opts.log(msg), verbs: this.verbs, port: () => this.portRef })
-    this.delivery = new DeliveryService({ log: (msg) => this.opts.log(msg), mcp: this.mcp, port: () => this.portRef })
+    this.delivery = new DeliveryService({ log: (msg) => this.opts.log(msg), mcp: this.mcp, port: () => this.portRef, wake: (slotId) => { this.suspend.resume(slotId, 'entrega') } })
   }
 
   /** The server's port; undefined in a satellite. */
@@ -99,7 +103,9 @@ export class DoorHost implements DoorSeams {
 
   decorate(meta: SlotMeta, state: SlotState): void { this.attentionService.decorate(meta, state) }
 
-  stateChanged(state: SlotState): void { this.attentionService.stateChanged(state); this.slotsService.stateChanged(state); this.delivery.stateChanged(state) }
+  stateChanged(state: SlotState): void { this.suspend.stateChanged(state); this.attentionService.stateChanged(state); this.slotsService.stateChanged(state); this.delivery.stateChanged(state) }
+
+  resumeSuspended(slotId: string, why: string): boolean { return this.suspend.resume(slotId, why) }
 
   input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void { this.delivery.input(slotId, data, origin, mark);this.slotsService.input(slotId, data, origin) }
 
@@ -122,7 +128,7 @@ export class DoorHost implements DoorSeams {
 
   exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }
 
-  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.slotsService.forgotten(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
+  forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.slotsService.forgotten(slotId); this.suspend.forgotten(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }
 
   /**
    * The start, after the extensions activated: a hold whose extension is not active (turned off, failed, gone) is a hold

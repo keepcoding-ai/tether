@@ -46,8 +46,10 @@ function padPanesOf(desk: { pads?: Record<string, unknown>; frames?: DeskLayout[
  */
 export function deskMapOf(layout: Layout, typeOf: PaneTypeOf, nameOf: (systemDeskId: string) => string | undefined = () => undefined): DeskMap {
   // A hibernated pane (layout `asleepPanes`) says so in the map: the daemon has no other way to know.
+  // A suspended pane (layout `suspendedPanes`) too: whatever needs it from outside resumes it first.
   const asleep = new Set(layout.asleepPanes ?? [])
-  const mark = (panes: DeskMapPane[]): DeskMapPane[] => panes.map(p => (asleep.has(p.id) ? { ...p, asleep: true as const } : p))
+  const suspended = new Set(layout.suspendedPanes ?? [])
+  const mark = (panes: DeskMapPane[]): DeskMapPane[] => panes.map(p => (asleep.has(p.id) ? { ...p, asleep: true as const } : suspended.has(p.id) ? { ...p, suspended: true as const } : p))
   const desks: DeskMapDesk[] = layout.desks.map(d => ({
     id: d.id,
     name: d.name || d.id,

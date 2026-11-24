@@ -36,7 +36,7 @@ describe('for-agents: send with the envelope (X5)', () => {
   const slot = { slotId: PANE, kind: 'soul' as string, name: 'p1', cwd: '/x' }
   const deps = {
     api: {
-      slots: { get: (id: string) => (id === PANE ? slot : { slotId: OWNER, kind: 'soul', name: 'Atrium', cwd: '/x' }) },
+      slots: { get: (id: string) => (id === PANE ? slot : { slotId: OWNER, kind: 'soul', name: 'Atrium', cwd: '/x' }), awake: async (id: string) => (id === PANE ? slot : undefined) },
       desks: { map: () => undefined },
       delivery: {
         pathOf: () => path,

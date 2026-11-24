@@ -25,6 +25,7 @@ import { IS_MAC, paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
+import { RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem } from './tab-emblems.ts'
 import { focusIfStillActive, followActive, type ActivePanelApi } from './focus-follow.ts'
@@ -227,6 +228,12 @@ export interface PanelHost {
   isStartPending(slotId: string): boolean
   /** The pane was hibernated on purpose: it shows "hibernada" and offers to wake it. */
   isAsleep?(slotId: string): boolean
+  /** The app stopped the pane's idle agent to save resources (suspend.ts): it keeps its screen and resumes when used. */
+  isSuspended?(slotId: string): boolean
+  /** The person's input before it goes to the pane: true when the host holds it (a suspended pane resuming). */
+  takeInput?(slotId: string, data: string): boolean
+  /** A click or a scroll in the pane's terminal (use of the pane; resumes a suspended one). */
+  onUse?(slotId: string): void
   onAction(slotId: string, action: PanelAction): void
   /** The user renamed the tab; an empty name removes the custom name (the session title shows again). */
   onRename(slotId: string, name: string): void
@@ -360,6 +367,8 @@ export class TerminalPanel implements IContentRenderer {
   private readonly termHost: HTMLElement
   private readonly details: HTMLElement
   private readonly overlay: HTMLElement
+  /** The discreet "Suspensa" sign over a suspended pane's last screen. */
+  private readonly suspendedSign: HTMLElement
   private readonly loading: { root: HTMLElement; icon: HTMLElement; text: HTMLElement }
   /** The xterm is open in the DOM (after the font loaded). */
   private opened = false
@@ -434,7 +443,14 @@ export class TerminalPanel implements IContentRenderer {
     this.loading = { root: loading, icon: loadingIcon, text: loadingText }
     const body = document.createElement('div')
     body.className = 'panel-body'
-    body.append(this.termHost, loading, this.overlay)
+    // A suspended pane shows its last screen with a discreet sign; a click on it (or anywhere in the terminal) resumes.
+    const sign = document.createElement('div'); sign.className = 'panel-suspended'; sign.hidden = true
+    sign.title = SUSPENDED_TIP; sign.setAttribute('role', 'status'); sign.setAttribute('aria-label', SUSPENDED_TIP)
+    const signText = document.createElement('span'); signText.textContent = SUSPENDED_LABEL
+    sign.append(icon('leaf'), signText)
+    this.suspendedSign = sign
+    body.append(this.termHost, loading, sign, this.overlay)
+    for (const type of ['pointerdown', 'wheel'] as const) body.addEventListener(type, () => { if (this.slotId) this.host.onUse?.(this.slotId) }, { passive: true, capture: true })
     // The header sits in a grid wrapper whose row animates between 0fr and 1fr (styles.css); `inert` while
     // collapsed keeps its pill out of the tab order.
     const details = document.createElement('div')
@@ -470,6 +486,7 @@ export class TerminalPanel implements IContentRenderer {
     }
     this.term.onData(data => {
       if (!this.slotId) return
+      if (this.host.takeInput?.(this.slotId, data)) return
       perfKey(this.slotId)
       if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp
       else window.tether.notice({ t: 'input', slotId: this.slotId, data })
@@ -607,8 +624,11 @@ export class TerminalPanel implements IContentRenderer {
     if (routed) this.head.bell.style.setProperty('--attn-hue', String(routed.hue)); else this.head.bell.style.removeProperty('--attn-hue')
     this.head.bell.title = bellTip
     this.head.bell.setAttribute('aria-label', bellTip)
+    const suspended = !!this.host.isSuspended?.(this.slotId) && !this.host.isAsleep?.(this.slotId)
     if (s.restarting) this.setStatus('starting', 'reiniciando…')
     else if (status === 'exited' && this.host.isAsleep?.(this.slotId)) this.setStatus(status, 'hibernada')
+    else if (status === 'exited' && suspended) this.setStatus('suspended', SUSPENDED_TIP)
+    else if (status === 'starting' && suspended) this.setStatus(status, RESUMING_LABEL)
     else this.setStatus(status, STATUS_LABEL[status])
     this.element.dataset.status = status
 
@@ -617,8 +637,16 @@ export class TerminalPanel implements IContentRenderer {
     if (isAgentUnavailable(s.kind)) this.showOverlay(errorOverlay(s, { code: 'agent-unavailable', message: `O agente ${s.kind} não está disponível neste app (extensão desligada ou ausente); o painel continua guardado.` }))
     else if (status === 'unconfirmed') this.showOverlay(unconfirmedOverlay(s))
     else if (status === 'error' && err) this.showOverlay(errorOverlay(s, err))
+    else if (status === 'exited' && suspended) this.overlay.hidden = true // the last screen stays in view; any use resumes
     else if (status === 'exited') this.showOverlay(this.host.isAsleep?.(this.slotId) ? asleepOverlay(s) : exitedOverlay(s))
     else this.overlay.hidden = true
+    const sign = suspended && (status === 'exited' || status === 'starting')
+    if (this.suspendedSign.hidden !== !sign) this.suspendedSign.hidden = !sign
+    const resuming = sign && status === 'starting'
+    this.suspendedSign.classList.toggle('resuming', resuming)
+    const signText = this.suspendedSign.lastElementChild!
+    const label = resuming ? RESUMING_LABEL : SUSPENDED_LABEL
+    if (signText.textContent !== label) signText.textContent = label
     this.renderLoading()
   }
 
@@ -760,12 +788,12 @@ export class TerminalPanel implements IContentRenderer {
   async paste(rawWhenEmpty = false): Promise<void> {
     const text = await window.tether.readClipboard()
     if (text) this.term.paste(text)
-    else if (rawWhenEmpty && this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data: IMAGE_PASTE_KEY })
+    else if (rawWhenEmpty && this.slotId && !this.host.takeInput?.(this.slotId, IMAGE_PASTE_KEY)) window.tether.notice({ t: 'input', slotId: this.slotId, data: IMAGE_PASTE_KEY })
   }
 
   /** Types raw bytes into the terminal's pty (same path as keyboard input). */
   sendInput(data: string): void {
-    if (this.slotId) window.tether.notice({ t: 'input', slotId: this.slotId, data })
+    if (this.slotId && !this.host.takeInput?.(this.slotId, data)) window.tether.notice({ t: 'input', slotId: this.slotId, data })
   }
 
   /** Copies the selection to the clipboard and clears it; nothing without a selection. */
@@ -912,14 +940,17 @@ export class SlotTab implements ITabRenderer {
     }
     setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
     setIfChanged(this.text, this.api.title ?? this.api.id)
-    // A hibernated pane: a closed eye instead of the "ended" dot.
+    // A hibernated pane: a closed eye instead of the "ended" dot. A suspended one: a small leaf (it still counts as working).
     const asleep = !!s && effectiveStatus(s) === 'exited' && !!this.host.isAsleep?.(this.api.id)
-    if (asleep !== (this.dot.dataset.glyph === 'eye-closed')) {
-      this.dot.dataset.glyph = asleep ? 'eye-closed' : ''
-      this.dot.replaceChildren(icon(asleep ? 'eye-closed' : 'circle-fill'))
+    const suspended = !asleep && !!s && effectiveStatus(s) === 'exited' && !!this.host.isSuspended?.(this.api.id)
+    const glyph = asleep ? 'eye-closed' : suspended ? 'leaf' : ''
+    if (glyph !== (this.dot.dataset.glyph ?? '')) {
+      this.dot.dataset.glyph = glyph
+      this.dot.replaceChildren(icon(glyph || 'circle-fill'))
     }
-    setClass(this.dot, `dot ${asleep ? 'asleep' : s ? effectiveStatus(s) : 'error'}`)
-    if (this.dot.title !== (asleep ? 'Guia hibernada' : '')) this.dot.title = asleep ? 'Guia hibernada' : ''
+    setClass(this.dot, `dot ${asleep ? 'asleep' : suspended ? 'suspended' : s ? effectiveStatus(s) : 'error'}`)
+    const dotTip = asleep ? 'Guia hibernada' : suspended ? SUSPENDED_TIP : ''
+    if (this.dot.title !== dotTip) this.dot.title = dotTip
     if (this.unsafe.hidden !== !s?.unsafe) this.unsafe.hidden = !s?.unsafe
     if (this.ronda.hidden !== !s?.ronda) this.ronda.hidden = !s?.ronda
     if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
