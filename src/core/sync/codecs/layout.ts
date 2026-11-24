@@ -7,7 +7,7 @@
 //     local id → uid map (DeskIds) in a file; the codec receives it and hands it back.
 //   - A pad whose state still holds an absolute path after the PATH_KEYS pass stays on the machine.
 //   - What stays on the machine: activeDesk, drawer, sidebars, systemDesks, asleepPanes, deskSleptPanes, each desk's
-//     `asleep` and any unknown top-level key.
+//     `asleep` and any unknown top-level key; and the view state (see restoreViewState).
 import { randomUUID } from 'node:crypto'
 import { posix, win32 } from 'node:path'
 import { ensureRef, fromRef, toRef, type PlaceMap, type PlaceOpts, type PlaceRef } from '../places.ts'
@@ -150,6 +150,90 @@ function terminalSlots(desk: unknown): string[] {
   return out
 }
 
+// ---------- view state ----------
+// What is in focus or on show right now is this machine's view, not what the person arranged: the desk's
+// `activeFrame`, each frame dockview's `activeGroup` and each group's `activeView` (the active tab). They never
+// travel; on import the local value stays while still valid, else a default the app accepts (pruneLayout's rules).
+
+/** The group leaves (`data.views` array + `data.id`) of a dockview grid node, in reading order. */
+function groupLeaves(node: unknown, out: Obj[] = []): Obj[] {
+  if (!isObject(node)) return out
+  if (node.type === 'leaf') {
+    if (isObject(node.data) && Array.isArray(node.data.views)) out.push(node.data)
+  } else if (Array.isArray(node.data)) for (const c of node.data) groupLeaves(c, out)
+  return out
+}
+
+/** The frame ids of a desk's frame grid, in reading order. */
+function frameLeafIds(node: unknown, out: string[] = []): string[] {
+  if (!isObject(node)) return out
+  if (node.type === 'leaf') { if (isObject(node.data) && typeof node.data.id === 'string') out.push(node.data.id) }
+  else if (Array.isArray(node.data)) for (const c of node.data) frameLeafIds(c, out)
+  return out
+}
+
+/** The dockviews of a desk entity (frame id → serialized dockview). */
+function frameViews(desk: Obj): Obj {
+  return isObject(desk.frames) && isObject(desk.frames.views) ? desk.frames.views : {}
+}
+
+/**
+ * A desk-shaped holder of frames: a desk itself, or a frames pad's state (`{ frames, activeFrame }`, e.g. the
+ * `frame-pads.*` pads) nested anywhere inside it. Matched by shape, so every pad that holds frames is covered.
+ */
+function holdsFrames(x: unknown): x is Obj {
+  return isObject(x) && isObject(x.frames) && isObject(x.frames.grid) && isObject(x.frames.views)
+}
+
+/** Drops the view state from every frames holder in `value` (in place; `value` is already a copy). */
+function stripViewState(value: unknown): void {
+  if (Array.isArray(value)) { for (const v of value) stripViewState(v); return }
+  if (!isObject(value)) return
+  if (holdsFrames(value)) stripOwnViewState(value)
+  for (const v of Object.values(value)) stripViewState(v)
+}
+
+/** Gives every frames holder in `value` the view state of the holder at the same place in `mine`, or a default. */
+function restoreViewState(value: unknown, mine: unknown): void {
+  if (Array.isArray(value)) { value.forEach((v, i) => restoreViewState(v, Array.isArray(mine) ? mine[i] : undefined)); return }
+  if (!isObject(value)) return
+  if (holdsFrames(value)) restoreOwnViewState(value, holdsFrames(mine) ? mine : undefined)
+  for (const [k, v] of Object.entries(value)) restoreViewState(v, isObject(mine) && Object.hasOwn(mine, k) ? mine[k] : undefined)
+}
+
+function stripOwnViewState(desk: Obj): void {
+  delete desk.activeFrame
+  for (const view of Object.values(frameViews(desk))) {
+    if (!isObject(view)) continue
+    delete view.activeGroup
+    if (isObject(view.grid)) for (const g of groupLeaves(view.grid.root)) delete g.activeView
+  }
+}
+
+/** Gives a desk (stripped of view state) this machine's view state where still valid, else a default. */
+function restoreOwnViewState(desk: Obj, mine: Obj | undefined): void {
+  const views = frameViews(desk)
+  const mineViews = mine ? frameViews(mine) : {}
+  const frames = isObject(desk.frames) ? frameLeafIds((desk.frames.grid as Obj | undefined)?.root) : []
+  if (mine && typeof mine.activeFrame === 'string' && frames.includes(mine.activeFrame)) put(desk, 'activeFrame', mine.activeFrame)
+  else if (!mine || Object.hasOwn(mine, 'activeFrame')) { if (frames.length > 0) put(desk, 'activeFrame', frames[0]) }
+  for (const [frameId, view] of Object.entries(views)) {
+    if (!isObject(view) || !isObject(view.grid)) continue
+    const mv = Object.hasOwn(mineViews, frameId) && isObject(mineViews[frameId]) ? (mineViews[frameId] as Obj) : undefined
+    const mineGroups = new Map<string, Obj>()
+    if (mv && isObject(mv.grid)) for (const g of groupLeaves(mv.grid.root)) if (typeof g.id === 'string') mineGroups.set(g.id, g)
+    const groups = groupLeaves(view.grid.root)
+    for (const g of groups) {
+      const tabs = (g.views as unknown[]).filter((v): v is string => typeof v === 'string')
+      const old = typeof g.id === 'string' ? mineGroups.get(g.id) : undefined
+      if (old && !Object.hasOwn(old, 'activeView')) continue // the local file had none: adding one would show a change
+      const kept = old && typeof old.activeView === 'string' && tabs.includes(old.activeView) ? old.activeView : tabs[0]
+      if (kept !== undefined) put(g, 'activeView', kept)
+    }
+    if (mv && typeof mv.activeGroup === 'string' && groups.some((g) => g.id === mv.activeGroup)) put(view, 'activeGroup', mv.activeGroup)
+  }
+}
+
 export function exportLayout(
   layout: LayoutJson,
   map: PlaceMap,
@@ -184,6 +268,7 @@ export function exportLayout(
 
     const { asleep: _asleep, id: _id, pads, ...rest } = d
     const entity = toPlaces(rest, w) as Obj
+    stripViewState(entity)
     put(entity, 'id', uid)
     if (isObject(pads)) {
       const kept: Obj = {}
@@ -197,7 +282,8 @@ export function exportLayout(
         put(kept, padId, converted)
       }
       put(entity, 'pads', kept)
-    } else if (pads !== undefined) put(entity, 'pads', pads)
+    } else if (pads !== undefined) put(entity, 'pads', structuredClone(pads))
+    stripViewState(entity.pads) // frames pads nest desks of their own
     put(desks, uid, entity)
     order.push(uid)
   })
@@ -280,6 +366,8 @@ export function importLayout(
       continue
     }
     delete desk.asleep
+    stripViewState(desk) // entities written before view state stayed local still carry it: ignored
+    restoreViewState(desk, mine)
     if (mine) {
       put(desk, 'id', mine.id)
       if (Object.hasOwn(mine, 'asleep')) put(desk, 'asleep', mine.asleep)
