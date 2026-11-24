@@ -214,6 +214,10 @@ export function createRow(query: string): PickItem<string> | undefined {
 export const PANE_TEXT = {
   join: 'Juntar agente',
   joinMenu: 'Juntar agente…',
+  reopen: 'Reabrir canal',
+  more: 'Mais',
+  members: 'Membros',
+  toEnd: 'Ir para o fim',
   noMembers: 'Ninguém no canal ainda.',
   mute: 'Calar',
   unmute: 'Devolver a voz',

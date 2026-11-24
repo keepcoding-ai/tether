@@ -68,6 +68,12 @@ export interface PaneSnapshot {
   barMe: boolean
   /** Unseen lines addressed to the person, as the marks hold them. */
   toMe: number
+  /**
+   * The header's bar (the plan's `bar`, renamed: `bar` above is the "novas" bar). `primary`: the accent gesture shown (join in an open
+   * channel, reopen in a closed common one, none in a closed desk channel or before the first answer); `labeled`: it carries its text;
+   * `more`: the "⋯" is there; `toEnd`: "Ir para o fim" is in the bar (not in the narrow one).
+   */
+  actions: { primary: 'join' | 'reopen' | 'none'; labeled: boolean; more: boolean; toEnd: boolean }
 }
 
 export interface ChannelPanes {
@@ -130,6 +136,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private readonly side = el('div', 'ch-members')
     private membersBtn: HTMLButtonElement | undefined
     private joinBtn: HTMLButtonElement | undefined
+    private reopenBtn: HTMLButtonElement | undefined
+    private endBtn: HTMLButtonElement | undefined
     /** Whether the empty state ("Ninguém no canal ainda.") was drawn last, to repaint the conversation when it flips. */
     private drewNoMembers = false
     private readonly composer = createComposer({ send: (text, to) => this.say(text, to) })
@@ -346,6 +354,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private onResize(): void {
       const narrow = this.element.clientWidth > 0 && this.element.clientWidth < NARROW_PX
       this.element.classList.toggle('narrow', narrow)
+      this.paintBar()
       if (!this.membersTouched && this.element.clientWidth > 0 && this.membersOpen === narrow) { this.membersOpen = !narrow; this.paintSide() }
       const vis = this.visible()
       const shown = vis && !this.wasVisible
@@ -402,28 +411,64 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       return b
     }
 
+    /** An accent button of the bar: icon always, its text only while `labeled` (see paintBar). */
+    private primaryBtn(className: string, label: string, icon: Parameters<typeof glyph>[0], run: () => void): HTMLButtonElement {
+      const b = this.actionBtn(`ch-act ch-primary ${className}`, label, icon, run)
+      b.append(el('span', 'ch-lbl', label))
+      return b
+    }
+
     private buildBar(): void {
-      const join = this.actionBtn('ch-act ch-join', PANE_TEXT.join, 'user-plus', () => this.joinAgent())
-      this.joinBtn = join
+      this.joinBtn = this.primaryBtn('ch-join', PANE_TEXT.joinMenu, 'user-plus', () => this.joinAgent())
+      this.reopenBtn = this.primaryBtn('ch-reopen', PANE_TEXT.reopen, 'arrow-counter-clockwise', () => { void ui.commands.run(CMD.reopen, { channel: this.channelId }) })
       const members = el('button', 'ch-act on')
       members.type = 'button'
-      members.title = 'Membros'
-      members.setAttribute('aria-label', 'Membros')
+      members.title = PANE_TEXT.members
+      members.setAttribute('aria-label', PANE_TEXT.members)
       members.append(glyph('users'))
       members.addEventListener('click', () => { this.membersTouched = true; this.membersOpen = !this.membersOpen; this.paintSide() })
       this.membersBtn = members
-      const end = el('button', 'ch-act')
-      end.type = 'button'
-      end.title = 'Ir para o fim'
-      end.setAttribute('aria-label', 'Ir para o fim')
-      end.append(glyph('arrow-line-down'))
-      end.addEventListener('click', () => this.toEnd())
-      this.bar.append(join, members, end)
+      const end = this.actionBtn('ch-act ch-end', PANE_TEXT.toEnd, 'arrow-line-down', () => this.toEnd())
+      this.endBtn = end
+      // The same menu as the tab's (right click): the bar shows what is frequent, the "⋯" opens the whole list.
+      const more = this.actionBtn('ch-act ch-more', PANE_TEXT.more, 'dots-three', () => this.openMenu(more))
+      more.setAttribute('aria-haspopup', 'menu')
+      this.bar.setAttribute('role', 'toolbar')
+      this.bar.setAttribute('aria-label', 'Ações do canal')
+      this.bar.append(this.joinBtn, this.reopenBtn, members, end, more)
+      this.paintBar()
     }
 
+    private openMenu(opener: HTMLElement): void {
+      if (!this.api) return
+      const r = opener.getBoundingClientRect()
+      ui.panes.showTabMenu(this.api.id, r.left, r.bottom, opener)
+    }
+
+    private isNarrow(): boolean { return this.element.classList.contains('narrow') }
+
+    /** What the bar shows now: the accent gesture and whether it carries text (not in the narrow composition, not in the empty state). */
+    private barState(): PaneSnapshot['actions'] {
+      const known = this.answer !== undefined
+      const primary: PaneSnapshot['actions']['primary'] = !known ? 'none'
+        : !this.isClosed() ? 'join'
+        : this.answer!.channel.desk === undefined ? 'reopen' : 'none'
+      const labeled = primary === 'reopen' || (primary === 'join' && !this.isNarrow() && !this.noMembers())
+      return { primary, labeled, more: true, toEnd: !this.isNarrow() }
+    }
+
+    private paintBar(): void {
+      const s = this.barState()
+      if (this.joinBtn) { this.joinBtn.hidden = s.primary !== 'join'; this.joinBtn.classList.toggle('labeled', s.labeled) }
+      if (this.reopenBtn) { this.reopenBtn.hidden = s.primary !== 'reopen'; this.reopenBtn.classList.toggle('labeled', s.labeled) }
+      if (this.endBtn) this.endBtn.hidden = !s.toEnd
+    }
+
+    /** "Ir para o fim", for the tab menu (the bar drops it in the narrow composition). */
+    goEnd(): void { this.toEnd() }
+
     private paintHead(): void {
-      // A closed channel takes no one.
-      if (this.joinBtn) this.joinBtn.hidden = this.isClosed()
+      this.paintBar()
       this.titleBox.replaceChildren()
       if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.api?.title ?? '')); return }
       const h = headerOf(this.answer)
@@ -544,8 +589,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         // Nobody is here: under the system lines, the way to bring someone in (it goes when a member comes).
         const box = el('div', 'ch-empty ch-nobody')
         box.append(el('p', 't', PANE_TEXT.noMembers))
-        const join = this.actionBtn('ch-btn ch-join-empty', PANE_TEXT.join, 'user-plus', () => this.joinAgent())
-        join.append(PANE_TEXT.join)
+        const join = this.actionBtn('ch-btn ch-join-empty', PANE_TEXT.joinMenu, 'user-plus', () => this.joinAgent())
+        join.append(PANE_TEXT.joinMenu)
         box.append(join)
         m.append(box)
       } else if (rows.length === 0) {
@@ -604,7 +649,6 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const rows = memberRows(this.answer, id => ui.panes.personEmblem(id))
       const sec = el('div', 'ch-sec')
       sec.append(el('span', '', `Membros · ${rows.length}`))
-      if (!this.isClosed()) sec.append(this.actionBtn('ch-act ch-sec-add', PANE_TEXT.join, 'plus', () => this.joinAgent()))
       side.append(sec)
       for (const m of rows) {
         const row = el('div', 'ch-mrow')
@@ -678,6 +722,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         hasComposerSlot: this.element.querySelector('.ch-composer-slot') !== null,
         ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
         bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe,
+        actions: this.barState(),
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }
@@ -738,7 +783,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       has: id => id.startsWith(CHANNEL_PANE_PREFIX) && paneOf(channelIdOfPane(id)) !== undefined,
       // The minimum every tab has, plus joining an agent; "Encerrar canal…" is added by menus.ts (the tab menu hook).
       tabMenu: (id, x, y) => ui.menus.context(x, y, [
-        ...(paneOf(channelIdOfPane(id))?.canJoin() ? [{ icon: 'user-plus' as const, label: PANE_TEXT.joinMenu, run: () => { void ui.commands.run(CMD.join, { channel: channelIdOfPane(id) }) } }, 'sep' as const] : []),
+        ...(paneOf(channelIdOfPane(id))?.canJoin() ? [{ icon: 'user-plus' as const, label: PANE_TEXT.joinMenu, run: () => { void ui.commands.run(CMD.join, { channel: channelIdOfPane(id) }) } }] : []),
+        { icon: 'arrow-line-down' as const, label: PANE_TEXT.toEnd, run: () => paneOf(channelIdOfPane(id))?.goEnd() },
+        'sep',
         { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
         { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
         'sep',
