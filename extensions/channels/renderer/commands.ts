@@ -4,9 +4,9 @@
 // Every act is a request of the moderator to tetherd (`join`, `remove`...); a refusal comes back as a dialog in plain words.
 import type { Disposable, PickSpec, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
-import { CMD } from '../manifest.ts'
+import { CHANNEL_PANE_PREFIX, CMD, channelIdOfPane } from '../manifest.ts'
 import {
-  NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, joinResultDialog, memberItems, muteDialog, removeDialog,
+  NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, joinResultDialog, memberItems, muteDialog, removeDialog, reopenDialog,
   type JoinOutcome, type MemberText,
   type AgentChoice, type ChannelScope, type MemberGesture,
 } from './texts.ts'
@@ -250,6 +250,10 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   async function reopen(arg: ChannelArg): Promise<void> {
     const ch = await channelFor(arg, 'closed', PICK.reopen, 'Reabrir canal')
     if (!ch) return
+    if (arg.confirmed !== true) {
+      const a = await ui.dialogs.ask(reopenDialog({ channel: ch.name, members: ch.members })).catch(() => undefined)
+      if (a?.choice !== 'reopen') return
+    }
     await act('Reabrir canal', 'reopen', { channel: ch.id })
     await dir.refresh().catch(() => {})
   }
@@ -260,8 +264,18 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
     [CMD.mute, a => gesture('mute', a)], [CMD.unmute, a => gesture('unmute', a)],
     [CMD.close, close], [CMD.reopen, reopen],
   ]
+  // Run inside a channel's pane, a command without `channel` acts on that channel (no "which channel?" step).
+  const activeChannel = (): string | undefined => {
+    const id = ui.panes.activeId()
+    return id !== undefined && id.startsWith(CHANNEL_PANE_PREFIX) ? channelIdOfPane(id) : undefined
+  }
+  const ASKS_CHANNEL = new Set<string>([CMD.join, CMD.remove, CMD.mute, CMD.unmute, CMD.close, CMD.reopen])
   const disposables: Disposable[] = handlers.map(([id, fn]) =>
-    ui.commands.registerCommand(id, (_source, raw) => { void fn(argOf(raw)).catch(e => console.error(id, e)) }))
+    ui.commands.registerCommand(id, (_source, raw) => {
+      const arg = argOf(raw)
+      const here = arg.channel === undefined && ASKS_CHANNEL.has(id) ? activeChannel() : undefined
+      void fn(here !== undefined ? { ...arg, channel: here } : arg).catch(e => console.error(id, e))
+    }))
 
   // Test hook: fires a command as a menu does (a picker waits for the person, so it never resolves with the flow).
   ui.test.expose('run', (id: string, raw?: unknown): void => { void ui.commands.run(id, raw) })

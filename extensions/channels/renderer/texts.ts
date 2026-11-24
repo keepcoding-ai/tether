@@ -208,8 +208,23 @@ export function closeDialog(t: CloseText): DialogSpec {
   return {
     situation: 'channels.close', tone: 'danger', icon: ICON.close,
     title: `Encerrar #${t.channel}?`,
-    message: `Ninguém mais fala nele, e ${t.members === 1 ? 'o 1 membro recebe' : `os ${t.members} membros recebem`} um aviso da sala. A conversa fica guardada e legível; você, ou o dono, pode reabrir o canal depois.`,
+    message: t.members === 0
+      ? 'Ninguém mais fala nele. A conversa fica guardada e legível; você, ou o dono, pode reabrir o canal depois.'
+      : `Ninguém mais fala nele, e ${t.members === 1 ? 'o 1 membro recebe' : `os ${t.members} membros recebem`} um aviso da sala. A conversa fica guardada e legível; você, ou o dono, pode reabrir o canal depois.`,
     choices: [{ id: 'close', icon: ICON.close, label: 'Encerrar canal', consequence: `#${t.channel} fica só para leitura até ser reaberto.`, tone: 'destructive' }],
+    cancelLabel: 'Cancelar',
+  }
+}
+
+/** "Reabrir": every member is told, which can wake turns, so it is said before (the pane button, the menu and the command share it). */
+export function reopenDialog(t: CloseText): DialogSpec {
+  return {
+    situation: 'channels.reopen', tone: 'info', icon: ICON.reopen,
+    title: `Reabrir #${t.channel}?`,
+    message: t.members === 0
+      ? 'O canal volta a aceitar falas. A conversa continua de onde parou.'
+      : `${t.members === 1 ? 'O 1 membro volta' : `Os ${t.members} membros voltam`} a ouvir e a falar, e ${t.members === 1 ? 'recebe' : 'recebem'} um aviso da sala. A conversa continua de onde parou.`,
+    choices: [{ id: 'reopen', icon: ICON.reopen, label: 'Reabrir canal', consequence: `#${t.channel} volta a aceitar falas.`, tone: 'neutral' }],
     cancelLabel: 'Cancelar',
   }
 }

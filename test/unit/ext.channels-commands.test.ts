@@ -7,7 +7,7 @@ import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import type { MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import {
-  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, joinResultDialog, memberItems, memberMenu, muteDialog, PICK, removeDialog,
+  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, joinResultDialog, memberItems, memberMenu, muteDialog, PICK, removeDialog, reopenDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -160,6 +160,20 @@ test('the confirmations say the consequence; remove, mute and close are declared
   assert.match(cl.message!, /os 4 membros recebem um aviso/)
   assert.match(closeDialog({ channel: 'x', members: 1 }).message!, /o 1 membro recebe/)
   assert.deepEqual(cl.choices.map(c => c.id), ['close'])
+  // With nobody inside there is no "0 membros".
+  const cl0 = closeDialog({ channel: 'x', members: 0 }).message!
+  assert.equal(cl0, 'Ninguém mais fala nele. A conversa fica guardada e legível; você, ou o dono, pode reabrir o canal depois.')
+})
+
+test('reopenDialog: says who is told (plural, singular, nobody) and offers one neutral choice', () => {
+  const r = reopenDialog({ channel: 'revisao', members: 3 })
+  assert.equal(r.situation, 'channels.reopen')
+  assert.equal(r.title, 'Reabrir #revisao?')
+  assert.equal(r.message, 'Os 3 membros voltam a ouvir e a falar, e recebem um aviso da sala. A conversa continua de onde parou.')
+  assert.deepEqual(r.choices.map(c => [c.id, c.label, c.consequence, c.tone]), [['reopen', 'Reabrir canal', '#revisao volta a aceitar falas.', 'neutral']])
+  assert.equal(r.cancelLabel, 'Cancelar')
+  assert.equal(reopenDialog({ channel: 'x', members: 1 }).message, 'O 1 membro volta a ouvir e a falar, e recebe um aviso da sala. A conversa continua de onde parou.')
+  assert.equal(reopenDialog({ channel: 'x', members: 0 }).message, 'O canal volta a aceitar falas. A conversa continua de onde parou.')
 })
 
 test('removeDialog: three variants of the consequence (member, owner of a common channel, owner of the desk)', () => {

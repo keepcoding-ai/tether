@@ -33,6 +33,7 @@ import { killElectron } from './electron.ts'
 
 type Hooks = {
   panelIds(): string[]
+  activate(slotId: string): void
   activeDesk(): string
   switchDesk(id: string): void
   ext: { channels: { run(id: string, arg?: unknown): void } }
@@ -165,6 +166,8 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
 
     // ---- 2. join: two steps; with an argument it acts at once ----
     console.log('step 2')
+    // An agent's pane is the active one: no channel pane, so the command asks which channel (with a channel pane active it would not).
+    await page.evaluate(p => window.__tether.activate(p), a)
     await run('channels.join')
     await picker.waitFor()
     assert.equal(await title(), 'Juntar agente a que canal?')
@@ -201,7 +204,7 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     assert.equal(await ask('channels.unmute').count(), 0)
 
     await run('channels.remove')
-    await picker.waitFor()
+    await picker.waitFor() // (the agent's pane is still the active one)
     await page.locator('dialog.picker li.pk-item', { hasText: '#conferencia' }).click()
     await page.waitForFunction(() => document.querySelector('dialog.picker .pk-title')?.textContent === 'Tirar de #conferencia')
     assert.equal((await rows.allInnerTexts()).length, 3, 'every member of the channel')
@@ -302,11 +305,24 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     assert.ok((await menuLabels()).includes('Reabrir canal'))
     await closeMenu()
     await run('channels.reopen', { channel: conf })
+    await ask('channels.reopen').waitFor()
+    assert.match(await ask('channels.reopen').innerText(), /volta a aceitar falas/)
+    await ask('channels.reopen').locator('button.choice[data-choice="reopen"]').click()
     await waitUntil(() => ch.store.get(conf)!.closed === undefined, 10_000, 'conferencia reopened')
     // Without an argument "Reabrir" lists the closed ones (the desk's never).
+    await page.evaluate(p => window.__tether.activate(p), a)
     await run('channels.reopen')
     await picker.waitFor()
     assert.deepEqual((await page.locator('dialog.picker li.pk-item .pk-label').allInnerTexts()).map(t => t.trim()), ['#revisao'])
+    await page.keyboard.press('Escape')
+    await picker.waitFor({ state: 'detached' })
+
+    // With the channel's pane active, a command without `channel` skips the channel step: "Calar em #conferencia" at once (G8).
+    await run('channels.open', { channel: 'conferencia' })
+    await page.waitForFunction(p => window.__tether.panelIds().includes(p), `channel:${conf}`)
+    await run('channels.mute')
+    await picker.waitFor()
+    assert.equal(await title(), 'Calar em #conferencia')
     await page.keyboard.press('Escape')
     await picker.waitFor({ state: 'detached' })
 
