@@ -424,6 +424,11 @@ export interface TetherUi {
      */
     personEmblem(paneId: string): PaneEmblem | undefined
     /**
+     * Opens the tab's own "Emblema…" popover (the same one the tab menu opens) for a pane, at page coordinates. The emblem belongs
+     * to the tab: a pane with no tab (an agent running with no pane) opens nothing.
+     */
+    emblemMenu(paneId: string, x: number, y: number): void
+    /**
      * Closes the pane of a slot, as an extension that already asked the person (its own dialog), with no further question.
      * `process: 'keep'` (the default) leaves the agent running without a pane ("Rodando sem painel", reopenable); 'stop'
      * stops it first. A pane with no slot just closes. Remembered for "reabrir o último painel fechado". Resolves once done.

@@ -85,7 +85,7 @@ export function closeTip(hints: readonly string[]): string {
   return hints.length ? `Fechar (${hints.join(' ou ')})` : 'Fechar'
 }
 
-export type PeekMenuAction = 'open-here' | 'open-other' | 'go-tab' | 'copy-link' | 'close'
+export type PeekMenuAction = 'open-here' | 'open-other' | 'go-tab' | 'emblem' | 'copy-link' | 'close'
 
 export interface PeekMenuItem {
   action: PeekMenuAction
@@ -104,7 +104,7 @@ export interface PeekMenuItem {
  */
 export function peekMenuPlan(hint: string, ended: boolean, hasTab = false): PeekMenuItem[] {
   const open: PeekMenuItem[] = hasTab
-    ? [{ action: 'go-tab', label: GO_TAB_LABEL }]
+    ? [{ action: 'go-tab', label: GO_TAB_LABEL }, { action: 'emblem', label: EMBLEM_LABEL }]
     : [
         { action: 'open-here', label: 'Abrir nesta mesa', disabled: ended },
         { action: 'open-other', label: 'Abrir em outra mesa', submenu: true, disabled: ended },
@@ -117,6 +117,8 @@ export function peekMenuPlan(hint: string, ended: boolean, hasTab = false): Peek
 }
 
 export const GO_TAB_LABEL = 'Ir para a guia'
+/** The tab menu's own row: the emblem is the tab's, so the card offers it only for a slot that has a tab. */
+export const EMBLEM_LABEL = 'Emblema…'
 
 /** The card's opening button, secondary (the main action is "Fechar"): "Abrir nesta mesa" (split with ▾ "Abrir em outra mesa") without a tab; "Ir para a guia" (alone) with one. */
 export interface PeekOpenButton {

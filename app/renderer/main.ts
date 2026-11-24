@@ -1679,6 +1679,7 @@ function peekHost(): PeekHost {
     ...placeHost(),
     contextMenu: (x, y, specs, opener) => showContextMenu(x, y, menuEntriesOf(specs), opener),
     copyLink: copyPaneLink,
+    emblemMenu: (slotId, x, y, back) => { if (findPanel(slotId)) openEmblemMenu(slotId, x, y, back) },
     slot: id => slots.get(id),
     createPanel: createPeekPanel,
     releasePanel: (panel, detach) => {
@@ -2352,6 +2353,7 @@ const emblemHost: EmblemHost = {
   panels: () => allPanels().map(p => ({ id: p.id, params: p.params })),
   setParam: (id, emblem) => { findPanel(id)?.api.updateParameters({ emblem }); scheduleSave() },
   saveLibrary: lib => { layoutFile = { ...layoutFile, emblems: lib }; scheduleSave() },
+  changed: id => door.marksChanged(id),
 }
 
 async function restoreLayout(): Promise<void> {
@@ -4798,6 +4800,7 @@ function activateRendererExtensions(): void {
         onDidChangeMarks: listener => add(door.onMarksChange(listener)),
         slotFacts: paneId => door.slotFacts(paneId),
         personEmblem: paneId => { const p = findPanel(paneId); return p ? personEmblemOf(p.params) : undefined },
+        emblemMenu: (paneId, x, y) => { if (findPanel(paneId)) openEmblemMenu(paneId, x, y) },
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
         hibernate: paneId => door.hibernate(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),

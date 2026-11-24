@@ -25,6 +25,8 @@ export interface PeekHost extends PlaceHost {
   contextMenu(x: number, y: number, entries: MenuSpec[], opener?: HTMLElement): void
   /** "Copiar link do painel" for the slot. */
   copyLink(slotId: string): void
+  /** The tab's "Emblema…" popover for the slot's tab at (x, y); nothing when the slot has no tab. */
+  emblemMenu(slotId: string, x: number, y: number, back?: () => void): void
   slot(slotId: string): SlotState | undefined
   /** A TerminalPanel for the slot, initialised and registered where the slot's output is routed. */
   createPanel(slotId: string): TerminalPanel
@@ -283,11 +285,13 @@ export class PeekCard {
     const slotId = cur.slotId
     const hint = this.host.closeHint()
     const ended = this.host.slot(slotId)?.status === 'exited'
-    const icons = { 'open-here': 'plus', 'open-other': 'arrow-square-out', 'go-tab': 'arrow-square-out', 'copy-link': 'link', close: 'x' } as const
+    const icons = { 'open-here': 'plus', 'open-other': 'arrow-square-out', 'go-tab': 'arrow-square-out', emblem: 'tag', 'copy-link': 'link', close: 'x' } as const
     const entries: MenuSpec[] = []
+    const at = this.menuBtn.getBoundingClientRect()
     for (const item of peekMenuPlan(hint, ended, cur.lent)) {
       if (item.sepBefore) entries.push('sep')
       const run = (): void => {
+        if (item.action === 'emblem') { this.host.emblemMenu(slotId, at.right, at.bottom + 2, () => this.focusTerminal()); return }
         if (item.action === 'open-here') this.openHere()
         else if (item.action === 'go-tab') this.goToTab()
         else if (item.action === 'copy-link') this.host.copyLink(slotId)

@@ -221,7 +221,8 @@ export class DoorHost {
     return toDisposable(() => { this.markListeners.delete(listener) })
   }
 
-  private marksChanged(paneId: string | undefined): void {
+  /** Tells the listeners a mark of a pane changed (also the emblem the person put on its tab); undefined: any pane may have changed. */
+  marksChanged(paneId: string | undefined): void {
     for (const l of [...this.markListeners]) { try { l(paneId) } catch (err) { console.error('panes.onDidChangeMarks', err) } }
   }
 

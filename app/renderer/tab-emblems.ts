@@ -19,6 +19,8 @@ export interface EmblemHost {
   setParam(panelId: string, emblemId: string | undefined): void
   /** The library changed: keep it in layout.json. */
   saveLibrary(lib: Emblem[]): void
+  /** The emblem a tab wears changed (undefined: the library did, any tab may look different): readers of `personEmblem` redraw. */
+  changed(panelId: string | undefined): void
 }
 
 let host: EmblemHost | undefined
@@ -153,17 +155,22 @@ function setTabEmblem(panelId: string, emblemId: string | undefined): void {
   worn.set(panelId, emblemId)
   host?.setParam(panelId, emblemId)
   repaintPanel(panelId)
+  host?.changed(panelId)
 }
 
 function libraryChanged(): void {
   host?.saveLibrary(lib.map(e => ({ ...e })))
   repaintAll()
+  host?.changed(undefined)
 }
 
 // ---------- "Emblema…" popover ----------
 
-/** The emblem popover of a tab at (x, y): the visible emblems, "Nenhum", "Gerenciar emblemas…". Arrows, Enter, Esc. */
-export function openEmblemMenu(panelId: string, x: number, y: number): void {
+/**
+ * The emblem popover of a tab at (x, y): the visible emblems, "Nenhum", "Gerenciar emblemas…". Arrows, Enter, Esc.
+ * `back` (a surface that opened it, like the peek card) says where the keyboard goes after a pick or Esc.
+ */
+export function openEmblemMenu(panelId: string, x: number, y: number, back?: () => void): void {
   document.getElementById('ctx-menu')?.remove()
   const panel = host?.panels().find(p => p.id === panelId)
   const current = shownEmblem(lib, panel ? emblemParam(panel.params) : worn.get(panelId))?.id
@@ -177,14 +184,14 @@ export function openEmblemMenu(panelId: string, x: number, y: number): void {
     if (checked !== undefined) li.setAttribute('aria-checked', String(checked))
     li.innerHTML = html
     if (checked) li.append(icon('check', 'ctx-check'))
-    li.addEventListener('click', ev => { ev.stopPropagation(); close(false); run() })
+    li.addEventListener('click', ev => { ev.stopPropagation(); close(false); run(); back?.() })
     menu.append(li)
   }
   const hd = document.createElement('li'); hd.className = 'hd'; hd.setAttribute('role', 'presentation'); hd.textContent = 'Emblema'; menu.append(hd)
   for (const e of shown) item('menuitemradio', `${chipHtml(e)}<span class="emb-mname">${esc(displayName(e))}</span>`, current === e.id, () => setTabEmblem(panelId, e.id))
   item('menuitemradio', '<span class="emb-chip emb-none"></span><span class="emb-dim">Nenhum</span>', current === undefined, () => setTabEmblem(panelId, undefined))
   const sep = document.createElement('li'); sep.className = 'sep'; sep.setAttribute('role', 'separator'); menu.append(sep)
-  item('menuitem', '', undefined, () => openEmblemEditor(current))
+  item('menuitem', '', undefined, () => openEmblemEditor(current, back))
   const manage = menu.lastElementChild!
   manage.append(icon('tag'), document.createTextNode('Gerenciar emblemas…'))
 
@@ -196,7 +203,7 @@ export function openEmblemMenu(panelId: string, x: number, y: number): void {
   const onKey = (ev: KeyboardEvent): void => {
     const lis = [...menu.querySelectorAll<HTMLElement>('li[role^=menuitem]')]
     const i = lis.indexOf(document.activeElement as HTMLElement)
-    if (ev.key === 'Escape' || ev.key === 'Tab') { ev.preventDefault(); close(true) }
+    if (ev.key === 'Escape' || ev.key === 'Tab') { ev.preventDefault(); close(true); back?.() }
     else if (ev.key === 'ArrowDown') { ev.preventDefault(); lis[(i + 1) % lis.length]?.focus() }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); lis[(i - 1 + lis.length) % lis.length]?.focus() }
     else if (ev.key === 'Home') { ev.preventDefault(); lis[0]?.focus() }
@@ -222,14 +229,17 @@ interface Editor {
 let ed: Editor | undefined
 let sel = ''
 let askingDelete = false
+/** Where the keyboard goes when the editor closes (the surface that opened it, e.g. the peek card); one use. */
+let editorBack: (() => void) | undefined
 let index: IconIndexEntry[] | undefined
 const LABEL = new Map(EMBLEM_ICONS.map(i => [i.n, i.pt.split(' ').slice(0, 3).join(', ')]))
 const cur = (): Emblem => lib.find(e => e.id === sel) ?? lib[0]!
 const cell = (n: string): string => `<button type="button" class="emb-c" role="option" data-i="${n}" title="${n}"><svg><use href="#emb-${n}"/></svg></button>`
 
 /** Opens the "Emblemas" editor on `id` (or the first emblem). Built on first open, reused after. */
-export function openEmblemEditor(id?: string): void {
+export function openEmblemEditor(id?: string, back?: () => void): void {
   const e = build()
+  editorBack = back
   sel = id && lib.some(x => x.id === id) ? id : lib[0]?.id ?? ''
   askingDelete = false
   renderList(); renderForm()
@@ -273,7 +283,11 @@ function build(): Editor {
 
 function wire(e: Editor): void {
   e.dlg.querySelector('[data-x]')!.addEventListener('click', () => e.dlg.close())
-  e.dlg.addEventListener('close', () => { askingDelete = false })
+  e.dlg.addEventListener('close', () => {
+    askingDelete = false
+    const back = editorBack; editorBack = undefined
+    back?.()
+  })
   e.list.addEventListener('click', ev => {
     const b = (ev.target as Element).closest<HTMLElement>('.emb-li')
     if (!b) return

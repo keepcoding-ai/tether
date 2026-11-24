@@ -60,8 +60,8 @@ describe('a slot with a tab in the card', () => {
   })
   test('the "⋯" has "Ir para a guia" in place of the two ways of opening', () => {
     const plan = peekMenuPlan('Ctrl+Shift+O', false, true)
-    assert.deepEqual(plan.map(i => i.label), ['Ir para a guia', 'Copiar link do painel', 'Fechar'])
-    assert.deepEqual(plan.map(i => i.action), ['go-tab', 'copy-link', 'close'])
+    assert.deepEqual(plan.map(i => i.label), ['Ir para a guia', 'Emblema…', 'Copiar link do painel', 'Fechar'])
+    assert.deepEqual(plan.map(i => i.action), ['go-tab', 'emblem', 'copy-link', 'close'])
     assert.equal(plan.some(i => i.submenu), false)
   })
   test('the tab says who is being peeked, with no buttons (the card covers them)', () => {
@@ -129,6 +129,7 @@ describe('the card\'s "⋯" menu', () => {
     const plan = peekMenuPlan('Ctrl+Shift+O', false)
     assert.deepEqual(plan.map(i => i.label), ['Abrir nesta mesa', 'Abrir em outra mesa', 'Copiar link do painel', 'Fechar'])
     assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['open-other'])
+    assert.equal(plan.some(i => i.action === 'emblem'), false, 'no tab, no emblem: the emblem is the tab\'s')
     const close = plan.find(i => i.action === 'close')!
     assert.equal(close.sepBefore, true)
     assert.equal(close.trail, 'Ctrl+Shift+O')
