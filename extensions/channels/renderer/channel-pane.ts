@@ -575,14 +575,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     }
 
     /** The column is drawn when the person has it open and somebody is in the channel (a lone "Você" says nothing). */
-    private sideShown(): boolean { return this.membersOpen && !this.noMembers() }
+    private sideShown(): boolean { return this.membersOpen && !this.nobodyListed() }
+
+    /** Nobody is in the channel, open or closed: the column and the "Membros" button have nothing to say. */
+    private nobodyListed(): boolean { return this.answer !== undefined && this.answer.members.length === 0 }
 
     private paintSide(): void {
       const shown = this.sideShown()
       this.side.hidden = !shown
       this.element.classList.toggle('members-off', !shown)
       if (this.membersBtn) {
-        this.membersBtn.hidden = this.noMembers()
+        this.membersBtn.hidden = this.nobodyListed()
         this.membersBtn.classList.toggle('on', shown)
         this.membersBtn.setAttribute('aria-pressed', String(shown))
       }

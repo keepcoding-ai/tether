@@ -294,9 +294,14 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     // A closed common channel has "Reabrir canal" as its accent, with text; the "⋯" stays.
     assert.deepEqual((await view(old.channel.id))!.actions, { primary: 'reopen', labeled: true, more: true, toEnd: !(await isNarrow(old.channel.id)) })
     assert.equal((await pane(old.channel.id).locator('.ch-bar .ch-reopen').innerText()).trim(), 'Reabrir canal')
+    await page.screenshot({ path: join(SHOTS, 'encerrado-larga.png') })
     // The click asks first (G8); the confirmation reopens it and the accent turns into "Juntar agente…".
     await pane(old.channel.id).locator('.ch-bar .ch-reopen').click()
     await ask('channels.reopen').waitFor()
+    // A closed channel with nobody: no column, no "Membros" button; "encerrado" once (chip only in the narrow composition).
+    assert.deepEqual((await view(old.channel.id))!.column, { shown: false, button: false })
+    const chipShown = await pane(old.channel.id).locator('.ch-closed-chip').isVisible()
+    assert.equal(chipShown, await isNarrow(old.channel.id))
     await page.screenshot({ path: join(SHOTS, 'g8-reabrir.png') })
     await ask('channels.reopen').locator('button.choice[data-choice="reopen"]').click()
     await waitUntil(() => ch.store.get(old.channel.id)!.closed === undefined, 10_000, 'old reopened')

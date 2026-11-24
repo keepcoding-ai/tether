@@ -53,7 +53,7 @@
 .ch-pane.narrow .ch-conv { order: 2; flex: 1 1 0; border-right: 0; }
 .ch-pane.narrow .ch-mrow { padding: 4px 8px; }
 .ch-pane.narrow .ch-l2, .ch-pane.narrow .ch-macts { display: none; }
-.ch-nrole, .ch-dot, .ch-closed-chip { display: none; }
+.ch-nrole, .ch-dot, .ch-role.ch-closed-chip { display: none; }
 .ch-pane.narrow .ch-nrole { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .ch-pane.narrow .ch-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--fg-dim); }
 .ch-pane.narrow .ch-dot[data-tone="on"] { background: var(--ok); }
@@ -65,7 +65,7 @@
 .ch-pane.narrow .ch-title { flex: 1 1 auto; }
 .ch-pane.narrow .ch-sub { display: none; }
 .ch-pane.narrow .ch-name-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.ch-pane.narrow .ch-closed-chip { display: inline-flex; }
+.ch-pane.narrow .ch-role.ch-closed-chip { display: inline-flex; }
 .ch-pane.narrow .ch-bar { flex: none; }
 .ch-msgs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
 
