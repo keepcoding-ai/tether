@@ -35,6 +35,22 @@ export function picks(ui: TetherUi): IDisposable[] {
       record(ui.pick.list({ title: 'Lista que falha', items: () => Promise.reject(new Error('sonda: a lista falha')) }))
     }
   })
+  // pick.many: how each one resolved (the values, or null).
+  const manyResults: unknown[] = []
+  ui.test.expose('pickManyResults', () => manyResults)
+  ui.test.expose('pickManyStart', () => {
+    void ui.pick.many({
+      title: 'Juntar a #canal',
+      placeholder: 'Buscar agente',
+      confirmLabel: 'Juntar',
+      confirmHint: 'junta',
+      items: [
+        { value: 'um', label: 'claude · conferente', letter: 'C', hue: 200, group: 'Nesta mesa · obra' },
+        { value: 'dois', label: 'soul · bancada', letter: 'S', hue: 300, group: 'Nesta mesa · obra' },
+        { value: 'tres', label: 'codex · conferência', letter: 'X', hue: 40, group: 'Mesa · pesquisa', detail: 'parado' },
+      ],
+    }).then(r => { manyResults.push(r ?? null) })
+  })
   ui.test.expose('runJoin', (arg?: unknown) => { record(ui.commands.run('door-probe.join', arg).then(r => `command:${r}`)) })
   return [
     ui.commands.register({

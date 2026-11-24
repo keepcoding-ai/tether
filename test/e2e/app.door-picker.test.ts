@@ -300,6 +300,93 @@ test('door picker: the person\'s tab emblem at the right end of a row, and panes
   })
 })
 
+test('door picker: pick.many marks several (Space, click, Enter, button, Esc)', { timeout: 300_000 }, async () => {
+  await withApp(async page => {
+    const manyResults = (): Promise<unknown[]> => probe(page, 'pickManyResults')
+    const waitMany = (n: number): Promise<unknown> => page.waitForFunction(n => (window.__tether.ext['door-probe']!.pickManyResults as () => unknown[])().length >= n, n)
+    const marked = (): Promise<string[]> => rows(page).evaluateAll(els => els.filter(e => e.getAttribute('aria-selected') === 'true').map(e => e.querySelector('.pk-label')!.textContent!))
+    const start = async (): Promise<void> => { await probe(page, 'pickManyStart'); await opened(page); await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length === 3) }
+    const confirm = box(page).locator('.pk-confirm')
+
+    // Enter with no mark answers with the row under the cursor alone; the box says the keys and counts.
+    await start()
+    assert.equal(await box(page).locator('ul.pk-list').getAttribute('aria-multiselectable'), 'true')
+    assert.equal(await box(page).locator('.pk-hint').innerText(), 'Espaço marca vários · Enter junta · Esc fecha')
+    assert.equal(await confirm.innerText(), 'Juntar 1')
+    assert.equal(await box(page).locator('li.pk-item kbd.pk-num').count(), 0, 'no number keys in a many box')
+    assert.deepEqual(await box(page).locator('li.pk-group').allInnerTexts().then(t => t.map(x => x.toLowerCase())), ['nesta mesa · obra', 'mesa · pesquisa'])
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await closed(page)
+    await waitMany(1)
+    assert.deepEqual((await manyResults())[0], ['dois'])
+
+    // Space marks (the cursor stays), two marks come back in the list's order, the button counts.
+    await start()
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Space')
+    assert.deepEqual(await marked(), ['codex · conferência'])
+    assert.equal(await confirm.innerText(), 'Juntar 1')
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Space')
+    assert.deepEqual(await marked(), ['claude · conferente', 'codex · conferência'])
+    assert.equal(await confirm.innerText(), 'Juntar 2')
+    assert.equal(await box(page).locator('input').inputValue(), '', 'Space marked, it did not type')
+    const dir = process.env.TETHER_G6_PRINTS
+    if (dir) { mkdirSync(dir, { recursive: true }); await page.waitForTimeout(300); await box(page).screenshot({ path: join(dir, 'g6-marcar.png') }) }
+    // A filter hides a marked row without dropping the mark; Enter answers with both marks.
+    await page.keyboard.type('soul')
+    assert.deepEqual(await rowTexts(page), ['soul · bancada'])
+    assert.equal(await confirm.innerText(), 'Juntar 2')
+    await page.keyboard.press('Enter')
+    await closed(page)
+    await waitMany(2)
+    assert.deepEqual((await manyResults())[1], ['um', 'tres'])
+
+    // A click marks; the button confirms; a click away from the keys keeps the field's focus.
+    await start()
+    await rows(page).filter({ hasText: 'soul' }).click()
+    await rows(page).filter({ hasText: 'codex' }).click()
+    assert.deepEqual(await marked(), ['soul · bancada', 'codex · conferência'])
+    await rows(page).filter({ hasText: 'soul' }).click()
+    assert.deepEqual(await marked(), ['codex · conferência'])
+    await rows(page).filter({ hasText: 'soul' }).click()
+    await confirm.click()
+    await closed(page)
+    await waitMany(3)
+    assert.deepEqual((await manyResults())[2], ['dois', 'tres'])
+
+    // A double click confirms with that row marked.
+    await start()
+    await rows(page).filter({ hasText: 'claude' }).dblclick()
+    await closed(page)
+    await waitMany(4)
+    assert.deepEqual((await manyResults())[3], ['um'])
+
+    // Esc and a click outside resolve undefined.
+    await start()
+    await page.keyboard.press('Space')
+    await page.keyboard.press('Escape')
+    await closed(page)
+    await waitMany(5)
+    assert.equal((await manyResults())[4], null)
+    await start()
+    await page.mouse.click(4, 4)
+    await closed(page)
+    await waitMany(6)
+    assert.equal((await manyResults())[5], null)
+
+    // The list picker is as before: no footer, no marks.
+    await probe(page, 'pickStart', 'list')
+    await opened(page)
+    assert.equal(await box(page).locator('.pk-foot').isVisible(), false)
+    assert.equal(await box(page).locator('ul.pk-list').getAttribute('aria-multiselectable'), null)
+    assert.equal(await box(page).locator('.pk-check').count(), 0)
+    await page.keyboard.press('Escape')
+    await closed(page)
+  })
+})
+
 test('door picker K1.6: group headings and the number keys',{ timeout: 300_000 }, async () => {
   await withApp(async page => {
     const groupResults = (): Promise<unknown[]> => probe(page, 'pickGroupResults')
