@@ -248,6 +248,31 @@ export function reactionLimit(tallies: readonly ReactionTally[], who: Who, react
   return undefined
 }
 
+/** The two reactions that ask something of the person when an agent puts them on her speech: ❓ (doubt) and ❌ (disagree). */
+export const ASK_EMOJIS: readonly string[] = ['❓', '❌']
+
+/** One reaction that asks the person: `seq` is the reaction's own number (what "seen" is compared with), `on` the speech of hers it is on. */
+export interface Ask { seq: number; on: number; emoji: string; by: string }
+
+/**
+ * The reactions that ask the person, from `lines` (ascending, the channel's tail): a ❓ or ❌ an AGENT put on a speech of the
+ * PERSON and nobody took back. Every other reaction, on any speech, asks nothing. Pure.
+ */
+export function personAsks(lines: readonly Line[]): Ask[] {
+  const hers = new Set<number>()
+  const live = new Map<string, Ask>()
+  for (const l of lines) {
+    if (l.kind === 'message' && l.from.id === USER) hers.add(l.seq)
+    if (l.kind !== 'reaction' || !l.react || l.from.id === USER || !hers.has(l.react.seq)) continue
+    const key = reactionKey(l.react.emoji)
+    if (!ASK_EMOJIS.includes(key)) continue
+    const id = `${l.react.seq}|${key}|${l.from.id}`
+    if (l.react.op === 'add') { if (!live.has(id)) live.set(id, { seq: l.seq, on: l.react.seq, emoji: key, by: l.from.name }) }
+    else live.delete(id)
+  }
+  return [...live.values()].sort((a, b) => a.seq - b.seq)
+}
+
 /** The person is the moderator of every channel. */
 export function isModerator(who: Who): boolean {
   return who === USER

@@ -1,7 +1,7 @@
 // What the pane shows of the reactions, as pure functions (no DOM, no daemon): the pills of a message, the sum kept when a
 // reaction line is heard, the person's gesture shown before the daemon answers, and the words of the refusals. A reaction is a
 // signal, not a speech: nothing here touches the timeline's lines, the unread count or the "seen" mark.
-import { parseReaction, reactionKey, REACTION_SENSES, REACTIONS_PER_LINE, REACTIONS_PER_MEMBER, USER, type Line, type ReactionTally } from '../rules.ts'
+import { ASK_EMOJIS, parseReaction, reactionKey, REACTION_SENSES, REACTIONS_PER_LINE, REACTIONS_PER_MEMBER, USER, type Line, type ReactionTally } from '../rules.ts'
 
 /** The five agreed reactions as the person reads them (the agent writes the `name`). */
 export const SENSE_TEXT: Record<string, { emoji: string; label: string; sense: string }> = Object.fromEntries(REACTION_SENSES.map((s) => [s.name, {
@@ -80,6 +80,15 @@ export function whoText(by: ReadonlyArray<{ id: string; name: string }>): string
 export function pillTitle(p: Pick<Pill, 'by' | 'name' | 'emoji'>): string {
   const sense = p.name ? SENSE_TEXT[p.name]?.sense : undefined
   return `${whoText(p.by)}${sense ? `: ${sense}` : ''}`
+}
+
+/**
+ * What the person is told when her ❓ or ❌ lands on an agent's speech: it wakes nobody, the agent reads it with the next message of the
+ * channel. Undefined for any other reaction, for another's, and for her own speeches.
+ */
+export function seesNextText(p: Pick<Pill, 'emoji' | 'mine'>, author: { id: string; name: string; role?: string } | undefined): string | undefined {
+  if (!p.mine || !author || author.id === USER || author.role === 'moderator') return undefined
+  return ASK_EMOJIS.includes(reactionKey(p.emoji)) ? `${author.name} vê isto na próxima mensagem do canal` : undefined
 }
 
 /** What a screen reader says of a pill (a toggle button): "concordo, 2 reações: Você e codex. Você reagiu." */

@@ -19,11 +19,13 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 const closePopover = (): void => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) }
 
 export function createStatus(ui: TetherUi, marks: Marks, list: () => readonly ChannelSummary[]): Disposable[] {
+  /** What is for her in a channel: the lines addressed to her and the reactions that ask her. */
+  const marksOf = (id: string): { unread: number; toMe: number } => { const m = marks.of(id); return { unread: m.unread, toMe: m.toMe + marks.asksOf(id).length } }
   const render = (pop: HTMLElement): void => {
     pop.replaceChildren()
     pop.classList.add('ch-pop')
     pop.append(el('h5', 'ch-pop-head', 'Canais'))
-    const rows = popRows(list(), marks.of)
+    const rows = popRows(list(), marksOf)
     if (rows.length === 0) pop.append(el('p', 'ch-pop-empty', 'Nenhum canal aberto.'))
     for (const r of rows) {
       const b = el('button', `ch-pop-row${r.toMe > 0 ? ' to-me' : ''}`)
@@ -52,7 +54,7 @@ export function createStatus(ui: TetherUi, marks: Marks, list: () => readonly Ch
   })
   ui.test.expose('status', () => {
     const t = marks.totals()
-    return { state: stateOf(t), title: titleOf(t), badge: t.toMe > 0 ? t.toMe : undefined, unread: t.unread, toMe: t.toMe, rows: popRows(list(), marks.of) }
+    return { state: stateOf(t), title: titleOf(t), badge: t.toMe > 0 ? t.toMe : undefined, unread: t.unread, toMe: t.toMe, rows: popRows(list(), marksOf) }
   })
   return [handle, marks.onDidChange(() => handle.update())]
 }

@@ -175,7 +175,9 @@ test('channel pane: reactions (pills, click, bar, menu, refusal, closed)', { tim
     const after = (await view())!
     assert.equal(after.rows.length, base.rows.length, 'no blank speech and no new row for a reaction')
     assert.deepEqual([after.unread, after.bar, after.last], [base.unread, base.bar, base.last], 'the "novas" count, bar and last line did not move')
-    assert.deepEqual(await marks(), baseMarks, 'the tab\'s marks did not move')
+    // (R5: the ❓ of an agent on her speech, seen in place, takes the "seen" mark to the reaction; nothing is lit or counted.)
+    const nowMarks = await marks()
+    assert.deepEqual([nowMarks.unread, nowMarks.toMe, nowMarks.seal], [baseMarks.unread, baseMarks.toMe, baseMarks.seal], 'the tab\'s marks did not move')
     assert.equal(await pane.locator('.ch-unseen').count(), 0, 'no "novas para você" separator')
     // A line right after: not a hole (no catch-up), so it is just a new line.
     assert.ok((await ch.say(a, id, { body: 'depois da reação' })).ok)

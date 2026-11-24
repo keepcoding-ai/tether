@@ -383,7 +383,9 @@ export const isNearBottom = (scrollTop: number, clientHeight: number, scrollHeig
 export const unreadLabel = (n: number): string => (n === 1 ? '1 fala nova' : `${n} falas novas`)
 
 /** The bar for the lines addressed to the person (the only orange of the channels, P1). */
-export const forYouLabel = (n: number): string => (n === 1 ? '1 nova para você' : `${n} novas para você`)
+/** The bar and the tab's tooltip for reactions of agents that ask the person (❓ doubt, ❌ disagree) on her speeches. */
+export const asksLabel = (n: number): string => (n === 1 ? '1 reação pede você' : `${n} reações pedem você`)
+export const forYouLabel =(n: number): string => (n === 1 ? '1 nova para você' : `${n} novas para você`)
 
 // ---------- the top bar icon (U3) ----------
 
@@ -404,7 +406,7 @@ export interface PopRow { id: string; name: string; members: string; unread: num
 export function popRows(list: readonly ChannelSummary[], marksOf: (id: string) => MarksOf): PopRow[] {
   return list.filter(c => !c.closed).map((c): PopRow => {
     const m = marksOf(c.id)
-    const plain = m.unread - m.toMe
+    const plain = Math.max(0, m.unread - m.toMe)
     const text = m.toMe > 0 ? (m.toMe === 1 ? 'para você' : `${m.toMe} para você`) : plain > 0 ? unreadLabel(plain) : ''
     return { id: c.id, name: c.name, members: membersCount(c.members), unread: m.unread, toMe: m.toMe, text }
   }).sort((a, b) => (b.toMe > 0 ? 1 : 0) - (a.toMe > 0 ? 1 : 0) || b.unread - a.unread || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))

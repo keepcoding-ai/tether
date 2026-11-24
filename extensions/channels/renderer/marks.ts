@@ -7,9 +7,9 @@
 // `MarkBoard` is pure (no DOM, no daemon); `createMarks` wires it to the daemon's `line` events and to the app's seal and emblem.
 // Memory: one small map per channel, at most MAX_HELD entries; reconciled once from the newest page of each open channel.
 import type { AttentionHandle, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
-import type { LineEvent } from '../daemon/fanout.ts'
+import type { LineEvent, ReactionEvent } from '../daemon/fanout.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
-import type { Line } from '../rules.ts'
+import { ASK_EMOJIS, reactionKey, type Ask, type Line } from '../rules.ts'
 import { channelPaneId } from '../manifest.ts'
 import { DEFAULT_MODERATOR_NAME, type HistoryPage } from './view-model.ts'
 
@@ -19,6 +19,8 @@ export const MAX_HELD = 500
 const RECONCILE_MAX = 30
 const RECONCILE_PAGE = 50
 const SYNC_DELAY_MS = 250
+const START_RETRIES = 10
+const START_RETRY_MS = 500
 
 export type Heard = 'plain' | 'toMe'
 
@@ -43,15 +45,42 @@ export interface ChannelMarks {
   seen: number
 }
 
-interface Held { seen: number; lines: Map<number, Heard> }
+interface Held { seen: number; lines: Map<number, Heard>; asks: Map<number, Ask>; dismissed: Set<number> }
 
 export class MarkBoard {
   private readonly held = new Map<string, Held>()
 
   private entry(channelId: string): Held {
     let h = this.held.get(channelId)
-    if (!h) { h = { seen: 0, lines: new Map() }; this.held.set(channelId, h) }
+    if (!h) { h = { seen: 0, lines: new Map(), asks: new Map(), dismissed: new Set() }; this.held.set(channelId, h) }
     return h
+  }
+
+  /**
+   * The reactions that ask the person, as the daemon counts them now (the whole set replaces the held one: a ❓ taken back is gone).
+   * What she already saw (up to the "seen" mark, or looked at in place) is not held.
+   */
+  setAsks(channelId: string, asks: readonly Ask[]): boolean {
+    const h = this.entry(channelId)
+    const next = new Map(asks.filter(a => a.seq > h.seen && !h.dismissed.has(a.seq)).slice(-MAX_HELD).map(a => [a.seq, a] as const))
+    for (const s of [...h.dismissed]) if (!asks.some(a => a.seq === s)) h.dismissed.delete(s)
+    const same = next.size === h.asks.size && [...next.keys()].every(s => h.asks.has(s))
+    h.asks = next
+    return !same
+  }
+
+  /**
+   * The person has the speech of an ask on her screen. Returns `persist` (the "seen" mark is raised to the ask: nothing unseen lies
+   * below it, so no other line or ask is hidden by it) or only forgets it for this session.
+   */
+  attended(channelId: string, seq: number): { changed: boolean; persist: boolean } {
+    const h = this.held.get(channelId)
+    if (!h || !h.asks.has(seq)) return { changed: false, persist: false }
+    const clear = [...h.lines.keys(), ...h.asks.keys()].every(s => s >= seq)
+    if (clear) { this.raise(h, seq); return { changed: true, persist: true } }
+    h.asks.delete(seq)
+    h.dismissed.add(seq)
+    return { changed: true, persist: false }
   }
 
   /** The channel's `seenByUser` from the daemon: lines up to it are not news. Returns whether the marks changed. */
@@ -85,6 +114,7 @@ export class MarkBoard {
     if (seq <= h.seen) return false
     h.seen = seq
     for (const s of [...h.lines.keys()]) if (s <= seq) h.lines.delete(s)
+    for (const s of [...h.asks.keys()]) if (s <= seq) h.asks.delete(s)
     return true
   }
 
@@ -97,6 +127,12 @@ export class MarkBoard {
     return { unread: h.lines.size, toMe, ...(first !== undefined ? { firstToMe: first } : {}), seen: h.seen }
   }
 
+  /** The reactions that ask her and she has not seen, oldest first (kept apart from the lines: they are no speech of an agent). */
+  asksOf(channelId: string): Ask[] {
+    const h = this.held.get(channelId)
+    return h ? [...h.asks.values()].sort((a, b) => a.seq - b.seq) : []
+  }
+
   forget(channelId: string): void { this.held.delete(channelId) }
 }
 
@@ -107,10 +143,14 @@ export interface Totals { unread: number; toMe: number }
 export interface Marks {
   disposables: Disposable[]
   of(channelId: string): ChannelMarks
+  /** The ❓/❌ reactions of agents on her speeches that she has not seen: they light the same seal as a line for her. */
+  asksOf(channelId: string): Ask[]
   /** Open channels with something unseen, and the sums (what the popover and the icon say). */
   totals(): Totals
   /** The pane shows the end of the conversation to the person (active, visible, window in front): up to `seq` is seen. */
   viewed(channelId: string, seq: number): void
+  /** The pane has the speech an ask is on in view (reaction `seq`): it asks no more; the "seen" mark follows when nothing unseen lies below it. */
+  attended(channelId: string, seq: number): void
   /** A channel's pane appeared or went: its tab and seal are drawn (or taken down) again. */
   paneChanged(channelId: string): void
   onDidChange(listener: () => void): Disposable
@@ -135,6 +175,7 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
   let again = false
   let disposed = false
   let flushing = false
+  let startTries = 0
 
   const moderator = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
   const summaryOf = (channelId: string): ChannelSummary | undefined => deps.list().find(c => c.id === channelId)
@@ -159,10 +200,15 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     const paneId = channelPaneId(channelId)
     const open = ui.panes.find(paneId) !== undefined
     const m = board.of(channelId)
+    const asks = board.asksOf(channelId)
     // The quiet ring on the tab is the tab's own (channel-pane.ts ChannelTab): the core's emblems fill only its own tab headers.
     const handle = seals.get(channelId)
-    if (open && m.toMe > 0) {
-      const message = `#${nameOf(channelId)}: ${m.toMe === 1 ? 'uma fala para você' : `${m.toMe} falas para você`}`
+    if (open && m.toMe + asks.length > 0) {
+      const parts = [
+        ...(m.toMe > 0 ? [m.toMe === 1 ? 'uma fala para você' : `${m.toMe} falas para você`] : []),
+        ...(asks.length > 0 ? [asks.length === 1 ? '1 reação pede você' : `${asks.length} reações pedem você`] : []),
+      ]
+      const message = `#${nameOf(channelId)}: ${parts.join(' e ')}`
       if (handle) handle.update({ message })
       else {
         try { seals.set(channelId, ui.attention.raise({ paneId, message, sticky: true })) } catch (e) { console.error('channels seal', e) }
@@ -175,12 +221,21 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
 
   // ---------- what the daemon says ----------
 
+  /** The reactions that ask her, as the daemon counts them (one read of the channel's tail); it also answers what was seen. */
+  const refreshAsks = async (channelId: string): Promise<void> => {
+    try {
+      const r = await ui.daemon.request<{ asks: Ask[] }>('asks', { channel: channelId })
+      if (!disposed && board.setAsks(channelId, r.asks)) schedule(channelId)
+    } catch { /* the next reaction or sync asks again */ }
+  }
+
   const reconcile = async (c: ChannelSummary): Promise<void> => {
     try {
       const page = await ui.daemon.request<HistoryPage>('history', { channel: c.id, limit: RECONCILE_PAGE })
       known.add(c.id)
       sent.set(c.id, Math.max(sent.get(c.id) ?? 0, c.seenByUser))
       if (board.load(c.id, page.lines, c.seenByUser, moderator())) schedule(c.id)
+      await refreshAsks(c.id)
     } catch { /* the next sync tries again */ }
   }
 
@@ -191,7 +246,11 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
       do {
         again = false
         let list: readonly ChannelSummary[] = []
-        try { list = await deps.refresh() } catch { break }
+        try { list = await deps.refresh(); startTries = 0 } catch {
+          // The daemon may not answer extension requests yet at start: tried again a few times.
+          if (startTries++ < START_RETRIES) setTimeout(() => { if (!disposed) void sync() }, START_RETRY_MS)
+          break
+        }
         if (disposed) return
         const open = list.filter(c => !c.closed)
         // A channel that was closed or is gone has nothing to mark.
@@ -218,8 +277,16 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     if (!known.has(ev.channelId)) syncSoon()
   }
 
+  /** A ❓ or ❌ put or taken back by an agent: the daemon says whether it is on a speech of hers (every other reaction asks nothing). */
+  const onReaction = (ev: ReactionEvent): void => {
+    const r = ev.line.react
+    if (ev.line.from.id === 'user' || !r || !ASK_EMOJIS.includes(reactionKey(r.emoji))) return
+    void refreshAsks(ev.channelId)
+  }
+
   const disposables: Disposable[] = [
     ui.daemon.onEvent<LineEvent>('line', onLine),
+    ui.daemon.onEvent<ReactionEvent>('reaction', onReaction),
     ui.daemon.onEvent('channel', syncSoon),
     { dispose: () => { disposed = true; if (syncTimer) clearTimeout(syncTimer); for (const h of seals.values()) h.resolve(); seals.clear(); listeners.clear() } },
   ]
@@ -232,16 +299,17 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
       if (c.closed) continue
       const m = board.of(c.id)
       unread += m.unread
-      toMe += m.toMe
+      toMe += m.toMe + board.asksOf(c.id).length
     }
     return { unread, toMe }
   }
 
-  ui.test.expose('marks', (channelId: string): ChannelMarks & { seal: boolean } => ({ ...board.of(channelId), seal: seals.has(channelId) }))
+  ui.test.expose('marks', (channelId: string): ChannelMarks & { seal: boolean; asks: Ask[] } => ({ ...board.of(channelId), asks: board.asksOf(channelId), seal: seals.has(channelId) }))
 
   return {
     disposables,
     of: channelId => board.of(channelId),
+    asksOf: channelId => board.asksOf(channelId),
     totals,
     viewed: (channelId, seq) => {
       if (seq <= 0) return
@@ -249,6 +317,15 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
       if (seq > (sent.get(channelId) ?? 0)) {
         sent.set(channelId, seq)
         // The daemon holds the number and writes it once after a delay; a refusal is not the person's concern.
+        void ui.daemon.request('seen', { channel: channelId, seq }).catch(() => {})
+      }
+    },
+    attended: (channelId, seq) => {
+      const r = board.attended(channelId, seq)
+      if (!r.changed) return
+      schedule(channelId)
+      if (r.persist && seq > (sent.get(channelId) ?? 0)) {
+        sent.set(channelId, seq)
         void ui.daemon.request('seen', { channel: channelId, seq }).catch(() => {})
       }
     },

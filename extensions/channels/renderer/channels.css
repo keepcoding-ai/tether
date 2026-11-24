@@ -198,6 +198,9 @@ body.no-tab-close .ch-tab .close { display: none; }
 
 /* U3, the marks. The only orange of the channels is what is said to the person (P1): the bar "novas para você", the "para você" of
    a line, the popover row and the seal the app draws on the tab. Lines for everyone are the quiet ring (no colour, no number). */
+.ch-msg.ch-flash { animation: ch-flash 1.8s ease-out; }
+@keyframes ch-flash { 0%, 40% { background: color-mix(in srgb, var(--x-alert) 22%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .ch-msg.ch-flash { animation: none; background: color-mix(in srgb, var(--x-alert) 22%, transparent); } }
 .ch-newbar.me { background: var(--x-alert); color: var(--x-alert-foreground, var(--bg)); }
 .ch-msg.to-me .ch-dest { color: var(--x-alert); font-weight: 600; }
 .ch-ring { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--fg-dim); flex: none; display: inline-block; box-sizing: border-box; opacity: .85; }

@@ -46,6 +46,8 @@ export interface Directory {
 }
 
 const REFRESH_DELAY_MS = 200
+const START_RETRIES = 10
+const START_RETRY_MS = 500
 
 export function createDirectory(ui: TetherUi): Directory {
   let held: readonly ChannelSummary[] = []
@@ -69,14 +71,19 @@ export function createDirectory(ui: TetherUi): Directory {
     if (timer) return
     timer = setTimeout(() => { timer = undefined; void refresh().catch(() => {}) }, REFRESH_DELAY_MS)
   }
-  void refresh().catch(() => {})
+  // The first read may come before the daemon answers extension requests: it is tried again (a few times, then the next channel event does it).
+  const first = (left: number): void => {
+    void refresh().catch(() => { if (left > 0) startTimer = setTimeout(() => { startTimer = undefined; first(left - 1) }, START_RETRY_MS) })
+  }
+  let startTimer: ReturnType<typeof setTimeout> | undefined
+  first(START_RETRIES)
   return {
     list: () => held,
     refresh,
     memberIds: () => ids,
     disposables: [
       ui.daemon.onEvent('channel', soon),
-      { dispose: () => { if (timer) { clearTimeout(timer); timer = undefined } } },
+      { dispose: () => { if (timer) { clearTimeout(timer); timer = undefined } if (startTimer) { clearTimeout(startTimer); startTimer = undefined } } },
     ],
   }
 }

@@ -9,7 +9,7 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
+import { personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { PAGE } from './store.ts'
 
@@ -206,6 +206,14 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       moderator(ctx)
       const ch = channelOf(c, a)
       return { channel: summaryOf(done(await c.reopen(USER, ch.id)).channel) }
+    }],
+
+    // The reactions that ask the person (❓/❌ of an agent on her speeches) and she has not seen: the tail of the channel, one read.
+    ['asks', async (c, a) => {
+      const ch = channelOf(c, a)
+      const last = await c.store.lastSeq(ch.id)
+      const tail = await c.store.since(ch.id, Math.max(0, last - REACTION_WINDOW), REACTION_WINDOW)
+      return { asks: personAsks(tail).filter((k) => k.seq > ch.seenByUser) }
     }],
 
     // The person saw up to `seq`: raised in memory now, written once after a delay (one timer for every channel).

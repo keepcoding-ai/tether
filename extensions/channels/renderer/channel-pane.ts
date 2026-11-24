@@ -14,7 +14,7 @@ import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line } from '../rules.ts'
 import {
-  announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, splitPills, whoText,
+  announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, seesNextText, splitPills, whoText,
   type Pending, type Pill, type Tallies,
 } from './reactions.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
@@ -29,7 +29,7 @@ import { channelSpans, HASH_TEXT, mentionSpans } from './mentions.ts'
 import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
+  agentLinkOf, asksLabel, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
   MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
@@ -100,6 +100,8 @@ export interface PaneSnapshot {
   barMe: boolean
   /** Unseen lines addressed to the person, as the marks hold them. */
   toMe: number
+  /** Unseen ❓/❌ reactions of agents on her speeches. */
+  asks: number
   /**
    * The header's bar (the plan's `bar`, renamed: `bar` above is the "novas" bar). `primary`: the accent gesture shown (join in an open
    * channel, reopen in a closed common one, none in a closed desk channel or before the first answer); `labeled`: it carries its text;
@@ -335,6 +337,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       document.addEventListener('visibilitychange', this.onWatch)
       this.subs.push(marks.onDidChange(() => {
         this.paintNewBar()
+        // A reaction that asks her may arrive while its speech is in view: it is seen at once.
+        if (marks.asksOf(this.channelId).length > 0) this.checkSeen()
         // The orange separator goes when the person sees the line (the same `seen` rule as the marks).
         const first = marks.of(this.channelId).firstToMe
         if (first !== this.separatorAt) this.paintMsgs()
@@ -374,9 +378,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
      * the view is at the end. Then up to the newest line is seen: the marks go and the daemon is told (`seen`).
      */
     private checkSeen(): void {
-      if (!this.loaded || this.disposed || !this.stick || !this.visible()) return
+      if (!this.loaded || this.disposed || !this.visible()) return
       if (!document.hasFocus() || document.visibilityState !== 'visible') return
-      marks.viewed(this.channelId, this.timeline.last)
+      const asks = marks.asksOf(this.channelId)
+      if (this.stick) {
+        // A reaction newer than the last speech is no hole in the conversation: it is seen with the end only when its speech is in view.
+        let upTo = this.timeline.last
+        for (const a of asks) if (a.seq > upTo && this.onScreen(a.on)) upTo = a.seq
+        marks.viewed(this.channelId, upTo)
+      }
+      // Reading above the end: an ask whose speech is in view is seen too.
+      for (const a of marks.asksOf(this.channelId)) if (this.onScreen(a.on)) marks.attended(this.channelId, a.seq)
     }
 
     // ---------- data ----------
@@ -596,6 +608,18 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
      * to the end (which is where they are seen).
      */
     private onBar(): void {
+      if (this.barText().ask) {
+        // To the speech the oldest ask is on, marked for a moment; once it is on screen the ask is seen (checkSeen) and the bar goes.
+        const ask = marks.asksOf(this.channelId)[0]
+        const row = ask ? this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${ask.on}"]`) : null
+        if (row) {
+          row.scrollIntoView({ block: 'center' })
+          row.classList.add('ch-flash')
+          setTimeout(() => row.classList.remove('ch-flash'), 1800)
+          this.onScroll()
+        }
+        return
+      }
       const first = marks.of(this.channelId).firstToMe
       const row = first === undefined ? null : this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${first}"]`)
       if (row) {
@@ -831,11 +855,23 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     /** "N novas para você" (the lines addressed to her, unseen) beats "N falas novas"; neither shows while reading the end. */
-    private barText(): { text: string; me: boolean } {
+    private barText(): { text: string; me: boolean; ask?: true } {
+      const m = marks.of(this.channelId)
+      if (!this.stick && m.toMe > 0) return { text: forYouLabel(m.toMe), me: true }
+      // A ❓/❌ of an agent on her speech asks her even at the end of the conversation (the speech may be far above).
+      const asks = marks.asksOf(this.channelId).length
+      if (asks > 0) return { text: asksLabel(asks), me: true, ask: true }
       if (this.stick) return { text: '', me: false }
-      const toMe = marks.of(this.channelId).toMe
-      if (toMe > 0) return { text: forYouLabel(toMe), me: true }
       return { text: this.unread > 0 ? unreadLabel(this.unread) : '', me: false }
+    }
+
+    /** Whether the speech `seq` is held and at least partly in view of the conversation. */
+    private onScreen(seq: number): boolean {
+      const row = this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${seq}"]`)
+      if (!row) return false
+      const r = row.getBoundingClientRect()
+      const v = this.msgs.getBoundingClientRect()
+      return r.height > 0 && r.top < v.bottom && r.bottom > v.top
     }
 
     private paintNewBar(): void {
@@ -1066,7 +1102,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         b.dataset.emoji = p.emoji
         b.dataset.key = reactionKey(p.emoji)
         b.dataset.count = String(p.count)
-        b.title = pillTitle(p)
+        const sees = seesNextText(p, this.timeline.lines.find(l => l.seq === seq)?.from)
+        b.title = sees ? `${pillTitle(p)}\n${sees}` : pillTitle(p)
         b.append(el('span', 'e', p.emoji), el('span', 'n', String(p.count)))
         b.setAttribute('aria-label', pillAria(p, readOnly))
         if (b instanceof HTMLButtonElement) {
@@ -1836,7 +1873,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         },
         focusSeq: document.activeElement instanceof HTMLElement && this.msgs.contains(document.activeElement) ? Number(document.activeElement.closest<HTMLElement>('.ch-msg')?.dataset.seq ?? 0) : 0,
         ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
-        bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe,
+        bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe, asks: marks.asksOf(this.channelId).length,
         actions: this.barState(),
         empty: this.noMembers(),
         column: { shown: !this.side.hidden, button: this.membersBtn !== undefined && !this.membersBtn.hidden },
@@ -1863,14 +1900,16 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
      */
     private paintMarks(channelId: string): void {
       const m = marks.of(channelId)
-      const plain = m.unread - m.toMe
+      const plain = Math.max(0, m.unread - m.toMe)
+      // The orange counter: how many lines are for her and how many reactions ask her (the plain lines stay the quiet ring, no number).
+      const asks = marks.asksOf(channelId).length
+      const n = m.toMe + asks
       this.ring.hidden = plain === 0
       this.ring.title = plain > 0 ? unreadLabel(plain) : ''
-      // The orange counter: how many lines are for her (the plain ones stay the quiet ring, no number).
-      this.dot.hidden = m.toMe === 0
-      this.dot.textContent = m.toMe > 0 ? String(m.toMe > 99 ? '99+' : m.toMe) : ''
-      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : ''
-      this.element.dataset.mark = m.toMe > 0 ? 'me' : plain > 0 ? 'plain' : ''
+      this.dot.hidden = n === 0
+      this.dot.textContent = n > 0 ? String(n > 99 ? '99+' : n) : ''
+      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : asks > 0 ? asksLabel(asks) : ''
+      this.element.dataset.mark = n > 0 ? 'me' : plain > 0 ? 'plain' : ''
     }
     init(p: GroupPanelPartInitParameters): void {
       const paneId = p.api.id
