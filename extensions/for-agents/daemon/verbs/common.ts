@@ -154,6 +154,17 @@ export function commanded(deps: VerbDeps, caller: VerbCaller, guia: string, cap:
   return { paneId, eff, target: targetOf(deps, paneId) }
 }
 
+/**
+ * Before acting on a pane: a pane the app suspended to save resources is resumed first and the act waits for its agent to be
+ * up, so nothing an owner sends is lost. Returns a fresh target (the slot as it is after the wait). A resume the person must
+ * decide (a session never confirmed) refuses with `unconfirmed`, like `agents wake`.
+ */
+export async function awakeTarget(deps: VerbDeps, paneId: string, verb: string): Promise<ConductorTarget> {
+  const state = await deps.api.slots.awake(paneId, `agents ${verb}`)
+  if (state?.status === 'unconfirmed') refuse('unconfirmed', `a guia ${paneName(deps, paneId)} estava suspensa e a sessão dela não foi confirmada, então ela não volta sem uma escolha da pessoa`)
+  return targetOf(deps, paneId)
+}
+
 /** The conductor that does `act` on the target: none in the chain = `no-conductor`; the chain lacks the act = `unsupported`. */
 export function conductorFor(target: ConductorTarget, act: ConductorAct): Conductor {
   const chain = conductorRegistry.chain(target)
