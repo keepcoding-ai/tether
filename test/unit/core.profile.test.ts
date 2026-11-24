@@ -152,6 +152,12 @@ describe('defaults of a motor missing from the file (merged on read, per motor)'
     assert.equal(out[2]!.default, true)
   })
 
+  test("name clash (case-insensitive): the entering default gets suffix 2, 3; the file's profile is untouched", () => {
+    const file = [mk('mine', 'claude', { name: 'Hands' }), mk('mine-2', 'codex', { name: 'hands 2' })]
+    const out = mergeMissingMotors(file, [mk('hands', 'hands')])
+    assert.deepEqual(out.map((p) => [p.id, p.name]), [['mine', 'Hands'], ['mine-2', 'hands 2'], ['hands', 'hands 3']])
+  })
+
   test('reading does not write: a file lacking motors is merged in memory and stays byte-identical on disk', () => {
     const home = homes.make()
     const onlyClaude: Profile[] = [mk('claude-dev', 'claude', { args: ['--dangerously-skip-permissions'] })]
