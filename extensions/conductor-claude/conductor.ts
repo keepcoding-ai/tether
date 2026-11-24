@@ -56,7 +56,10 @@ function digitFor(seen: Extract<Seen, { card: unknown }>, choice: string): strin
   if (seen.kind === 'permission') {
     const hit = options.find((o) => o.role === choice)
     if (choice === 'no') return hit?.n !== undefined ? String(hit.n) : 'esc'
-    if (!hit || hit.n === undefined) throw new ConductError('unsupported', `este pedido não tem a opção ${choice}`)
+    if (!hit || hit.n === undefined) {
+      const names = [...new Set([...options.map((o) => o.role).filter((r) => r !== undefined), 'no'])]
+      throw new ConductError('unsupported', `este pedido não tem a opção ${choice}; aceita: ${[...names, ...options.map((o) => String(o.n))].join(', ')}`)
+    }
     return String(hit.n)
   }
   if (choice === 'no' && seen.kind === 'question') return 'esc'

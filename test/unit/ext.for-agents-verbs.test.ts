@@ -436,6 +436,8 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     assert.equal(data(always).card, 'Yes, and do not ask again')
     assert.equal(data(always).proven, false)
     assert.match(always.text, /não provado pela sonda/)
+    // `session` is a named choice too: the verb takes it to the conductor, which says whether the card offers it.
+    assert.notEqual(codeOf(await call(A, 'answer', { guia: p1, choice: 'session' })), 'bad-request')
     await appSet('pane', p1, 'hand', { with: 'user', why: 'taken', by: 'gesture', since: new Date().toISOString() })
     assert.equal(codeOf(await call(A, 'answer', { guia: p1, choice: 'no' })), 'with-user')
     await appSet('pane', p1, 'hand')
