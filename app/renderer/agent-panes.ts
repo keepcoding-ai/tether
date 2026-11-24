@@ -17,8 +17,20 @@ export interface PanePlace {
   padId?: string
 }
 
-/** An agent's pane: the info every host has, plus the renderer's layout. */
-export interface AgentPane extends AgentInfo, PanePlace {}
+/**
+ * An agent's pane: the info every host has, plus the renderer's layout. `placed: false` marks a live agent with NO pane (a
+ * session outside any desk, drawer or pad: "Sem guia"); `paneId` is still its slot id, but nothing shows it. Absent = it has a pane.
+ */
+export interface AgentPane extends AgentInfo, PanePlace {
+  placed?: false
+}
+
+/** The agent of a live slot that no pane shows: it has an identity and a name, but no place. */
+export function loosePaneOf(slot: SlotState): AgentPane | undefined {
+  const info = agentInfoOf(slot)
+  if (!info || !info.alive) return undefined
+  return { ...info, paneId: slot.slotId, isSystemDesk: false, inDrawer: false, placed: false }
+}
 
 /** The pane of a slot; undefined for a plain shell. `color` is left out: the interface gives agents no colour of their own. */
 export function agentPaneOf(slot: SlotState, place: PanePlace): AgentPane | undefined {

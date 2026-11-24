@@ -603,14 +603,18 @@ export interface TetherUi {
    */
   agents: {
     register(ui: AgentUi): IDisposable
-    /** Every agent pane in the window (desks, system desks, the drawer, the pads), in no particular order. */
+    /**
+     * Every agent pane in the window (desks, system desks, the drawer, the pads), in no particular order, plus the live agents
+     * no pane shows ("Sem guia"), marked `placed: false` (their `paneId` is the slot id). Code that needs a real pane filters them.
+     */
     list(): readonly AgentPane[]
     get(slotId: string): AgentPane | undefined
     /** A pane appeared, was renamed, moved (desk, drawer, pad), changed profile, exited or went away (then with `alive: false`). */
     onDidChange(listener: (pane: AgentPane) => void): IDisposable
     /**
      * Brings the agent's pane to the front: its desk (a system desk too) comes forward, the drawer or its pad opens, its tab is
-     * activated and focused. An agent that exited is not restarted. False when no pane shows that slot.
+     * activated and focused. An agent that exited is not restarted. A live agent with no pane (`placed: false`) opens in the
+     * peek card instead. False when there is nothing to bring (no such slot, or it exited with no pane).
      */
     focus(slotId: string): boolean
     /**
@@ -618,6 +622,15 @@ export interface TetherUi {
      * and returns its rows (none: an empty list); it runs each time the menu opens.
      */
     tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
+  }
+  /** The "Sessões" menu. */
+  sessions: {
+    /**
+     * Tells the menu a session is worth keeping: the provider answers, for a slot id, what ties others to it ("dono de 2 mesas",
+     * "membro de 1 canal") or undefined. The bulk close of the idle ones without a tab leaves such a session alone (and says
+     * how many it spared); stopping it by hand asks first. Called when the menu draws: keep it cheap.
+     */
+    hold(provider: (slotId: string) => string | undefined): IDisposable
   }
   /**
    * The background processes tetherd keeps (tether proc): the core holds the live list, the extension draws it. Each act

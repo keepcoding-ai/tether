@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { agentInfoOf, diffAgents, slotIsLive, slotTitle } from '../../app/shared/agent-info.ts'
-import { agentPaneChanges, agentPaneOf, type PanePlace } from '../../app/renderer/agent-panes.ts'
+import { agentPaneChanges, agentPaneOf, loosePaneOf, type PanePlace } from '../../app/renderer/agent-panes.ts'
 import { AgentTracker, type AgentExit } from '../../app/main/agents.ts'
 
 const slot = (over: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', cwd: '/work/proj/', status: 'running', ...over })
@@ -33,6 +33,13 @@ test('agentPaneOf: adds where the pane lives; optional place fields stay out whe
   assert.equal('deskId' in drawer, false)
   assert.equal(drawer.inDrawer, true)
   assert.equal(agentPaneOf(slot({ kind: 'shell' }), place()), undefined)
+})
+
+test('loosePaneOf: a live agent no pane shows is marked placed:false with its slot id as pane id; an ended one or a shell is none', () => {
+  assert.deepEqual(loosePaneOf(slot()), { slotId: 's1', kind: 'claude', name: 'proj', alive: true, paneId: 's1', isSystemDesk: false, inDrawer: false, placed: false })
+  assert.equal(loosePaneOf(slot({ status: 'exited' })), undefined)
+  assert.equal(loosePaneOf(slot({ kind: 'shell' })), undefined)
+  assert.equal('placed' in agentPaneOf(slot(), place())!, false, 'a real pane carries no marker')
 })
 
 test('diffAgents: added, removed, changed and exited', () => {

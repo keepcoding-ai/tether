@@ -5,7 +5,7 @@ import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
   CHOOSE_PLACE_LABEL, deskChoices, rowMenuPlan, bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
-  resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter,
+  resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter, stopHeldSituation,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
 
@@ -157,6 +157,29 @@ describe('bulkCloseAction', () => {
   test('nothing eligible is disabled', () => {
     const a = bulkCloseAction(sessionRows([mk('x', { turn: 'busy' })], none, NOW))
     assert.deepEqual([a.n, a.names, a.enabled], [0, [], false])
+  })
+  test('a held session (owner, channel member) is spared: not listed, not counted, and the hint says how many', () => {
+    const slots: SessionSlot[] = [
+      mk('free', { name: 'Livre', idleSince: ago(20 * MIN) }),
+      mk('boss', { name: 'Dona', idleSince: ago(60 * MIN) }),
+      mk('boss2', { name: 'Dono2', idleSince: ago(60 * MIN) }),
+      mk('fresh-boss', { idleSince: ago(2 * MIN) }),
+    ]
+    const heldOf = (id: string): string | undefined => (id.includes('boss') ? 'dono de 2 mesas' : undefined)
+    const rows = sessionRows(slots, none, NOW, heldOf)
+    const a = bulkCloseAction(rows)
+    assert.deepEqual([a.n, a.names, a.spared], [1, ['Livre'], 2])
+    assert.equal(a.hint, '2 poupados: são donos ou membros de canal')
+    assert.equal(rows.find(r => r.slotId === 'boss')!.held, 'dono de 2 mesas')
+    assert.equal(rows.find(r => r.slotId === 'fresh-boss')!.spared, false, 'not idle enough: nothing to spare')
+    const only = bulkCloseAction(sessionRows(slots.slice(1, 2), none, NOW, heldOf))
+    assert.deepEqual([only.n, only.enabled, only.hint], [0, false, '1 poupado: é dono ou membro de canal'])
+    assert.equal(bulkCloseAction(sessionRows(slots, none, NOW)).hint, '')
+  })
+  test('stopHeldSituation names the session and what it holds', () => {
+    const s = stopHeldSituation('Atrium', 'dono de 2 mesas e 1 guia')
+    assert.equal(s.title, 'Atrium é dono de 2 mesas e 1 guia. Encerrar mesmo assim?')
+    assert.equal(s.choices[0]!.id, 'close')
   })
   test('singular label', () => {
     assert.equal(bulkCloseAction(sessionRows([mk('x', { idleSince: ago(15 * MIN) })], none, NOW)).label, 'Encerrar o ocioso sem guia')

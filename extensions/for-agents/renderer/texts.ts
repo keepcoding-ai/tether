@@ -83,6 +83,9 @@ export const PICK = {
   groupRecent: 'Recentes',
   groupHere: 'Nesta mesa',
   groupElsewhere: 'Outras mesas',
+  /** A live agent with no tab (outside any desk, drawer or pad); it can still own desks and panes. */
+  groupNoDesk: 'Sem mesa',
+  noDesk: 'sem mesa',
   livesIn: (place: string) => `mora em ${place}`,
   owns: (mesas: number, guias: number): string => {
     const parts: string[] = []

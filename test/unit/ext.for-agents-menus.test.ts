@@ -10,6 +10,7 @@ import type { AgentPane } from '../../app/renderer/agent-panes.ts'
 import type { TetherUi } from '../../app/renderer/ext-api.ts'
 import { OwnershipStore } from '../../extensions/for-agents/daemon/ownership.ts'
 import { gestures, pickItems, writes } from '../../extensions/for-agents/renderer/gestures.ts'
+import { heldText } from '../../extensions/for-agents/renderer/holds.ts'
 import { deskMenu, paneMenu, readFacts, toRows, type MenuFacts, type Row, type Waiting } from '../../extensions/for-agents/renderer/menus.ts'
 import { giveDeskDialog, givePaneDialog, revokeDeskDialog } from '../../extensions/for-agents/renderer/texts.ts'
 import type { Frozen, Hand, Ownership } from '../../extensions/for-agents/rules.ts'
@@ -206,6 +207,25 @@ describe('the picker rows', () => {
     assert.deepEqual(items.map(i => i.letter), ['A', 'K', 'S', 'C', 'N'], 'the initial of the name, as on its tab emblem')
     assert.deepEqual(pickItems(agents, { ...ctx, exclude: 'A' }).map(i => i.value).includes('A'), false)
     assert.equal(pickItems(agents, { ...ctx, paneId: 'K' }).find(i => i.value === 'K')!.detail?.startsWith('ela mesma: de si'), true)
+  })
+  test('a live agent with no tab goes last, in "Sem mesa", marked "sem mesa" instead of "mora em"; recents keep it first', () => {
+    const agents = [
+      agent('A', 'Atrium', { deskId: 'd9', deskTitle: 'atrium' }), agent('Z', 'zeta', { placed: false }), agent('B', 'beta', { placed: false }),
+      agent('D', 'morto', { placed: false, alive: false }),
+    ]
+    const items = pickItems(agents, { ...ctx, deskId: 'd1', owns: id => (id === 'B' ? { mesas: 0, guias: 2 } : { mesas: 0, guias: 0 }) })
+    assert.deepEqual(items.map(i => [i.group, i.label]), [['Outras mesas', 'Atrium'], ['Sem mesa', 'beta'], ['Sem mesa', 'zeta']])
+    assert.equal(items[1]!.detail, 'sem mesa · dono de 2 guias')
+    assert.equal(items[2]!.detail, 'sem mesa')
+    const recent = pickItems(agents, { ...ctx, recent: ['Z'] })
+    assert.deepEqual(recent.map(i => [i.group, i.label]), [['Recentes', 'zeta'], ['Outras mesas', 'Atrium'], ['Sem mesa', 'beta']])
+  })
+  test('holds: an agent that owns desks or guias is held; an ended ownership and its own guia do not count', () => {
+    const own = (owner: string, ended = false) => ({ owner, since: 't', givenBy: 'user', ...(ended ? { ended: { at: 't', name: 'x' } } : {}) }) as never
+    const f = { deskOwner: new Map([['d1', own('A')], ['d2', own('A', true)]]), paneOwner: new Map([['p1', own('A')], ['A', own('A')], ['p2', own('B')]]) }
+    assert.equal(heldText(f, 'A'), 'dono de 1 mesa e 1 guia')
+    assert.equal(heldText(f, 'B'), 'dono de 1 guia')
+    assert.equal(heldText(f, 'C'), undefined)
   })
   test('the emblem of the guia rides on its row; none when the reader has none; the pane itself too', () => {
     const agents = [agent('A', 'Atrium'), agent('K', 'kai')]

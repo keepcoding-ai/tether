@@ -32,6 +32,10 @@ export interface SessionsMenuHost extends PlaceHost {
   request(body: RequestBody): Promise<string | undefined>
   /** The single confirmation of the bulk close; true = go ahead. */
   confirmBulkClose(names: string[]): Promise<boolean>
+  /** What makes a session worth keeping ("dono de 2 mesas"), asked of the extensions; undefined = nothing. */
+  heldOf(slotId: string): string | undefined
+  /** The confirmation of stopping one held session ("<nome> é dono de…. Encerrar mesmo assim?"); true = go ahead. */
+  confirmStopHeld(name: string, held: string): Promise<boolean>
   /** The single confirmation of "Esquecer todas as encerradas"; true = go ahead. */
   confirmForgetAll(count: number): Promise<boolean>
   /** Opens the "Acompanhar…" popup. */
@@ -155,7 +159,14 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     await Promise.all(ids.filter(id => still.has(id)).map(id => forgetSession(id)))
   }
 
-  const rowsNow = (): SessionRow[] => sessionRows(host.slots(), host.hasTab, Date.now())
+  const rowsNow = (): SessionRow[] => sessionRows(host.slots(), host.hasTab, Date.now(), host.heldOf)
+
+  /** One session's stop by hand (the ✕, the row menu): a held one (owns desks or panes, is in a channel) asks first. */
+  async function stopByHand(slotId: string): Promise<void> {
+    const row = rowsNow().find(r => r.slotId === slotId)
+    if (row?.held && !(await host.confirmStopHeld(row.name, row.held))) return
+    await stopSession(slotId)
+  }
   const freeRows = (rows: readonly SessionRow[]): SessionRow[] => rows.filter(r => r.noTab)
   const endedRows = (rows: readonly SessionRow[]): SessionRow[] => rows.filter(r => r.state === 'ended' && !host.hasTab(r.slotId))
 
@@ -178,7 +189,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       const stop = iconButton('ic stop', 'x', 'Encerrar a sessão')
       stop.title = 'Encerrar: o processo termina e a conversa fica guardada em Encerradas'
       stop.disabled = busy.has(r.slotId)
-      stop.addEventListener('click', ev => { ev.stopPropagation(); void stopSession(r.slotId) })
+      stop.addEventListener('click', ev => { ev.stopPropagation(); void stopByHand(r.slotId) })
       acts.append(stop)
       // The whole row peeks (the buttons keep their own act).
       row.addEventListener('click', ev => { if (!(ev.target as Element).closest('button')) peekRow(r.slotId) })
@@ -248,7 +259,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const run: Record<string, () => void> = {
       peek: () => peekRow(slotId),
       'open-here': () => { close(); host.openSlot(slotId) },
-      stop: () => { void stopSession(slotId) },
+      stop: () => { void stopByHand(slotId) },
       reopen: () => reviveRow(slotId),
       'reopen-here': () => { close(); host.openSlot(slotId) },
       forget: () => { askingForget = slotId; refresh() },
@@ -366,6 +377,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       bulkBtn.disabled = !bulk.enabled || bulking
       bulkBtn.addEventListener('click', ev => { ev.stopPropagation(); void bulkClose() })
       const wrap = el('div', 'sx-actions'); wrap.append(bulkBtn)
+      if (bulk.hint) { const hint = el('div', 'sx-hint', bulk.hint); hint.id = 'sessions-bulk-hint'; wrap.append(hint); wrap.classList.add('with-hint') }
       const body = el('div', 'sx-rows')
       body.append(...free.map(r => sessionRow(r, 'free')))
       sec.append(wrap, body)

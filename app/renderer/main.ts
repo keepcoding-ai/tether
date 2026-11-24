@@ -38,7 +38,7 @@ import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
-import { bulkCloseSituation, forgetEndedSituation } from './sessions-rules.ts'
+import { bulkCloseSituation, forgetEndedSituation, stopHeldSituation } from './sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { setupToolbarOverflow } from './toolbar-overflow.ts'
 import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-menu-basics.ts'
@@ -92,7 +92,7 @@ import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extension
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
 import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
-import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
+import { agentPaneChanges, agentPaneOf, loosePaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
@@ -2557,6 +2557,15 @@ let pauseBatch: PauseBatch | null = null
 const procsStore = new ProcsStore(body => window.tether.request(body))
 let sessionsMenu: SessionsMenu | undefined
 
+/** What extensions say makes a session worth keeping (TetherUi.sessions.hold). */
+const sessionHolds = new Set<(slotId: string) => string | undefined>()
+/** "dono de 2 mesas e 1 guia, membro de 1 canal": the extensions' words for a slot, joined; undefined when none holds it. */
+function sessionHeldOf(slotId: string): string | undefined {
+  const words: string[] = []
+  for (const p of sessionHolds) { try { const w = p(slotId); if (w) words.push(w) } catch (err) { console.error('sessions.hold', err) } }
+  return words.length > 0 ? words.join(', ') : undefined
+}
+
 /** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
 function refreshSessions(): void { sessionsMenu?.refresh() }
 
@@ -2574,6 +2583,8 @@ function setupSessionsMenu(): void {
     contextMenu: (x, y, specs, opener) => showContextMenu(x, y, menuEntriesOf(specs), opener),
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     confirmBulkClose: async names => (await askDialog(bulkCloseSituation(names))).choice === 'close',
+    heldOf: sessionHeldOf,
+    confirmStopHeld: async (name, held) => (await askDialog(stopHeldSituation(name, held))).choice === 'close',
     confirmForgetAll: async count => (await askDialog(forgetEndedSituation(count))).choice === 'forget',
     openFollow: openPauseDialog,
     dialogOpen,
@@ -2706,6 +2717,12 @@ function agentPanes(): AgentPane[] {
     })
     if (pane) out.push(pane)
   }
+  // Live agents no pane shows ("Sem guia") are still agents: they can own desks and panes, so extensions must see them.
+  for (const slot of slots.values()) {
+    if (seen.has(slot.slotId) || slot.kind === 'shell') continue
+    const loose = loosePaneOf(slot)
+    if (loose) out.push(loose)
+  }
   return out
 }
 
@@ -2724,7 +2741,14 @@ function notifyAgentPanes(): void {
 
 /** Brings an agent's pane forward without restarting an exited agent. */
 function focusAgentPane(slotId: string): boolean {
-  if (!slots.has(slotId) || !findPanel(slotId)) return false
+  const slot = slots.get(slotId)
+  if (!slot) return false
+  // A live agent with no pane (Sem guia): the peek card is the way to reach it.
+  if (!findPanel(slotId)) {
+    if (slot.kind === 'shell' || !isLiveSlot(slot)) return false
+    peek(slotId)
+    return true
+  }
   openSlot(slotId, false)
   requestAnimationFrame(() => focusPane(slotId))
   return true
@@ -4885,6 +4909,9 @@ function activateRendererExtensions(): void {
         onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
         focus: slotId => focusAgentPane(slotId),
         tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
+      },
+      sessions: {
+        hold: provider => { sessionHolds.add(provider); refreshSessions(); return add(toDisposable(() => { sessionHolds.delete(provider); refreshSessions() })) },
       },
       procs: {
         list: () => procsStore.list(),

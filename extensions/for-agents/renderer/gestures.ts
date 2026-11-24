@@ -11,6 +11,7 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import { OBJECT_KEYS, type Frozen, type Hand, type OwnerId, type Ownership } from '../rules.ts'
 import { effOf, menus, openedPanes, readFacts, type Action, type MenuFacts, type Target } from './menus.ts'
+import { ownsCount } from './holds.ts'
 import { PICK, closeOpenedDialog, giveDeskDialog, givePaneDialog, revokeDeskDialog, waitingWhat } from './texts.ts'
 import { clockOf, initialOf } from './view-model.ts'
 
@@ -33,22 +34,24 @@ export interface PickContext {
   emblemOf?: ((id: string) => PaneEmblem | undefined) | undefined
 }
 
-/** Only live agents (F8); "Recentes", then "Nesta mesa", then "Outras mesas", each by name. */
+/** Only live agents (F8); "Recentes", then "Nesta mesa", then "Outras mesas", then "Sem mesa" (no tab at all), each by name. */
 export function pickItems(agents: readonly AgentPane[], c: PickContext): PickItem<OwnerId>[] {
   const live = agents.filter(a => a.alive && a.slotId !== c.exclude)
   const byName = (a: AgentPane, b: AgentPane): number => a.name.localeCompare(b.name)
   const recent = c.recent.map(id => live.find(a => a.slotId === id)).filter((a): a is AgentPane => a !== undefined)
   const rest = live.filter(a => !recent.includes(a))
   const here = rest.filter(a => c.deskId !== undefined && a.deskId === c.deskId).sort(byName)
-  const elsewhere = rest.filter(a => !here.includes(a)).sort(byName)
+  const loose = rest.filter(a => a.placed === false).sort(byName)
+  const elsewhere = rest.filter(a => !here.includes(a) && !loose.includes(a)).sort(byName)
   const row = (a: AgentPane, group: string): PickItem<OwnerId> => {
     const o = c.owns(a.slotId)
     const place = a.inDrawer ? 'a Gaveta' : (a.deskTitle ?? '')
-    const detail = [a.slotId === c.paneId ? PICK.itself : place ? PICK.livesIn(place) : '', o.mesas + o.guias > 0 ? PICK.owns(o.mesas, o.guias) : ''].filter(Boolean).join(' · ')
+    const where = a.placed === false ? PICK.noDesk : place ? PICK.livesIn(place) : ''
+    const detail = [a.slotId === c.paneId ? PICK.itself : where,o.mesas + o.guias > 0 ? PICK.owns(o.mesas, o.guias) : ''].filter(Boolean).join(' · ')
     const emblem = c.emblemOf?.(a.slotId)
     return { value: a.slotId, label: a.name, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), ...(emblem ? { emblem } : {}), group }
   }
-  return [...recent.map(a => row(a, PICK.groupRecent)), ...here.map(a => row(a, PICK.groupHere)), ...elsewhere.map(a => row(a, PICK.groupElsewhere))]
+  return [...recent.map(a => row(a, PICK.groupRecent)), ...here.map(a => row(a, PICK.groupHere)), ...elsewhere.map(a => row(a, PICK.groupElsewhere)), ...loose.map(a => row(a, PICK.groupNoDesk))]
 }
 
 // ---- the writes: the same values as OwnershipStore ----------------------------------------------------------------------------
@@ -96,10 +99,7 @@ export function gestures(ui: TetherUi): IDisposable[] {
 
   const deskName = (f: MenuFacts, id: string): string => f.desks.find(d => d.id === id)?.name ?? id
   const paneTitle = (f: MenuFacts, id: string): string => f.panes.find(p => p.id === id)?.title ?? id
-  const ownsOf = (f: MenuFacts) => (id: OwnerId): { mesas: number; guias: number } => ({
-    mesas: [...f.deskOwner].filter(([, o]) => !o.ended && o.owner === id).length,
-    guias: [...f.paneOwner].filter(([pid, o]) => !o.ended && o.owner === id && pid !== id).length,
-  })
+  const ownsOf = (f: MenuFacts) => (id: OwnerId): { mesas: number; guias: number } => ownsCount(f, id)
   const deskOf = (f: MenuFacts, t: Target): string | undefined => (t.kind === 'desk' ? t.id : f.panes.find(p => p.id === t.id)?.deskId)
 
   /** The owner a target has now (live), whatever the way: its own, its desk's. */

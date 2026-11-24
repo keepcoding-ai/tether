@@ -120,8 +120,12 @@ export interface SessionRow {
   text: string
   /** Working set of the session's process tree, formatted ("420 MB"); empty when unknown or ended. */
   memory: string
-  /** Eligible for "Encerrar os N ociosos sem guia". */
+  /** Eligible for "Encerrar os N ociosos sem guia" (idle, no tab, and not held). */
   cleanup: boolean
+  /** What makes the session worth keeping ("dono de 2 mesas"), when something does: an extension's word. */
+  held?: string
+  /** Idle enough for the bulk close but held: left out of it. */
+  spared: boolean
   slot: SessionSlot
 }
 
@@ -166,9 +170,11 @@ function rowText(s: SessionSlot, state: TurnState, now: number): string {
 const RANK: Record<TurnState, number> = { attention: 0, busy: 1, idle: 2, ended: 3 }
 
 /** Rows in display order: attention, busy, idle (longest idle first), ended (most recent first); stable otherwise. */
-export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: string) => boolean, now: number): SessionRow[] {
+export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: string) => boolean, now: number, heldOf: (slotId: string) => string | undefined = () => undefined): SessionRow[] {
   const rows = [...slots].map((slot, i) => {
     const state = turnState(slot)
+    const idle = isIdleForCleanup(slot, now, hasTab)
+    const held = state === 'ended' ? undefined : heldOf(slot.slotId)
     const row: SessionRow = {
       slotId: slot.slotId,
       name: displayName(slot),
@@ -176,7 +182,9 @@ export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: strin
       noTab: state !== 'ended' && !hasTab(slot.slotId),
       text: rowText(slot, state, now),
       memory: state === 'ended' ? '' : formatMemory(slot.memoryMB),
-      cleanup: isIdleForCleanup(slot, now, hasTab),
+      cleanup: idle && !held,
+      ...(held ? { held } : {}),
+      spared: idle && !!held,
       slot,
     }
     const at = Date.parse((state === 'ended' ? slot.endedAt : slot.idleSince) ?? '')
@@ -207,14 +215,40 @@ export interface BulkCloseAction {
   n: number
   names: string[]
   enabled: boolean
+  /** How many idle ones the bulk close leaves alone because they own desks or panes, or belong to a channel. */
+  spared: number
+  /** "2 poupados: são donos ou membros de canal"; empty when none was spared. */
+  hint: string
+}
+
+/** The hint under the bulk button when owners and channel members were left out. */
+export function sparedHint(spared: number): string {
+  if (spared <= 0) return ''
+  return `${spared} ${spared === 1 ? 'poupado' : 'poupados'}: ${spared === 1 ? 'é dono ou membro de canal' : 'são donos ou membros de canal'}`
 }
 
 /** "Encerrar os N ociosos sem guia": the rows flagged `cleanup`, with their names for the single confirmation. */
 export function bulkCloseAction(rows: readonly SessionRow[]): BulkCloseAction {
   const names = rows.filter(r => r.cleanup).map(r => r.name)
   const n = names.length
-  if (n === 0) return { label: 'Nenhum ocioso sem guia para encerrar', n, names, enabled: false }
-  return { label: n === 1 ? 'Encerrar o ocioso sem guia' : `Encerrar os ${n} ociosos sem guia`, n, names, enabled: true }
+  const spared = rows.filter(r => r.spared).length
+  const hint = sparedHint(spared)
+  if (n === 0) return { label: 'Nenhum ocioso sem guia para encerrar', n, names, enabled: false, spared, hint }
+  return { label: n === 1 ? 'Encerrar o ocioso sem guia' : `Encerrar os ${n} ociosos sem guia`, n, names, enabled: true, spared, hint }
+}
+
+/** "Encerrar mesmo assim?": the single confirmation of stopping, one by one, a session something depends on. */
+export function stopHeldSituation(name: string, held: string): DialogSpec {
+  return {
+    situation: 'stop-held',
+    tone: 'warn',
+    icon: 'warning',
+    title: `${name} é ${held}. Encerrar mesmo assim?`,
+    message: 'Encerrar termina o processo; o que ele possui deixa de ter quem o comande.',
+    context: { icon: 'robot', name, lines: [held] },
+    choices: [{ id: 'close', icon: 'power', label: 'Encerrar mesmo assim', consequence: 'O processo termina. A conversa fica guardada em Encerradas e pode ser reaberta.', tone: 'destructive' }],
+    cancelLabel: 'Cancelar',
+  }
 }
 
 // ---------- icon counter ----------
