@@ -7,6 +7,7 @@ import { after, describe, test } from 'node:test'
 import { noteUrl, parseTetherUrl } from '../../app/shared/tether-url.ts'
 import { focusLink, focusTarget, ownTabUrl, parseFocusArgs } from '../../src/cli/focus.ts'
 import { withTabEnv } from '../../src/core/tab-env.ts'
+import { userDir } from '../../src/core/paths.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'tether-focus-'))
 after(() => rmSync(dir, { recursive: true, force: true }))
@@ -72,5 +73,12 @@ describe('tether link / focus', () => {
     assert.deepEqual(parseTetherUrl(plan.env.TETHER_TAB_URL!), { kind: 'tab', id: '1a2b3c4d' })
     assert.equal(plan.env.TETHER_OPEN_CWD, 'C:/open')
     assert.ok(existsSync(plan.env.TETHER_CLI!), 'TETHER_CLI is the real CLI script')
+    assert.equal(plan.env.TETHER_USER_DIR, userDir(), 'the pane gets the creator\'s userDir')
+  })
+
+  test('TETHER_USER_DIR is the creator\'s userDir, over the profile', () => {
+    const env = { TETHER_HOME: join(dir, 'h') }
+    const plan = withTabEnv({ command: 'x', args: [], cwd: 'C:/w', env: { TETHER_USER_DIR: 'C:/forged' } } as never, { slotId: '1a2b3c4d', cwd: 'C:/open' }, env)
+    assert.equal(plan.env.TETHER_USER_DIR, join(dir, 'h'))
   })
 })

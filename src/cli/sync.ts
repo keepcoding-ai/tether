@@ -12,7 +12,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readlinkSync,
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { pidExists } from '../core/liveness.ts'
-import { tetherHome, userDir } from '../core/paths.ts'
+import { samePath, tetherHome, userDir } from '../core/paths.ts'
 import { readProfiles } from '../core/profile-sync.ts'
 import { storageRoots } from '../core/storage/areas.ts'
 import { createDiskPorts } from '../core/sync/disk-ports.ts'
@@ -35,6 +35,8 @@ export interface SyncConfig {
   machine: string
   /** Set by a first `connect` until its first run succeeds: a failure before that leaves no link behind. */
   pending?: true
+  /** The sync folder this connection uses (userDir/sync when it was made). A command that resolves another folder refuses. */
+  dir?: string
 }
 
 export interface SyncLast {
@@ -89,7 +91,11 @@ function writeJsonAtomic(file: string, value: unknown): void {
 export function readSyncConfig(home: string): SyncConfig | undefined {
   const doc = readJson(configPath(home))
   if (!isObject(doc) || doc.provider !== 'git' || typeof doc.url !== 'string' || !doc.url || typeof doc.machine !== 'string' || !doc.machine) return undefined
-  return { provider: 'git', url: doc.url, machine: doc.machine, ...(doc.pending === true ? { pending: true as const } : {}) }
+  return {
+    provider: 'git', url: doc.url, machine: doc.machine,
+    ...(doc.pending === true ? { pending: true as const } : {}),
+    ...(typeof doc.dir === 'string' && doc.dir ? { dir: doc.dir } : {}),
+  }
 }
 
 export function readSyncLast(home: string): SyncLast | undefined {
@@ -222,7 +228,8 @@ export async function cmdSync(argv: string[], io: SyncIo): Promise<number> {
         return 1
       }
       const machine = a.options.machine?.trim() ? machineLabel(a.options.machine) : existing?.machine ?? machineLabel()
-      if (!existing) writeJsonAtomic(configPath(home), { provider: 'git', url, machine, pending: true } satisfies SyncConfig)
+      if (existing && wrongDir(io, existing)) return 1
+      if (!existing) writeJsonAtomic(configPath(home), { provider: 'git', url, machine, pending: true, dir: storageRoots(io.env).sync } satisfies SyncConfig)
       return await runNow(io, home, json, fromApp)
     }
     case 'now':
@@ -234,6 +241,14 @@ export async function cmdSync(argv: string[], io: SyncIo): Promise<number> {
     default:
       throw new UsageError(`subcomando desconhecido: ${sub}. ${SYNC_USAGE}`)
   }
+}
+
+/** A connection made from one sync folder never syncs from another (a second folder would overwrite the person's data). */
+function wrongDir(io: SyncIo, cfg: SyncConfig): boolean {
+  const dir = storageRoots(io.env).sync
+  if (!cfg.dir || samePath(cfg.dir, dir)) return false
+  io.err(`tether: a sincronização desta máquina usa a pasta ${cfg.dir}, mas este processo resolveu ${dir}; nada foi sincronizado\n`)
+  return true
 }
 
 function providerFor(io: SyncIo, home: string, cfg: SyncConfig): SyncProvider {
@@ -253,6 +268,7 @@ function show(io: SyncIo, home: string, last: SyncLast, json: boolean): number {
 async function runNow(io: SyncIo, home: string, json: boolean, fromApp: boolean): Promise<number> {
   const cfg = readSyncConfig(home)
   if (!cfg) { io.err('tether: a sincronização não está configurada; rode "tether sync connect <url>"\n'); return 1 }
+  if (wrongDir(io, cfg)) return 1
   if (!fromApp && (io.appRunning ?? appIsOpen)(home)) return await delegateToApp(io, home, json)
   let release: () => void
   try { release = acquireSyncLock(home) } catch (e) {
@@ -276,7 +292,8 @@ async function runNow(io: SyncIo, home: string, json: boolean, fromApp: boolean)
       const linked = existsSync(join(storageRoots(io.env).sync, '.git')) && (await provider.status()).connected
       const report = linked ? await engine.sync() : await engine.connect()
       last = { at: new Date(now()).toISOString(), ok: true, report }
-      if (cfg.pending) writeJsonAtomic(configPath(home), { provider: 'git', url: cfg.url, machine: cfg.machine } satisfies SyncConfig)
+      // The first success fixes the folder: an old sync.json without `dir` gains it here.
+      if (cfg.pending || !cfg.dir) writeJsonAtomic(configPath(home), { provider: 'git', url: cfg.url, machine: cfg.machine, dir: cfg.dir ?? storageRoots(io.env).sync } satisfies SyncConfig)
     } catch (e) {
       const error = describeSyncError(e)
       if (cfg.pending) {

@@ -11,12 +11,12 @@ import { type FSWatcher, watch } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { isNotFound, mainExecutor } from './main-executor.ts'
+import { userDir } from '../../src/core/paths.ts'
 import { gitignoreCovers, gitignoreWithTether, noteFileName, NOTES_SUBDIR, uniqueFileName } from '../shared/notes.ts'
 
 /** The notes folder without a pane: the person's own, or the test home's. */
 export function userNotesDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
-  const fromEnv = env.TETHER_HOME?.trim()
-  return fromEnv ? join(fromEnv, 'notes') : join(home, '.tether', 'notes')
+  return join(userDir(env, { homedir: home }), 'notes')
 }
 
 /** The default of the setting "Pasta das minhas notas" (extensions.note.personalFolder). */

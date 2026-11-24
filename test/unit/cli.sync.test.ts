@@ -114,8 +114,8 @@ describe('cli: tether sync', () => {
     assert.match(a.out, /o seu perfil foi enviado/)
     assert.match(a.out, /Enviado: \d+ itens/)
     assert.ok(remoteCommits(remote) >= 1)
-    assert.deepEqual(readSyncConfig(a.home), { provider: 'git', url: remote, machine: 'maq-a' })
-    assert.deepEqual(JSON.parse(readFileSync(join(a.home, 'sync.json'), 'utf8')), { provider: 'git', url: remote, machine: 'maq-a' })
+    assert.deepEqual(readSyncConfig(a.home), { provider: 'git', url: remote, machine: 'maq-a', dir: join(a.user, 'sync') })
+    assert.deepEqual(JSON.parse(readFileSync(join(a.home, 'sync.json'), 'utf8')), { provider: 'git', url: remote, machine: 'maq-a', dir: join(a.user, 'sync') })
     const last = readSyncLast(a.home)!
     assert.equal(last.ok, true)
     assert.equal(last.report?.pushed, true)
@@ -280,7 +280,28 @@ describe('cli: tether sync', () => {
     assert.equal(readSyncLast(b.home)?.ok, false)
     const remote = bareRemote()
     assert.equal(await run(b, 'connect', remote), 0, b.err)
-    assert.deepEqual(JSON.parse(readFileSync(join(b.home, 'sync.json'), 'utf8')), { provider: 'git', url: remote, machine: machineLabel() })
+    assert.deepEqual(JSON.parse(readFileSync(join(b.home, 'sync.json'), 'utf8')), { provider: 'git', url: remote, machine: machineLabel(), dir: join(b.user, 'sync') })
+  })
+
+  test('a sync folder other than the one recorded is refused; an old sync.json gains dir on its first success', async () => {
+    const remote = bareRemote()
+    const a = box()
+    seedA(a, join(a.user, 'proj'))
+    writeFileSync(join(a.home, 'sync.json'), JSON.stringify({ provider: 'git', url: remote, machine: 'm' }))
+    assert.equal(await run(a, 'now'), 0, a.err)
+    assert.equal(readSyncConfig(a.home)?.dir, join(a.user, 'sync'))
+    const commits = remoteCommits(remote)
+    const other = join(a.home, '..', 'other-user')
+    a.io.env = { ...a.env, TETHER_USER_DIR: other }
+    for (const argv of [['now'], ['connect', remote]]) {
+      assert.equal(await run(a, ...argv), 1)
+      assert.match(a.err, /usa a pasta .*nada foi sincronizado/)
+      assert.equal(a.err.trim().split('\n').length, 1)
+    }
+    assert.ok(!existsSync(join(other, 'sync')), 'no second sync folder')
+    assert.equal(remoteCommits(remote), commits)
+    a.io.env = { ...a.env, TETHER_USER_DIR: join(a.user.toUpperCase(), '') + '\\' }
+    if (process.platform === 'win32') assert.equal(await run(a, 'now'), 0, a.err)
   })
 
   test('a reconnection that fails keeps the link', async () => {

@@ -4,7 +4,7 @@
 //   <home>/slots/<slotId>.run.json  RunInfo (who is running the slot now)
 import { realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, posix, resolve, win32 } from 'node:path'
 
 /**
  * The folder as the agent must see it: absolute, with the on-disk casing (realpath.native: Windows keeps
@@ -23,26 +23,55 @@ export function upperDrive(dir: string): string {
   return dir.replace(/^([a-z]):/, (_m, drive: string) => `${drive.toUpperCase()}:`)
 }
 
+/** The OS facts the default folders depend on; tests inject their own. */
+export interface PlatformInfo {
+  platform?: NodeJS.Platform
+  homedir?: string
+}
+
 export function tetherHome(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.TETHER_HOME?.trim()
   if (fromEnv) return fromEnv
-  if (process.platform === 'win32') {
+  return defaultTetherHome(env)
+}
+
+/** The platform's tetherHome when TETHER_HOME is not set. */
+export function defaultTetherHome(env: NodeJS.ProcessEnv = process.env, os: PlatformInfo = {}): string {
+  const platform = os.platform ?? process.platform
+  const home = os.homedir ?? homedir()
+  const p = platform === 'win32' ? win32 : posix
+  if (platform === 'win32') {
     const local = env.LOCALAPPDATA?.trim()
-    return join(local || join(homedir(), 'AppData', 'Local'), 'tether')
+    return p.join(local || p.join(home, 'AppData', 'Local'), 'tether')
   }
-  return join(homedir(), '.local', 'state', 'tether')
+  return p.join(home, '.local', 'state', 'tether')
+}
+
+/** Same folder by its spelling: normalized, no trailing separator, case-insensitive on Windows. No disk access. */
+export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  const p = platform === 'win32' ? win32 : posix
+  const norm = (s: string): string => {
+    let n = p.normalize(s.trim())
+    while (n.length > 1 && /[\\/]$/.test(n) && !/^[A-Za-z]:[\\/]$/.test(n)) n = n.slice(0, -1)
+    return platform === 'win32' ? n.toLowerCase() : n
+  }
+  return norm(a) === norm(b)
 }
 
 /**
- * Where the person's own configuration lives (settings.json, keybindings.json), apart from the machine's state in
- * `tetherHome`: TETHER_USER_DIR, else TETHER_HOME when it is set (tests stay inside their temp home), else `~/.tether`.
+ * Where the person's own configuration lives (settings.json, keybindings.json, sync/), apart from the machine's state in
+ * `tetherHome`: TETHER_USER_DIR, else TETHER_HOME when it overrides the platform default (tests, a dev instance stay
+ * inside their own home), else `~/.tether`. A TETHER_HOME that spells the default home is no override: the panes get it
+ * explicitly, and every process of one tether must resolve the same folder.
  */
-export function userDir(env: NodeJS.ProcessEnv = process.env): string {
+export function userDir(env: NodeJS.ProcessEnv = process.env, os: PlatformInfo = {}): string {
   const fromUser = env.TETHER_USER_DIR?.trim()
   if (fromUser) return fromUser
+  const platform = os.platform ?? process.platform
+  const home = os.homedir ?? homedir()
   const fromHome = env.TETHER_HOME?.trim()
-  if (fromHome) return fromHome
-  return join(homedir(), '.tether')
+  if (fromHome && !samePath(fromHome, defaultTetherHome(env, os), platform)) return fromHome
+  return (platform === 'win32' ? win32 : posix).join(home, '.tether')
 }
 
 export function slotsDir(home: string): string {
