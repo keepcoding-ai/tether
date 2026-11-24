@@ -270,6 +270,8 @@ describe('for-agents and the conductors turned on and unused', () => {
       store.dispose()
       host.dispose()
       await daemon.close().catch(() => {})
+      // The door's MCP server listens once a soul slot is offered it (soul loads HTTP MCP servers); the test owns the door.
+      await door.mcp.close()
       await removeHome(home)
     }
   }

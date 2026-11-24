@@ -104,6 +104,7 @@ describe('for-agents: the ownership in the daemon (X2)', () => {
     b.probe.dispose()
     b.rec.close()
     await b.daemon.close().catch(() => {})
+    await b.door.mcp.close()
     await removeHome(home)
   })
 
@@ -332,6 +333,7 @@ describe('for-agents: an owner with no path inside hears its notices through its
     b.probe.dispose()
     b.rec.close()
     await b.daemon.close().catch(() => {})
+    await b.door.mcp.close()
     await removeHome(home)
   })
 
@@ -436,6 +438,7 @@ describe('for-agents: a restarted daemon keeps the ownership', () => {
       // The daemon goes (the extension is not turned off: tetherd never disposes it), and a new one starts on the same home.
       b.probe.dispose(); b.rec.close()
       await b.daemon.close()
+      await b.door.mcp.close()
       b = await boot(home, logs)
       await b.fa.idle()
       const after = Object.fromEntries([A, K, p1, p2].map((id) => [id, want(id)]))
@@ -448,6 +451,7 @@ describe('for-agents: a restarted daemon keeps the ownership', () => {
     } finally {
       b.probe.dispose(); b.rec.close()
       await b.daemon.close().catch(() => {})
+      await b.door.mcp.close()
       await removeHome(home)
     }
   })
@@ -473,6 +477,7 @@ describe('for-agents: a hold of an inactive extension goes at the start', () => 
       const restart = async (withExt: boolean): Promise<void> => {
         b.probe.dispose(); b.rec.close()
         await b.daemon.close()
+        await b.door.mcp.close()
         b = await boot(home, logs, withExt)
         if (withExt) await b.fa.idle()
       }
@@ -493,6 +498,7 @@ describe('for-agents: a hold of an inactive extension goes at the start', () => 
     } finally {
       b.probe.dispose(); b.rec.close()
       await b.daemon.close().catch(() => {})
+      await b.door.mcp.close()
       await removeHome(home)
     }
   })
@@ -515,6 +521,7 @@ describe('for-agents: the start pass waits for the data', () => {
       await b.door.objects.flush(); await b.door.desks.flush()
       b.probe.dispose(); b.rec.close()
       await b.daemon.close()
+      await b.door.mcp.close()
       b = await boot(home, logs, true, 800)
       await b.fa.idle()
       assert.deepEqual(b.slots.get(p1)?.held, { ext: EXT_ID, by: A })
@@ -523,6 +530,7 @@ describe('for-agents: the start pass waits for the data', () => {
     } finally {
       b.probe.dispose(); b.rec.close()
       await b.daemon.close().catch(() => {})
+      await b.door.mcp.close()
       await removeHome(home)
     }
   })
