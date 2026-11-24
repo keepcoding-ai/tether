@@ -2575,6 +2575,7 @@ function setupSessionsMenu(): void {
     hasTab: id => findPanel(id) !== undefined,
     batch: () => pauseBatch,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    rename: (slotId, name) => { void renameSlot(slotId, name) },
     openSlot,
     ...placeHost(),
     // The panel hides itself on Espiar: the keyboard goes back to the sessions button of the bar, not to a row that is gone.

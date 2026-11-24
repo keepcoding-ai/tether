@@ -434,7 +434,7 @@ function skipWhy(s: SessionSlot | undefined): string | undefined {
 export type RowGroup = 'free' | 'ended'
 
 /** What a row's menu items do (main.ts maps each to a function). */
-export type RowAction = 'peek' | 'open-here' | 'open-other' | 'stop' | 'reopen' | 'reopen-here' | 'reopen-other' | 'forget'
+export type RowAction = 'peek' | 'open-here' | 'open-other' | 'stop' | 'reopen' | 'reopen-here' | 'reopen-other' | 'forget' | 'rename'
 
 export interface RowMenuItem {
   action: RowAction
@@ -453,6 +453,7 @@ export function rowMenuPlan(group: RowGroup): RowMenuItem[] {
       { action: 'peek', label: 'Espiar' },
       { action: 'open-here', label: 'Abrir nesta mesa' },
       { action: 'open-other', label: 'Abrir em outra mesa', submenu: true },
+      { action: 'rename', label: 'Renomear…', sepBefore: true },
       { action: 'stop', label: 'Encerrar…', danger: true, sepBefore: true },
     ]
   }

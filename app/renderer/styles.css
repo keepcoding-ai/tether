@@ -307,8 +307,6 @@ button.primary:hover { background: var(--accent-hover); }
 #sessions-list .kind { display: inline-flex; color: var(--warn); }
 #sessions-list .kind.shell { color: var(--fg-dim); }
 #sessions-list .sx-free .open { font-weight: 500; }
-#sessions-list .sx-row.peekable { cursor: pointer; }
-#sessions-list .sx-row.peekable .acts button { cursor: pointer; }
 /* The split button ("Abrir" + ▾, "Reabrir" + ▾): one outline, the arrow stuck to the body. */
 #sessions-list .split { display: inline-flex; align-items: stretch; }
 #sessions-list .split > .open { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -755,6 +753,7 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .kind .ph { width: 14px; height: 14px; }
 .tether-tab .text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tether-tab input.rename { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 140px; min-width: 0; outline: none; }
+#sessions-list input.sx-rename { font: inherit; font-weight: 600; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 100%; min-width: 0; outline: none; }
 .tether-tab .dot { display: inline-flex; flex: none; }
 .tether-tab .dot .ph { width: 7px; height: 7px; }
 /* Running is the normal state: no dot. The others keep theirs. */
