@@ -1,0 +1,22 @@
+/* The sync extension's status popover (renderer.ts): head, the two facts, the result line, what needs a look, the foot. */
+.status-pop.sync-pop { min-width: 300px; max-width: 400px; padding: 8px; line-height: 1.45; }
+.sync-pop .sync-pop-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px; border-bottom: 1px solid var(--border); }
+.sync-pop .sync-pop-head .ph { width: 16px; height: 16px; flex: none; }
+.sync-pop .sync-pop-title { font-weight: 600; }
+.sync-pop .sync-pop-when { flex: 1; min-width: 0; color: var(--fg-dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.sync-pop[data-state="busy"] .sync-pop-when { color: var(--accent); }
+.sync-pop .sync-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; row-gap: 2px; margin: 6px 4px; font-size: 12px; }
+.sync-pop .sync-facts dt { color: var(--fg-dim); }
+.sync-pop .sync-facts dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-pop .sync-result { margin: 6px 4px 0; padding: 6px 8px; border-radius: 4px; font-size: 12px; white-space: normal; }
+.sync-pop .sync-result.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.sync-pop .sync-result.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.sync-pop .sync-result.error { background: color-mix(in srgb, var(--err) 14%, transparent); }
+.sync-pop .sync-details { margin: 4px 4px 0; padding: 0 0 0 16px; font-size: 11.5px; color: var(--fg-dim); white-space: normal; }
+.sync-pop .sync-detail.conflict, .sync-pop .sync-detail.env { color: var(--warn); }
+.sync-pop .sync-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 6px 4px 0; border-top: 1px solid var(--border); }
+.sync-pop .sync-foot button { margin: 0; border: 0; background: none; padding: 4px 6px; border-radius: 4px; font: inherit; font-size: 12px; cursor: pointer; }
+.sync-pop .sync-now { color: var(--accent); }
+.sync-pop .sync-disconnect { color: var(--fg-dim); }
+.sync-pop .sync-foot button:hover:not(:disabled), .sync-pop .sync-foot button:focus-visible { background: var(--bg-hover-2); outline: none; }
+.sync-pop .sync-foot button:disabled { opacity: .55; cursor: default; }

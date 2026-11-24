@@ -163,8 +163,8 @@ describe('tetherd with an unregistered agent', () => {
 })
 
 describe('daemon extension host', () => {
-  test('the committed index holds the built-in agents, claude then soul (slice 4) and codex, then skills, web-bridge (F7 C2) and browser, then for-agents and its conductors (terminal, claude, soul, codex), then channels', () => {
-    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'codex', 'skills', 'web-bridge', 'browser', 'for-agents', 'conductor-terminal', 'conductor-claude', 'conductor-soul', 'conductor-codex', 'channels'])
+  test('the committed index holds the built-in agents, claude then soul (slice 4) and codex, then skills, web-bridge (F7 C2) and browser, then for-agents and its conductors (terminal, claude, soul, codex), then channels, then sync', () => {
+    assert.deepEqual(daemonIndex.map((e) => e.manifest.id), ['claude', 'soul', 'codex', 'skills', 'web-bridge', 'browser', 'for-agents', 'conductor-terminal', 'conductor-claude', 'conductor-soul', 'conductor-codex', 'channels', 'sync'])
   })
 
   test('an extension registers an agent, a launch middleware and a slot listener; dispose undoes them', async () => {
