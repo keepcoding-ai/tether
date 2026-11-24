@@ -177,6 +177,7 @@ describe('conductor-soul: the acts', () => {
     assert.deepEqual(a.writes, [])
     assert.deepEqual(a.keys, [])
     assert.equal(await codeOf(soulConductor.answer!(fakeCtx([PERMISSION]).ctx, '3')), 'bad-request')
+    assert.equal(await codeOf(soulConductor.answer!(fakeCtx([PERMISSION]).ctx, 'session')), 'bad-request')
     assert.equal(await codeOf(soulConductor.answer!(fakeCtx([IDLE]).ctx, 'yes')), 'no-request')
   })
 

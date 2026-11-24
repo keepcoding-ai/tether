@@ -56,7 +56,7 @@ export interface ManagerHost {
 }
 
 const PANE_ICON: Record<string, IconName> = { note: 'note-pencil', empty: 'square-half', terminal: 'terminal-window', 'md-preview': 'file-md', 'html-preview': 'file-html', 'browser-web': 'globe-simple' }
-const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand' }
+const AGENT_ICON: Record<string, IconName> = { claude: 'brand', soul: 'brand', hands: 'brand' }
 const items = (entries: readonly ContextMenuEntry[]): MenuItem[] => entries.filter((e): e is MenuItem => e !== 'sep')
 /** The item a key or gesture runs, found by what it says (the menu is the only definition). */
 const itemOf = (entries: readonly ContextMenuEntry[], label: string): MenuItem | undefined => items(entries).find(e => e.label === label)

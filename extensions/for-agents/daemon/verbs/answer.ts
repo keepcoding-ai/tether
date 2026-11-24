@@ -3,17 +3,17 @@
 import { buildContext } from '../context.ts'
 import { commanded, conductorFor, GUIA_PROP, ok, refuse, touch, wantString, type VerbDef } from './common.ts'
 
-const NAMED = ['yes', 'always', 'no']
+const NAMED = ['yes', 'session', 'always', 'no']
 
 export const answerVerb: VerbDef = {
   name: 'answer',
-  description: "Answer a permission request (or question) that an agent in one of your panes is showing now: choice yes, always, no, or the option's number. It reads the screen first and refuses with `no-request` when there is no card. `card` in the result is the text of the option chosen.",
+  description: "Answer a permission request (or question) that an agent in one of your panes is showing now: choice yes, session (allow for this session, when the card offers it), always, no, or the option's number. It reads the screen first and refuses with `no-request` when there is no card. `card` in the result is the text of the option chosen.",
   help: 'Responde o pedido de permissão que está na tela de uma guia.',
-  input: { type: 'object', properties: { guia: GUIA_PROP, choice: { type: 'string', description: "'yes', 'always', 'no' or an option number." } }, required: ['guia', 'choice'] },
+  input: { type: 'object', properties: { guia: GUIA_PROP, choice: { type: 'string', description: "'yes', 'session', 'always', 'no' or an option number." } }, required: ['guia', 'choice'] },
   positional: ['guia', 'choice'],
   async run(deps, caller, args) {
     const choice = String(args.choice ?? '').trim()
-    if (!NAMED.includes(choice) && !/^[1-9][0-9]*$/.test(choice)) refuse('bad-request', "choice: 'yes', 'always', 'no' ou o número da opção")
+    if (!NAMED.includes(choice) && !/^[1-9][0-9]*$/.test(choice)) refuse('bad-request', "choice: 'yes', 'session', 'always', 'no' ou o número da opção")
     const { paneId, target } = commanded(deps, caller, wantString(args, 'guia'), 'answer')
     const conductor = conductorFor(target, 'answer')
     const detector = conductorFor(target, 'detect')

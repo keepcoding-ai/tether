@@ -65,7 +65,10 @@ function digitFor(seen: Extract<Seen, { kind: 'permission' | 'question' }>, choi
   if (seen.kind === 'permission') {
     if (choice === 'always') throw new ConductError('unsupported', 'o Soul não tem "sempre permitir" no pedido; o equivalente é trocar o modo (shift+tab), e isso o condutor não faz')
     const hit = options.find((o) => o.role === choice)
-    if (!hit || hit.n === undefined) throw new ConductError('bad-request', `este pedido não tem a opção ${choice}`)
+    if (!hit || hit.n === undefined) {
+      const names = options.map((o) => o.role).filter((r) => r !== undefined)
+      throw new ConductError('bad-request', `este pedido não tem a opção ${choice}; aceita: ${[...names, ...options.map((o) => String(o.n))].join(', ')}`)
+    }
     return String(hit.n)
   }
   throw new ConductError('bad-request', 'pergunta: responda com o número da opção')

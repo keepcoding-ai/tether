@@ -92,6 +92,12 @@ export function sendChunks(text: string, platform: NodeJS.Platform = process.pla
   return [{ data: `${PASTE_START}${asKeyEvents(lines.join('\r'))}${PASTE_END}` }, { data: '\r', waitMs: PASTE_ENTER_DELAY_MS }]
 }
 
+/** The names and numbers this card accepts, for the refusal of a choice it does not offer. */
+function acceptedOf(options: readonly ParsedOption[]): string {
+  const names = options.map((o) => o.role).filter((r): r is NonNullable<ParsedOption['role']> => r !== undefined)
+  return [...new Set([...names, 'no']), ...options.map((o) => String(o.n))].join(', ')
+}
+
 /** What an `answer` choice does on this card: a key named on the screen (`y`, `p`) or Esc, with whether a probe proved it. */
 function actionFor(seen: Extract<Seen, { card: unknown }>, choice: string): { act: 'key' | 'esc' | 'move'; data: string; proven: boolean; moves?: KeyName[] } {
   const options: ParsedOption[] = seen.options
@@ -116,7 +122,7 @@ function actionFor(seen: Extract<Seen, { card: unknown }>, choice: string): { ac
   if (seen.kind === 'permission') {
     const hit = options.find((o) => o.role === choice)
     if (choice === 'no') return hit ? viaOption(hit) : { act: 'esc', data: '', proven: !seen.list }
-    if (!hit) throw new ConductError('unsupported', `este pedido não tem a opção ${choice}`)
+    if (!hit) throw new ConductError('unsupported', `este pedido não tem a opção ${choice}; aceita: ${acceptedOf(options)}`)
     return viaOption(hit)
   }
   if (choice === 'no') return { act: 'esc', data: '', proven: false }

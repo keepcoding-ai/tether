@@ -277,6 +277,14 @@ describe('conductor-codex: the acts', () => {
     assert.equal(await codeOf(codexConductor.answer!(fakeCtx([UPDATE]).ctx, 'yes')), 'bad-request')
   })
 
+  test('answer session on a card with no "for this session" option is refused, listing what the card accepts', async () => {
+    const f = fakeCtx([PERMISSION])
+    const err = await codexConductor.answer!(f.ctx, 'session').then(() => undefined, (e: { code?: string; message?: string }) => e)
+    assert.equal(err?.code, 'unsupported')
+    assert.match(err?.message ?? '', /aceita: yes, always, no, 1, 2, 3/)
+    assert.deepEqual(f.writes, [])
+  })
+
   test('interrupt: one esc, then rereads the screen: stopped when the turn is no longer running', async () => {
     const f = fakeCtx([WORKING, INTERRUPTED])
     const r = await codexConductor.interrupt!(f.ctx)

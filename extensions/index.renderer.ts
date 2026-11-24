@@ -3,6 +3,7 @@ import type { TetherUi } from '../app/renderer/ext-api.ts'
 import type { ExtensionEntry } from './types.ts'
 import * as claude from './claude/renderer.ts'
 import * as soul from './soul/renderer.ts'
+import * as hands from './hands/renderer.ts'
 import * as codex from './codex/renderer.ts'
 import * as note from './note/renderer.ts'
 import * as framePads from './frame-pads/renderer.ts'
@@ -30,6 +31,7 @@ declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
 export const extensions: readonly ExtensionEntry<TetherUi>[] = [
   { manifest: claude.manifest, activate: claude.activate },
   { manifest: soul.manifest, activate: soul.activate },
+  { manifest: hands.manifest, activate: hands.activate },
   { manifest: codex.manifest, activate: codex.activate },
   { manifest: note.manifest, activate: note.activate },
   { manifest: quickOpen.manifest, activate: quickOpen.activate },

@@ -39,7 +39,7 @@ export const USAGE = `uso: tether <comando> [opções]
 
   ls [--json]                         lista os slots (--json: estado bruto)
   show <slot>                         vínculo e histórico de eventos do slot
-  new <claude|soul|shell> [--profile p] [--name n] [--cwd p] [--here] [-- args do agente]
+  new <claude|soul|hands|shell> [--profile p] [--name n] [--cwd p] [--here] [-- args do agente]
                                       cria um slot e abre o agente nele (--profile: perfil de
                                       lançamento, pelo nome ou id; dispensa o agente)
   open <slot> [--new|--resume-anyway] [--here]
@@ -49,7 +49,7 @@ export const USAGE = `uso: tether <comando> [opções]
   rm <slot> [--yes]                   esquece o slot (não apaga a sessão do agente)
   rename <slot> <nome>                renomeia o slot
   profiles [--json]                   lista os perfis de lançamento
-  profile add <claude|soul|shell> <nome> [--default] [--env K=V]... [--cwd p]
+  profile add <claude|soul|hands|shell> <nome> [--default] [--env K=V]... [--cwd p]
               [--shell "exe args"] [-- args do agente]
                                       cria um perfil
   profile edit <perfil> [--name n] [--default|--no-default] [--env K=V]...
