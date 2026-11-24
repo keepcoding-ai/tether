@@ -1179,6 +1179,13 @@ ipcMain.handle('shell:open-path', async (_e, path: unknown): Promise<{ ok: true 
   const err = await shell.openPath(path)
   return err ? { ok: false, message: err } : { ok: true }
 })
+// Shows a file (or folder) selected in its folder in the file manager: only a path that exists; nothing is launched.
+ipcMain.handle('shell:show-in-folder', async (_e, path: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+  if (typeof path !== 'string' || path.trim() === '') return { ok: false, message: 'Caminho inválido.' }
+  try { await mainExec.run('stat', [path]) } catch { return { ok: false, message: 'O arquivo não existe.' } }
+  shell.showItemInFolder(path)
+  return { ok: true }
+})
 ipcMain.handle('clipboard:read', () => clipboard.readText())
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 

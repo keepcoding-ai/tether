@@ -2,7 +2,7 @@
 // copy text.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isPeekClick, linkCopyText, linkMenuPlan, paneOfLink, type LinkMenuLine } from '../../app/renderer/link-menu-rules.ts'
+import { isPeekClick, linkCopyText, linkMenuPlan, paneOfLink, relativeCopyText, relativeToFolder, type LinkMenuLine } from '../../app/renderer/link-menu-rules.ts'
 
 const labels = (plan: LinkMenuLine[]): string[] => plan.map(l => (l === 'sep' ? '-' : l.hint ? `${l.label} [${l.hint}]` : l.label))
 const facts = { peekable: true, mac: false }
@@ -21,8 +21,28 @@ describe('link menu rows', () => {
     assert.deepEqual(labels(linkMenuPlan({ kind: 'external', url: 'http://localhost:9/x' }, facts)), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
   })
   test('a file and a folder', () => {
-    assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/a/b.ts' }, facts)), ['Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Copiar caminho'])
+    // No folder of reference, no explorer: only the rows that always make sense.
+    assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/a/b.ts' }, facts)),
+      ['Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Mostrar na pasta do sistema', '-', 'Copiar caminho'])
     assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/a', isDirectory: true }, facts)), ['Abrir pasta [Ctrl+clique]', '-', 'Copiar caminho'])
+  })
+  test('a file under the tab folder gets the full list, in the approved order', () => {
+    const plan = linkMenuPlan({ kind: 'file', path: 'C:/proj/src/a.ts', position: { line: 4 } }, { ...facts, explorer: true, baseDir: 'C:\\proj' })
+    assert.deepEqual(labels(plan), [
+      'Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Mostrar no explorador do tether', 'Mostrar na pasta do sistema', '-', 'Copiar caminho', 'Copiar caminho relativo',
+    ])
+  })
+  test('the relative row is absent with no folder, outside it, or on the folder itself', () => {
+    const file = (path: string): LinkMenuLine[] => linkMenuPlan({ kind: 'file', path }, { ...facts, baseDir: 'C:/proj' })
+    const has = (plan: LinkMenuLine[]): boolean => labels(plan).includes('Copiar caminho relativo')
+    assert.equal(has(file('C:/proj/a.ts')), true)
+    assert.equal(has(file('C:/other/a.ts')), false)
+    assert.equal(has(file('C:/project/a.ts')), false, 'a sibling that shares a prefix is outside')
+    assert.equal(has(file('C:/proj')), false)
+    assert.equal(has(linkMenuPlan({ kind: 'file', path: 'C:/proj/a.ts' }, facts)), false)
+  })
+  test('a folder link gets no new rows', () => {
+    assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/proj/src', isDirectory: true }, { ...facts, explorer: true, baseDir: 'C:/proj' })), ['Abrir pasta [Ctrl+clique]', '-', 'Copiar caminho'])
   })
   test('macOS reads Cmd and Option', () => {
     const plan = labels(linkMenuPlan({ kind: 'tether', url: 'tether://tab/abc123' }, { peekable: true, mac: true }))
@@ -45,6 +65,16 @@ describe('what the menu reads of a link', () => {
     assert.equal(linkCopyText({ kind: 'external', url: 'http://x.y/z' }), 'http://x.y/z')
     assert.equal(linkCopyText({ kind: 'file', path: 'C:/a/b.ts', position: { line: 3 } }), 'C:/a/b.ts')
     assert.equal(linkCopyText({ kind: 'anchor', id: 'x' }), undefined)
+  })
+})
+
+describe('relative paths', () => {
+  test('under the folder, with / separators; case only matters where the system says so', () => {
+    assert.equal(relativeToFolder('C:\\Proj\\', 'C:\\Proj\\src\\a.ts', false), 'src/a.ts')
+    assert.equal(relativeToFolder('C:/proj', 'C:/Proj/a.ts', true), 'a.ts')
+    assert.equal(relativeToFolder('C:/proj', 'C:/Proj/a.ts', false), undefined)
+    assert.equal(relativeCopyText({ kind: 'file', path: '/w/x/y.md' }, { baseDir: '/w' }), 'x/y.md')
+    assert.equal(relativeCopyText({ kind: 'external', url: 'http://a.b' }, { baseDir: '/w' }), undefined)
   })
 })
 

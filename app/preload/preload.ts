@@ -50,6 +50,7 @@ const api: TetherApi = {
   associateLinks: () => ipcRenderer.invoke('tether-link:associate'),
   onTetherLink: listener => on<string>('tether:link', listener),
   openPath: path => ipcRenderer.invoke('shell:open-path', path),
+  showInFolder: path => ipcRenderer.invoke('shell:show-in-folder', path),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
   getTheme: () => ipcRenderer.invoke('theme:get'),

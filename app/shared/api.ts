@@ -141,6 +141,8 @@ export interface TetherApi {
   onTetherLink(listener: (url: string) => void): () => void
   /** Opens a folder in the file manager (Explorer). Validates that the path exists and is a directory; never runs anything. */
   openPath(path: string): Promise<{ ok: true } | { ok: false; message: string }>
+  /** Shows an existing file or folder, selected, in its folder in the file manager (shell.showItemInFolder); never runs anything. */
+  showInFolder(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   readClipboard(): Promise<string>
   writeClipboard(text: string): void
   /** Current theme setting and the scheme it paints right now. */

@@ -5,7 +5,7 @@ import type { LinkTarget } from '../shared/links.ts'
 import { parseTetherUrl } from '../shared/tether-url.ts'
 
 /** What a row does. `follow` is what Ctrl+click does; `follow-side` opens it beside; `peek` is Alt+click on a pane link. */
-export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy'
+export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative'
 
 export interface LinkMenuRow { action: LinkMenuAction; label: string; icon: string; hint?: string }
 export type LinkMenuLine = LinkMenuRow | 'sep'
@@ -14,6 +14,12 @@ export interface LinkMenuFacts {
   /** The link names a pane of a slot the app knows (only then can it be peeked at). */
   peekable: boolean
   mac: boolean
+  /** The explorer extension is on (only then can a file be shown in its tree). */
+  explorer?: boolean
+  /** The folder of the tab the link came from; a file under it gets "Copiar caminho relativo". */
+  baseDir?: string
+  /** Paths compare without case (Windows, macOS). */
+  caseInsensitive?: boolean
 }
 
 /** The follow modifier as the person reads it. */
@@ -41,6 +47,26 @@ export function linkCopyText(target: LinkTarget): string | undefined {
   if (target.kind === 'external' || target.kind === 'tether') return target.url
   if (target.kind === 'file') return target.path
   return undefined
+}
+
+/**
+ * A path relative to a folder, with `/` separators; undefined when the path is the folder itself or lies outside it (the
+ * relative form would then be the absolute one again, or climb out with `..`).
+ */
+export function relativeToFolder(folder: string, path: string, caseInsensitive: boolean): string | undefined {
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  const base = norm(folder)
+  const full = norm(path)
+  if (base === '' || full === '') return undefined
+  const key = (p: string): string => (caseInsensitive ? p.toLowerCase() : p)
+  if (!key(full).startsWith(`${key(base)}/`)) return undefined
+  return full.slice(base.length + 1)
+}
+
+/** What "copy relative" puts in the clipboard: the file's path under the folder the link came from; undefined when there is none. */
+export function relativeCopyText(target: LinkTarget, facts: Pick<LinkMenuFacts, 'baseDir' | 'caseInsensitive'>): string | undefined {
+  if (target.kind !== 'file' || !facts.baseDir) return undefined
+  return relativeToFolder(facts.baseDir, target.path, facts.caseInsensitive === true)
 }
 
 /** The rows of a link's menu; empty for what is not followed (an anchor, an ignored link). */
@@ -83,7 +109,11 @@ export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenu
         { action: 'follow', label: 'Abrir', icon: 'file', hint: follow },
         { action: 'follow-side', label: 'Abrir ao lado', icon: 'columns' },
         'sep',
+        ...(facts.explorer ? [{ action: 'reveal', label: 'Mostrar no explorador do tether', icon: 'target' } satisfies LinkMenuRow] : []),
+        { action: 'show-in-folder', label: 'Mostrar na pasta do sistema', icon: 'arrow-square-out' },
+        'sep',
         { action: 'copy', label: 'Copiar caminho', icon: 'copy' },
+        ...(relativeCopyText(target, facts) !== undefined ? [{ action: 'copy-relative', label: 'Copiar caminho relativo', icon: 'copy' } satisfies LinkMenuRow] : []),
       ]
     default:
       return []

@@ -80,7 +80,7 @@ import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
 import { type LinkMenuAct, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu } from './link-menu.ts'
-import { type LinkMenuAction, linkCopyText, linkMenuPlan, paneOfLink, peekKey } from './link-menu-rules.ts'
+import { type LinkMenuAction, type LinkMenuFacts, linkCopyText, linkMenuPlan, paneOfLink, peekKey, relativeCopyText } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
@@ -3522,8 +3522,7 @@ setLinkHandler(followLink)
 
 /** The context menu of a link (link-menu-rules.ts has the rows; each one calls the same opener Ctrl+click calls). */
 function linkMenuEntries(target: LinkTarget, origin: LinkOrigin): MenuEntry[] {
-  const pane = paneOfLink(target)
-  const plan = linkMenuPlan(target, { peekable: pane !== undefined && slots.has(pane), mac: IS_MAC })
+  const plan = linkMenuPlan(target, linkMenuFacts(target, origin))
   return plan.map((line): MenuEntry => {
     if (line === 'sep') return SEP
     const trail = line.hint ? Object.assign(document.createElement('kbd'), { textContent: line.hint }) : undefined
@@ -3531,15 +3530,31 @@ function linkMenuEntries(target: LinkTarget, origin: LinkOrigin): MenuEntry[] {
   })
 }
 
+/** What the plan needs to know about where the link came from: the folder of its tab and whether the explorer can show a file. */
+function linkMenuFacts(target: LinkTarget, origin: LinkOrigin): LinkMenuFacts {
+  const pane = paneOfLink(target)
+  const baseDir = (origin.slotId ? paneCwdOf(origin.slotId) : undefined) ?? origin.baseDir
+  return {
+    peekable: pane !== undefined && slots.has(pane), mac: IS_MAC, caseInsensitive: CASE_INSENSITIVE,
+    explorer: commands.all().some(c => c.id === 'explorer.reveal'),
+    ...(baseDir ? { baseDir } : {}),
+  }
+}
+
 function runLinkRow(action: LinkMenuAction, target: LinkTarget, origin: LinkOrigin): void {
   if (action === 'copy') { const text = linkCopyText(target); if (text !== undefined) window.tether.writeClipboard(text); return }
+  if (action === 'copy-relative') { const text = relativeCopyText(target, linkMenuFacts(target, origin)); if (text !== undefined) window.tether.writeClipboard(text); return }
+  if (target.kind === 'file' && action === 'reveal') { void commands.run('explorer.reveal', 'menu', target.path); return }
+  if (target.kind === 'file' && action === 'show-in-folder') {
+    void window.tether.showInFolder(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
+    return
+  }
   openLink(target, { ...origin, ...(action === 'follow-side' ? { side: true } : {}), ...(action === 'peek' ? { peek: true } : {}) })
 }
 
 /** The same rows for a surface with a menu of its own (the note editor's Monaco menu): link-menu.ts linkMenuRows. */
 setLinkMenuRowsProvider((target, origin) => {
-  const pane = paneOfLink(target)
-  return linkMenuPlan(target, { peekable: pane !== undefined && slots.has(pane), mac: IS_MAC }).map((line): LinkMenuAct =>
+  return linkMenuPlan(target, linkMenuFacts(target, origin)).map((line): LinkMenuAct =>
     line === 'sep' ? 'sep' : { label: line.label, ...(line.hint ? { hint: line.hint } : {}), run: () => runLinkRow(line.action, target, origin) })
 })
 

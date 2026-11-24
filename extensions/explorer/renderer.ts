@@ -19,9 +19,9 @@ export function activate(ui: TetherUi): IDisposable[] {
   const on = (key: 'follow' | 'autoReveal' | 'confirmDelete'): boolean => ui.settings.get<boolean>(key) === true
   const toggle = (key: 'follow' | 'autoReveal'): void => ui.settings.set(key, !on(key))
   /** The active pane's file, revealed in the tree: opens the pad (the keyboard stays where it is). */
-  const reveal = async (): Promise<void> => {
+  const reveal = async (path?: string): Promise<void> => {
     const id = ui.panes.activeId()
-    const file = id ? ui.panes.describe(id)?.file : undefined
+    const file = path ?? (id ? ui.panes.describe(id)?.file : undefined)
     if (!file) return
     ui.pads.open(PAD)
     await view?.reveal(file)
@@ -64,7 +64,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     // Opens the pad (focusing it when it was closed) and puts the keyboard in it when it already was open.
     ui.commands.registerCommand('explorer.focus', () => { ui.pads.open(PAD); view?.focus() }),
     ui.commands.registerCommand('explorer.open-folder', () => { ui.pads.open(PAD); void view?.pickFolder() }),
-    ui.commands.registerCommand('explorer.reveal', () => { void reveal() }),
+    // A caller that knows the file (a link's menu) passes its path; the palette and the chord reveal the active pane's file.
+    ui.commands.registerCommand('explorer.reveal', (_source, arg) => { void reveal(typeof arg === 'string' ? arg : undefined) }),
     ui.commands.registerCommand('explorer.refresh', () => { ui.pads.open(PAD); view?.refresh() }),
     ui.commands.registerCommand('explorer.collapse-all', () => { ui.pads.open(PAD); view?.collapseAll() }),
     ...(['new-file', 'new-folder', 'rename', 'delete', 'copy-path', 'copy-relative-path', 'new-pane'] as const).map((op: FileOp) =>
