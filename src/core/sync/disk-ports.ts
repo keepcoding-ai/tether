@@ -99,7 +99,7 @@ export function createDiskPorts(opts: DiskPortsOpts): SyncPorts {
   async function applyProfiles(next: Profile[]): Promise<void> {
     const daemon = opts.daemon
     if (!daemon) { writeProfiles(home, next); return }
-    const current = readProfiles(home).profiles
+    const current = readProfiles(home, { raw: true }).profiles
     const keep = new Set(next.map((p) => p.id))
     for (const p of next) {
       if (!same(current.find((c) => c.id === p.id), p)) await daemon.request({ t: 'profile-save', profile: p })
@@ -123,7 +123,7 @@ export function createDiskPorts(opts: DiskPortsOpts): SyncPorts {
     async read(): Promise<Working> {
       const settings = parseSettings(readText(settingsPath(userDir)) ?? '').value
       return {
-        profiles: readProfiles(home).profiles,
+        profiles: readProfiles(home, { raw: true }).profiles,
         layout: readLayoutFile(home),
         slots: listSlots(home),
         settings,

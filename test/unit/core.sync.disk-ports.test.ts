@@ -110,6 +110,17 @@ describe('disk ports', () => {
     assert.deepEqual(w.slots, [])
   })
 
+  test('the sync mirrors the file, not the merged list: a file without hands exports none, and a daemon plan never deletes in-memory defaults', async () => {
+    const { home, user } = dirs()
+    writeFileSync(join(home, 'profiles.json'), JSON.stringify({ v: 1, profiles: [prof('keep')] }))
+    const calls: unknown[] = []
+    const daemon: DaemonRequester = { request: async (body) => { calls.push(body); return { t: 'ok', id: 1 } } }
+    const ports = createDiskPorts({ home, userDir: user, daemon })
+    assert.deepEqual((await ports.read()).profiles.map((p) => p.id), ['keep'])
+    await ports.apply({ profiles: [prof('keep'), prof('fresh')] })
+    assert.deepEqual(calls, [{ t: 'profile-save', profile: prof('fresh') }])
+  })
+
   test('keybindings with comments are read (JSONC)', async () => {
     const { home, user } = dirs()
     writeFileSync(join(user, 'keybindings.json'), '// mine\n[ { "key": "a", "command": "b" }, ]\n')

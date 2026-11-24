@@ -118,7 +118,8 @@ describe('persisted format stays compatible (fixtures)', () => {
     copyFileSync(join(fixtures, 'profiles.json'), join(home, 'profiles.json'))
     const read = readProfiles(home)
     assert.equal(read.problem, undefined)
-    assert.deepEqual(read.profiles.map((p) => p.id), ['claude', 'soul', 'aider', 'powershell'])
+    // the fixture has no hands or codex profile: their defaults enter after the file's (aider is unregistered, so no default for it)
+    assert.deepEqual(read.profiles.map((p) => p.id), ['claude', 'soul', 'aider', 'powershell', 'hands', 'codex', 'codex-dev'])
   })
 
   test('slot metas of a registered and an unregistered agent both read', () => {

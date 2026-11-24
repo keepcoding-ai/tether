@@ -99,6 +99,37 @@ export function defaultProfilesWith(env: NodeJS.ProcessEnv, platform: NodeJS.Pla
   return out
 }
 
+/** True when some motor (a registered agent, or the shells) has no profile in the list: only then are the defaults worth computing. */
+export function lacksMotorProfiles(file: Profile[]): boolean {
+  const have = new Set<string>(file.map((p) => p.agent))
+  return !have.has('shell') || agentRegistry.all().some((a) => !have.has(a.name))
+}
+
+/**
+ * Per-motor fusion of the file's profiles with the defaults, in memory only (a read never writes it). A motor (`agent`,
+ * shells included) with at least one profile in the file keeps just the file's; a motor with none gets its default profiles,
+ * after the file's. A default whose id is taken by a profile of another motor enters under a free id (`-2`, `-3`...); the
+ * file's profiles are never touched, and an entering default keeps the `default` flag the default declares. A name already
+ * used by a profile (case-insensitive, as `upsertProfile` compares) gets the same treatment: ` 2`, ` 3`...
+ */
+export function mergeMissingMotors(file: Profile[], defaults: Profile[]): Profile[] {
+  const have = new Set<string>(file.map((p) => p.agent))
+  const taken = new Set<string>(file.map((p) => p.id))
+  const names = new Set<string>(file.map((p) => p.name.trim().toLowerCase()))
+  const out = [...file]
+  for (const d of defaults) {
+    if (have.has(d.agent)) continue
+    let id = d.id
+    for (let n = 2; taken.has(id); n++) id = `${d.id}-${n}`
+    taken.add(id)
+    let name = d.name
+    for (let n = 2; names.has(name.trim().toLowerCase()); n++) name = `${d.name} ${n}`
+    names.add(name.trim().toLowerCase())
+    out.push(id === d.id && name === d.name ? d : { ...d, id, name })
+  }
+  return out
+}
+
 /** `defaultProfilesWith`, asking the executor for the two facts that need the disk. */
 async function defaultProfilesVia(io: SnapshotIo, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<Profile[]> {
   const shell = await io.run('resolveShell', [[], undefined, { ...env }])
@@ -187,8 +218,9 @@ async function readProfilesVia(home: string, io: SnapshotIo, text: string | unde
   }
   const parsed = parseProfilesFile(text)
   if (parsed.ok) {
-    if (parsed.skipped === 0) return { profiles: parsed.profiles }
-    return { profiles: parsed.profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
+    const profiles = lacksMotorProfiles(parsed.profiles) ? mergeMissingMotors(parsed.profiles, await defaultProfilesVia(io)) : parsed.profiles
+    if (parsed.skipped === 0) return { profiles }
+    return { profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
   }
   const backup = `${path}.corrompido-${stamp()}`
   try {

@@ -2,7 +2,7 @@
 // tests. tetherd never imports this file: it keeps the snapshot in profile.ts (ProfileStore), reloaded by the executor.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { defaultShell } from '../agents/shell-sync.ts'
-import { defaultProfilesWith, gitBashPath, parseProfilesFile, profilesPath, type Profile, type ProfilesFile, type ProfilesRead } from './profile.ts'
+import { defaultProfilesWith, gitBashPath, lacksMotorProfiles, mergeMissingMotors, parseProfilesFile, profilesPath, type Profile, type ProfilesFile, type ProfilesRead } from './profile.ts'
 
 /** The default profiles of this machine (the shell found on PATH, Git Bash when its file exists). */
 export function defaultProfiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Profile[] {
@@ -27,8 +27,10 @@ function stamp(): string {
  * The profiles on disk. A missing file is created with the defaults. A file that cannot be parsed is copied to
  * `profiles.json.corrompido-<time>` and replaced by the defaults (the copy fails → nothing is overwritten and the
  * defaults are used in memory only); either way `problem` says what happened, for the CLI/app to show.
+ * A readable file gets the defaults of the motors it lacks merged in memory; `raw` skips that and returns what the file holds
+ * (the sync mirrors the file, never the merged list).
  */
-export function readProfiles(home: string): ProfilesRead {
+export function readProfiles(home: string, opts: { raw?: boolean } = {}): ProfilesRead {
   const path = profilesPath(home)
   let text: string
   try {
@@ -43,8 +45,9 @@ export function readProfiles(home: string): ProfilesRead {
   }
   const parsed = parseProfilesFile(text)
   if (parsed.ok) {
-    if (parsed.skipped === 0) return { profiles: parsed.profiles }
-    return { profiles: parsed.profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
+    const profiles = !opts.raw && lacksMotorProfiles(parsed.profiles) ? mergeMissingMotors(parsed.profiles, defaultProfiles()) : parsed.profiles
+    if (parsed.skipped === 0) return { profiles }
+    return { profiles, problem: `${path}: ${parsed.skipped} perfil(is) malformado(s) ignorado(s)` }
   }
   const backup = `${path}.corrompido-${stamp()}`
   try {
