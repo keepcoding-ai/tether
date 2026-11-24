@@ -23,7 +23,10 @@ export const PICK = {
   unmute: { title: 'Devolver a voz em que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
   close: { title: 'Encerrar que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos para encerrar.' },
   reopen: { title: 'Reabrir que canal?', placeholder: 'Buscar canal', empty: 'Não há canais encerrados para reabrir.' },
-  agentJoin: (channel: string) => ({ title: `Juntar a #${channel}`, placeholder: 'Buscar agente', empty: 'Nenhum agente fora do canal.' }),
+  agentJoin: (channel: string, noAgents = false) => ({
+    title: `Juntar a #${channel}`, placeholder: 'Buscar agente',
+    empty: noAgents ? 'Não há guia de agente aberta. Abra um agente numa mesa e ele aparece aqui.' : 'Nenhum agente fora do canal.',
+  }),
   agentRemove: (channel: string) => ({ title: `Tirar de #${channel}`, placeholder: 'Buscar membro', empty: 'Não há ninguém para tirar.' }),
   agentMute: (channel: string) => ({ title: `Calar em #${channel}`, placeholder: 'Buscar membro', empty: 'Ninguém para calar: todos já estão calados.' }),
   agentUnmute: (channel: string) => ({ title: `Devolver a voz em #${channel}`, placeholder: 'Buscar membro', empty: 'Não há calados neste canal.' }),
@@ -99,17 +102,56 @@ export function agentLabel(a: Pick<AgentChoice, 'kind' | 'name'>): string {
   return `${a.kind} · ${a.name}`
 }
 
-/** The join's second step: agents outside the channel, the ones of the active desk first. */
-export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<string>, deskId: string | undefined, emblemOf?: EmblemReader): PickItem<string>[] {
-  const out = agents.filter(a => a.alive && !inside.has(a.slotId))
-  const row = (a: AgentChoice, group: string): PickItem<string> => ({
-    value: a.slotId, label: agentLabel(a), letter: a.name.charAt(0).toUpperCase() || '?', hue: agentHue(a.slotId),
-    detail: a.deskTitle !== undefined ? a.deskTitle : 'Gaveta', group, ...emblemField(a.slotId, emblemOf),
-  })
-  return [
-    ...out.filter(a => a.deskId === deskId).map(a => row(a, 'Nesta mesa')),
-    ...out.filter(a => a.deskId !== deskId).map(a => row(a, 'Outras mesas')),
+/** What the join's list knows besides the agents: who the daemon says was taken out, and the desks (order and sleep). */
+export interface JoinContext {
+  /** Ids the channel took out (`members.removed`): they come back by a join (C18) and the row says so. */
+  removed?: ReadonlySet<string>
+  /** The queue's desks in order; a sleeping one marks its agents "mesa dormindo". */
+  desks?: readonly { id: string; asleep: boolean }[]
+}
+
+export const JOIN_GROUP = { drawer: 'Gaveta e blocos', stopped: 'Parados' } as const
+export const JOIN_MARK = { removed: 'tirado deste canal', stopped: 'parado', asleep: 'mesa dormindo' } as const
+
+/**
+ * The join's list (G5): every agent pane outside the channel. Groups in order: the active desk ("Nesta mesa · nome"), the
+ * other desks ("Mesa · nome", in the queue's order), "Gaveta e blocos" (panes with no desk), and last "Parados": a stopped
+ * agent or one of a sleeping desk, still joinable (it reads what it missed when it wakes). A row says only what is worth
+ * saying: "tirado deste canal", "parado", "mesa dormindo".
+ */
+export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<string>, deskId: string | undefined, emblemOf?: EmblemReader, ctx: JoinContext = {}): PickItem<string>[] {
+  const out = agents.filter(a => !inside.has(a.slotId))
+  const asleepDesk = (a: AgentChoice): boolean => a.deskId !== undefined && ctx.desks?.find(d => d.id === a.deskId)?.asleep === true
+  const stopped = (a: AgentChoice): boolean => !a.alive || asleepDesk(a)
+  // A desk's rank: the active one first, then the queue's order, then first appearance among the agents.
+  const seen: string[] = []
+  for (const a of out) if (a.deskId !== undefined && a.deskId !== deskId && !seen.includes(a.deskId)) seen.push(a.deskId)
+  const rank = (a: AgentChoice): number => {
+    if (a.deskId === undefined) return Number.MAX_SAFE_INTEGER
+    if (a.deskId === deskId) return -1
+    const q = ctx.desks?.findIndex(d => d.id === a.deskId) ?? -1
+    return q >= 0 ? q : 10_000 + seen.indexOf(a.deskId)
+  }
+  const groupOf = (a: AgentChoice): string => {
+    if (stopped(a)) return JOIN_GROUP.stopped
+    if (a.deskId === undefined) return JOIN_GROUP.drawer
+    return `${a.deskId === deskId ? 'Nesta mesa' : 'Mesa'} · ${a.deskTitle ?? a.deskId}`
+  }
+  const marks = (a: AgentChoice): string[] => [
+    ...(ctx.removed?.has(a.slotId) ? [JOIN_MARK.removed] : []),
+    ...(!a.alive ? [JOIN_MARK.stopped] : []), ...(asleepDesk(a) ? [JOIN_MARK.asleep] : []),
   ]
+  const row = (a: AgentChoice): PickItem<string> => {
+    const m = marks(a)
+    return {
+      value: a.slotId, label: agentLabel(a), letter: a.name.charAt(0).toUpperCase() || '?', hue: agentHue(a.slotId),
+      ...(m.length > 0 ? { detail: m.join(' · ') } : {}), group: groupOf(a), ...emblemField(a.slotId, emblemOf),
+    }
+  }
+  const live = out.filter(a => !stopped(a)).map((a, i) => ({ a, i }))
+  const down = out.filter(stopped).map((a, i) => ({ a, i }))
+  const byDesk = (x: { a: AgentChoice; i: number }, y: { a: AgentChoice; i: number }): number => rank(x.a) - rank(y.a) || x.i - y.i
+  return [...live.sort(byDesk), ...down.sort(byDesk)].map(x => row(x.a))
 }
 
 /** Which of the members a gesture offers. */

@@ -137,13 +137,16 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   const WHAT = { join: 'Juntar agente', remove: 'Tirar agente', mute: 'Calar agente', unmute: 'Devolver a voz' } as const
 
   const agentSpec = (kind: keyof typeof AGENT_TEXT, channel: ChannelSummary): PickSpec<string> => {
-    const text = AGENT_TEXT[kind](channel.name)
+    const text = kind === 'join' ? PICK.agentJoin(channel.name, ui.agents.list().length === 0) : AGENT_TEXT[kind](channel.name)
     return {
       title: text.title, placeholder: text.placeholder, emptyText: text.empty,
       items: async () => {
         const a = await membersOf(channel.id)
         const emblemOf = (id: string) => ui.panes.personEmblem(id)
-        if (kind === 'join') return joinItems(agents(), new Set(a.members.map(m => m.id)), ui.desks.activeId(), emblemOf)
+        if (kind === 'join') {
+          const desks = ui.desks.list().map(d => ({ id: d.id, asleep: d.asleep }))
+          return joinItems(agents(), new Set(a.members.map(m => m.id)), ui.desks.activeId(), emblemOf, { removed: new Set(a.removed), desks })
+        }
         const ownerId = a.channel.owner.kind === 'agent' ? a.channel.owner.id : undefined
         return memberItems(a.members, ownerId, kind as MemberGesture, emblemOf)
       },

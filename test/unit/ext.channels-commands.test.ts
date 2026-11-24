@@ -7,7 +7,7 @@ import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import type { MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import {
-  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, removeDialog,
+  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, PICK, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -71,11 +71,40 @@ const agent = (slotId: string, name: string, deskId: string | undefined, alive =
   slotId, kind: 'claude', name, alive, ...(deskId !== undefined ? { deskId, deskTitle: deskId === 'desk-1' ? 'obra' : 'geral' } : {}),
 })
 
-test('joinItems: only live agents outside the channel, this desk first', () => {
-  const items = joinItems([agent('s1', 'conferente', 'desk-2'), agent('s2', 'bancada', 'desk-1'), agent('s3', 'dentro', 'desk-1'), agent('s4', 'parado', 'desk-1', false)], new Set(['s3']), 'desk-1')
-  assert.deepEqual(items.map(i => [i.value, i.label, i.group]), [['s2', 'claude · bancada', 'Nesta mesa'], ['s1', 'claude · conferente', 'Outras mesas']])
+test('joinItems: the active desk first, the other desks, the drawer, the stopped last; members never listed', () => {
+  const items = joinItems([
+    agent('s1', 'conferente', 'desk-2'), agent('s2', 'bancada', 'desk-1'), agent('s3', 'dentro', 'desk-1'),
+    agent('s4', 'parado', 'desk-1', false), agent('s5', 'gaveta', undefined),
+  ], new Set(['s3']), 'desk-1')
+  assert.deepEqual(items.map(i => [i.value, i.label, i.group]), [
+    ['s2', 'claude · bancada', 'Nesta mesa · obra'], ['s1', 'claude · conferente', 'Mesa · geral'],
+    ['s5', 'claude · gaveta', 'Gaveta e blocos'], ['s4', 'claude · parado', 'Parados'],
+  ])
   assert.equal(items[0]!.letter, 'B')
-  assert.equal(items[0]!.detail, 'obra')
+  assert.equal('detail' in items[0]!, false, 'nothing to say: no detail')
+  assert.equal(items[3]!.detail, 'parado')
+})
+
+test('joinItems: removed, stopped and sleeping-desk marks; the sleeping desk\'s agents go last, in the queue\'s order', () => {
+  const ctx = { removed: new Set(['s1', 's6']), desks: [{ id: 'desk-1', asleep: false }, { id: 'desk-2', asleep: true }, { id: 'desk-3', asleep: false }] }
+  const items = joinItems([
+    agent('s6', 'parado-tirado', 'desk-3', false), agent('s5', 'dorme', 'desk-2'), agent('s1', 'leitor', 'desk-3'),
+    agent('s2', 'bancada', 'desk-1'), agent('s7', 'dorme-parado', 'desk-2', false),
+  ], new Set(), 'desk-1', undefined, ctx)
+  assert.deepEqual(items.map(i => [i.value, i.group, i.detail]), [
+    ['s2', 'Nesta mesa · obra', undefined],
+    ['s1', 'Mesa · geral', 'tirado deste canal'],
+    ['s5', 'Parados', 'mesa dormindo'],
+    ['s7', 'Parados', 'parado · mesa dormindo'],
+    ['s6', 'Parados', 'tirado deste canal · parado'],
+  ])
+  assert.deepEqual(joinItems([], new Set(), 'desk-1'), [])
+})
+
+test('PICK.agentJoin: the empty texts tell nobody outside the channel from no agent pane at all', () => {
+  assert.equal(PICK.agentJoin('obra').empty, 'Nenhum agente fora do canal.')
+  assert.equal(PICK.agentJoin('obra', true).empty, 'Não há guia de agente aberta. Abra um agente numa mesa e ele aparece aqui.')
+  assert.equal(PICK.agentJoin('obra').title, 'Juntar a #obra')
 })
 
 test('memberItems: the owner first; mute offers the ones who speak, unmute the muted, remove everyone', () => {
