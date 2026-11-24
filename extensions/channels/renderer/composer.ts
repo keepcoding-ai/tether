@@ -16,10 +16,16 @@ export interface ComposerSnapshot {
   enabled: boolean
   /** The field's placeholder as drawn. */
   placeholder: string
+  /** What a screen reader says of the field (it says why it is off) and the live note that announces the switch. */
+  label: string
+  note: string
 }
 
 /** The field's placeholders: the usual one, and the one while nobody is in the channel to hear. */
 export const SAY_PLACEHOLDER = { on: 'Escreva para o canal…', off: 'Escreva para o canal… ninguém ouve ainda' } as const
+/** The field's accessible name, and what is announced when it goes off (a disabled field cannot take the focus to say it itself). */
+export const SAY_LABEL = { on: 'Mensagem para o canal', off: 'Mensagem para o canal, desligada: ninguém ouve ainda' } as const
+export const SAY_OFF_NOTE = 'A caixa de fala está desligada: ninguém ouve ainda. Junte um agente para falar.'
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -48,7 +54,10 @@ export function createComposer(opts: ComposerOptions): Composer {
   const field = el('textarea', 'ch-field')
   field.rows = 2
   field.placeholder = SAY_PLACEHOLDER.on
-  field.setAttribute('aria-label', 'Mensagem para o canal')
+  field.setAttribute('aria-label', SAY_LABEL.on)
+  // Always there (a live region must exist before its text changes); empty while the box is on. Visually hidden: the placeholder says it to the eyes.
+  const note = el('div', 'ch-sr')
+  note.setAttribute('role', 'status')
   const error = el('div', 'ch-say-error')
   error.setAttribute('role', 'alert')
   error.hidden = true
@@ -62,7 +71,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   const who = el('span', 'ch-role mod', 'moderador')
   head.append('falar como ', who, ' · para ', pick)
   row.append(hint, el('span', 'ch-say-sp'), sendBtn)
-  element.append(head, field, error, row)
+  element.append(head, field, note, error, row)
 
   let names: readonly string[] = []
   let busy = false
@@ -73,6 +82,9 @@ export function createComposer(opts: ComposerOptions): Composer {
     pick.disabled = !enabled
     sendBtn.disabled = !enabled || busy
     field.placeholder = enabled ? SAY_PLACEHOLDER.on : SAY_PLACEHOLDER.off
+    field.setAttribute('aria-label', enabled ? SAY_LABEL.on : SAY_LABEL.off)
+    note.textContent = enabled ? '' : SAY_OFF_NOTE
+    sendBtn.title = enabled ? '' : 'Ninguém ouve ainda'
     head.hidden = !enabled
     element.classList.toggle('off', !enabled)
   }
@@ -126,7 +138,7 @@ export function createComposer(opts: ComposerOptions): Composer {
     },
     snapshot: () => ({
       text: field.value, picked: pick.value, options: [...pick.options].map(o => o.value), error: error.hidden ? '' : error.textContent ?? '', busy,
-      enabled, placeholder: field.placeholder,
+      enabled, placeholder: field.placeholder, label: field.getAttribute('aria-label') ?? '', note: note.textContent ?? '',
     }),
     focus: () => field.focus(),
     address(name) {

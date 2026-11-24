@@ -22,6 +22,16 @@
 
 .ch-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 276px; }
 .ch-pane.members-off .ch-body { grid-template-columns: minmax(0, 1fr); }
+/* The members come before the conversation in the DOM (the Tab visits them first); the grid puts the column on the right. */
+.ch-body > .ch-conv { grid-column: 1; grid-row: 1; }
+.ch-body > .ch-members { grid-column: 2; grid-row: 1; }
+.ch-mlist { display: block; }
+.ch-msgs:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Said to a screen reader, not drawn. */
+.ch-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* "não ouve": the words beside the dot of the narrow row (the wide row has its second line for the state). */
+.ch-warnlbl { display: none; }
+.ch-pane.narrow .ch-warnlbl { display: inline; flex: none; font-size: 11px; line-height: 15px; white-space: nowrap; color: var(--warn); }
 .ch-conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
 .ch-pane.members-off .ch-conv { border-right: 0; }
 /* Narrow (G7): the members are no longer a column over the conversation but a strip above it, folded or with the list down (at most 40%

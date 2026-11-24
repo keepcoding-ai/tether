@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
+  applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -231,4 +231,12 @@ test('rows: "novas para você · hora" goes right before the first unseen line t
   assert.equal((rows[3] as SayRow).continued, false)
   assert.equal((rows[4] as SayRow).continued, true)
   assert.deepEqual(rowsOf(lines, { moderatorName: 'usuário' }).map(r => r.kind), ['day', 'say', 'say', 'say'])
+})
+
+test('memberAria: one sentence per row (who, role, muted, how it hears); the dot is never the only source', () => {
+  const rows = memberRows(answer())
+  const by = (name: string) => rows.find(r => r.name === name)!
+  assert.equal(memberAria(by('claude · conferente')), 'claude · conferente, membro, ouvindo')
+  assert.equal(memberAria(by('Atrium')), 'Atrium, dono, ouvindo')
+  assert.equal(memberAria(by('codex · conferência')), 'codex · conferência, membro, calado, não ouve agora · falas em espera')
 })

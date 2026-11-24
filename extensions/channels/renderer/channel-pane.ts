@@ -18,8 +18,8 @@ import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { PANE_TEXT, channelMenu, memberMenu, type ChannelMenuId } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
-  olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
+  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
+  MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
 /** Lines asked per page (the daemon's ceiling is 200). */
@@ -86,6 +86,20 @@ export interface PaneSnapshot {
    */
   fold: { count: number; muted: number; open: boolean }
   foldBar: { shown: boolean; warn: number }
+  /**
+   * What the pane says to a screen reader and the keyboard (G9), as attributes: the bar's toolbar, the "Membros" button (`pressed`,
+   * `controls`), the strip's button, the list of members (its role, name and each row's whole sentence), the conversation's log, and
+   * the order the Tab visits the regions in (`tabs`: toolbar, strip, members, log, composer; one entry per stop).
+   */
+  aria: {
+    toolbar: { role: string; label: string }
+    membersBtn: { pressed: string; controls: string; hidden: boolean }
+    fold: { expanded: string; label: string; controls: string }
+    list: { role: string; label: string; items: Array<{ role: string; label: string }> }
+    log: { role: string; live: string; label: string; relevant: string; tabindex: string }
+    moreMenu: string
+    tabs: string[]
+  }
 }
 
 export interface ChannelPanes {
@@ -156,6 +170,15 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private endBtn: HTMLButtonElement | undefined
     /** Whether the empty state ("Ninguém no canal ainda.") was drawn last, to repaint the conversation when it flips. */
     private drewNoMembers = false
+    /**
+     * Where the focus goes back to after a gesture on a member (G9): the button it started from (`act`: mute/unmute share one stop), or a
+     * neighbour row when the member is gone (`next`: the rows after it, then the ones before). The member's list is redrawn whole, so the
+     * button the person pressed may not exist when the menu or dialog closes. Never takes a focus someone else holds; `until` bounds it.
+     */
+    private memberReturn: { id: string; act: string; next: string[]; until: number } | undefined
+    private overlays: MutationObserver | undefined
+    /** When the keyboard last opened a member's menu (the `contextmenu` event it may raise too is ignored for a moment). */
+    private keyMenuAt = 0
     private readonly composer = createComposer({ send: (text, to) => this.say(text, to) })
 
     init(p: GroupPanelPartInitParameters): void {
@@ -177,8 +200,31 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       this.fold.hidden = true
       this.fold.setAttribute('aria-controls', this.side.id)
       this.fold.addEventListener('click', () => this.toggleMembers())
-      // Wide: the strip is away and the column sits beside the conversation. Narrow: the CSS stacks strip, list and conversation.
-      this.body.append(this.fold, this.conv, this.side)
+      // The conversation is a log: the lines of system ("juntou", "calou", "tirou") are the spoken confirmation of each gesture. It takes the
+      // focus (Tab) so the keys can scroll it.
+      this.msgs.setAttribute('role', 'log')
+      this.msgs.setAttribute('aria-live', 'polite')
+      this.msgs.setAttribute('aria-relevant', 'additions')
+      this.msgs.setAttribute('aria-label', 'Conversa do canal')
+      this.msgs.tabIndex = 0
+      // The Tab visits the strip or the column of members BEFORE the conversation (bar, members, conversation, box): the DOM has that
+      // order, and the CSS puts the column on the right in the wide composition and the strip and list above the conversation in the narrow one.
+      this.body.append(this.fold, this.side, this.conv)
+      this.element.addEventListener('focusin', ev => { if (!this.side.contains(ev.target as Node)) this.memberReturn = undefined })
+      this.overlays = new MutationObserver(recs => {
+        for (const r of recs) {
+          for (const n of r.removedNodes) {
+            if (!(n instanceof HTMLElement) || !(n.id === 'ctx-menu' || n.tagName === 'DIALOG')) continue
+            for (const b of this.side.querySelectorAll('[aria-haspopup][aria-expanded="true"]')) b.setAttribute('aria-expanded', 'false')
+            // After the closing code ran (the core gives the focus back to its opener itself when that is still on the page).
+            // A dialog closing ends the gesture (a menu may still be followed by its dialog, so the mark stays after it).
+            const ended = n.tagName === 'DIALOG'
+            setTimeout(() => { this.returnFocus(); if (ended) this.memberReturn = undefined }, 0)
+            return
+          }
+        }
+      })
+      this.overlays.observe(document.body, { childList: true })
       this.head.append(this.titleBox, this.bar)
       this.element.append(this.head, this.body)
       this.buildBar()
@@ -210,6 +256,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (this.membersTimer) clearTimeout(this.membersTimer)
       this.ro?.disconnect()
       this.contentRo?.disconnect()
+      this.overlays?.disconnect()
       for (const s of this.subs) s.dispose()
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
@@ -451,6 +498,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       members.type = 'button'
       members.title = PANE_TEXT.members
       members.setAttribute('aria-label', PANE_TEXT.members)
+      members.setAttribute('aria-pressed', 'true')
+      members.setAttribute('aria-controls', this.side.id)
       members.append(glyph('users'))
       members.addEventListener('click', () => this.toggleMembers())
       this.membersBtn = members
@@ -528,7 +577,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const shown = this.sideShown()
       this.side.hidden = !shown
       this.element.classList.toggle('members-off', !shown)
-      if (this.membersBtn) { this.membersBtn.hidden = this.noMembers(); this.membersBtn.classList.toggle('on', shown) }
+      if (this.membersBtn) {
+        this.membersBtn.hidden = this.noMembers()
+        this.membersBtn.classList.toggle('on', shown)
+        this.membersBtn.setAttribute('aria-pressed', String(shown))
+      }
       this.paintFold()
     }
 
@@ -758,8 +811,57 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       void ui.commands.run(CMD[act], { channel: this.channelId, agent })
     }
 
-    /** The member's menu (plan 2.6) at page coordinates. */
-    private openMemberMenu(m: MemberRow, x: number, y: number): void {
+    // ---------- the focus around a member's gestures (G9) ----------
+
+    /** The stop of a button of a member's row: its `data-act`, or "name" for the link to the agent's pane. */
+    private actOf(node: Element | null): string {
+      if (!(node instanceof HTMLElement)) return 'more'
+      return node.dataset.act ?? (node.classList.contains('ch-link') ? 'name' : 'more')
+    }
+
+    /** Remembers where the focus returns to for a gesture on this member: its `act` button, and the neighbours for when the row goes away. */
+    private markReturn(id: string, act: string): void {
+      const ids = [...this.side.querySelectorAll<HTMLElement>('.ch-mrow[data-member]')].map(r => r.dataset.member!)
+      const at = ids.indexOf(id)
+      const next = at < 0 ? [] : [...ids.slice(at + 1), ...ids.slice(0, at).reverse()]
+      this.memberReturn = { id, act, next, until: Date.now() + JOIN_FOCUS_MS }
+    }
+
+    /** Puts the focus on a member's button (or, when that one cannot take it, on the row's "⋯" or name); false when the row is not there. */
+    private focusMember(id: string, act: string): boolean {
+      const row = this.side.querySelector<HTMLElement>(`.ch-mrow[data-member="${CSS.escape(id)}"]`)
+      if (!row) return false
+      const own = act === 'mute' || act === 'unmute' ? '[data-act="mute"], [data-act="unmute"]' : act === 'name' ? '.ch-link' : `[data-act="${act}"]`
+      for (const sel of [own, '.ch-mmore', '.ch-link']) {
+        const b = row.querySelector<HTMLElement>(sel)
+        if (!b) continue
+        b.focus()
+        if (document.activeElement === b) return true
+      }
+      return false
+    }
+
+    /**
+     * After a menu or a dialog closes (or the list is redrawn under the focus): the focus goes back to the button the person pressed, to the
+     * next row when the member is gone, to the accent "Juntar agente…" when nobody is left. Only when the focus is lost: never taken from a
+     * place the person went to.
+     */
+    private returnFocus(): void {
+      const r = this.memberReturn
+      if (!r || this.disposed) return
+      if (Date.now() > r.until) { this.memberReturn = undefined; return }
+      const a = document.activeElement
+      if (a !== null && a !== document.body) return
+      if (!this.sideShown()) { (this.isNarrow() ? this.fold : this.membersBtn)?.focus(); return }
+      if (this.focusMember(r.id, r.act)) return
+      for (const id of r.next) if (this.focusMember(id, 'more')) return
+      if (this.noMembers()) this.joinBtn?.focus()
+    }
+
+    /** The member's menu (plan 2.6) at page coordinates; `act` is the stop it was opened from (where the focus comes back to). */
+    private openMemberMenu(m: MemberRow, x: number, y: number, act = 'more'): void {
+      this.markReturn(m.id, act)
+      this.side.querySelector(`.ch-mrow[data-member="${CSS.escape(m.id)}"] .ch-mmore`)?.setAttribute('aria-expanded', 'true')
       const reachable = ui.panes.find(m.id) !== undefined
       const run: Record<string, () => void> = {
         mute: () => this.memberAct('mute', m.id),
@@ -777,16 +879,26 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
 
     private paintMembers(): void {
       const side = this.side
+      // The list is redrawn whole: a focus on one of its buttons is put back on the same one (or the next row if the member went away).
+      const held = document.activeElement instanceof HTMLElement && side.contains(document.activeElement) ? document.activeElement : undefined
+      const heldId = held?.closest<HTMLElement>('.ch-mrow[data-member]')?.dataset.member
+      if (held && heldId) this.markReturn(heldId, this.actOf(held))
       side.replaceChildren()
       if (!this.answer) return
       // The emblems are read at each redraw (no observer): a change shows when the list is drawn again.
       const rows = memberRows(this.answer, id => ui.panes.personEmblem(id))
       const sec = el('div', 'ch-sec')
       sec.append(el('span', '', `Membros · ${rows.length}`))
-      side.append(sec)
+      // The list proper: the heading above it is not one of its items.
+      const list = el('div', 'ch-mlist')
+      list.setAttribute('role', 'list')
+      list.setAttribute('aria-label', 'Membros')
+      side.append(sec, list)
       for (const m of rows) {
         const row = el('div', 'ch-mrow')
         row.dataset.member = m.id
+        row.setAttribute('role', 'listitem')
+        row.setAttribute('aria-label', memberAria(m))
         hueStyle(row, m.hue)
         const l1 = el('div', 'ch-l1')
         const em = el('span', `ch-em${m.crown ? ' crown' : ''}`)
@@ -810,6 +922,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         dot.setAttribute('role', 'img')
         dot.setAttribute('aria-label', m.state)
         l1.append(nrole, dot)
+        if (m.tone === 'wait') {
+          // The narrow row has no second line for the state: a member that does not hear now says so in words, beside the dot (the dot's own
+          // name already says it to a screen reader, so the words are hidden from it).
+          const warn = el('span', 'ch-warnlbl', 'não ouve')
+          warn.setAttribute('aria-hidden', 'true')
+          l1.append(warn)
+        }
         if (m.emblem) {
           const chip = emblemBadge(m.emblem)
           chip.classList.add('ch-emblem')
@@ -822,10 +941,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           if (!m.crown) {
             const acts = el('span', 'ch-macts')
             const toggle = m.muted
-              ? this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.unmute, m.name), 'speaker-high', () => this.memberAct('unmute', m.id))
-              : this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.mute, m.name), 'speaker-slash', () => this.memberAct('mute', m.id))
+              ? this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.unmute, m.name), 'speaker-high', () => { this.markReturn(m.id, 'unmute'); this.memberAct('unmute', m.id) })
+              : this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.mute, m.name), 'speaker-slash', () => { this.markReturn(m.id, 'mute'); this.memberAct('mute', m.id) })
             toggle.dataset.act = m.muted ? 'unmute' : 'mute'
-            const out = this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.remove, m.name), 'user-minus', () => this.memberAct('remove', m.id))
+            const out = this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.remove, m.name), 'user-minus', () => { this.markReturn(m.id, 'remove'); this.memberAct('remove', m.id) })
             out.dataset.act = 'remove'
             acts.append(toggle, out)
             l1.append(acts)
@@ -836,8 +955,23 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           })
           more.dataset.act = 'more'
           more.setAttribute('aria-haspopup', 'menu')
+          more.setAttribute('aria-expanded', 'false')
           l1.append(more)
-          row.addEventListener('contextmenu', ev => { ev.preventDefault(); this.openMemberMenu(m, ev.clientX, ev.clientY) })
+          row.addEventListener('contextmenu', ev => {
+            ev.preventDefault()
+            // The keyboard's own menu key already opened it (below): its `contextmenu` event is the same gesture.
+            if (performance.now() - this.keyMenuAt < 400) return
+            this.openMemberMenu(m, ev.clientX, ev.clientY)
+          })
+          // The menu key and Shift+F10 on any button of the row: the same menu, at the button that holds the focus.
+          row.addEventListener('keydown', ev => {
+            if (!(ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) return
+            ev.preventDefault()
+            this.keyMenuAt = performance.now()
+            const at = ev.target instanceof HTMLElement && ev.target.getClientRects().length > 0 ? ev.target : more
+            const r = at.getBoundingClientRect()
+            this.openMemberMenu(m, r.left, r.bottom, this.actOf(at))
+          })
         }
         const l2 = el('div', 'ch-l2')
         l2.append(el('span', 'ch-role', m.role))
@@ -851,9 +985,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         if (m.hint !== undefined) state.title = m.hint
         l2.append(state)
         row.append(l1, l2)
-        side.append(row)
+        list.append(row)
       }
       const me = el('div', 'ch-mrow')
+      me.setAttribute('role', 'listitem')
+      me.setAttribute('aria-label', MODERATOR_ARIA)
       const l1 = el('div', 'ch-l1')
       const em = el('span', 'ch-em me')
       em.append(glyph('user'))
@@ -861,10 +997,35 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const l2 = el('div', 'ch-l2')
       l2.append(el('span', 'ch-role mod', 'moderador'), el('span', 'ch-state', 'lê tudo, fala em qualquer canal'))
       me.append(l1, l2)
-      side.append(me)
+      list.append(me)
+      if (held) this.returnFocus()
     }
 
     // ---------- test ----------
+
+    /** The attributes of G9 as they are on the page now, and the regions the Tab visits in order (consecutive stops of one region count once). */
+    private ariaSnapshot(): PaneSnapshot['aria'] {
+      const at = (e: Element | null | undefined, n: string): string => e?.getAttribute(n) ?? ''
+      const region = (e: HTMLElement): string =>
+        this.bar.contains(e) ? 'toolbar' : this.fold.contains(e) ? 'strip' : this.side.contains(e) ? 'members'
+          : this.msgs.contains(e) ? 'log' : this.newBar.contains(e) ? 'newbar' : this.composerSlot.contains(e) ? 'composer' : 'other'
+      const stops = [...this.element.querySelectorAll<HTMLElement>('button, select, textarea, input, [tabindex="0"]')]
+        .filter(e => !(e as HTMLButtonElement).disabled && e.tabIndex >= 0 && e.getClientRects().length > 0)
+        .map(region)
+      const list = this.side.querySelector('[role="list"]')
+      return {
+        toolbar: { role: at(this.bar, 'role'), label: at(this.bar, 'aria-label') },
+        membersBtn: { pressed: at(this.membersBtn, 'aria-pressed'), controls: at(this.membersBtn, 'aria-controls'), hidden: this.membersBtn?.hidden ?? true },
+        fold: { expanded: at(this.fold, 'aria-expanded'), label: at(this.fold, 'aria-label'), controls: at(this.fold, 'aria-controls') },
+        list: {
+          role: at(list, 'role'), label: at(list, 'aria-label'),
+          items: [...(list?.querySelectorAll('[role="listitem"]') ?? [])].map(i => ({ role: at(i, 'role'), label: at(i, 'aria-label') })),
+        },
+        log: { role: at(this.msgs, 'role'), live: at(this.msgs, 'aria-live'), label: at(this.msgs, 'aria-label'), relevant: at(this.msgs, 'aria-relevant'), tabindex: at(this.msgs, 'tabindex') },
+        moreMenu: at(this.bar.querySelector('.ch-more'), 'aria-haspopup'),
+        tabs: stops.filter((r, i) => i === 0 || stops[i - 1] !== r),
+      }
+    }
 
     snapshot(): PaneSnapshot {
       const m = this.msgs
@@ -893,6 +1054,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           ? { count: this.answer.members.length, muted: this.answer.members.filter(x => x.muted).length, open: this.isNarrow() && this.sideShown() }
           : { count: 0, muted: 0, open: false },
         foldBar: { shown: !this.fold.hidden, warn: this.answer ? foldOf(this.answer).waiting : 0 },
+        aria: this.ariaSnapshot(),
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }

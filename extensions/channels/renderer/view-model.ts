@@ -266,6 +266,14 @@ export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader): Memb
   return [...rows.filter(r => r.crown), ...rows.filter(r => !r.crown)]
 }
 
+/** The whole sentence of a member's row for a screen reader: who, the role, "calado" when muted, how it hears ("claude · conferente, membro, calado, ouvindo"). */
+export function memberAria(m: Pick<MemberRow, 'name' | 'role' | 'muted' | 'state'>): string {
+  return [m.name, m.role, ...(m.muted ? ['calado'] : []), m.state].join(', ')
+}
+
+/** The person's own row in the list. */
+export const MODERATOR_ARIA = 'Você, moderador, lê tudo e fala em qualquer canal'
+
 export const membersCount = (n: number): string => (n === 1 ? '1 membro' : `${n} membros`)
 
 export interface Header {
