@@ -288,6 +288,41 @@ export function headerOf(answer: MembersAnswer): Header {
   return { title: `#${c.name}`, sub: parts.join(' · '), closed: c.closed !== undefined, ownerName: owner.name, ...('hue' in owner ? { ownerHue: owner.hue } : {}), mutedCount }
 }
 
+/** How many emblems the folded strip of the narrow composition stacks (the rest is in the count). */
+export const FOLD_MARKS = 4
+
+export interface FoldMark { id: string; hue: number; crown: boolean }
+
+/** What the narrow strip says of the members while folded: who (the first emblems), how many, how many muted, how many do not hear now. */
+export interface Fold {
+  count: number
+  muted: number
+  /** Members that do not hear now (the `wait` route): the strip keeps a warning on them even folded. */
+  waiting: number
+  marks: FoldMark[]
+  /** "3 membros" */
+  label: string
+}
+
+export function foldOf(answer: MembersAnswer): Fold {
+  const rows = memberRows(answer)
+  return {
+    count: rows.length,
+    muted: rows.filter(r => r.muted).length,
+    waiting: rows.filter(r => r.tone === 'wait').length,
+    marks: rows.slice(0, FOLD_MARKS).map(r => ({ id: r.id, hue: r.hue, crown: r.crown })),
+    label: membersCount(rows.length),
+  }
+}
+
+/** The accessible name of the strip's button: the numbers, then what it does. */
+export function foldAria(f: Fold, open: boolean): string {
+  const parts = [f.label]
+  if (f.muted > 0) parts.push(f.muted === 1 ? '1 calado' : `${f.muted} calados`)
+  if (f.waiting > 0) parts.push(f.waiting === 1 ? '1 não ouve agora' : `${f.waiting} não ouvem agora`)
+  return `${parts.join(', ')}. ${open ? 'Recolher membros' : 'Mostrar membros'}`
+}
+
 /** name → id of the members (the hue of the names a line addresses). */
 export const idByName = (answer: MembersAnswer): Map<string, string> => new Map(answer.members.map(m => [m.name, m.id]))
 

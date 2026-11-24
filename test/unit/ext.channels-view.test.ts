@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  applyLine, applyPage, emptyTimeline, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
+  applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -158,6 +158,27 @@ test('mute bar and the name → id map', () => {
   assert.equal(muteBar(answer()), '1 calado neste canal: codex · conferência. Ouve tudo e não fala.')
   assert.equal(muteBar(answer({ members: [member('a', 'x')] })), '')
   assert.equal(idByName(answer()).get('Atrium'), 'a1')
+})
+
+test('fold (G7): the narrow strip says how many, who is muted and who does not hear now; the owner leads the emblems', () => {
+  const f = foldOf(answer())
+  assert.equal(f.count, 3)
+  assert.equal(f.label, '3 membros')
+  assert.equal(f.muted, 1)
+  assert.equal(f.waiting, 1, 'the muted one is also on the wait route')
+  assert.deepEqual(f.marks.map(m => [m.id, m.crown]), [['a1', true], ['b2', false], ['c3', false]])
+  assert.equal(f.marks[0]!.hue, agentHue('a1'))
+  assert.equal(foldAria(f, false), '3 membros, 1 calado, 1 não ouve agora. Mostrar membros')
+  assert.equal(foldAria(f, true), '3 membros, 1 calado, 1 não ouve agora. Recolher membros')
+  // Nobody muted, everybody hears: the label alone. One member reads in the singular.
+  const calm = foldOf(answer({ members: [member('b2', 'x')] }))
+  assert.deepEqual([calm.count, calm.muted, calm.waiting, calm.label], [1, 0, 0, '1 membro'])
+  assert.equal(foldAria(calm, false), '1 membro. Mostrar membros')
+  // Many members: the emblems stop at FOLD_MARKS, the count does not.
+  const many = foldOf(answer({ members: Array.from({ length: 7 }, (_, i) => member(`m${i}`, `m${i}`)) }))
+  assert.equal(many.count, 7)
+  assert.equal(many.marks.length, FOLD_MARKS)
+  assert.equal(foldOf(answer({ members: [member('a', 'x', { muted: true }), member('b', 'y', { muted: true })] })).muted, 2)
 })
 
 test('scroll: near the bottom only inside the slack', () => {
