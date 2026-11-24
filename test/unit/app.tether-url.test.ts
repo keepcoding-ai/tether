@@ -1,9 +1,22 @@
 // The tether:// link (app/shared/tether-url.ts): build, parse, refuse what is unsafe.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { noteUrl, parseTetherUrl, tabUrl, tetherUrlInArgv } from '../../app/shared/tether-url.ts'
+import { isSyncNowUrl, noteUrl, parseTetherUrl, SYNC_NOW_URL, tabUrl, tetherUrlInArgv } from '../../app/shared/tether-url.ts'
+import { SYNC_LINK } from '../../src/cli/sync.ts'
 
 describe('tether:// links', () => {
+  test('tether://sync/now: the CLI\'s link, recognized by main and never a place for the renderer', () => {
+    assert.equal(SYNC_NOW_URL, SYNC_LINK)
+    assert.equal(isSyncNowUrl(SYNC_LINK), true)
+    assert.equal(isSyncNowUrl('TETHER://SYNC/NOW/'), true)
+    assert.equal(parseTetherUrl(SYNC_LINK), undefined)
+    assert.equal(isSyncNowUrl('tether://sync/now?x=1'), false)
+    assert.equal(isSyncNowUrl('tether://sync/now/more'), false)
+    assert.equal(isSyncNowUrl('tether://sync'), false)
+    assert.equal(isSyncNowUrl('https://sync/now'), false)
+    assert.equal(tetherUrlInArgv(['electron', '.', SYNC_LINK]), SYNC_LINK)
+  })
+
   test('a pane, round-trip', () => {
     assert.equal(tabUrl('1a2b3c4d'), 'tether://tab/1a2b3c4d')
     assert.deepEqual(parseTetherUrl(tabUrl('1a2b3c4d')), { kind: 'tab', id: '1a2b3c4d' })
