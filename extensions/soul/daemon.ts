@@ -30,7 +30,7 @@ export const soulAgent: AgentContribution = {
   // (soul-cli src/hands/localMcp.ts), so the agent still sees them.
   // `http`: soul loads `{ "type": "http" }` servers in process (the agent door's `tether`, the browser). Over -H only stdio
   // servers are lent to the remote agent, so a remote soul gets no HTTP server.
-  mcp: { inject: withMcpConfigFlag, http: true },
+  mcp: { inject: withMcpConfigFlag, http: true, httpFor: (plan) => !isRemoteSoul(plan) },
   // The door's channel: `--channels tether` lets the server's `notifications/claude/channel` open a turn (without it soul drops
   // them, though it declares the capability). No `channel`: the ronda is not offered to soul.
   channelPlan: soulChannelPlan,
@@ -41,6 +41,11 @@ export const soulAgent: AgentContribution = {
 /** soul's options for a remote engine; next to them `--channels` is a usage error and soul does not start. */
 const REMOTE_FLAGS = new Set(['-H', '--host', '--target'])
 
+/** The command line points soul at a remote engine (-H, --host, --target, with or without `=`). */
+export function isRemoteSoul(plan: LaunchPlan): boolean {
+  return plan.args.some((a) => REMOTE_FLAGS.has(a) || /^--(host|target)=/.test(a))
+}
+
 /**
  * `--channels <a,b>` appended at the end (soul's `--mcp-config` takes one value, so nothing is swallowed, and the plan may start
  * with the script node runs). Undefined, so no channel, when the command line points soul at a remote engine (-H, --host,
@@ -48,7 +53,7 @@ const REMOTE_FLAGS = new Set(['-H', '--host', '--target'])
  */
 export function soulChannelPlan(plan: LaunchPlan, servers: readonly string[]): LaunchPlan | undefined {
   if (servers.length === 0) return undefined
-  if (plan.args.some((a) => REMOTE_FLAGS.has(a) || /^--(host|target)=/.test(a))) return undefined
+  if (isRemoteSoul(plan)) return undefined
   return { ...plan, args: [...plan.args, '--channels', servers.join(',')] }
 }
 

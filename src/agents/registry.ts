@@ -26,6 +26,11 @@ export interface AgentMcp {
    * process; absent = the stdio files, as always.
    */
   http?: boolean
+  /**
+   * With `http`: false for a launch plan whose CLI cannot load an HTTP server (soul over -H lends the remote agent only the
+   * stdio ones). That launch keeps the stdio files, as before `http`. Absent: every plan takes HTTP. Read it through `mcpHttpFor`.
+   */
+  httpFor?: (plan: LaunchPlan) => boolean
 }
 
 export interface AgentContribution {

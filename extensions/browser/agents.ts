@@ -19,7 +19,7 @@
 // the daemon, and nothing is stopped for being idle. What the tool knows the tabs by is kept with the tabs (agent-tabs.ts).
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
-import { httpMcpConfigOf, McpNameCollisionError } from '../../src/agents/mcp.ts'
+import { httpMcpConfigOf, McpNameCollisionError, mcpHttpFor } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
@@ -162,7 +162,7 @@ export function createBrowserLaunchMiddleware(deps: BrowserInjectDeps): (plan: L
       throw e
     }
     const backend = deps.backend
-    const url = agent.mcp.http && backend ? deps.http?.urlOf(slot.slotId) : undefined
+    const url = mcpHttpFor(agent.mcp, plan) && backend ? deps.http?.urlOf(slot.slotId) : undefined
     try {
       const key = (deps.key ?? newKey)()
       if (!validKeyShape(key)) throw new Error('chave gerada com formato inválido')

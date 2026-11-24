@@ -96,20 +96,25 @@ describe('web-bridge over HTTP', () => {
       identities.drop('s1')
       identities.follow(state({ name: 'after the end' }))
       assert.equal(first!.env[ENV_CLIENT_NAME], 'kai-thinking', 'an ended run is not touched')
-      // soul (stdio): named at launch, an event changes nothing (it has no shell inside the daemon)
-      const soul = await t.mw(base(), { ...slotOf('soul'), slotId: 's2' }, state({ slotId: 's2', kind: 'soul', title: 'soul-env' }))
+      // remote soul (stdio): named at launch, an event changes nothing (it has no shell inside the daemon)
+      const soul = await t.mw({ ...base(), args: ['-H', 'box', ...base().args] }, { ...slotOf('soul'), slotId: 's2' }, state({ slotId: 's2', kind: 'soul', title: 'soul-env' }))
       assert.equal(soul.env[ENV_CLIENT_NAME], 'soul-env')
       identities.follow(state({ slotId: 's2', kind: 'soul', name: 'other' }))
       assert.equal(identities.nameOf('s2'), 'soul-env')
     } finally { t.done() }
   })
 
-  test('fallback: soul, and claude while the host is not listening, get the shared stdio file; nothing granted', async () => {
-    for (const [agent, listening, withBackend] of [['soul', true, true], ['claude', false, true], ['claude', true, false]] as const) {
+  test('fallback: a REMOTE soul (-H / --host= / --target), and claude while the host is not listening, get the shared stdio file; nothing granted', async () => {
+    const remote = (args: string[]): LaunchPlan => ({ ...base(), args: [...args, ...base().args] })
+    const cases = [
+      ['soul', true, true, remote(['-H', 'box'])], ['soul', true, true, remote(['--host=box'])], ['soul', true, true, remote(['--target', 'box'])],
+      ['claude', false, true, base()], ['claude', true, false, base()],
+    ] as const
+    for (const [agent, listening, withBackend, plan] of cases) {
       const t = setup(listening, withBackend)
       try {
-        const out = await t.mw(base(), slotOf(agent))
-        assert.deepEqual(out.args, [...base().args, MCP_CONFIG_FLAG, mcpConfigPathOf(t.home)], agent)
+        const out = await t.mw(plan, slotOf(agent))
+        assert.deepEqual(out.args, [...plan.args, MCP_CONFIG_FLAG, mcpConfigPathOf(t.home)], agent)
         assert.equal(out.env[ENV_BRIDGE_MCP_KEY], undefined)
         assert.equal(out.env[ENV_CLIENT_ID], 'tether:s1')
         assert.equal(t.grants.size, 0)

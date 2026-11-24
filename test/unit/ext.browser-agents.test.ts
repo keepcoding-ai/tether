@@ -279,12 +279,29 @@ describe('the browser over HTTP (agents with mcp.http)', () => {
     } finally { t.done() }
   })
 
-  test('fallback: soul (no mcp.http), claude while the host is not listening, and claude without the library keep the stdio file; nothing is granted', async () => {
-    for (const [agent, listening, noBackend] of [['soul', true, false], ['claude', false, false], ['claude', true, true]] as const) {
+  test('a local soul takes the HTTP file, like claude', async () => {
+    const h = fakeHost()
+    const t = setup({ http: h.http })
+    try {
+      const out = await t.mw(base(), slotOf('soul'))
+      const cfg = JSON.parse(readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8'))
+      assert.equal(cfg.mcpServers[MCP_SERVER_NAME].type, 'http')
+      assert.ok(out.env[ENV_BROWSER_MCP_KEY])
+      assert.equal(h.grants.size, 1)
+    } finally { t.done() }
+  })
+
+  test('fallback: a REMOTE soul (-H / --host= / --target), claude while the host is not listening, and claude without the library keep the stdio file; nothing is granted', async () => {
+    const remote = (args: string[]): LaunchPlan => ({ ...base(), args: [...args, ...base().args] })
+    const cases = [
+      ['soul', true, false, remote(['-H', 'box'])], ['soul', true, false, remote(['--host=box'])], ['soul', true, false, remote(['--target', 'box'])],
+      ['claude', false, false, base()], ['claude', true, true, base()],
+    ] as const
+    for (const [agent, listening, noBackend, plan] of cases) {
       const h = fakeHost(listening)
       const t = setup({ http: h.http, noBackend })
       try {
-        const out = await t.mw(base(), slotOf(agent))
+        const out = await t.mw(plan, slotOf(agent))
         const cfg = JSON.parse(readFileSync(mcpFileOf(t.home, 'abc123'), 'utf8'))
         assert.equal(cfg.mcpServers[MCP_SERVER_NAME].command, NODE, `${agent}: stdio`)
         assert.equal(out.env[ENV_BROWSER_MCP_KEY], undefined)

@@ -29,7 +29,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
-import { httpMcpConfigOf } from '../../agents/mcp.ts'
+import { httpMcpConfigOf, mcpHttpFor } from '../../agents/mcp.ts'
 import { channelArgsOf } from '../../agents/registry.ts'
 import type { LaunchPlan } from '../../agents/types.ts'
 import { McpHttpHost, type McpBackend, type McpTransport } from '../mcp-http.ts'
@@ -182,8 +182,8 @@ export class DoorMcp {
   get wanted(): boolean { return this.deliveryUsers > 0 || this.opts.verbs.list('mcp').length > 0 }
 
   /** This launch would get the server: wanted, a live door, and an agent whose CLI loads HTTP MCP servers. */
-  offers(ctx: LaunchContext): boolean {
-    return this.wanted && this.opts.port() !== undefined && !!ctx.agent?.mcp?.http
+  offers(ctx: LaunchContext, plan?: LaunchPlan): boolean {
+    return this.wanted && this.opts.port() !== undefined && (plan ? mcpHttpFor(ctx.agent?.mcp, plan) : !!ctx.agent?.mcp?.http)
   }
 
   // ---- launch ----------------------------------------------------------------------------------
@@ -200,7 +200,7 @@ export class DoorMcp {
     const run = this.runs.get(slotId)!
     const port = this.opts.port()
     const mcp = ctx.agent?.mcp
-    if (!this.offers(ctx) || !port || !mcp) return { plan, offered: false, channel: false }
+    if (!this.offers(ctx, plan) || !port || !mcp) return { plan, offered: false, channel: false }
     try {
       const portNo = await this.listen()
       if (this.runs.get(slotId) !== run) return { plan, offered: false, channel: false }

@@ -332,9 +332,14 @@ describe('agent door MCP server (D5)', () => {
     assert.deepEqual(out.plan.args, ['soul.mjs', '-g', '--mcp-config', file, '--channels', DOOR_MCP_SERVER], 'the script stays first, the channel last')
     for (const remote of [['-H', 'https://x'], ['--host=https://x'], ['--target', 'y']]) {
       const r = await mcp.prepare(soulPlan(...remote), sctx('s2'))
-      assert.equal(r.offered, true)
+      // a remote soul loads no HTTP server (only stdio ones are lent over -H): the door's server is not offered at all
+      assert.equal(r.offered, false, `no server with ${remote.join(' ')}`)
       assert.equal(r.channel, false, `no channel with ${remote.join(' ')}`)
-      assert.ok(!r.plan.args.includes('--channels'))
+      assert.deepEqual(r.plan.args, soulPlan(...remote).args)
+    }
+    // soulChannelPlan itself still refuses a remote host (defense in depth)
+    for (const remote of [['-H', 'https://x'], ['--host=https://x'], ['--target', 'y']]) {
+      assert.equal(soulChannelPlan(soulPlan(...remote), [DOOR_MCP_SERVER]), undefined)
     }
     on.dispose()
     assert.equal(soulChannelPlan(soulPlan(), []), undefined)

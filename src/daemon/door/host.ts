@@ -118,7 +118,7 @@ export class DoorHost implements DoorSeams {
     const slotId = ctx.meta.slotId
     const key = this.slotKeys.issue(slotId)
     const keyed: LaunchGrant = { plan: { ...plan, env: { ...plan.env, [ENV_SLOT_KEY]: key } }, revoke: () => this.slotKeys.revoke(slotId, key) }
-    if (!this.mcp.offers(ctx)) return keyed
+    if (!this.mcp.offers(ctx, keyed.plan)) return keyed
     return this.mcp.prepare(keyed.plan, ctx).then((offer) => ({
       plan: offer.plan,
       channel: offer.channel,

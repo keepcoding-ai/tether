@@ -9,7 +9,13 @@
 //
 // Two files declaring the same server name overwrite each other silently in both CLIs (the last wins), so an extension may
 // DECLARE the names its file holds; the plan remembers them and a second file with a taken name is refused.
+import type { AgentMcp } from './registry.ts'
 import type { LaunchPlan } from './types.ts'
+
+/** This launch plan takes the servers over HTTP: the agent says `http` and its `httpFor` does not refuse this plan. */
+export function mcpHttpFor(mcp: AgentMcp | undefined, plan: LaunchPlan): boolean {
+  return !!mcp?.http && (mcp.httpFor?.(plan) ?? true)
+}
 
 export const MCP_CONFIG_FLAG = '--mcp-config'
 

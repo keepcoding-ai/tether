@@ -22,7 +22,7 @@
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { folderNameOf, slotTitle } from '../../app/shared/agent-info.ts'
-import { httpMcpConfigOf } from '../../src/agents/mcp.ts'
+import { httpMcpConfigOf, mcpHttpFor } from '../../src/agents/mcp.ts'
 import type { AgentContribution } from '../../src/agents/registry.ts'
 import type { LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
@@ -185,7 +185,7 @@ export function createLaunchMiddleware(deps: InjectDeps): (plan: LaunchPlan, slo
     const id = clientIdOf(slot.slotId)
     if (!CLIENT_ID_PATTERN.test(id)) { deps.log(`slot ${slot.slotId}: id de cliente inválido para o bridge; lançado sem identidade`); return await agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME]) }
     const identity = { [ENV_CLIENT_ID]: id, [ENV_CLIENT_NAME]: identities.nameFor(slot.slotId, clientNameOf(state ?? tabOfMeta(slot))) }
-    const viaHttp = agent.mcp.http ? await injectHttp(deps, agent, plan, slot, identity, identities) : undefined
+    const viaHttp = mcpHttpFor(agent.mcp, plan) ? await injectHttp(deps, agent, plan, slot, identity, identities) : undefined
     if (viaHttp) return viaHttp
     const out = await agent.mcp.inject(plan, deps.configFile, [MCP_SERVER_NAME])
     return { ...out, env: { ...out.env, ...identity } }
