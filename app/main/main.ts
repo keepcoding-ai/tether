@@ -12,7 +12,7 @@ import { Executor } from '../../src/exec/executor.ts'
 import type { OpTable } from '../../src/exec/table.ts'
 import { setMainExecutor } from './main-executor.ts'
 import { setAgentExecutor } from '../../src/agents/agent-exec.ts'
-import { loadLayoutFile, saveLayoutFile } from './layout-file.ts'
+import { loadLayoutFile } from './layout-file.ts'
 import { createAppLog } from './app-log.ts'
 import { startCrashReports } from './crash-report.ts'
 import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
@@ -67,7 +67,8 @@ import { isProbeResultNotice, probeEnabled } from '../shared/probe-app.ts'
 
 // Key->echo probe (TETHER_PROBE=1): off by default; every use below sits behind this flag.
 const probe = probeEnabled(process.env)
-import { TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
+import { isSyncNowUrl, TETHER_SCHEME, tetherUrlInArgv } from '../shared/tether-url.ts'
+import { wireSyncRunner } from './sync-runner.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { type Association, commandLineFor, describeCommand, readAssociatedCommand, removeAssociation, sameCommand } from './protocol-association.ts'
 
@@ -125,6 +126,8 @@ if (handOffToCookieRuntime({ home, argv: process.argv, execPath: process.execPat
 let daemon: DaemonClient | undefined
 let connecting: Promise<void> | undefined
 let win: BrowserWindow | undefined
+/** `tether sync` from the app (app/main/sync-runner.ts): the CLI runs the engine as a child; main times it and guards the arrangement. */
+const syncRunner = wireSyncRunner({ home, cli: join(__dirname, '..', '..', 'bin', 'tether.mjs'), node: findNode, exec: mainExec, layoutPath, ipc: ipcMain, window: () => win, log: appLog })
 let quittingAll = false
 /** Set when the daemon connection was lost: the next connection reloads the renderer so every panel restarts its slot. */
 let reloadOnReconnect = false
@@ -196,7 +199,7 @@ async function drainDisk(ms = 2000): Promise<void> {
   await Promise.race([settled, sleep(ms)])
 }
 /** app.exit skips before-quit and will-quit: the disk work still in flight is drained first (bounded). */
-function exitApp(): void { void drainDisk().finally(() => app.exit(0)) }
+function exitApp(): void { syncRunner.stop(); void drainDisk().finally(() => { syncRunner.pushOnExit(); app.exit(0) }) }
 
 // ---------- daemon ----------
 
@@ -572,6 +575,7 @@ function saveSetting(key: string, value: unknown): boolean {
 /** The settings file changed: tells the renderer which keys; an edit from outside also replays the specific broadcasts. */
 function onSettingsChanged(keys: string[], source: 'self' | 'disk'): void {
   win?.webContents.send('tether:settings-changed', keys)
+  syncRunner.settingsChanged(keys)
   if (source === 'disk') replaySettings(keys)
 }
 
@@ -1082,7 +1086,7 @@ ipcMain.handle('tether:connection', (): ConnectionState => connectionState())
 
 // layout.json keeps its previous content in layout.json.bak on every save and falls back to it (layout-file.ts).
 ipcMain.handle('layout:load', () => loadLayoutFile(mainExec, layoutPath))
-ipcMain.handle('layout:save', (_e, layout: unknown) => saveLayoutFile(mainExec, layoutPath, layout))
+ipcMain.handle('layout:save', (_e, layout: unknown) => syncRunner.saveLayout(layout)) // held while a sync child runs
 // The renderer asks for this when it reads an older file (v1, v2, v3): layout.json.bak rotates on every save, layout.v<n>.bak
 // keeps the last content of that version for good (a copy: layout.json itself is not touched until the person changes
 // something), so an older build can be given its file back by hand.
@@ -1134,6 +1138,7 @@ ipcMain.handle('profiles:list', async (): Promise<ProfilesList> => {
 })
 
 ipcMain.handle('profiles:save', async (_e, profile: ProfileInput): Promise<ProfileSaved> => {
+  syncRunner.changed('profiles')
   if (daemon) {
     const r = await request({ t: 'profile-save', profile })
     return r.t === 'ok' ? { ok: true, profile: r.profile!, warnings: r.warnings ?? [] } : { ok: false, message: r.message }
@@ -1148,6 +1153,7 @@ ipcMain.handle('profiles:save', async (_e, profile: ProfileInput): Promise<Profi
 })
 
 ipcMain.handle('profiles:delete', async (_e, profileId: string): Promise<ProfileDeleted> => {
+  syncRunner.changed('profiles')
   if (daemon) {
     const r = await request({ t: 'profile-delete', profileId })
     return r.t === 'ok' ? { ok: true } : { ok: false, message: r.message }
@@ -1186,7 +1192,7 @@ function keybindingsState(): KeybindingsFileState {
 }
 ipcMain.handle('keybindings:read', (): KeybindingsFileState => keybindingsState())
 // The same watcher class the notes use (one per folder, debounced): the file's folder is the user folder.
-const keybindingsWatchers = new NoteWatchers(() => win?.webContents.send('tether:keybindings-changed', keybindingsState()))
+const keybindingsWatchers = new NoteWatchers(() => { syncRunner.changed('keybindings'); win?.webContents.send('tether:keybindings-changed', keybindingsState()) })
 try { mkdirSync(userHome, { recursive: true }); keybindingsWatchers.watch(keybindingsPath) } catch { /* no watcher: the screen still reads on open */ }
 
 // ---------- opening files ----------
@@ -1248,6 +1254,7 @@ function bringToFront(_event?: unknown, argv?: string[]): void {
   appLog('second launch poked this instance; bringing the window up')
   void writeJson(ackPath, { at: Date.now(), pid: process.pid })
   const link = argv ? tetherUrlInArgv(argv) : undefined
+  if (link && isSyncNowUrl(link)) { void syncRunner.run('link'); return } // `tether sync now` from a terminal: no window comes up
   if (link) queueTetherLink(link)
   if (!app.isReady()) return
   void openWindow() // creates the window when the app is hidden in the tray
@@ -1430,7 +1437,8 @@ async function start(): Promise<void> {
   if (process.platform === 'darwin') app.dock?.setIcon(join(__dirname, 'tether.png'))
   createMenu()
   extensionHost.activate()
-  createWindow()
+  await syncRunner.atOpen() // at most 8 s; a sync still running then reloads the window if it brings another arrangement
+  if (!win) createWindow() // a second launch during that wait may have opened it already
   startPriorities()
   setupTray()
   closeStandalone?.() // only now: with the main window up, closing it does not quit the app

@@ -110,6 +110,8 @@ export interface TetherApi {
   reconnect(): void
   loadLayout(): Promise<unknown | null>
   saveLayout(layout: unknown): Promise<void>
+  /** Main is about to sync (app/main/sync-runner.ts): the renderer writes its arrangement now; main hears back once the listener's promise settles. */
+  onFlushLayout(listener: () => Promise<void> | void): () => void
   /** Copies layout.json to layout.v<version>.bak (1 by default): the renderer asks when it read an older file (v1 or v2), before the first write in the current version. */
   backupLayout(version?: 1 | 2 | 3): Promise<void>
   recentFolders(): Promise<string[]>
