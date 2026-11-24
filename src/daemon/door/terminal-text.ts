@@ -8,7 +8,7 @@
 // - the body loses every control character but the line break and the tab: an ESC would let it end the bracketed paste
 //   (`ESC[201~`) and submit half a message, or move the cursor over the user's screen; CR and CRLF become LF.
 // Pure: no state, no I/O.
-import { oneLine, toNames } from './channel-meta.ts'
+import { oneLine, REACTIONS_MAX, toNames } from './channel-meta.ts'
 import type { DeliveryMessage } from './types.ts'
 
 export const HEADER_TAG = '[tether ·'
@@ -16,11 +16,14 @@ const HEADER_FIELD_MAX = 80
 // C0 controls except TAB (0x09) and LF (0x0a), DEL and the C1 range.
 const BODY_CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
 
-function field(value: string): string {
-  return oneLine(value, HEADER_FIELD_MAX).replace(/\[/g, '(').replace(/\]/g, ')')
+function field(value: string, max = HEADER_FIELD_MAX): string {
+  return oneLine(value, max).replace(/\[/g, '(').replace(/\]/g, ')')
 }
 
-/** `[tether · <origin> · #<room> · de <from> (<role>) · <id>]`; the room part is left out when there is none. */
+/**
+ * `[tether · <origin> · #<room> · de <from> (<role>) · <id>]`; the room part is left out when there is none; a delivery with
+ * reactions riding ends with ` · reações às suas falas: <reactions>`.
+ */
 export function terminalHeader(msg: DeliveryMessage, origin: string, id: string): string {
   const room = msg.room ? field(msg.room) : ''
   const to = field(toNames(msg, ', ') ?? '')
@@ -30,6 +33,8 @@ export function terminalHeader(msg: DeliveryMessage, origin: string, id: string)
     `de ${field(msg.from.name) || field(msg.from.id)} (${field(msg.from.role)})${to ? ` → ${to}` : ''}`,
     (msg.ref && field(msg.ref)) || field(id),
   ]
+  const reactions = msg.reactions ? field(msg.reactions, REACTIONS_MAX) : ''
+  if (reactions) parts.push(`reações às suas falas: ${reactions}`)
   return `${HEADER_TAG} ${parts.join(' · ')}]`
 }
 

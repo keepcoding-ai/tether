@@ -20,16 +20,18 @@
 //     owner (the notice drops an edge whose `attentionFor` is gone, whichever listener runs first). A turn the owner opened
 //     with `agents send` brings no line of ours, so its `done` stays and is told.
 // All of it is lost on a tetherd restart (the record and the core's queue stay on disk): at worst one return notice is missed.
+// The ride (reactions to a member's own lines, carried by a message it gets anyway) keeps its cursor on disk, in the member's
+// `reactionsSeen` in the index: it is read from the channel's tail, never alone delivered, and never repeated after a restart.
 import { slotIsLive, slotTitle } from '../../../app/shared/agent-info.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { DeliveryMessage, DeliveryReceipt, TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../src/daemon/protocol.ts'
 import {
   closeRefusal, deliveryRoleOf, deskChannelId, isDeskChannel, isMember, joinRefusal, joinsByDesk, mayModerate, parseReaction, reactionKey,
-  reactionLimit, reactRefusal, REACTION_WINDOW, REACTIONS_PER_MINUTE, reopenRefusal, roleIn, sayRefusal, slugOf, sumReactions, USER,
-  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Reaction, type Who,
+  reactionLimit, reactionRide, reactRefusal, REACTION_WINDOW, REACTIONS_PER_MINUTE, reopenRefusal, roleIn, sayRefusal, slugOf, sumReactions, USER,
+  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Reaction, type ReactionRide, type Who,
 } from '../rules.ts'
-import type { ChannelStore, NewLine, StoreError } from './store.ts'
+import { TAIL_LINES, type ChannelStore, type NewLine, type StoreError } from './store.ts'
 import {
   closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
   joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
@@ -143,6 +145,8 @@ export interface ReactionEvent { channelId: ChannelId; room: string; line: Line 
 
 interface Waiting extends Tally {
   receipt: string
+  /** Reactions rode on the waiting delivery: the member's cursor before them, so a merge carries them again. */
+  rideFrom?: number
 }
 
 /** The turn edges of one member and the lines between them (2.6). */
@@ -237,7 +241,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   /** Whether the receipt still waits in the core's queue (it may have gone out while the answer came back). */
   const stillWaits = (r: DeliveryReceipt): boolean => r.state === 'queued' && api.delivery.pending(r.slotId).some((p) => p.id === r.id)
 
-  function track(agent: AgentId, id: ChannelId, r: DeliveryReceipt, t: Tally): void {
+  function track(agent: AgentId, id: ChannelId, r: DeliveryReceipt, t: Tally & { rideFrom?: number }): void {
     const key = keyOf(agent, id)
     if (!stillWaits(r)) return
     pending.set(key, { ...t, receipt: r.id })
@@ -275,21 +279,57 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     if (per.size === 0) missed.delete(agent)
   }
 
-  /** One line to one member, with the rule of one waiting delivery per (member, channel). */
-  async function deliverLine(agent: AgentId, ch: Channel, line: Line): Promise<LineReceipt> {
+  // ---- the ride: reactions to the member's own lines go along with a delivery it gets anyway (never one of their own) ----
+  /** The channel's tail up to `upTo`, read once per fan-out and only when some delivery needs it. */
+  const tailOnce = (id: ChannelId, upTo?: number): (() => Promise<Line[]>) => {
+    let got: Promise<Line[]> | undefined
+    return () => (got ??= store.history(id, upTo === undefined ? undefined : upTo + 1, TAIL_LINES))
+  }
+  const cursorOf = (ch: Channel, agent: AgentId): number => (Object.hasOwn(ch.members, agent) ? ch.members[agent]!.reactionsSeen ?? 0 : 0)
+  /** Puts on `msg` the reactions after `from`; the ride, so `rode` moves the cursor once the delivery went to the core. */
+  async function ride(agent: AgentId, msg: DeliveryMessage, from: number, tail: () => Promise<Line[]>): Promise<ReactionRide> {
+    const r = reactionRide(await tail(), agent, from)
+    if (r.text) msg.reactions = r.text
+    return r
+  }
+  /**
+   * The ride went with a delivery the core took (inside, typed or queued): the cursor moves past it, on disk, so a restart
+   * never repeats it. A queued one that is merged later rides again on the merged notice (`rideFrom`).
+   */
+  async function rode(agent: AgentId, ch: Channel, r: ReactionRide): Promise<void> {
+    if (!r.text) return
+    store.markReactionsSeen(ch.id, agent, r.last)
+    await store.flush()
+  }
+
+  /**
+   * One line to one member, with the rule of one waiting delivery per (member, channel). `tail` given (a message): the
+   * reactions to the member's lines ride on it.
+   */
+  async function deliverLine(agent: AgentId, ch: Channel, line: Line, tail?: () => Promise<Line[]>): Promise<LineReceipt> {
     if (isAway(agent)) { remember(agent, ch.id, line); return 'away' }
     const key = keyOf(agent, ch.id)
+    const cursor = cursorOf(ch, agent)
     const w = untrack(key)
     if (w && api.delivery.cancel(w.receipt)) {
       count(w, line)
-      const r = await send(agent, noticeOf(ch, mergedNotice(ch.name, w, api.delivery.routeOf(agent), api.delivery.hasTools(agent)), line.seq))
+      const msg = noticeOf(ch, mergedNotice(ch.name, w, api.delivery.routeOf(agent), api.delivery.hasTools(agent)), line.seq)
+      // What rode on the cancelled delivery rides again, with what came since.
+      const from = Math.min(w.rideFrom ?? cursor, cursor)
+      const got = tail || w.rideFrom !== undefined ? await ride(agent, msg, from, tail ?? tailOnce(ch.id, line.seq)) : undefined
+      const r = await send(agent, msg)
       if (!r) return 'away'
-      track(agent, ch.id, r, w)
+      const { rideFrom: _was, ...tally } = w
+      track(agent, ch.id, r, got?.text ? { ...tally, rideFrom: from } : tally)
+      if (got && r.state !== 'dropped') await rode(agent, ch, got)
       return receiptState(r)
     }
-    const r = await send(agent, envelopeOf(ch, line, api.delivery.routeOf(agent), api.delivery.hasTools(agent)))
+    const msg = envelopeOf(ch, line, api.delivery.routeOf(agent), api.delivery.hasTools(agent))
+    const got = tail ? await ride(agent, msg, cursor, tail) : undefined
+    const r = await send(agent, msg)
     if (!r) return 'away'
-    track(agent, ch.id, r, tallyOf(line))
+    track(agent, ch.id, r, got?.text ? { ...tallyOf(line), rideFrom: cursor } : tallyOf(line))
+    if (got && r.state !== 'dropped') await rode(agent, ch, got)
     return receiptState(r)
   }
   const receiptState = (r: DeliveryReceipt): LineReceipt => (r.state === 'dropped' ? 'away' : r.state)
@@ -303,11 +343,13 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   /** Every member but `except` gets the line; `personal` gives some of them their own text instead. */
   async function fanout(ch: Channel, line: Line, except?: AgentId, personal?: ReadonlyMap<AgentId, string>): Promise<Record<AgentId, LineReceipt>> {
     const out: Record<AgentId, LineReceipt> = {}
+    // Reactions ride only on a message (a line that is delivered anyway), never on a notice or a reaction.
+    const tail = line.kind === 'message' ? tailOnce(ch.id, line.seq) : undefined
     await Promise.all(Object.keys(ch.members).map(async (agent) => {
       if (agent === except) return
       const text = personal?.get(agent)
       if (text !== undefined) { await tell(agent, ch, text, line); return }
-      out[agent] = await deliverLine(agent, ch, line)
+      out[agent] = await deliverLine(agent, ch, line, tail)
     }))
     return out
   }
@@ -741,9 +783,15 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
         if (!ch || !Object.hasOwn(ch.members, agent)) return
         // What still waited from before it stopped joins the same notice.
         const w = untrack(keyOf(agent, id))
-        if (w && api.delivery.cancel(w.receipt)) merge(t, w)
-        const r = await send(agent, noticeOf(ch, returnNotice(ch.name, t, api.delivery.routeOf(agent), api.delivery.hasTools(agent))))
-        if (r) track(agent, id, r, t)
+        const cancelled = w !== undefined && api.delivery.cancel(w.receipt)
+        if (cancelled) merge(t, w)
+        const msg = noticeOf(ch, returnNotice(ch.name, t, api.delivery.routeOf(agent), api.delivery.hasTools(agent)))
+        // Reactions that rode on the cancelled delivery ride again on the return notice.
+        const from = cancelled ? w.rideFrom : undefined
+        const got = from !== undefined ? await ride(agent, msg, from, tailOnce(id)) : undefined
+        const r = await send(agent, msg)
+        if (r) track(agent, id, r, got?.text ? { ...t, rideFrom: from! } : t)
+        if (r && got) await rode(agent, ch, got)
       })))
     },
 

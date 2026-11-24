@@ -66,6 +66,8 @@ export interface Member {
   name: string
   /** Muted: still hears, no longer speaks. */
   muted?: { since: string; by: Who }
+  /** The seq of the newest line whose reactions already rode to it (reactionRide); absent: none yet. */
+  reactionsSeen?: number
 }
 
 /** A role in a channel. The envelope carries 'member' for an owner who speaks (deliveryRoleOf). */
@@ -187,6 +189,54 @@ export function sumReactions(lines: readonly Line[]): Map<number, ReactionTally[
     }))
   }
   return out
+}
+
+/** Entries (one emoji on one message) a ride carries at most; the rest is counted (`+N, veja channels_read`). */
+export const RIDE_ENTRIES = 5
+/** Characters a ride carries at most (~60 tokens): an entry that would pass it is counted with the rest. */
+export const RIDE_CHARS = 200
+
+export interface ReactionRide {
+  /** `38 ❓ soul · bancada, 👍 Guga; 36 ✅ Guga` (newest message first; several names joined by ` + `), undefined when nothing new. */
+  text?: string
+  /** The newest seq looked at: the member's cursor once the ride is delivered. */
+  last: number
+}
+
+/**
+ * The reactions that ride on the next delivery to `agent`: those given after the cursor `after`, by anyone but `agent`, on a
+ * message of `agent` that is among `lines` (ascending, the channel's tail up to the line delivered). A reaction put and taken
+ * after the cursor is not there; a take away of one already ridden says nothing. Pure.
+ */
+export function reactionRide(lines: readonly Line[], agent: AgentId, after: number): ReactionRide {
+  const last = lines.length ? Math.max(after, lines[lines.length - 1]!.seq) : after
+  const mine = new Set<number>()
+  for (const l of lines) if (l.kind === 'message' && l.from.id === agent) mine.add(l.seq)
+  const fresh = lines.filter((l) => l.seq > after && l.kind === 'reaction' && l.react && l.from.id !== agent && mine.has(l.react.seq))
+  if (fresh.length === 0) return { last }
+  const sums = [...sumReactions(fresh)].sort((a, b) => b[0] - a[0])
+  const total = sums.reduce((n, [, t]) => n + t.length, 0)
+  if (total === 0) return { last }
+  const groups: string[] = []
+  let used = 0
+  let size = 0
+  for (const [seq, tallies] of sums) {
+    const parts: string[] = []
+    for (const t of tallies) {
+      if (used >= RIDE_ENTRIES) break
+      const part = `${t.emoji} ${t.by.map((b) => b.name).join(' + ')}`
+      const extra = parts.length ? part.length + 2 : `${seq} `.length + part.length + (groups.length ? 2 : 0)
+      if (size + extra > RIDE_CHARS) break
+      parts.push(part)
+      size += extra
+      used++
+    }
+    if (parts.length) groups.push(`${seq} ${parts.join(', ')}`)
+    if (used >= RIDE_ENTRIES || parts.length < tallies.length) break
+  }
+  const rest = total - used
+  const text = groups.join('; ') + (rest > 0 ? `${groups.length ? '; ' : ''}+${rest}, veja channels_read` : '')
+  return { text, last }
 }
 
 /** `limit` when `who` putting `reaction` on a message that carries `tallies` would pass a cap, else undefined. */

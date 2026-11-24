@@ -153,6 +153,11 @@ export interface DeliveryMessage {
   to?: readonly string[]
   /** The message's own id in its room, the same for every addressee (unlike the delivery id, one per addressee). */
   ref?: string
+  /**
+   * Reactions to the addressee's own lines that ride on this delivery (`38 ❓ soul · bancada; 36 ✅ Guga`), written by the
+   * extension, never by who wrote the body: the `reactions` attribute inside, a part of the header when typed.
+   */
+  reactions?: string
 }
 
 export type DeliveryState =

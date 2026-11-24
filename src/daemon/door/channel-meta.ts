@@ -10,6 +10,8 @@
 import type { DeliveryMessage } from './types.ts'
 
 export const META_VALUE_MAX = 120
+/** The `reactions` value is the only longer one: the extension caps its ride at ~60 tokens, this is the core's ceiling. */
+export const REACTIONS_MAX = 240
 const KEY_RE = /^[A-Za-z0-9_]+$/
 // C0 controls (line breaks included), DEL and the C1 range.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g
@@ -51,7 +53,7 @@ export function toNames(msg: DeliveryMessage, sep = ','): string | undefined {
  * that delivers, set by the core and written after nothing the message carries, so the message never chooses it.
  */
 export function deliveryMeta(msg: DeliveryMessage, origin: string, id: string): Record<string, string> {
-  return channelMeta({
+  const meta = channelMeta({
     kind: msg.kind,
     origin,
     room: msg.room,
@@ -63,4 +65,7 @@ export function deliveryMeta(msg: DeliveryMessage, origin: string, id: string): 
     to: toNames(msg),
     ref: msg.ref,
   })
+  const reactions = msg.reactions ? oneLine(msg.reactions, REACTIONS_MAX) : ''
+  if (reactions) meta.reactions = reactions
+  return meta
 }

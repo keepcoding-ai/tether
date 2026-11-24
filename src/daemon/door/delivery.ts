@@ -87,7 +87,7 @@ export function checkMessage(raw: unknown): DeliveryMessage {
   if (!m || typeof m !== 'object' || !isStr(m.kind) || !KINDS.has(m.kind) || !isStr(m.body)
     || !from || !isStr(from.name) || !isStr(from.id) || !from.id || !isStr(from.role) || !ROLES.has(from.role as DeliveryRole)
     || (m.room !== undefined && !isStr(m.room)) || (m.inReplyTo !== undefined && !isStr(m.inReplyTo))
-    || (m.ref !== undefined && !isStr(m.ref)) || (m.to !== undefined && !(Array.isArray(m.to) && m.to.every(isStr)))) {
+    || (m.ref !== undefined && !isStr(m.ref)) || (m.reactions !== undefined && !isStr(m.reactions)) || (m.to !== undefined && !(Array.isArray(m.to) && m.to.every(isStr)))) {
     throw new DoorError('bad-request', 'delivery.deliver: mensagem inválida (kind, from {name, id, role} e body são obrigatórios)')
   }
   return {
@@ -98,6 +98,7 @@ export function checkMessage(raw: unknown): DeliveryMessage {
     ...(m.inReplyTo ? { inReplyTo: m.inReplyTo } : {}),
     ...(m.to && m.to.length ? { to: [...m.to] } : {}),
     ...(m.ref ? { ref: m.ref } : {}),
+    ...(m.reactions ? { reactions: m.reactions } : {}),
   }
 }
 

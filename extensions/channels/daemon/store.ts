@@ -83,7 +83,9 @@ export interface ChannelStore {
   rename(id: ChannelId, name: string): Promise<Done<{ channel: Channel; changed: boolean }>>
   /** Raises `seenByUser` in memory; `flush` writes it. */
   markSeen(id: ChannelId, seq: number): void
-  /** Writes the index when `markSeen` left it dirty. */
+  /** Raises the member's `reactionsSeen` (the ride's cursor) in memory; `flush` writes it. */
+  markReactionsSeen(id: ChannelId, agent: AgentId, seq: number): void
+  /** Writes the index when `markSeen` or `markReactionsSeen` left it dirty. */
   flush(): Promise<void>
 
   /** Appends one line (the next `seq`), after it is on disk it is in the tail. */
@@ -451,6 +453,14 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
       const ch = channels.get(id)
       if (ch && seq > ch.seenByUser) {
         ch.seenByUser = seq
+        dirty = true
+      }
+    },
+
+    markReactionsSeen(id, agent, seq) {
+      const m = channels.get(id)?.members[agent]
+      if (m && Object.hasOwn(channels.get(id)!.members, agent) && seq > (m.reactionsSeen ?? 0)) {
+        m.reactionsSeen = seq
         dirty = true
       }
     },
