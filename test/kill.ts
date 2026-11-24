@@ -3,6 +3,8 @@
 // still the one the test claimed, i.e. the same pid AND the same OS creation time, and optionally a command
 // line that contains a token only this test could have put there (its home, pipe or checkout path).
 import { execFile } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { basename, dirname, resolve } from 'node:path'
 
 /** A process identity captured while the process was known to be the test's own. */
 export interface Owned {
@@ -90,6 +92,39 @@ export async function stillOurs(p: Owned): Promise<boolean> {
  * (nothing is killed). A claim with an unknown creation time is never acted on.
  */
 export async function killOwned(p: Owned, opts: { tree?: boolean } = {}): Promise<KillOutcome> {
+  const outcome = await killOwnedProcess(p, opts)
+  // A tetherd of a test home leaves its terminal-pane host (tether-ptyd) behind on purpose (it outlives the daemon
+  // in real use); a test that ends the daemon ends that host too, found by the home in its command line.
+  if (outcome !== 'not-ours') { const home = testHomeOfDaemon(p); if (home) await killTestPtyd(home) }
+  return outcome
+}
+
+/** The temp home a tetherd runs for (`<tmp>/tether-*`, from `<home>/bin/tetherd[.exe]` in its command line); undefined for any other process, and for any home outside the OS temp dir. */
+export function testHomeOfDaemon(p: Owned): string | undefined {
+  const m = /^"?([^"]*)[\\/]bin[\\/]tetherd(?:\.exe)?"?(?:\s|$)/i.exec(p.cmd ?? '')
+  if (!m) return undefined
+  const home = resolve(m[1]!)
+  const same = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
+  return basename(home).startsWith('tether-') && same(dirname(home), resolve(tmpdir())) ? home : undefined
+}
+
+/**
+ * Kills the tether-ptyd of a test home (never of a home outside the OS temp dir) and its tree: the host runs as
+ * `<home>/bin/tether-ptyd.exe`, so its command line names the home, which is the identity checked.
+ */
+export async function killTestPtyd(home: string): Promise<Owned[]> {
+  const probe: Owned = { pid: 0, created: 0, cmd: `"${resolve(home, 'bin', 'tetherd.exe')}"` }
+  if (testHomeOfDaemon(probe) === undefined) return []
+  const killed: Owned[] = []
+  for (const name of process.platform === 'win32' ? ['tether-ptyd.exe'] : ['node']) {
+    for (const h of await findProcesses({ name, cmdIncludes: home }).catch(() => [])) {
+      if (await killOwnedProcess(h, { tree: true }) === 'killed') killed.push(h)
+    }
+  }
+  return killed
+}
+
+async function killOwnedProcess(p: Owned, opts: { tree?: boolean } = {}): Promise<KillOutcome> {
   const now = await identify(p.pid)
   if (!now) return 'gone'
   if (p.created === 0 || now.created !== p.created) return 'not-ours'

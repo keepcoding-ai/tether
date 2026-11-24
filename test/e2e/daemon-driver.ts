@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
-import { claim, killOwned, type Owned } from '../kill.ts'
+import { claim, killOwned, killTestPtyd, type Owned } from '../kill.ts'
 import { awaitReady, Terminal, type ExitInfo, type StartOptions, type Transport } from './harness.ts'
 
 const DAEMON_MAIN = resolve(import.meta.dirname, '../../src/daemon/main.ts')
@@ -110,6 +110,7 @@ export class SuiteDaemon {
     this.pid = 0
     this.owned = undefined
     this.client.close()
+    await killTestPtyd(this.home) // the pane host outlives its daemon by design; a test home must not keep one
   }
 
   /** The daemon's log, for diagnostics. */
