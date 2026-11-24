@@ -12,7 +12,7 @@ import { stat } from 'node:fs/promises'
 import { cacheHitRatio, detectContextJumps } from '../../src/context/live.ts'
 import { inventoryKey, type Inventory } from '../../src/context/inventory.ts'
 import { ContextMeter, type MeasureInput, type MeasureResult } from '../../src/context/measure.ts'
-import { claudeProvider, codexProvider, soulProvider, liveView, type ContextProvider, type ReaderLike } from './providers.ts'
+import { claudeProvider, codexProvider, handsProvider, soulProvider, liveView, type ContextProvider, type ReaderLike } from './providers.ts'
 import type { InventoryView, JumpView, MeasureReply, SnapshotReply, SnapshotRequest, TranscriptView, TurnRow } from './ipc.ts'
 import { inventoryForWire, MAX_READERS, MAX_TURNS_SENT, READER_TTL_MS, readersToDrop } from './rules.ts'
 
@@ -34,7 +34,7 @@ export interface ServiceDeps {
   /** Claude provider overrides (tests). */
   readInventory?: (cwd: string) => Promise<Inventory>
   makeReader?: (path: string) => ReaderLike
-  /** Providers by agent kind; default: claude, codex and soul. */
+  /** Providers by agent kind; default: claude, codex, soul and hands. */
   providers?: Record<string, ContextProvider>
   meter?: { measure(input: MeasureInput): Promise<MeasureResult> }
   isDirectory?: (path: string) => boolean
@@ -63,6 +63,7 @@ export class ContextService {
       claude: claudeProvider({ home: deps.home, ...(deps.readInventory ? { readInventory: deps.readInventory } : {}), ...(deps.makeReader ? { makeReader: deps.makeReader } : {}) }),
       codex: codexProvider({ home: deps.home, now: this.now }),
       soul: soulProvider({ home: deps.home }),
+      hands: handsProvider({ home: deps.home }),
     }
     this.meter = deps.meter ?? new ContextMeter({ inventory: async cwd => (await this.inventoryFor('claude', cwd)).inv })
   }

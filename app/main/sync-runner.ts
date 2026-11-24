@@ -32,6 +32,12 @@ export const ECHO_MS = 5_000
 
 export const SYNC_ARGS: readonly string[] = ['sync', 'now', '--from-app', '--json']
 export const SYNC_EXIT_ARGS: readonly string[] = ['sync', 'now', '--from-app']
+/** `tether sync connect <url>` from the app: the same guarded cycle as `now` (flush, hold, reload), started without sync.json. */
+export const connectArgs = (url: string): readonly string[] => ['sync', 'connect', url, '--from-app', '--json']
+export const DISCONNECT_ARGS: readonly string[] = ['sync', 'disconnect']
+
+interface Job { args: readonly string[]; requireConfig: boolean }
+const SYNC_JOB: Job = { args: SYNC_ARGS, requireConfig: true }
 
 export type ChangeKind = 'layout' | 'settings' | 'profiles' | 'keybindings'
 
@@ -114,6 +120,7 @@ export class SyncRunner {
   private next: { reason: string; promise: Promise<SyncResult | undefined>; resolve: (r: SyncResult | undefined) => void } | undefined
   private debounce: unknown
   private periodic: unknown
+  private readonly listeners = new Set<(state: SyncState) => void>()
   private stopped = false
   private exited = false
   /** Real changes so far; the cycle that started at seq N covers every change up to N. */
@@ -147,26 +154,65 @@ export class SyncRunner {
     return this.next.promise
   }
 
-  private start(reason: string): Promise<SyncResult | undefined> {
-    const p = this.cycle(reason).catch((err: unknown) => {
-      this.deps.log(`sync: ${reason}: erro interno: ${withoutUrls(err instanceof Error ? err.message : String(err))}`)
-      return undefined
-    }).finally(() => {
-      this.current = undefined
-      const n = this.next
-      this.next = undefined
-      if (n) void this.start(n.reason).then(n.resolve)
+  /** The state changed (connected, running, last); the listener is removed by the function returned. */
+  onDidChange(listener: (state: SyncState) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  private emit(): void {
+    const s = this.state()
+    for (const l of [...this.listeners]) { try { l(s) } catch { /* a listener never breaks the cycle */ } }
+  }
+
+  /** `tether sync connect <url>` in the guarded cycle, after the cycle in progress (if any). */
+  async connect(url: string): Promise<SyncResult | undefined> {
+    while (this.current) await this.current
+    return this.start('conexão', { args: connectArgs(url), requireConfig: false })
+  }
+
+  /** `tether sync disconnect` (the files stay); no cycle runs meanwhile. The message is the CLI's one line. */
+  async disconnect(): Promise<{ ok: boolean; message: string }> {
+    while (this.current) await this.current
+    const p = this.runChild(DISCONNECT_ARGS).then(async out => {
+      const ok = out.spawnError === undefined && !out.timedOut && out.code === 0
+      const message = out.spawnError ?? (out.timedOut ? 'o tether sync disconnect não terminou a tempo' : ok ? lastLine(out.stdout) : (lastLine(out.stderr) || `o tether sync saiu com o código ${String(out.code)}`).replace(/^tether:\s*/, ''))
+      this.connected = await this.deps.configExists().catch(() => false)
+      if (!this.connected) { this.last = null; this.clearDebounce() }
+      this.deps.log(`sync: desconectar: ${ok ? 'ok' : `falhou: ${withoutUrls(message)}`}`)
+      return { ok, message }
     })
+    this.current = p.then(() => undefined, () => undefined)
+    try { return await p } finally { this.settle(); this.emit() }
+  }
+
+  private start(reason: string, job: Job = SYNC_JOB): Promise<SyncResult | undefined> {
+    const p = this.cycle(reason, job).catch((err: unknown) => {
+      this.deps.log(`sync: ${reason}: erro interno: ${withoutUrls(err instanceof Error ? err.message : String(err))}`)
+      this.emit()
+      return undefined
+    }).finally(() => this.settle())
     this.current = p
     return p
   }
 
-  private async cycle(reason: string): Promise<SyncResult | undefined> {
+  /** The exclusive slot is free: the merged request (if any) starts. */
+  private settle(): void {
+    this.current = undefined
+    const n = this.next
+    this.next = undefined
+    if (n) void this.start(n.reason).then(n.resolve)
+  }
+
+  private async cycle(reason: string, job: Job): Promise<SyncResult | undefined> {
     if (this.stopped) return undefined
+    const was = this.connected
     this.connected = await this.deps.configExists().catch(() => false)
-    if (!this.connected || this.stopped) return undefined
+    if (was !== this.connected) this.emit()
+    if ((job.requireConfig && !this.connected) || this.stopped) return undefined
     const started = this.clock.now()
     this.running = true
+    this.emit()
     this.startSeq = this.changeSeq
     this.clearDebounce() // the changes so far ride on this cycle
     this.duringRun.clear()
@@ -175,7 +221,7 @@ export class SyncRunner {
       this.phase = 'flush'
       await this.bounded(this.deps.flushLayout().catch(() => undefined), FLUSH_WAIT_MS)
       this.phase = 'hold'
-      const out = await this.runChild()
+      const out = await this.runChild(job.args)
       result = this.resultOf(out, reason, started)
     } finally {
       // d. release: always, even when something above threw.
@@ -199,10 +245,13 @@ export class SyncRunner {
     }
     this.last = result
     if (result.ok) this.syncedSeq = this.startSeq
+    // connect writes sync.json itself: the link exists from now on (or still does not).
+    if (!job.requireConfig) this.connected = await this.deps.configExists().catch(() => false)
     this.deps.log(this.logLine(result))
     if (!result.ok && result.report === null && result.error && this.deps.writeLast && !this.childWroteLast) {
       await this.deps.writeLast({ at: result.at, ok: false, error: result.error, report: null }).catch(() => undefined)
     }
+    this.emit()
     return result
   }
 
@@ -234,7 +283,7 @@ export class SyncRunner {
     return `sync: ${r.reason}: falhou em ${secs}: ${r.error?.code ?? 'error'}: ${withoutUrls(r.error?.message ?? '')}`
   }
 
-  private runChild(): Promise<ChildOutcome> {
+  private runChild(args: readonly string[]): Promise<ChildOutcome> {
     return new Promise(resolve => {
       let stdout = ''
       let stderr = ''
@@ -247,7 +296,7 @@ export class SyncRunner {
         resolve({ ...o, stdout, stderr })
       }
       let child: ChildLike
-      try { child = this.deps.spawnChild(SYNC_ARGS, false) } catch (err) {
+      try { child = this.deps.spawnChild(args, false) } catch (err) {
         finish({ code: null, timedOut: false, spawnError: err instanceof Error ? err.message : String(err) })
         return
       }
@@ -365,6 +414,11 @@ let registered: SyncRunner | undefined
 
 export function createSyncRunner(deps: SyncRunnerDeps): SyncRunner {
   registered = new SyncRunner(deps)
+  return registered
+}
+
+/** The app's runner, for the sync extension's main side (extensions/sync/main.ts); undefined before main created it. */
+export function getSyncRunner(): SyncRunner | undefined {
   return registered
 }
 

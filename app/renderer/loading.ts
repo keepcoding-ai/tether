@@ -4,7 +4,7 @@
 import { agentTable, agentUi, isAgentUnavailable } from './agent-ui.ts'
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 /** Phosphor icons of the stages (a subset of icons.ts IconName; not imported: icons.ts pulls the SVG assets). */
-export type LoadingIcon = 'plugs' | 'hourglass' | 'terminal-window' | 'clock-counter-clockwise' | 'ghost' | 'sparkle'
+export type LoadingIcon = 'plugs' | 'hourglass' | 'terminal-window' | 'clock-counter-clockwise' | 'ghost' | 'hand' | 'sparkle'
 
 /** What the pane paints from the layout file before the daemon answers (kept in the pane's params). */
 export interface PaneHint {

@@ -6,6 +6,7 @@ import { describe, test } from 'node:test'
 import {
   CHANGE_DEBOUNCE_MS, CHILD_TIMEOUT_MS, ECHO_MS, FLUSH_WAIT_MS, OPEN_WAIT_MS, PERIODIC_MS, SYNC_ARGS, SYNC_EXIT_ARGS,
   SyncRunner, rendererLayoutFlusher, withoutUrls, type ChildLike, type Clock, type SyncRunnerDeps,
+  DISCONNECT_ARGS, connectArgs, type SyncState,
 } from '../../app/main/sync-runner.ts'
 
 const tick = async (n = 10): Promise<void> => { for (let i = 0; i < n; i++) await new Promise<void>(r => setImmediate(r)) }
@@ -373,5 +374,66 @@ describe('sync runner: helpers', () => {
     assert.equal(await flush(), false, 'no answer: false after the wait')
     target = undefined
     assert.equal(await flush(), false)
+  })
+})
+
+describe('sync runner: connect, disconnect and the change event', () => {
+  test('connect runs `sync connect <url> --from-app --json` in the guarded cycle without sync.json, and then is connected', async () => {
+    const h = harness({ configured: false })
+    const states: SyncState[] = []
+    h.runner.onDidChange(s => states.push(s))
+    const p = h.runner.connect('https://git.test/me/perfil.git')
+    const c = await h.childNow()
+    assert.deepEqual(c.args, connectArgs('https://git.test/me/perfil.git'))
+    assert.equal(h.flushes, 1, 'the renderer saves first, as in `now`')
+    assert.equal(h.runner.state().running, true)
+    h.setConfigured(true) // the CLI wrote sync.json
+    c.finish({ layout: true })
+    const r = await p
+    assert.equal(r?.ok, true)
+    assert.equal(r?.reason, 'conexão')
+    assert.equal(h.reloads, 1, 'an applied arrangement reloads the window')
+    assert.equal(h.runner.state().connected, true)
+    assert.ok(states.some(s => s.running), 'running was announced')
+    assert.deepEqual(states.at(-1), { connected: true, running: false, last: r })
+  })
+
+  test('a failed connect keeps the one-line message of the CLI', async () => {
+    const h = harness({ configured: false })
+    const p = h.runner.connect('https://git.test/x.git')
+    const c = await h.childNow()
+    c.stderr.emit('data', 'tether: esta máquina já está conectada a https://***@git.test/y.git; rode "tether sync disconnect" antes de trocar\n')
+    c.emit('close', 1)
+    const r = await p
+    assert.equal(r?.ok, false)
+    assert.match(r?.error?.message ?? '', /^esta máquina já está conectada/)
+  })
+
+  test('disconnect runs `sync disconnect`, forgets the last result and announces it', async () => {
+    const h = harness()
+    const p1 = h.runner.run('link'); (await h.childNow()).finish(); await p1
+    const states: SyncState[] = []
+    h.runner.onDidChange(s => states.push(s))
+    const p = h.runner.disconnect()
+    const c = await h.childNow()
+    assert.deepEqual(c.args, DISCONNECT_ARGS)
+    h.setConfigured(false)
+    c.stdout.emit('data', 'Desconectado. Os seus arquivos e a pasta de sincronização ficaram como estão.\n')
+    c.emit('close', 0)
+    assert.deepEqual(await p, { ok: true, message: 'Desconectado. Os seus arquivos e a pasta de sincronização ficaram como estão.' })
+    assert.deepEqual(h.runner.state(), { connected: false, running: false, last: null })
+    assert.deepEqual(states.at(-1), { connected: false, running: false, last: null })
+  })
+
+  test('a request during disconnect waits for it (and then finds no sync.json)', async () => {
+    const h = harness()
+    const p = h.runner.disconnect()
+    const c = await h.childNow()
+    const during = h.runner.run('mudança')
+    h.setConfigured(false)
+    c.emit('close', 0)
+    await p
+    assert.equal(await during, undefined)
+    assert.equal(h.children.length, 1)
   })
 })

@@ -21,7 +21,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export type ExeName = 'tetherd' | 'tether-soul' | 'tether-procd' | 'tether-ptyd'
+export type ExeName = 'tetherd' | 'tether-soul' | 'tether-hands' | 'tether-procd' | 'tether-ptyd'
 export type ExeMethod = 'hardlink' | 'copy'
 /** How the process gets its name: a renamed file, none at all (`fallback`), or argv[0] over the real node (`argv0`). */
 export type ExeHow = ExeMethod | 'fallback' | 'argv0'

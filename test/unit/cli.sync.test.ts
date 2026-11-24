@@ -246,6 +246,7 @@ describe('cli: tether sync', () => {
     const url = 'https://someone:topsecret@localhost:1/none.git'
     assert.equal(await run(b, 'connect', url), 1)
     assert.ok(!b.out.includes('topsecret') && !b.err.includes('topsecret'))
+    writeFileSync(join(b.home, 'sync.json'), JSON.stringify({ provider: 'git', url, machine: 'm' }))
     await run(b, 'status')
     assert.ok(!b.out.includes('topsecret'))
     assert.match(b.out, /https:\/\/\*\*\*@localhost:1\/none\.git/)
@@ -267,6 +268,28 @@ describe('cli: tether sync', () => {
     assert.equal(last.error?.code, 'network')
     assert.equal(last.report, null)
     assert.ok(!existsSync(join(b.home, 'sync.lock')))
+  })
+
+  test('a first connection that fails leaves no link, and a good URL works right after', async () => {
+    const b = box()
+    seedA(b, join(b.user, 'proj'))
+    assert.equal(await run(b, 'connect', join(root, 'nope.git')), 1)
+    assert.match(b.err, /Nada ficou conectado\.$/m)
+    assert.equal(b.err.trim().split('\n').length, 1)
+    assert.ok(!existsSync(join(b.home, 'sync.json')))
+    assert.equal(readSyncLast(b.home)?.ok, false)
+    const remote = bareRemote()
+    assert.equal(await run(b, 'connect', remote), 0, b.err)
+    assert.deepEqual(JSON.parse(readFileSync(join(b.home, 'sync.json'), 'utf8')), { provider: 'git', url: remote, machine: machineLabel() })
+  })
+
+  test('a reconnection that fails keeps the link', async () => {
+    const b = box()
+    const url = join(root, 'gone.git')
+    writeFileSync(join(b.home, 'sync.json'), JSON.stringify({ provider: 'git', url, machine: 'm' }))
+    assert.equal(await run(b, 'connect', url), 1)
+    assert.doesNotMatch(b.err, /Nada ficou conectado/)
+    assert.equal(readSyncConfig(b.home)?.url, url)
   })
 
   test('--json prints the whole record (success and failure)', async () => {
