@@ -20,8 +20,8 @@ export function desksPath(home: string): string {
 const isPane = (p: unknown): p is { id: string; type: string } =>
   typeof p === 'object' && p !== null && typeof (p as { id?: unknown }).id === 'string' && typeof (p as { type?: unknown }).type === 'string'
 
-/** A pane of the map, normalised: `asleep` kept only when it is `true`. */
-const paneOf = (p: DeskMapPane): DeskMapPane => ({ id: p.id, type: p.type, ...(p.asleep === true ? { asleep: true as const } : {}) })
+/** A pane of the map, normalised: `asleep` and `suspended` kept only when they are `true`. */
+const paneOf = (p: DeskMapPane): DeskMapPane => ({ id: p.id, type: p.type, ...(p.asleep === true ? { asleep: true as const } : {}), ...(p.suspended === true ? { suspended: true as const } : {}) })
 
 /** Validates and normalises what the app sent (or what the disk holds); undefined when it is not a desk map. */
 export function parseDeskMap(raw: unknown): DeskMap | undefined {
@@ -47,6 +47,8 @@ export class DeskService implements DoorDesks {
   private byPane = new Map<string, DeskMapDesk>()
   /** The slots whose terminal pane sits in a desk. */
   private shownSlots = new Set<string>()
+  /** The panes the app suspended to save resources (map `suspended`), in desks or in the drawer. */
+  private suspendedPanes = new Set<string>()
   private readonly listeners = new Set<(map: DeskMap) => void>()
   private writing: Promise<void> = Promise.resolve()
 
@@ -73,6 +75,9 @@ export class DeskService implements DoorDesks {
   map(): DeskMap | undefined { return this.current }
 
   deskOf(paneId: string): DeskMapDesk | undefined { return this.byPane.get(paneId) }
+
+  /** The app suspended this pane to save resources (map `suspended`): anything that needs it resumes it first. */
+  isSuspended(paneId: string): boolean { return this.suspendedPanes.has(paneId) }
 
   onDidChange(listener: (map: DeskMap) => void): IDisposable {
     this.listeners.add(listener)
@@ -148,7 +153,9 @@ export class DeskService implements DoorDesks {
     this.currentText = text
     this.byPane = new Map()
     this.shownSlots = new Set()
-    for (const d of map.desks) for (const p of d.panes) { this.byPane.set(p.id, d); if (p.type === 'terminal') this.shownSlots.add(p.id) }
+    this.suspendedPanes = new Set()
+    for (const d of map.desks) for (const p of d.panes) { this.byPane.set(p.id, d); if (p.type === 'terminal') this.shownSlots.add(p.id); if (p.suspended) this.suspendedPanes.add(p.id) }
+    for (const p of map.drawer) if (p.suspended) this.suspendedPanes.add(p.id)
     return true
   }
 

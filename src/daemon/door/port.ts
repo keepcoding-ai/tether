@@ -118,4 +118,6 @@ export interface DoorSeams {
   exited(slotId: string): void
   /** The slot was forgotten (`forget`), before its files go; a promise is awaited before the reply. */
   forgotten(slotId: string): void | Promise<void>
+  /** Resumes the slot when the app suspended its pane (door/suspend.ts); false when it is not suspended. */
+  resumeSuspended?(slotId: string, why: string): boolean
 }

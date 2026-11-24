@@ -23,6 +23,8 @@ describe('for-agents: send with the envelope (X5)', () => {
   let logs: string[]
   /** What the verb told the store about each send: true = failed (the text may be left in the box). */
   let outcomes: boolean[]
+  /** The door's awake (a suspended pane resumes before the act); by default the pane is up at once. */
+  let awakeImpl: (id: string, why: string) => Promise<unknown>
 
   const fake: Conductor = {
     id: 'fake',
@@ -36,7 +38,7 @@ describe('for-agents: send with the envelope (X5)', () => {
   const slot = { slotId: PANE, kind: 'soul' as string, name: 'p1', cwd: '/x' }
   const deps = {
     api: {
-      slots: { get: (id: string) => (id === PANE ? slot : { slotId: OWNER, kind: 'soul', name: 'Atrium', cwd: '/x' }) },
+      slots: { get: (id: string) => (id === PANE ? slot : { slotId: OWNER, kind: 'soul', name: 'Atrium', cwd: '/x' }), awake: (id: string, why: string) => awakeImpl(id, why) },
       desks: { map: () => undefined },
       delivery: {
         pathOf: () => path,
@@ -75,6 +77,7 @@ describe('for-agents: send with the envelope (X5)', () => {
     slot.kind = 'soul'
     path = 'terminal'; hand = 'owner'; detected = { state: 'idle' }; typed = []; delivered = []; logs = []; outcomes = []
     sendImpl = async () => {}
+    awakeImpl = async (id) => (id === PANE ? slot : undefined)
     receipt = { id: 'm_x', slotId: PANE, state: 'typed', at: '' }
   })
 
@@ -161,5 +164,26 @@ describe('for-agents: send with the envelope (X5)', () => {
     receipt = { id: 'm_6', slotId: PANE, state: 'queued', at: '' }
     await run()
     assert.deepEqual(outcomes, [false, true, false, false])
+  })
+
+  test('a suspended pane: the send waits for the pane to resume, then types (nothing goes before the agent is up)', async () => {
+    const order: string[] = []
+    let release!: () => void
+    awakeImpl = (id, why) => { order.push(`awake ${id} ${why}`); return new Promise((resolve) => { release = () => { order.push('up'); resolve(slot) } }) }
+    sendImpl = async () => { order.push('typed') }
+    const pending = run()
+    await new Promise((r) => setTimeout(r, 20))
+    assert.deepEqual(order, [`awake ${PANE} agents send`], 'nothing typed while the pane resumes')
+    release()
+    const r = await pending
+    assert.equal(r.isError, undefined)
+    assert.deepEqual(order, [`awake ${PANE} agents send`, 'up', 'typed'])
+  })
+
+  test('a suspended pane whose resume needs the person (unconfirmed session): refused with unconfirmed, nothing typed', async () => {
+    awakeImpl = async () => ({ ...slot, status: 'unconfirmed' })
+    const r = await run()
+    assert.equal(codeOf(r), 'unconfirmed')
+    assert.deepEqual([typed.length, delivered.length], [0, 0])
   })
 })

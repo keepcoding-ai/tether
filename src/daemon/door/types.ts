@@ -64,6 +64,12 @@ export interface DoorSlots {
   userFree(slotId: string): boolean
   /** When (ms epoch) the person last typed into the slot; undefined when she never did. The agent's own keys do not count. */
   userTypedAt(slotId: string): number | undefined
+  /**
+   * Before an act on the slot: when the app suspended its pane (an idle agent stopped to save resources), it is resumed and
+   * this resolves once the agent is up ('running'), or the start settles without it, or a long timeout passes; then with the
+   * slot's state. A slot that is not suspended resolves at once (a starting one once it runs). `why` goes to the log.
+   */
+  awake(slotId: string, why: string): Promise<SlotState | undefined>
 }
 
 // ---- 2. desks --------------------------------------------------------------------------------

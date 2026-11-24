@@ -1265,3 +1265,25 @@ Pedido do Guga: reproduzir o painel Search do VSCodium, substituir incluído, "a
 - Corrigido no caminho: foco que rodava entre painéis após restaurar o layout (teclas caíam em outro painel) — anterior à etapa; três pontos que descartavam tecla agora enfileiram (64 KB) e entregam em ordem; adopt sem duplicar; fila do host que podia travar com teto pequeno; testes da CLI isolados do host em processo.
 - Fica para depois: agente adotado sem atenção/ronda/MCP refeitos (reiniciar o painel devolve); atraso de laço do host não medido; limpeza `s.held.length >= 0` em `PanelLink.resync`.
 - Suíte: 3 falhas de base (profiles/set-profile "Claude modo dev", ext.index cookie-runtime-main).
+
+## Tether leve: guia suspensa por economia (2026-11-23, branch agent/tether-suspend)
+
+Item aprovado pelo PO: uma guia de agente ociosa (sem turno e sem uso da pessoa por 60 min, configurável) é suspensa para economizar recursos; qualquer uso retoma. Estado, textos e ícone próprios, separados da hibernação.
+
+- **Mecanismo.** O mesmo da hibernação: `stop` para suspender, `start` (retoma a sessão) para retomar. Estado novo `suspendedPanes` no layout (fica na máquina, como `asleepPanes`); o mapa de mesas marca a guia `suspended: true`, e o tetherd guarda o mapa em `desks.json`, então a retomada vinda de fora funciona com o app fechado.
+- **Varredor único** no renderer (`app/renderer/suspend.ts`, a cada 60 s, nada por guia). Suspende só agente `running`, com `canRestart` (motor que retoma e sessão informada nesta execução), sem `turn: 'busy'`, sem subagentes em segundo plano, sem `waiting` (inclusive roteado), sem foco, fora de hibernação, com `idleSince` e último uso além do limite. O mapa é gravado antes do `stop`.
+- **Retomada pela pessoa.** Tecla, colar, clique ou rolagem no terminal retomam; o que ela digita enquanto a guia volta fica guardado (até 64 KB, em ordem) e é entregue quando o agente fica `running`.
+- **Retomada de fora** (`src/daemon/door/suspend.ts`, `SuspendWaker`): uma entrega que fica na fila (canais, mensagem, `agents send`, avisos ao dono) retoma a guia e a fila sai quando o agente sobe; `send`, `type`, `keys` e `command` esperam a retomada (`DoorSlots.awake`) e então agem; a ronda devida numa guia suspensa a retoma. Pedido que chega durante o `stop` da suspensão espera o processo sair e então retoma.
+- **Tela.** A guia fica no lugar, sem cartão, com a última tela (o anel do tetherd sobrevive ao `stop`; só se perde se o tetherd reiniciar). Selo discreto "Suspensa" com a dica "Suspensa para economizar recursos — retoma ao usar" (vira "Retomando…" enquanto volta); na aba, uma folha pequena e apagada no lugar do ponto.
+- **Configuração.** `performance.suspend.enabled` (padrão true) e `performance.suspend.idleMinutes` (padrão 60, entre 5 e 1440), seção "Desempenho" da tela de Configurações.
+- **Hibernação.** Hibernar uma guia suspensa a torna hibernada ("Hibernar guia" aparece também para a suspensa); guia hibernada nunca é suspensa; retomar hibernada continua explícito.
+- **Prova.** `test/unit/app.suspend.test.ts` (critério, retomada pela pessoa, persistência, mapa, independência da hibernação, configuração), `test/unit/daemon.door-suspend.test.ts` (tetherd real: entrega retoma e entrega, `awake` espera e a escrita chega, pedido durante o `stop`, guia parada ou hibernada não retoma), `ext.for-agents-send.test.ts` (o `send` espera a retomada antes de digitar; sessão não confirmada recusa).
+- **Entrega pede reiniciar o tetherd** (mudou `src/daemon` e os verbos do for-agents): sem isso o tetherd antigo descarta a marca `suspended` do mapa, e o que vem de fora espera na fila até a pessoa usar a guia.
+
+### Decisões para validar
+- Shell nunca é suspenso (um shell não retoma o estado; voltaria vazio).
+- Foco conta como uso: a guia com foco renova o relógio de uso a cada varredura.
+- Clique ou rolagem em qualquer parte do terminal retoma; foco sozinho (trocar para a guia) não retoma.
+- Ícone da suspensa: folha (Phosphor `leaf`), sem lua nem olho.
+- Ao abrir o app, o "último uso" desconhecido conta a partir da abertura: nada é suspenso na primeira hora.
+- A ronda retoma a guia suspensa a cada ronda devida (uma guia com ronda curta quase não fica suspensa).

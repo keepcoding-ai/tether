@@ -6,7 +6,7 @@
 //   - A desk travels under a `uid`, not its local `desk-N` id (two machines both mint `desk-2`). The engine keeps the
 //     local id → uid map (DeskIds) in a file; the codec receives it and hands it back.
 //   - A pad whose state still holds an absolute path after the PATH_KEYS pass stays on the machine.
-//   - What stays on the machine: activeDesk, drawer, sidebars, systemDesks, asleepPanes, deskSleptPanes, each desk's
+//   - What stays on the machine: activeDesk, drawer, sidebars, systemDesks, asleepPanes, deskSleptPanes, suspendedPanes, each desk's
 //     `asleep` and any unknown top-level key; and the view state (see restoreViewState).
 import { randomUUID } from 'node:crypto'
 import { posix, win32 } from 'node:path'
@@ -395,6 +395,7 @@ export function importLayout(
     const gone = new Set(terminalSlots(mine))
     if (Array.isArray(out.asleepPanes)) out.asleepPanes = (out.asleepPanes as string[]).filter((s) => !gone.has(s))
     if (Array.isArray(out.deskSleptPanes)) out.deskSleptPanes = (out.deskSleptPanes as string[]).filter((s) => !gone.has(s))
+    if (Array.isArray(out.suspendedPanes)) out.suspendedPanes = (out.suspendedPanes as string[]).filter((s) => !gone.has(s))
   }
   out.desks = desks
   if (typeof out.activeDesk === 'string' && removed.includes(out.activeDesk) && desks.length > 0) out.activeDesk = desks[0]!.id
