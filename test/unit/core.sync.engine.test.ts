@@ -303,6 +303,28 @@ describe('sync engine (in-memory provider)', () => {
     assert.equal((a.work.layout.desks as { id: string }[])[0]!.id, 'desk-1', 'the local id stays')
   })
 
+  test('a local keybindings edit made after the export survives an import of the older folder copy', async () => {
+    const remote = newRemote()
+    const a = machine('a', (d) => fakeProvider(d, remote))
+    const b = machine('b', (d) => fakeProvider(d, remote))
+    seedA(a)
+    a.work.keybindings = [{ key: 'ctrl+k', command: 'old' }]
+    await a.engine.connect()
+    await b.engine.connect()
+    assert.deepEqual(b.work.keybindings, [{ key: 'ctrl+k', command: 'old' }])
+
+    // A pushes a newer version; B edits locally before importing it.
+    a.work.keybindings = [{ key: 'ctrl+k', command: 'fromA' }]
+    await a.engine.sync()
+    await b.provider.pull() // the folder now holds A's version
+    b.work.keybindings = [{ key: 'ctrl+j', command: 'mine' }] // edited after B's last export
+    await b.engine.importAll()
+    assert.deepEqual(b.work.keybindings, [{ key: 'ctrl+j', command: 'mine' }], 'the unsent local edit wins')
+    await b.engine.sync()
+    const text = readFileSync(join(b.dir, 'settings', 'keybindings.json'), 'utf8')
+    assert.match(text, /mine/, 'and it is exported on the next cycle')
+  })
+
   test('a removal propagates: profile and desk gone on A disappear on B', async () => {
     const remote = newRemote()
     const a = machine('a', (d) => fakeProvider(d, remote))

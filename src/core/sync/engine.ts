@@ -303,7 +303,18 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     const layoutOk = isObject(work.layout) && work.layout.v === 4
     const lr = layoutOk ? importLayout(entities, work.layout, places, ids, opts) : undefined
     const sr = importSlots(entities, work.slots, places, opts)
-    const se = importSettings(entities, { settings: work.settings, keybindings: work.keybindings }, opts.localSettings)
+    // A settings/keybindings entity whose local projection no longer matches the base was edited after the last
+    // export: the folder copy is older, so it must not overwrite it. Keep the local value and leave the old base
+    // entry in place, so the next export sees the difference and sends it.
+    const baseBefore = readState(home).base
+    const localProj = exportSettings(work.settings, work.keybindings, opts.localSettings).entities['settings'] ?? {}
+    const keepLocal = ['settings', 'keybindings'].filter((id) => {
+      const old = baseBefore[`settings/${id}`]
+      return old !== undefined && id in localProj && old !== sha(serializeEntity(localProj[id]))
+    })
+    const folderSettings = { ...(entities['settings'] ?? {}) }
+    for (const id of keepLocal) delete folderSettings[id]
+    const se = importSettings({ ...entities, settings: folderSettings }, { settings: work.settings, keybindings: work.keybindings }, opts.localSettings)
 
     const plan: ApplyPlan = {}
     if (!same(pr.profiles, work.profiles)) plan.profiles = pr.profiles
@@ -331,7 +342,9 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
     const state = readState(home)
     const proj = project(next, places, lr ? lr.ids : ids, opts)
     persistMaps(proj)
-    writeState(home, { base: baseOf(proj, state.base), needsImport: false })
+    const newBase = baseOf(proj, state.base)
+    for (const id of keepLocal) newBase[`settings/${id}`] = baseBefore[`settings/${id}`]!
+    writeState(home, { base: newBase, needsImport: false })
 
     const skipped = [...unreadable, ...pr.skipped.map((id) => `profiles/${id}`), ...(lr?.skipped ?? []), ...sr.skipped.map((id) => `slots/${id}`)]
     if (!layoutOk) skipped.push('layout')
