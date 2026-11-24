@@ -3,6 +3,12 @@
 // closes). picker.ts draws; this file decides, so the unit tests load it.
 import type { PickItem, PickManySpec, PickSpec } from '../ext-api.ts'
 import { fuzzyMatch, highlightRuns } from '../fuzzy.ts'
+import { engineOf as pickEngine } from '../agent-ui.ts'
+
+/** True when some row names an engine: the list is of agents, so every row reserves the engine column and the emblem slot. */
+export function hasEngineColumn<T>(items: readonly PickItem<T>[], featured?: PickItem<T>): boolean {
+  return featured?.engine !== undefined || items.some(i => i.engine !== undefined)
+}
 
 /** Rows moved by PageUp and PageDown. */
 export const PICK_PAGE = 8
@@ -29,9 +35,11 @@ export function rankPicks<T>(featured: PickItem<T> | undefined, items: readonly 
     const detail = label || !item.detail ? undefined : fuzzyMatch(query, item.detail)
     // The emblem's name is the last place a query can match, ranked like a detail-only match.
     const emblem = label || detail || !item.emblem ? undefined : fuzzyMatch(query, item.emblem.name)
-    if (!label && !detail && !emblem) return undefined
+    // The engine's name ("Soul", "Claude") is matched last too: typing "soul" finds the Soul agents whatever their names.
+    const engine = label || detail || emblem || !item.engine ? undefined : fuzzyMatch(query, pickEngine(item.engine).label)
+    if (!label && !detail && !emblem && !engine) return undefined
     const runs = label && label.positions.length > 0 ? highlightRuns(item.label, label.positions) : [{ text: item.label, hit: false }]
-    return { row: { item, featured: isFeatured, runs }, key: label ? 1000 + label.score : (detail ?? emblem)!.score }
+    return { row: { item, featured: isFeatured, runs }, key: label ? 1000 + label.score : (detail ?? emblem ?? engine)!.score }
   }
   const top = featured && rank(featured, true)
   if (top) rows.push(top.row)

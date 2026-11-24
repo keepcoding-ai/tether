@@ -117,6 +117,9 @@
 .ch-mention-list[hidden] { display: none; }
 .ch-mention-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 5px; cursor: pointer; }
 .ch-mention-opt[aria-selected="true"], .ch-mention-opt:hover { background: var(--bg-hover); }
+.ch-mention-eng { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; align-self: center; color: var(--fg-dim); }
+.ch-mention-eng svg.ph { width: 14px; height: 14px; }
+.ch-mention-opt .ch-mention-name { flex: 1; }
 .ch-mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-mention-opt.all .ch-mention-name { font-style: italic; }
 .ch-mention-mark { flex: none; font-size: 11px; color: var(--fg-dim); }

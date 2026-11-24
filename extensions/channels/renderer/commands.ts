@@ -161,7 +161,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
           return joinItems(agents(), new Set(a.members.map(m => m.id)), ui.desks.activeId(), emblemOf, { removed: new Set(a.removed), desks })
         }
         const ownerId = a.channel.owner.kind === 'agent' ? a.channel.owner.id : undefined
-        return memberItems(a.members, ownerId, kind as MemberGesture, emblemOf)
+        return memberItems(a.members, ownerId, kind as MemberGesture, emblemOf, id => ui.agents.get(id)?.kind)
       },
     }
   }

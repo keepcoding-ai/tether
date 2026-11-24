@@ -45,6 +45,7 @@ import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-
 import type { SearchTab } from './session-search-rules.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { ICON_NAMES, icon, KIND_ICON, type IconName } from './icons.ts'
+import { agentHue } from '../shared/agent-color.ts'
 import { BRAND } from '../shared/brand.ts'
 import { StatusRegistry } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
@@ -1599,7 +1600,7 @@ function pickPeek(): void {
     const route = peekRoute(s, tab !== undefined, tab ? tabInView(tabPlaceOf(s.slotId, tab)) : true)
     if (route !== 'card' && route !== 'lend') continue
     const h = peekHeader(s, now)
-    items.push({ value: s.slotId, label: h.title, detail: h.text, icon: KIND_ICON[s.kind] ?? 'terminal-window' })
+    items.push({ value: s.slotId, label: h.title, detail: h.text, engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: Array.from(h.title.trim())[0]?.toUpperCase() ?? '?', hue: agentHue(s.slotId) })
   }
   void door.pickList<string>({ title: 'Espiar agente', placeholder: 'Buscar agente…', items, emptyText: 'Nenhum agente vivo fora da tela.' }).then(id => { if (id) peek(id) })
 }

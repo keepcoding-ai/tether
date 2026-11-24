@@ -3,7 +3,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DoorHost } from '../../app/renderer/door/host.ts'
-import { confirmText, groupHeading, manyChosen, manyCount, manyFooter, manyOptions, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
+import { engineOf, registerAgentUi } from '../../app/renderer/agent-ui.ts'
+import { confirmText, groupHeading, hasEngineColumn, manyChosen, manyCount, manyFooter, manyOptions, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
 import type { PickItem, PickSpec } from '../../app/renderer/ext-api.ts'
 
 const it = (value: string, label = value, detail?: string): PickItem<string> => ({ value, label, ...(detail ? { detail } : {}) })
@@ -42,6 +43,22 @@ describe('rankPicks', () => {
     // A label match outranks an emblem-only match; a row with no emblem is untouched.
     const mixed = [wears('e', 'outro', 'Revisar'), it('l', 'Revisão')]
     assert.deepEqual(rankPicks(undefined, mixed, 'revis').map(r => r.item.value), ['l', 'e'])
+  })
+
+  test('the engine name is searched too ("soul" finds the Soul agents), last, and an unknown kind answers to its own name', () => {
+    const disposable = registerAgentUi({ name: 'soul', label: 'Soul', icon: 'soul-mark', keywords: [], argsPlaceholder: '' })
+    try {
+      const mk = (value: string, label: string, engine: string): PickItem<string> => ({ ...it(value, label), engine })
+      const rows = [mk('a', 'kai', 'soul'), mk('b', 'kai', 'claude'), mk('c', 'Soulange', 'claude'), it('d', 'xxx')]
+      assert.deepEqual(rankPicks(undefined, rows, 'soul').map(r => r.item.value), ['c', 'a'], 'a label match first, then the engine match')
+      assert.deepEqual(rankPicks(undefined, rows, 'claude').map(r => r.item.value), ['b', 'c'], 'an engine with no AgentUi is named by its kind')
+      assert.deepEqual(engineOf('soul'), { icon: 'soul-mark', label: 'Soul' })
+      assert.deepEqual(engineOf('shell'), { icon: 'terminal-window', label: 'Shell' })
+      assert.deepEqual(engineOf('codex'), { icon: 'terminal-window', label: 'codex' })
+      assert.equal(hasEngineColumn(rows), true)
+      assert.equal(hasEngineColumn([it('x'), it('y')]), false, 'a list that is not of agents has no column')
+      assert.equal(hasEngineColumn([it('x')], mk('f', 'f', 'soul')), true, 'the featured row counts')
+    } finally { disposable.dispose() }
   })
 
   test('the label comes back split for the highlight', () => {

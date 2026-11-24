@@ -15,6 +15,8 @@ import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
 import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
+import { engineOf } from '../../../app/renderer/agent-ui.ts'
+import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { isPeekModifier } from '../../../app/renderer/link-open.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
@@ -685,6 +687,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.composer.setMembers(this.answer.members.map(m => m.name))
       this.composer.setMarks(new Map(memberRows(this.answer, undefined, noDesk).flatMap((m): Array<[string, string]> =>
         m.muted ? [[m.name, MENTION_TEXT.muted]] : m.tone === 'wait' ? [[m.name, MENTION_TEXT.deaf]] : [])))
+      this.composer.setEngines(new Map(this.answer.members.flatMap((m): Array<[string, string]> => { const k = ui.agents.get(m.id)?.kind; return k ? [[m.name, k]] : [] })))
       this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }
@@ -1020,7 +1023,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         hueStyle(row, m.hue)
         const l1 = el('div', 'ch-l1')
         const em = el('span', `ch-em${m.crown ? ' crown' : ''}`)
-        em.append(glyph(m.crown ? 'crown-simple' : 'robot'))
+        // The engine's icon (Claude, Soul…) from the agent's kind; the generic robot when the app does not know the member.
+        const kind = ui.agents.get(m.id)?.kind
+        if (kind) {
+          const engine = engineOf(kind)
+          const g = glyph((ICON_NAMES as readonly string[]).includes(engine.icon) ? engine.icon as IconName : 'robot')
+          em.dataset.engine = kind
+          em.title = engine.label
+          em.setAttribute('role', 'img')
+          em.setAttribute('aria-label', engine.label)
+          em.append(g)
+        } else em.append(glyph('robot'))
         // The row's own right-click menu (open channel) is the name's menu too: it bubbles up from the name.
         const name = this.agentName(m.id, 'ch-oname ch-link', m.name, !this.isClosed())
         l1.append(em, name)

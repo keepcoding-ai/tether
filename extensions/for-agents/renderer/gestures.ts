@@ -49,7 +49,7 @@ export function pickItems(agents: readonly AgentPane[], c: PickContext): PickIte
     const where = a.placed === false ? PICK.noDesk : place ? PICK.livesIn(place) : ''
     const detail = [a.slotId === c.paneId ? PICK.itself : where,o.mesas + o.guias > 0 ? PICK.owns(o.mesas, o.guias) : ''].filter(Boolean).join(' · ')
     const emblem = c.emblemOf?.(a.slotId)
-    return { value: a.slotId, label: a.name, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), ...(emblem ? { emblem } : {}), group }
+    return { value: a.slotId, label: a.name, engine: a.kind, icon: 'robot', letter: initialOf(a.name), hue: agentHue(a.slotId), ...(detail ? { detail } : {}), ...(emblem ? { emblem } : {}), group }
   }
   return [...recent.map(a => row(a, PICK.groupRecent)), ...here.map(a => row(a, PICK.groupHere)), ...elsewhere.map(a => row(a, PICK.groupElsewhere)), ...loose.map(a => row(a, PICK.groupNoDesk))]
 }

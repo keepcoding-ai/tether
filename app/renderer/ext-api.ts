@@ -297,6 +297,12 @@ export interface PickItem<T> {
    * name tell apart. The filter also matches its name. Absent: the row is drawn as before.
    */
   emblem?: PaneEmblem
+  /**
+   * The engine of the agent the row stands for (its kind: 'claude', 'soul', 'codex', 'hands', 'shell'). The row draws the
+   * engine's icon in a fixed column at its left end, before the avatar, with the engine's name as title; the filter also
+   * matches that name. A list where some row has it reserves the column (and the emblem's slot) in every row.
+   */
+  engine?: string
   icon?: string
   /** One character drawn in the row's icon place, in the row's hue (an agent's initial: "A", "K"); longer text is cut to its first character. Wins over `icon`. */
   letter?: string

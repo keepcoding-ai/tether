@@ -30,6 +30,16 @@ export function agentUi(name: string): AgentUi | undefined {
   return uis.get(name)
 }
 
+/**
+ * The engine of an agent kind as lists draw it: the icon name (icons.ts) and the name a person reads ("Soul", "Claude").
+ * 'shell' is the terminal; a kind with no AgentUi keeps its own name and the terminal's icon.
+ */
+export function engineOf(kind: string): { icon: string; label: string } {
+  if (kind === 'shell') return { icon: 'terminal-window', label: 'Shell' }
+  const ui = uis.get(kind)
+  return ui ? { icon: ui.icon, label: ui.label } : { icon: 'terminal-window', label: kind }
+}
+
 /** The agents the app can offer (registration order), without 'shell'. */
 export function agentUiNames(): string[] {
   return [...uis.keys()]

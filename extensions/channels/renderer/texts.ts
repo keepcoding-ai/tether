@@ -95,6 +95,15 @@ function emblemField(id: string, emblemOf: EmblemReader | undefined): { emblem?:
   return emblem ? { emblem } : {}
 }
 
+/** Reads the engine (the agent's kind: 'claude', 'soul'…) of a member by its id; undefined when the app does not know it. */
+export type KindReader = (id: string) => string | undefined
+
+/** The row's `engine` field for the member with this id, or nothing (the row then has no engine icon). */
+function engineField(id: string, kindOf: KindReader | undefined): { engine?: string } {
+  const kind = kindOf?.(id)
+  return kind ? { engine: kind } : {}
+}
+
 /** The agent panes the person can add: alive, not in the channel, not removed from the question (they come back by a join). */
 export interface AgentChoice {
   slotId: string; kind: string; name: string; deskId?: string; deskTitle?: string; alive: boolean
@@ -152,7 +161,7 @@ export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<st
   const row = (a: AgentChoice): PickItem<string> => {
     const m = marks(a)
     return {
-      value: a.slotId, label: agentLabel(a), letter: a.name.charAt(0).toUpperCase() || '?', hue: agentHue(a.slotId),
+      value: a.slotId, label: agentLabel(a), engine: a.kind, letter: a.name.charAt(0).toUpperCase() || '?', hue: agentHue(a.slotId),
       ...(m.length > 0 ? { detail: m.join(' · ') } : {}), group: groupOf(a), ...emblemField(a.slotId, emblemOf),
     }
   }
@@ -166,13 +175,13 @@ export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<st
 export type MemberGesture = 'remove' | 'mute' | 'unmute'
 
 /** The second step of remove, mute and unmute: the owner first, as the pane lists them; muted ones only for "devolver a voz". */
-export function memberItems(members: readonly MemberInfo[], ownerId: string | undefined, gesture: MemberGesture, emblemOf?: EmblemReader): PickItem<string>[] {
+export function memberItems(members: readonly MemberInfo[], ownerId: string | undefined, gesture: MemberGesture, emblemOf?: EmblemReader, kindOf?: KindReader): PickItem<string>[] {
   const kept = members.filter(m => (gesture === 'unmute' ? m.muted : gesture === 'mute' ? !m.muted : true))
   const ordered = [...kept.filter(m => m.id === ownerId), ...kept.filter(m => m.id !== ownerId)]
   return ordered.map(m => ({
     value: m.id, label: m.name, letter: m.name.charAt(0).toUpperCase() || '?', hue: agentHue(m.id),
     detail: [m.id === ownerId ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.by === 'desk' ? ['da mesa'] : [])].join(' · '),
-    ...emblemField(m.id, emblemOf),
+    ...emblemField(m.id, emblemOf), ...engineField(m.id, kindOf),
   }))
 }
 

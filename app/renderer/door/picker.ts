@@ -6,8 +6,9 @@
 // are drawn under its heading. The row on top (`featured`) is selected when the box opens. When it closes, the
 // focus goes back to what had it before; nothing is shown unless a command asked.
 import type { PickItem, PickManySpec, PickSpec } from '../ext-api.ts'
+import { engineOf as pickEngine } from '../agent-ui.ts'
 import { normalizeHue } from './desk-seal-rules.ts'
-import { PICK_NUMBERED, confirmText, groupHeading, manyChosen, manyCount, manyFooter, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
+import { PICK_NUMBERED, confirmText, hasEngineColumn, groupHeading, manyChosen, manyCount, manyFooter, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
 
 /** The icon for a name the app has; undefined for one it does not (the row then draws without one). */
 type MakeIcon = (name: string) => SVGSVGElement | undefined
@@ -178,6 +179,7 @@ export class Picker {
         }
         empty.hidden = true
         const numbered = input.value === '' && !many
+        const agentList = hasEngineColumn(items, spec.featured)
         rows.forEach((row, i) => {
           const heading = groupHeading(rows, i)
           if (heading) { const hd = document.createElement('li'); hd.className = 'pk-group'; hd.setAttribute('role', 'presentation'); hd.textContent = heading; list.append(hd) }
@@ -202,8 +204,20 @@ export class Picker {
           if (row.item.detail) { const dt = document.createElement('span'); dt.className = 'pk-detail'; dt.textContent = row.item.detail; text.append(dt) }
           if (numbered && i < PICK_NUMBERED) { const n = document.createElement('kbd'); n.className = 'pk-num'; n.textContent = String(i + 1); li.append(n) }
           if (many) { const box = document.createElement('span'); box.className = 'pk-check'; box.setAttribute('aria-hidden', 'true'); li.append(box) }
+          // An agent list: the engine's icon in a fixed column before the avatar, and the emblem's slot kept at the right end.
+          if (agentList) {
+            const eng = document.createElement('span'); eng.className = 'pk-engine'
+            if (row.item.engine) {
+              const e = pickEngine(row.item.engine)
+              const glyph = icons(e.icon) ?? icons('terminal-window')
+              if (glyph) eng.append(glyph)
+              eng.title = e.label; eng.setAttribute('role', 'img'); eng.setAttribute('aria-label', e.label)
+            } else eng.setAttribute('aria-hidden', 'true')
+            li.append(eng)
+          }
           li.append(ic, text)
           if (row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem))
+          else if (agentList) { const slot = document.createElement('span'); slot.className = 'pk-slot'; slot.setAttribute('aria-hidden', 'true'); li.append(slot) }
           list.append(li)
           // The featured row is apart from the rest: a rule under it, when there is a rest.
           if (row.featured && rows.length > 1) { const sep = document.createElement('li'); sep.className = 'pk-sep'; sep.setAttribute('role', 'presentation'); list.append(sep) }

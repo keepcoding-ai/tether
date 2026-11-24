@@ -1,6 +1,8 @@
 // The speaking box of the channel's pane (slice U1b): "falar como moderador · para [todos ▾]", a text field, Enter sends,
 // Shift+Enter breaks the line. The recipient is an address, not a lock (P8): everyone hears, `to` only marks who it speaks to.
 // The line comes back through the channel's `line` event; this file only asks `say` and keeps the text when the ask fails.
+import { engineOf } from '../../../app/renderer/agent-ui.ts'
+import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph } from './glyphs.ts'
 import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HASH_TEXT, listTrigger, mentionToken, type ChannelChoice, type ListTrigger } from './mentions.ts'
 import { MENTION_TEXT } from './texts.ts'
@@ -13,7 +15,7 @@ export interface ComposerOptions {
 }
 
 /** One row of whichever list is open: its text, the discreet mark and what goes after the mark when it is picked. */
-interface Row { label: string; mark: string; token: string; all: boolean }
+interface Row { label: string; mark: string; token: string; all: boolean; /** The member's engine (its agent kind), when the app knows it. */ kind?: string | undefined }
 
 /** What a test reads of the box. */
 export interface ComposerSnapshot {
@@ -48,6 +50,8 @@ export interface Composer {
   setMembers(names: readonly string[]): void
   /** A discreet mark per member name for the "@" list ("calado", "não ouve agora"); a name without one has none. */
   setMarks(marks: ReadonlyMap<string, string>): void
+  /** The engine (agent kind: 'claude', 'soul'…) per member name: the "@" list draws its icon in a fixed column before the name. */
+  setEngines(kinds: ReadonlyMap<string, string>): void
   /** How many members hear the channel: with none the box is off (its draft is kept), with one or more it is on. */
   setAudience(n: number): void
   snapshot(): ComposerSnapshot
@@ -57,6 +61,19 @@ export interface Composer {
 }
 
 let composerSeq = 0
+
+/** The fixed column of the "@" list that holds an engine's icon (named by title and label); an empty column of the same width when there is none. */
+function engineCell(kind: string | undefined): HTMLElement {
+  const cell = el('span', 'ch-mention-eng')
+  if (kind === undefined) { cell.setAttribute('aria-hidden', 'true'); return cell }
+  const e = engineOf(kind)
+  cell.append(glyph((ICON_NAMES as readonly string[]).includes(e.icon) ? e.icon as IconName : 'robot'))
+  cell.title = e.label
+  cell.setAttribute('role', 'img')
+  cell.setAttribute('aria-label', e.label)
+  cell.dataset.engine = kind
+  return cell
+}
 
 /** Where the caret is, as pixels inside the box's offset parent: a hidden copy of the field's text up to the `@`, measured at a marker. */
 function caretSpot(field: HTMLTextAreaElement, index: number): { left: number; top: number } {
@@ -115,6 +132,7 @@ export function createComposer(opts: ComposerOptions): Composer {
 
   let names: readonly string[] = []
   let marks: ReadonlyMap<string, string> = new Map()
+  let engines: ReadonlyMap<string, string> = new Map()
   let options: Row[] = []
   let active = 0
   let trigger: ListTrigger | undefined
@@ -202,7 +220,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   /** The rows the trigger asks for: the members for `@` ("todos" first), the open channels for `#`. */
   const rowsFor = (t: ListTrigger): Row[] => t.mark === '@'
     ? filterMentionOptions(t.term, names).map(o => ({
-      label: o.all ? MENTION_TEXT.everyone : o.name, mark: o.all ? '' : marks.get(o.name) ?? '', token: mentionToken(o.name, names), all: o.all,
+      label: o.all ? MENTION_TEXT.everyone : o.name, mark: o.all ? '' : marks.get(o.name) ?? '', token: mentionToken(o.name, names), all: o.all, kind: o.all ? undefined : engines.get(o.name),
     }))
     : filterChannelOptions(t.term, opts.channels?.() ?? []).map(c => ({ label: `#${c.name}`, mark: c.current ? HASH_TEXT.current : '', token: c.name, all: false }))
 
@@ -222,6 +240,8 @@ export function createComposer(opts: ComposerOptions): Composer {
       const li = el('li', `ch-mention-opt${o.all ? ' all' : ''}`)
       li.id = `${listId}-${i}`
       li.setAttribute('role', 'option')
+      // The "@" list of members: the engine's icon in a fixed column, empty for "todos" and for a member whose engine is unknown.
+      if (t.mark === '@') li.append(engineCell(o.kind))
       li.append(el('span', 'ch-mention-name', o.label))
       if (o.mark !== '') li.append(el('span', 'ch-mention-mark', o.mark))
       // mousedown would blur the field; the choice is taken on click.
@@ -264,6 +284,7 @@ export function createComposer(opts: ComposerOptions): Composer {
       paintPick()
     },
     setMarks(next) { marks = next },
+    setEngines(next) { engines = next },
     setAudience(n) {
       const next = n > 0
       if (next === enabled) return

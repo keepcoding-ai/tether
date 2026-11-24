@@ -220,6 +220,10 @@ describe('the picker rows', () => {
     const recent = pickItems(agents, { ...ctx, recent: ['Z'] })
     assert.deepEqual(recent.map(i => [i.group, i.label]), [['Recentes', 'zeta'], ['Outras mesas', 'Atrium'], ['Sem mesa', 'beta']])
   })
+  test('every row names its engine (the agent kind), for the fixed icon column', () => {
+    const agents = [agent('A', 'kai', { kind: 'claude' }), agent('S', 'kai', { kind: 'soul' })]
+    assert.deepEqual(pickItems(agents, ctx).map(i => i.engine), ['claude', 'soul'])
+  })
   test('holds: an agent that owns desks or guias is held; an ended ownership and its own guia do not count', () => {
     const own = (owner: string, ended = false) => ({ owner, since: 't', givenBy: 'user', ...(ended ? { ended: { at: 't', name: 'x' } } : {}) }) as never
     const f = { deskOwner: new Map([['d1', own('A')], ['d2', own('A', true)]]), paneOwner: new Map([['p1', own('A')], ['A', own('A')], ['p2', own('B')]]) }

@@ -142,6 +142,15 @@ test('memberItems: the owner first; mute offers the ones who speak, unmute the m
   assert.equal(memberItems(members, 'a', 'remove')[1]!.detail, 'membro · calado')
 })
 
+test('agent rows carry the engine: the join list from the pane\'s kind, the member list from the reader (none when it does not know)', () => {
+  const join = joinItems([agent('s1', 'conferente', 'desk-1')], new Set(), 'desk-1')
+  assert.equal(join[0]!.engine, agent('s1', 'conferente', 'desk-1').kind)
+  const m = (id: string, name: string): MemberInfo => ({ id, name, muted: false, since: '', by: 'user', alive: true, path: 'inside' })
+  const rows = memberItems([m('a', 'Atrium'), m('c', 'conferente')], 'a', 'remove', undefined, id => (id === 'a' ? 'soul' : undefined))
+  assert.equal(rows[0]!.engine, 'soul')
+  assert.equal('engine' in rows[1]!, false)
+})
+
 test('agent rows carry the emblem the reader gives, and none when it gives none', () => {
   const deploy = { name: 'Deploy', color: 'teal', icon: 'rocket-launch' } as const
   const reader = (id: string) => (id === 's2' || id === 'a' ? deploy : undefined)
