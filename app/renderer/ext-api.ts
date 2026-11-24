@@ -318,6 +318,17 @@ export interface PickSpec<T> {
   create?: (query: string) => PickItem<T> | undefined
 }
 
+/**
+ * A spec for `pick.many`: the same rows, groups, emblems, details and filter as `pick.list`. `create` is ignored (a typed
+ * name is one value, not a mark). The number keys are off (a digit types).
+ */
+export interface PickManySpec<T> extends PickSpec<T> {
+  /** The verb on the confirm button, which adds the count ("Juntar 2"). Default: "Confirmar". */
+  confirmLabel?: string
+  /** The verb after "Enter" in the footer ("Espaço marca vários · Enter junta"). Default: "confirma". */
+  confirmHint?: string
+}
+
 export interface TetherUi {
   /** The extension's id. */
   readonly id: string
@@ -449,6 +460,13 @@ export interface TetherUi {
     list<T>(spec: PickSpec<T>): Promise<T | undefined>
     /** Two steps: pick in the first, then in the second (built from the first). Esc in the second goes back to the first. */
     steps<A, B>(first: PickSpec<A>, second: (a: A) => PickSpec<B>): Promise<{ first: A; second: B } | undefined>
+    /**
+     * Several at once. Space marks or unmarks the row under the cursor (a click does too); Enter with no mark answers with
+     * the row under the cursor alone, Enter with marks answers with the marked ones, in the list's order (a mark survives a
+     * filter that hides its row); the confirm button counts the marks; a double click confirms. Esc, a click outside or a newer
+     * picker resolve `undefined`.
+     */
+    many<T>(spec: PickManySpec<T>): Promise<T[] | undefined>
   }
   /** This extension's data on desks and panes (tetherd keeps it; this is a mirror). */
   objects: ExtObjects

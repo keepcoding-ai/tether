@@ -2,7 +2,7 @@
 // (state applied, slots listed, layout saved, strip rendered, the two menus, the daemon's `desks` and `object` events) and
 // the TetherUi blocks of the door (desks, pane emblems and menus, pick, objects) are served from here. The rules live in
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
-import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PaneSlotFacts, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
+import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PaneSlotFacts, PickManySpec, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
@@ -279,6 +279,8 @@ export class DoorHost {
   pickSteps<A, B>(first: PickSpec<A>, second: (a: A) => PickSpec<B>): Promise<{ first: A; second: B } | undefined> {
     return this.picker.steps(first, second)
   }
+
+  pickMany<T>(spec: PickManySpec<T>): Promise<T[] | undefined> { return this.picker.many(spec) }
 
   /** An extension's data on desks and panes. */
   objectsFor(ext: string): ExtObjects { return this.objects.apiFor(ext) }

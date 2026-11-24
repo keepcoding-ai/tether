@@ -4533,6 +4533,7 @@ function activateRendererExtensions(): void {
       pick: {
         list: spec => door.pickList(spec),
         steps: (first, second) => door.pickSteps(first, second),
+        many: spec => door.pickMany(spec),
       },
       objects: door.objectsFor(id),
       daemon: door.daemonFor(id),

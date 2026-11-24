@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DoorHost } from '../../app/renderer/door/host.ts'
-import { groupHeading, moveSelection, numberedRow, rankPicks, reselect, runList, runSteps, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
+import { confirmText, groupHeading, manyChosen, manyCount, manyFooter, manyOptions, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, PICK_PAGE, type Ask, type AskContext, type PickAnswer } from '../../app/renderer/door/picker-rules.ts'
 import type { PickItem, PickSpec } from '../../app/renderer/ext-api.ts'
 
 const it = (value: string, label = value, detail?: string): PickItem<string> => ({ value, label, ...(detail ? { detail } : {}) })
@@ -128,6 +128,62 @@ describe('DoorHost without a document', () => {
     const door = new DoorHost()
     assert.equal(await door.pickList({ title: 't', items: [it('a')] }), undefined)
     assert.equal(await door.pickSteps({ title: 't', items: [it('a')] }, () => ({ title: 'u', items: [] })), undefined)
+    assert.equal(await door.pickMany({ title: 't', items: [it('a')] }), undefined)
+  })
+})
+
+describe('pick.many rules', () => {
+  const list = [it('a', 'Alfa'), it('b', 'Beta'), it('c', 'Gama')]
+  const none = new Set<unknown>()
+
+  test('toggleMark marks and unmarks, without touching the set it was given', () => {
+    const one = toggleMark(none, 'b')
+    assert.deepEqual([...one], ['b'])
+    assert.equal(none.size, 0)
+    assert.deepEqual([...toggleMark(one, 'b')], [])
+    assert.deepEqual([...toggleMark(one, 'a')].sort(), ['a', 'b'])
+  })
+
+  test('Enter with no mark answers with the row under the cursor alone; with no row, with nothing', () => {
+    assert.deepEqual(manyChosen(list, none, list[1]).map(i => i.value), ['b'])
+    assert.deepEqual(manyChosen(list, none, undefined), [])
+  })
+
+  test('Enter with marks answers with the marked ones in the list order, whatever the marking order and the cursor', () => {
+    const marks = toggleMark(toggleMark(none, 'c'), 'a')
+    assert.deepEqual(manyChosen(list, marks, list[1]).map(i => i.value), ['a', 'c'])
+  })
+
+  test('a mark survives a filter: it is read against the whole list, not against the rows left', () => {
+    const marks = toggleMark(none, 'a')
+    const left = rankPicks(undefined, list, 'gama')
+    assert.deepEqual(left.map(r => r.item.value), ['c'])
+    assert.deepEqual(manyChosen(orderedItems(undefined, list), marks, left[0]!.item).map(i => i.value), ['a'])
+  })
+
+  test('the featured item leads the order, once', () => {
+    const featured = it('m', 'Mesa')
+    assert.deepEqual(orderedItems(featured, [...list, featured]).map(i => i.value), ['m', 'a', 'b', 'c'])
+    assert.deepEqual(orderedItems(undefined, list).map(i => i.value), ['a', 'b', 'c'])
+  })
+
+  test('the button counts the marks, or the one row Enter would take, and says the verb alone when nothing would go', () => {
+    const o = manyOptions({ title: 't', items: [], confirmLabel: 'Juntar', confirmHint: 'junta' })
+    assert.equal(confirmText(o, manyCount(none, true)), 'Juntar 1')
+    assert.equal(confirmText(o, manyCount(toggleMark(toggleMark(none, 'a'), 'b'), true)), 'Juntar 2')
+    assert.equal(confirmText(o, manyCount(none, false)), 'Juntar')
+    assert.equal(manyFooter(o), 'Espaço marca vários · Enter junta · Esc fecha')
+    assert.deepEqual(manyOptions({ title: 't', items: [] }), { confirmLabel: 'Confirmar', confirmHint: 'confirma' })
+  })
+
+  test('runMany: the confirmed values; closing, Esc and going back resolve undefined; the ask carries the words', async () => {
+    const many = (...values: string[]): PickAnswer<never> => ({ kind: 'many', items: values.map(v => it(v)) as never, query: '' })
+    const spec = { title: 'Juntar', items: [], confirmLabel: 'Juntar' }
+    const { ask, asked } = scripted(many('a', 'c'))
+    assert.deepEqual(await runMany(ask, spec), ['a', 'c'])
+    assert.equal(asked[0]!.ctx.many?.confirmLabel, 'Juntar')
+    assert.equal(await runMany(scripted({ kind: 'close' }).ask, spec), undefined)
+    assert.equal(await runMany(scripted({ kind: 'back' }).ask, spec), undefined)
   })
 })
 

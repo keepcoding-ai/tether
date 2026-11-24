@@ -1,7 +1,7 @@
 // The list picker's rules (the `pick` block of TetherUi), free of the DOM: which rows a query leaves and in what order, where the
 // selection goes on a key, and how one or two asks turn into an answer (Esc in the second goes back to the first, in the first
 // closes). picker.ts draws; this file decides, so the unit tests load it.
-import type { PickItem, PickSpec } from '../ext-api.ts'
+import type { PickItem, PickManySpec, PickSpec } from '../ext-api.ts'
 import { fuzzyMatch, highlightRuns } from '../fuzzy.ts'
 
 /** Rows moved by PageUp and PageDown. */
@@ -88,6 +88,8 @@ export function reselect<T>(rows: readonly PickRow<T>[], previous: PickItem<T> |
 /** What one ask of the picker came back with. */
 export type PickAnswer<T> =
   | { kind: 'pick'; item: PickItem<T>; query: string }
+  /** `pick.many`: the confirmed items, in the list's order. */
+  | { kind: 'many'; items: PickItem<T>[]; query: string }
   /** Esc in a later step. */
   | { kind: 'back' }
   /** Esc in the first step, a click outside, or a newer picker taking the place. */
@@ -102,6 +104,54 @@ export interface AskContext {
   /** What was typed the last time this step was open (coming back restores it), and the item that was picked then. */
   query?: string
   previous?: PickItem<unknown>
+  /** Present when the ask marks several (`pick.many`). */
+  many?: ManyOptions
+}
+
+/** The words of a `pick.many` box. */
+export interface ManyOptions {
+  confirmLabel: string
+  confirmHint: string
+}
+
+export const MANY_CONFIRM_LABEL = 'Confirmar'
+export const MANY_CONFIRM_HINT = 'confirma'
+
+export function manyOptions(spec: PickManySpec<unknown>): ManyOptions {
+  return { confirmLabel: spec.confirmLabel?.trim() || MANY_CONFIRM_LABEL, confirmHint: spec.confirmHint?.trim() || MANY_CONFIRM_HINT }
+}
+
+/** The footer of a `pick.many` box: the keys, said in writing. */
+export function manyFooter(o: ManyOptions): string {
+  return `Espaço marca vários · Enter ${o.confirmHint} · Esc fecha`
+}
+
+/** The marks after Space (or a click) on `value`: a new set, the mark added or taken away. */
+export function toggleMark(marks: ReadonlySet<unknown>, value: unknown): Set<unknown> {
+  const next = new Set(marks)
+  if (!next.delete(value)) next.add(value)
+  return next
+}
+
+/** The items to answer with: no mark, the row under the cursor alone; with marks, the marked ones in the list's order (a mark outlives a filter that hides its row). */
+export function manyChosen<T>(ordered: readonly PickItem<T>[], marks: ReadonlySet<unknown>, cursor: PickItem<T> | undefined): PickItem<T>[] {
+  if (marks.size === 0) return cursor ? [cursor] : []
+  return ordered.filter(i => marks.has(i.value))
+}
+
+/** How many the Enter key (and the button) would answer with: the marks, else the cursor row, else none. */
+export function manyCount(marks: ReadonlySet<unknown>, hasCursor: boolean): number {
+  return marks.size > 0 ? marks.size : hasCursor ? 1 : 0
+}
+
+/** The confirm button's text: the verb and the count ("Juntar 3"); the verb alone when there is nothing to answer with. */
+export function confirmText(o: ManyOptions, count: number): string {
+  return count > 0 ? `${o.confirmLabel} ${count}` : o.confirmLabel
+}
+
+/** The list the marks are read against: the featured item (once) and then the items, as given. */
+export function orderedItems<T>(featured: PickItem<T> | undefined, items: readonly PickItem<T>[]): PickItem<T>[] {
+  return featured ? [featured, ...items.filter(i => !Object.is(i.value, featured.value))] : [...items]
 }
 
 export type Ask = <T>(spec: PickSpec<T>, ctx: AskContext) => Promise<PickAnswer<T>>
@@ -110,6 +160,12 @@ export type Ask = <T>(spec: PickSpec<T>, ctx: AskContext) => Promise<PickAnswer<
 export async function runList<T>(ask: Ask, spec: PickSpec<T>): Promise<T | undefined> {
   const answer = await ask(spec, { step: 1, steps: 1 })
   return answer.kind === 'pick' ? answer.item.value : undefined
+}
+
+/** Several at once: the confirmed values, or undefined when the person closed it. */
+export async function runMany<T>(ask: Ask, spec: PickManySpec<T>): Promise<T[] | undefined> {
+  const answer = await ask(spec, { step: 1, steps: 1, many: manyOptions(spec as PickManySpec<unknown>) })
+  return answer.kind === 'many' ? answer.items.map(i => i.value) : undefined
 }
 
 /** Two steps. Esc in the second goes back to the first with its query and choice kept; closing anywhere resolves undefined. */
@@ -121,7 +177,7 @@ export async function runSteps<A, B>(ask: Ask, first: PickSpec<A>, second: (a: A
     again = { query: a.query, item: a.item }
     const b = await ask(second(a.item.value), { step: 2, steps: 2, chosen: a.item.label })
     if (b.kind === 'back') continue
-    if (b.kind === 'close') return undefined
+    if (b.kind !== 'pick') return undefined
     return { first: a.item.value, second: b.item.value }
   }
 }

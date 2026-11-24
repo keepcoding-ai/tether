@@ -5,9 +5,9 @@
 // filter is empty, Esc goes back (second step) or closes, a click on a row chooses, a click outside closes. Rows with a group
 // are drawn under its heading. The row on top (`featured`) is selected when the box opens. When it closes, the
 // focus goes back to what had it before; nothing is shown unless a command asked.
-import type { PickItem, PickSpec } from '../ext-api.ts'
+import type { PickItem, PickManySpec, PickSpec } from '../ext-api.ts'
 import { normalizeHue } from './desk-seal-rules.ts'
-import { PICK_NUMBERED, groupHeading, moveSelection, numberedRow, rankPicks, reselect, runList, runSteps, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
+import { PICK_NUMBERED, confirmText, groupHeading, manyChosen, manyCount, manyFooter, moveSelection, numberedRow, orderedItems, rankPicks, reselect, runList, runMany, runSteps, toggleMark, type Ask, type AskContext, type PickAnswer, type PickRow } from './picker-rules.ts'
 
 /** The icon for a name the app has; undefined for one it does not (the row then draws without one). */
 type MakeIcon = (name: string) => SVGSVGElement | undefined
@@ -48,6 +48,10 @@ export class Picker {
     return this.within(ask => runSteps(ask, first, second))
   }
 
+  many<T>(spec: PickManySpec<T>): Promise<T[] | undefined> {
+    return this.within(ask => runMany(ask, spec))
+  }
+
   /** The box stays open from the first ask to the last answer; a newer picker closes this one (it resolves as closed). */
   private async within<R>(body: (ask: Ask) => Promise<R | undefined>): Promise<R | undefined> {
     if (typeof document === 'undefined') return undefined
@@ -77,7 +81,8 @@ export class Picker {
     d.innerHTML = `<div class="pk-head"><span class="pk-title"></span><span class="pk-step"></span></div>
 <div class="pk-field"><span class="pk-lens"></span><input type="text" role="combobox" aria-expanded="true" aria-autocomplete="list" spellcheck="false" autocomplete="off"><kbd>Esc</kbd></div>
 <ul class="pk-list" role="listbox"></ul>
-<p class="pk-empty" hidden></p>`
+<p class="pk-empty" hidden></p>
+<div class="pk-foot" hidden><span class="pk-hint"></span><button type="button" class="pk-confirm"></button></div>`
     d.querySelector('.pk-lens')!.append(icons('magnifying-glass') ?? '')
     d.querySelector('input')!.setAttribute('aria-controls', (d.querySelector('ul')!.id = 'picker-list'))
     document.body.append(d)
@@ -88,6 +93,11 @@ export class Picker {
     const input = d.querySelector<HTMLInputElement>('input')!
     const list = d.querySelector<HTMLUListElement>('ul')!
     const empty = d.querySelector<HTMLElement>('.pk-empty')!
+    const foot = d.querySelector<HTMLElement>('.pk-foot')!
+    const confirmBtn = d.querySelector<HTMLButtonElement>('.pk-confirm')!
+    const many = ctx.many
+    // `pick.many`: the marks live here, by the item's value; a filter hides rows but never drops a mark.
+    let marks: ReadonlySet<unknown> = new Set()
     const ac = new AbortController()
     const { signal } = ac
     return new Promise(resolve => {
@@ -107,6 +117,31 @@ export class Picker {
       const back = (): PickAnswer<T> => (ctx.step > 1 ? { kind: 'back' } : { kind: 'close' })
       const choose = (i: number): void => { const row = rows[i]; if (row) settle({ kind: 'pick', item: row.item, query: input.value }) }
 
+      d.classList.toggle('many', many !== undefined)
+      foot.hidden = many === undefined
+      if (many) list.setAttribute('aria-multiselectable', 'true'); else list.removeAttribute('aria-multiselectable')
+      d.querySelector('.pk-hint')!.textContent = many ? manyFooter(many) : ''
+      const confirm = (): void => {
+        if (!many) return
+        const ordered = orderedItems(spec.featured, items)
+        const chosen = manyChosen(ordered, marks, rows[selected]?.item)
+        if (chosen.length > 0) settle({ kind: 'many', items: chosen, query: input.value })
+      }
+      // The marks drawn on the rows, and the button's count.
+      const paintMarks = (): void => {
+        if (!many) return
+        list.querySelectorAll<HTMLElement>('li.pk-item').forEach(li => {
+          const on = marks.has(rows[Number(li.dataset.index)]?.item.value)
+          li.classList.toggle('marked', on)
+          li.setAttribute('aria-selected', String(on))
+          li.setAttribute('aria-checked', String(on))
+        })
+        const n = manyCount(marks, rows[selected] !== undefined)
+        confirmBtn.textContent = confirmText(many, n)
+        confirmBtn.disabled = n === 0
+      }
+      if (many) { confirmBtn.textContent = confirmText(many, 0); confirmBtn.disabled = true }
+      const toggle = (i: number): void => { const row = rows[i]; if (row) { marks = toggleMark(marks, row.item.value); paintMarks() } }
       d.setAttribute('aria-label', spec.title)
       d.querySelector('.pk-title')!.textContent = spec.title
       d.querySelector('.pk-step')!.textContent = ctx.steps > 1 ? `${ctx.step} de ${ctx.steps}${ctx.chosen ? ` · ${ctx.chosen}` : ''}` : ''
@@ -123,24 +158,26 @@ export class Picker {
         els.forEach((li, k) => {
           const on = k === i
           li.classList.toggle('selected', on)
-          li.setAttribute('aria-selected', String(on))
+          // In a many box aria-selected means "marked" (paintMarks); the cursor is the active descendant.
+          if (!many) li.setAttribute('aria-selected', String(on))
           if (on) { input.setAttribute('aria-activedescendant', li.id); if (scroll) li.scrollIntoView({ block: 'nearest' }) }
         })
       }
 
       const draw = (keep?: PickItem<T>): void => {
         rows = rankPicks(spec.featured, items, input.value)
-        const made = spec.create && input.value.trim() !== '' ? spec.create(input.value) : undefined
+        const made = !many && spec.create && input.value.trim() !== '' ? spec.create(input.value) : undefined
         if (made) rows.push({ item: made, featured: false, runs: [{ text: made.label, hit: false }] })
         list.replaceChildren()
         if (rows.length === 0) {
           empty.textContent = items.length === 0 && !spec.featured ? (spec.emptyText ?? NOTHING_TEXT) : `Nada para “${input.value.trim()}”.`
           empty.hidden = false
           input.removeAttribute('aria-activedescendant')
+          paintMarks()
           return
         }
         empty.hidden = true
-        const numbered = input.value === ''
+        const numbered = input.value === '' && !many
         rows.forEach((row, i) => {
           const heading = groupHeading(rows, i)
           if (heading) { const hd = document.createElement('li'); hd.className = 'pk-group'; hd.setAttribute('role', 'presentation'); hd.textContent = heading; list.append(hd) }
@@ -164,6 +201,7 @@ export class Picker {
           text.append(label)
           if (row.item.detail) { const dt = document.createElement('span'); dt.className = 'pk-detail'; dt.textContent = row.item.detail; text.append(dt) }
           if (numbered && i < PICK_NUMBERED) { const n = document.createElement('kbd'); n.className = 'pk-num'; n.textContent = String(i + 1); li.append(n) }
+          if (many) { const box = document.createElement('span'); box.className = 'pk-check'; box.setAttribute('aria-hidden', 'true'); li.append(box) }
           li.append(ic, text)
           if (row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem))
           list.append(li)
@@ -171,14 +209,18 @@ export class Picker {
           if (row.featured && rows.length > 1) { const sep = document.createElement('li'); sep.className = 'pk-sep'; sep.setAttribute('role', 'presentation'); list.append(sep) }
         })
         select(reselect(rows, keep), false)
+        paintMarks()
       }
 
       input.addEventListener('input', () => draw(rows[selected]?.item), { signal })
       input.addEventListener('keydown', ev => {
         switch (ev.key) {
           case 'ArrowDown': case 'ArrowUp': case 'PageDown': case 'PageUp':
-            ev.preventDefault(); if (rows.length) select(moveSelection(selected, rows.length, ev.key)); break
-          case 'Enter': ev.preventDefault(); choose(selected); break
+            ev.preventDefault(); if (rows.length) select(moveSelection(selected, rows.length, ev.key)); if (many) paintMarks(); break
+          case 'Enter': ev.preventDefault(); if (many) confirm(); else choose(selected); break
+          case ' ':
+            if (!many || ev.ctrlKey || ev.altKey || ev.metaKey || ev.isComposing) break
+            ev.preventDefault(); toggle(selected); break
           case 'Escape': ev.preventDefault(); ev.stopPropagation(); settle(back()); break
           case 'Tab': ev.preventDefault(); break // the field is the only stop
           default: {
@@ -196,8 +238,23 @@ export class Picker {
       list.addEventListener('mousedown', ev => ev.preventDefault(), { signal })
       list.addEventListener('click', ev => {
         const li = (ev.target as HTMLElement).closest<HTMLElement>('li.pk-item')
-        if (li) choose(Number(li.dataset.index))
+        if (!li) return
+        if (!many) { choose(Number(li.dataset.index)); return }
+        select(Number(li.dataset.index), false)
+        toggle(Number(li.dataset.index))
       }, { signal })
+      if (many) {
+        // A double click confirms with the row marked (its two clicks left the mark as it was).
+        list.addEventListener('dblclick', ev => {
+          const li = (ev.target as HTMLElement).closest<HTMLElement>('li.pk-item')
+          const row = li ? rows[Number(li.dataset.index)] : undefined
+          if (!row) return
+          if (!marks.has(row.item.value)) marks = toggleMark(marks, row.item.value)
+          confirm()
+        }, { signal })
+        foot.addEventListener('mousedown', ev => ev.preventDefault(), { signal })
+        confirmBtn.addEventListener('click', confirm, { signal })
+      }
 
       input.focus()
       input.setSelectionRange(input.value.length, input.value.length)
