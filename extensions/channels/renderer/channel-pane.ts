@@ -687,7 +687,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.composer.setMembers(this.answer.members.map(m => m.name))
       this.composer.setMarks(new Map(memberRows(this.answer, undefined, noDesk).flatMap((m): Array<[string, string]> =>
         m.muted ? [[m.name, MENTION_TEXT.muted]] : m.tone === 'wait' ? [[m.name, MENTION_TEXT.deaf]] : [])))
-      this.composer.setEngines(new Map(this.answer.members.flatMap((m): Array<[string, string]> => { const k = ui.agents.get(m.id)?.kind; return k ? [[m.name, k]] : [] })))
+      // The "@" list is by name: two members with the same name cannot tell their engines apart there, so neither gets an icon.
+      const kinds = new Map<string, string | undefined>()
+      for (const m of this.answer.members) kinds.set(m.name, kinds.has(m.name) ? undefined : ui.agents.get(m.id)?.kind)
+      this.composer.setEngines(new Map([...kinds].filter((e): e is [string, string] => e[1] !== undefined)))
       this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }

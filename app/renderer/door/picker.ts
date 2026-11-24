@@ -203,6 +203,8 @@ export class Picker {
           text.append(label)
           if (row.item.detail) { const dt = document.createElement('span'); dt.className = 'pk-detail'; dt.textContent = row.item.detail; text.append(dt) }
           if (numbered && i < PICK_NUMBERED) { const n = document.createElement('kbd'); n.className = 'pk-num'; n.textContent = String(i + 1); li.append(n) }
+          // Past the ninth row of an agent list the number's place stays, so the engine column does not move.
+          else if (numbered && agentList) { const n = document.createElement('span'); n.className = 'pk-num'; n.setAttribute('aria-hidden', 'true'); li.append(n) }
           if (many) { const box = document.createElement('span'); box.className = 'pk-check'; box.setAttribute('aria-hidden', 'true'); li.append(box) }
           // An agent list: the engine's icon in a fixed column before the avatar, and the emblem's slot kept at the right end.
           if (agentList) {
