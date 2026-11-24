@@ -18,7 +18,7 @@ import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { PANE_TEXT, channelMenu, memberMenu, type ChannelMenuId } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
+  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
   olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
@@ -80,6 +80,12 @@ export interface PaneSnapshot {
   empty: boolean
   /** What is drawn of the members: the column, and the "Membros" button of the bar (both away while the channel is empty). */
   column: { shown: boolean; button: boolean }
+  /**
+   * The narrow composition's strip of members (G7): `count` members, `muted` of them muted, `open` while its list is down over the conversation.
+   * `foldBar`: whether the strip is drawn (narrow, somebody in the channel) and how many members do not hear now (`warn`, the strip's warning).
+   */
+  fold: { count: number; muted: number; open: boolean }
+  foldBar: { shown: boolean; warn: number }
 }
 
 export interface ChannelPanes {
@@ -140,6 +146,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private readonly foot = el('div', 'ch-foot')
     private readonly composerSlot = el('div', 'ch-composer-slot')
     private readonly side = el('div', 'ch-members')
+    /** The narrow composition's strip of members (one button): over the conversation, folded or with its list down. */
+    private readonly fold = el('button', 'ch-fold')
     private membersBtn: HTMLButtonElement | undefined
     private joinBtn: HTMLButtonElement | undefined
     private reopenBtn: HTMLButtonElement | undefined
@@ -164,7 +172,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       this.composerSlot.dataset.slot = 'composer'
       this.foot.append(this.composerSlot)
       this.conv.append(this.msgs, this.newBar, this.muteBox, this.foot)
-      this.body.append(this.conv, this.side)
+      this.side.id = `ch-members-${this.channelId}`
+      this.fold.type = 'button'
+      this.fold.hidden = true
+      this.fold.setAttribute('aria-controls', this.side.id)
+      this.fold.addEventListener('click', () => this.toggleMembers())
+      // Wide: the strip is away and the column sits beside the conversation. Narrow: the CSS stacks strip, list and conversation.
+      this.body.append(this.fold, this.conv, this.side)
       this.head.append(this.titleBox, this.bar)
       this.element.append(this.head, this.body)
       this.buildBar()
@@ -499,6 +513,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       sub.append(owner)
       if (h.closed) sub.append(' · encerrado')
       this.titleBox.append(glyph(h.closed ? 'lock' : 'chats-circle'), el('span', 'ch-name-title', h.title), sub)
+      if (h.closed) {
+        // The narrow header drops the subtitle: the state stays as a chip (the wide one says it in the subtitle).
+        const chip = el('span', 'ch-role ch-closed-chip')
+        chip.append(glyph('lock'), 'encerrado')
+        this.titleBox.append(chip)
+      }
     }
 
     /** The column is drawn when the person has it open and somebody is in the channel (a lone "Você" says nothing). */
@@ -509,6 +529,49 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       this.side.hidden = !shown
       this.element.classList.toggle('members-off', !shown)
       if (this.membersBtn) { this.membersBtn.hidden = this.noMembers(); this.membersBtn.classList.toggle('on', shown) }
+      this.paintFold()
+    }
+
+    /** The strip is drawn only in the narrow composition, with somebody in an open channel. */
+    private foldShown(): boolean { return this.isNarrow() && this.answer !== undefined && !this.isClosed() && this.answer.members.length > 0 }
+
+    private paintFold(): void {
+      const show = this.foldShown()
+      this.fold.hidden = !show
+      if (!show || !this.answer) return
+      const f = foldOf(this.answer)
+      const open = this.sideShown()
+      this.fold.setAttribute('aria-expanded', String(open))
+      this.fold.setAttribute('aria-label', foldAria(f, open))
+      this.fold.classList.toggle('open', open)
+      const kids: Array<Node | string> = []
+      if (open) {
+        kids.push(glyph('caret-down'), el('span', 'ch-fold-count', f.label), el('span', 'ch-fold-sp'), el('span', 'ch-fold-hint', 'recolher'))
+      } else {
+        const stack = el('span', 'ch-fold-stack')
+        for (const k of f.marks) {
+          const em = el('span', `ch-em${k.crown ? ' crown' : ''}`)
+          hueStyle(em, k.hue)
+          em.append(glyph(k.crown ? 'crown-simple' : 'robot'))
+          stack.append(em)
+        }
+        kids.push(stack, el('span', 'ch-fold-count', f.label))
+        if (f.muted > 0) {
+          const mute = el('span', 'ch-role mute ch-fold-muted')
+          mute.title = f.muted === 1 ? '1 calado' : `${f.muted} calados`
+          mute.append(glyph('speaker-slash'), String(f.muted))
+          kids.push(mute)
+        }
+        if (f.waiting > 0) {
+          // A member that does not hear now stays visible while folded: a warning on the count.
+          const warn = el('span', 'ch-role warn ch-fold-warn')
+          warn.title = f.waiting === 1 ? '1 não ouve agora' : `${f.waiting} não ouvem agora`
+          warn.append(glyph('warning'), String(f.waiting))
+          kids.push(warn)
+        }
+        kids.push(el('span', 'ch-fold-sp'), glyph('caret-right'))
+      }
+      this.fold.replaceChildren(...kids)
     }
 
     /** "N novas para você" (the lines addressed to her, unseen) beats "N falas novas"; neither shows while reading the end. */
@@ -733,6 +796,20 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         name.title = 'Ir para a guia deste agente'
         name.addEventListener('click', () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) })
         l1.append(em, name)
+        // The narrow row is one line: the role, the muted mark and the state as a dot ride on it (the second line is away there).
+        const nrole = el('span', 'ch-nrole')
+        nrole.append(el('span', 'ch-role', m.role))
+        if (m.muted) {
+          const mute = el('span', 'ch-role mute')
+          mute.append(glyph('speaker-slash'), 'calado')
+          nrole.append(mute)
+        }
+        const dot = el('span', 'ch-dot')
+        dot.dataset.tone = m.tone
+        dot.title = m.hint ?? m.state
+        dot.setAttribute('role', 'img')
+        dot.setAttribute('aria-label', m.state)
+        l1.append(nrole, dot)
         if (m.emblem) {
           const chip = emblemBadge(m.emblem)
           chip.classList.add('ch-emblem')
@@ -812,6 +889,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         actions: this.barState(),
         empty: this.noMembers(),
         column: { shown: !this.side.hidden, button: this.membersBtn !== undefined && !this.membersBtn.hidden },
+        fold: this.answer
+          ? { count: this.answer.members.length, muted: this.answer.members.filter(x => x.muted).length, open: this.isNarrow() && this.sideShown() }
+          : { count: 0, muted: 0, open: false },
+        foldBar: { shown: !this.fold.hidden, warn: this.answer ? foldOf(this.answer).waiting : 0 },
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }

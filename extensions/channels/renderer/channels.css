@@ -21,11 +21,42 @@
 .ch-pane button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .ch-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 276px; }
-.ch-pane.narrow .ch-body, .ch-pane.members-off .ch-body { grid-template-columns: minmax(0, 1fr); }
-.ch-pane.narrow .ch-members:not([hidden]) { grid-column: 1; grid-row: 1; z-index: 1; border-left: 0; }
+.ch-pane.members-off .ch-body { grid-template-columns: minmax(0, 1fr); }
 .ch-conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
-.ch-pane.narrow .ch-conv, .ch-pane.members-off .ch-conv { border-right: 0; }
-.ch-pane.narrow .ch-conv { grid-column: 1; grid-row: 1; }
+.ch-pane.members-off .ch-conv { border-right: 0; }
+/* Narrow (G7): the members are no longer a column over the conversation but a strip above it, folded or with the list down (at most 40%
+   of the pane, its own scroll); the conversation and the speaking box stay where they are. Wide: the strip does not exist. */
+.ch-fold { display: none; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; border: 0; border-bottom: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: 12px var(--ui); text-align: left; cursor: pointer; }
+.ch-fold:hover { background: var(--bg-3); }
+.ch-fold svg.ph { color: var(--fg-dim); }
+.ch-fold-stack { display: inline-flex; }
+.ch-fold-stack .ch-em { margin-left: -4px; box-shadow: 0 0 0 2px var(--bg-2); }
+.ch-fold-stack .ch-em:first-child { margin-left: 0; }
+.ch-fold-sp { flex: 1; }
+.ch-fold-hint { color: var(--fg-dim); }
+.ch-role.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); color: var(--warn); }
+.ch-role.warn svg.ph { color: var(--warn); }
+.ch-pane.narrow .ch-body { display: flex; flex-direction: column; }
+.ch-pane.narrow .ch-fold:not([hidden]) { display: flex; flex: none; order: 0; }
+.ch-pane.narrow .ch-members:not([hidden]) { order: 1; flex: none; max-height: 40%; border-left: 0; border-bottom: 1px solid var(--border); padding-top: 2px; }
+.ch-pane.narrow .ch-members .ch-sec { display: none; }
+.ch-pane.narrow .ch-conv { order: 2; flex: 1 1 0; border-right: 0; }
+.ch-pane.narrow .ch-mrow { padding: 4px 8px; }
+.ch-pane.narrow .ch-l2, .ch-pane.narrow .ch-macts { display: none; }
+.ch-nrole, .ch-dot, .ch-closed-chip { display: none; }
+.ch-pane.narrow .ch-nrole { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.ch-pane.narrow .ch-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--fg-dim); }
+.ch-pane.narrow .ch-dot[data-tone="on"] { background: var(--ok); }
+.ch-pane.narrow .ch-dot[data-tone="wait"] { background: var(--warn); }
+.ch-pane.narrow .ch-l1 .ch-emblem { order: 1; margin-left: 0; }
+.ch-pane.narrow .ch-l1 .ch-mmore { order: 2; margin-left: auto; }
+/* The narrow header is one line: the name (cut with an ellipsis), the state chip and the bar; dono and count live in the strip and the menu. */
+.ch-pane.narrow .ch-head { flex-wrap: nowrap; }
+.ch-pane.narrow .ch-title { flex: 1 1 auto; }
+.ch-pane.narrow .ch-sub { display: none; }
+.ch-pane.narrow .ch-name-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ch-pane.narrow .ch-closed-chip { display: inline-flex; }
+.ch-pane.narrow .ch-bar { flex: none; }
 .ch-msgs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
 
 .ch-day { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 600; color: var(--fg-dim); }

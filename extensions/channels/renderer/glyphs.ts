@@ -11,12 +11,13 @@ import users from '@phosphor-icons/core/assets/regular/users.svg'
 import arrowBendDownRight from '@phosphor-icons/core/assets/regular/arrow-bend-down-right.svg'
 import paperPlaneTilt from '@phosphor-icons/core/assets/regular/paper-plane-tilt.svg'
 import plus from '@phosphor-icons/core/assets/regular/plus.svg'
+import warning from '@phosphor-icons/core/assets/regular/warning.svg'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { NoticeGlyph } from './view-model.ts'
 
 const LOCAL = {
   'chats-circle': chatsCircle, lock, 'speaker-high': speakerHigh, 'speaker-slash': speakerSlash, user, 'user-minus': userMinus,
-  'user-plus': userPlus, users, 'arrow-bend-down-right': arrowBendDownRight, 'paper-plane-tilt': paperPlaneTilt, plus,
+  'user-plus': userPlus, users, 'arrow-bend-down-right': arrowBendDownRight, 'paper-plane-tilt': paperPlaneTilt, plus, warning,
 } as const
 export type LocalGlyph = keyof typeof LOCAL
 export type GlyphName = LocalGlyph | IconName

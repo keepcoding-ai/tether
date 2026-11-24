@@ -32,6 +32,9 @@ type Snap = {
   actions: { primary: string; labeled: boolean; more: boolean; toEnd: boolean }
   empty: boolean
   column: { shown: boolean; button: boolean }
+  fold: { count: number; muted: number; open: boolean }
+  foldBar: { shown: boolean; warn: number }
+  scroll: { client: number }
   composer?: { enabled: boolean; placeholder: string; picked: string }
   members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; hint: string; acts: string[] }>
 }
@@ -132,6 +135,9 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     const view = (id: string) => page.evaluate(i => window.__tether.ext.channels.view(i), id)
     const isNarrow = (id: string): Promise<boolean> => pane(id).evaluate(e => e.classList.contains('narrow'))
     const pickTitle =(): Promise<string> => page.locator('dialog.picker .pk-title').innerText()
+    const resize = async (w: number, h: number): Promise<void> => {
+      await app!.evaluate(({ BrowserWindow }, [ww, hh]) => { BrowserWindow.getAllWindows()[0]!.setSize(ww!, hh!) }, [w, h])
+    }
 
     // ---- 1. the empty channel ----
     console.log('step 1')
@@ -209,6 +215,10 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
 
     // ---- 3. the member's row: mute (asks), unmute (at once), remove (asks) ----
     console.log('step 3')
+    // The hover icons (Calar, Tirar) belong to the wide composition (the narrow row has only the "⋯", G7): this step runs wide.
+    await resize(1900, 760)
+    await page.waitForFunction(id => (document.querySelector(`.ch-pane[data-channel="${id}"]`)?.clientWidth ?? 0) >= 560, hz)
+    await pane(hz).locator('.ch-members').waitFor()
     const row = pane(hz).locator(`.ch-mrow[data-member="${a}"]`)
     // G3: the "⋯" is on the row all the time (no hover needed); Calar and Tirar come with the hover.
     await page.mouse.move(2, 2)
@@ -305,9 +315,6 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     // ---- 6. the wide and the narrow composition (the pictures of the slice) ----
     console.log('step 6')
     assert.ok((await ch.join(USER, hz, a)).ok)
-    const resize = async (w: number, h: number): Promise<void> => {
-      await app!.evaluate(({ BrowserWindow }, [ww, hh]) => { BrowserWindow.getAllWindows()[0]!.setSize(ww!, hh!) }, [w, h])
-    }
     await run('channels.open', { channel: hz })
     await pane(hz).locator(`.ch-mrow[data-member="${a}"]`).waitFor()
     // The desk holds three columns (the channel and the two agents): the window sizes put the channel's own pane above 560 px and at ~520.
@@ -366,6 +373,69 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.keyboard.press('Escape')
     await ask('channels.remove').waitFor({ state: 'detached' })
     await pane(of).screenshot({ path: join(SHOTS, 'g3-nao-ouve.png') })
+
+    // ---- 9. G7: the narrow strip. Wide first (the picture that must not change), then ~520 px folded and open ----
+    console.log('step 9')
+    const wideView = (await view(of))!
+    assert.equal(wideView.foldBar.shown, false, 'the strip does not exist in the wide composition')
+    assert.equal(await pane(of).locator('.ch-fold').isVisible(), false)
+    assert.equal(await pane(of).locator('.ch-members').isVisible(), true, 'the wide column is still beside the conversation')
+    await pane(of).screenshot({ path: join(SHOTS, 'g7-larga.png') })
+    // The one that does not hear is also muted: the strip counts both.
+    assert.ok((await ch.mute(USER, of, s)).ok)
+    await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.fold.muted === 1, of)
+    await resize(1650, 760)
+    await page.waitForFunction(id => document.querySelector(`.ch-pane[data-channel="${id}"]`)?.classList.contains('narrow') === true, of)
+    await pane(of).locator('.ch-fold').waitFor()
+    const fold = pane(of).locator('.ch-fold')
+    // Folded: the column no longer covers the conversation; the strip counts, marks the muted and keeps a warning for the one that does not hear.
+    const f0 = (await view(of))!
+    assert.deepEqual(f0.fold, { count: 2, muted: 1, open: false })
+    assert.deepEqual(f0.foldBar, { shown: true, warn: 1 })
+    assert.equal(f0.column.shown, false)
+    assert.equal(await fold.getAttribute('aria-expanded'), 'false')
+    assert.equal(await fold.getAttribute('aria-label'), '2 membros, 1 calado, 1 não ouve agora. Mostrar membros')
+    assert.equal(await fold.locator('.ch-fold-warn').isVisible(), true)
+    assert.equal(await fold.locator('.ch-fold-muted').isVisible(), true)
+    assert.ok(f0.scroll.client > 0, 'the conversation is visible')
+    // The header is one line (title and buttons side by side) and the subtitle is away.
+    assert.ok((await pane(of).locator('.ch-head').evaluate(e => e.clientHeight)) < 56, 'one-line header')
+    assert.equal(await pane(of).locator('.ch-sub').isVisible(), false)
+    await pane(of).screenshot({ path: join(SHOTS, 'g7-recolhida.png') })
+    // Open: the list comes down above the conversation (the strip button and the bar's "Membros" are the same toggle).
+    await fold.click()
+    await pane(of).locator(`.ch-mrow[data-member="${s}"]`).waitFor()
+    const f1 = (await view(of))!
+    assert.deepEqual(f1.fold, { count: 2, muted: 1, open: true })
+    assert.equal(await fold.getAttribute('aria-expanded'), 'true')
+    assert.ok(f1.scroll.client > 0, 'the conversation is still visible with the list down')
+    assert.equal(await pane(of).locator('.ch-composer-slot textarea').isVisible(), true, 'the speaking box stays at the foot')
+    const listBox = (await pane(of).locator('.ch-members').boundingBox())!
+    const convBox = (await pane(of).locator('.ch-conv').boundingBox())!
+    assert.ok(listBox.y + listBox.height <= convBox.y + 1, 'the list is above the conversation, not over it')
+    const paneBox = (await pane(of).boundingBox())!
+    assert.ok(listBox.height <= paneBox.height * 0.4 + 2, 'at most 40% of the pane')
+    // One line per member, one action ("⋯"); the member that does not hear carries its mark on the row.
+    const deafRow = pane(of).locator(`.ch-mrow[data-member="${s}"]`)
+    assert.ok((await deafRow.boundingBox())!.height < 36, 'one-line row')
+    assert.equal(await deafRow.locator('.ch-macts').isVisible(), false)
+    assert.equal(await deafRow.locator('.ch-mmore').isVisible(), true)
+    assert.equal(await deafRow.locator('.ch-dot').getAttribute('data-tone'), 'wait')
+    assert.equal(await deafRow.locator('.ch-dot').getAttribute('title'), deaf.hint)
+    assert.equal(await deafRow.locator('.ch-dot').getAttribute('aria-label'), 'não ouve agora · falas em espera')
+    await pane(of).screenshot({ path: join(SHOTS, 'g7-aberta.png') })
+    // The "⋯" of the row still opens the member's menu; the strip folds again.
+    await deafRow.locator('.ch-mmore').click()
+    await page.waitForSelector('#ctx-menu li')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#ctx-menu li', { state: 'detached' })
+    await fold.click()
+    await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.fold.open === false, of)
+    // An empty channel has no strip (the plan: nobody here, nothing to fold).
+    await run('channels.open', { channel: vz })
+    await pane(vz).locator('.ch-nobody').waitFor()
+    assert.equal((await view(vz))!.foldBar.shown, false)
+    assert.equal(await pane(vz).locator('.ch-fold').isVisible(), false)
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
