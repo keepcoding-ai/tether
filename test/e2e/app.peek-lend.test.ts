@@ -176,7 +176,7 @@ test('espiar quem tem guia: empréstimo do terminal, aviso na guia, devolução 
     await run(page, g, "Write-Output ('pk-' + (6*7))", /^pk-42$/m) // typing in the card works; the output flows while lent
     assert.equal(await page.locator('#peek .peek-open .label').textContent(), 'Ir para a guia')
     assert.equal(await page.locator('#peek .peek-open-more').isHidden(), true, 'no ▾ for a slot with a tab')
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Fechar: ✕/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo ✕/)
     const cardWide = await sizeOf(page, g)
     assert.deepEqual(await ptySize(page, g), cardWide, 'the pty takes the card\'s size')
     await page.screenshot({ path: join(shots, 'e2-cartao-emprestado.png') })

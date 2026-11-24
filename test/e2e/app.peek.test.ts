@@ -3,7 +3,7 @@
 //   1. a shell closed with "só fechar" keeps running without a tab; `peek` opens the card over the desk: its terminal is
 //      the routed one, shows the shell's screen and takes typing (an echo comes back); the window behind is inert and the
 //      card holds the freeze; the header and foot read as the rules say;
-//   2. Esc: the slot reported as an agent keeps Esc (twice, the card stays); as a shell at its prompt a double Esc closes;
+//   2. Esc: in the card's terminal it is always the program's (agent or shell, once or twice: the card stays);
 //   3. the ✕, a press on the margin, the chord (Ctrl+Shift+O) and the palette command close it, the keyboard back on the
 //      exact element that had it; the command is unavailable with the card closed;
 //   4. over the open drawer: the drawer stays open (inert behind the card) and the keyboard goes back into it;
@@ -152,7 +152,7 @@ test('cartão de espiar: slot sem guia, terminal vivo, Esc, fechar e foco, gavet
     assert.match((await head.locator('.peek-state').textContent())!, /^(ocioso|trabalhando)/)
     assert.equal(await page.locator('#peek .peek-close').getAttribute('title'), 'Fechar (Ctrl+Shift+O)')
     assert.equal(await page.locator('#peek .peek-card').getAttribute('aria-label'), `Espiando ${cwd.split(/[\\/]/).pop()}`)
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /Esc duas vezes/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo ✕, pela margem ou por Ctrl\+Shift\+O\./)
     assert.equal(await page.evaluate(() => document.getElementById('dock')!.hasAttribute('inert')), true, 'the desks behind are inert')
     assert.equal(await page.evaluate(() => document.getElementById('toolbar')!.hasAttribute('inert')), true, 'the toolbar behind is inert')
     assert.ok((await page.evaluate(() => window.__tether.freeze().reasons)).includes('peek'), 'the card holds the freeze')
@@ -175,6 +175,10 @@ test('cartão de espiar: slot sem guia, terminal vivo, Esc, fechar e foco, gavet
     await sleep(100)
     assert.equal((await state(page)).open, true, 'a shell: the first Esc reaches the shell')
     await page.keyboard.press('Escape')
+    await sleep(300)
+    assert.equal((await state(page)).open, true, 'a shell: Esc twice does not close the card either (Esc in the terminal is always the program\'s)')
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /Esc fica com o terminal/)
+    await page.keyboard.press('Control+Shift+O')
     await waitClosed(page)
     assert.deepEqual(await focusIs(page), { slot: keep, xterm: true, drawer: false, peek: false }, 'the keyboard is back where it was')
     assert.equal(await page.evaluate(() => document.getElementById('dock')!.hasAttribute('inert')), false, 'the desks come back')

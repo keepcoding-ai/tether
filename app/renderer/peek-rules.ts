@@ -53,11 +53,13 @@ export function tabInView(p: TabPlace): boolean {
 // ---------- Esc ----------
 
 /**
- * What an Esc inside the open card means: the drawer's rule (drawer-rules.ts `escAction`), the card standing for the
- * drawer. Outside the terminal (the header, a button) Esc closes; an agent's terminal never gives Esc away (Claude
- * interrupts with it); a shell at its prompt closes on a double Esc; a dialog or menu up keeps its own Esc.
+ * What an Esc inside the open card means. In the card's terminal (agent or shell) Esc always goes to the program and never
+ * closes the card (Claude interrupts with it). On the header (a button) it closes, unless a dialog or menu is up and keeps
+ * its own Esc. (The drawer keeps its own rule, drawer-rules.ts.)
  */
 export function peekEscAction(input: Omit<EscInput, 'open'>): EscAction {
+  // One rule: inside the card's content (the terminal, agent or shell) Esc is the program's, never the card's.
+  if (input.focus.in === 'terminal') return 'pass'
   return escAction({ ...input, open: true })
 }
 
@@ -159,9 +161,9 @@ export function peekLabel(title: string): string {
  * stays with the agent (said on the screen itself, since Esc does not close here).
  */
 export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean): string {
-  const way = hint ? `✕ ou ${hint}` : '✕'
-  if (ended) return `Sessão encerrada. Fechar: ${way}.`
-  return kind === 'shell' ? `Fechar: ${hint ? `✕, ${hint}` : '✕'} ou Esc duas vezes.` : `Fechar: ${way}. O Esc fica com o agente.`
+  const way = hint ? `pelo ✕, pela margem ou por ${hint}` : 'pelo ✕ ou pela margem'
+  if (ended) return `Sessão encerrada. Feche ${way}.`
+  return `Feche ${way}. ${kind === 'shell' ? 'O Esc fica com o terminal.' : 'O Esc fica com o agente.'}`
 }
 
 // ---------- keys while the card is open ----------

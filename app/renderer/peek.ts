@@ -11,8 +11,8 @@
 //     espiado" in its place. Closing gives it back (TerminalPanel.takeBack), which refits the tab and forces the pty size;
 //     a tab disposed meanwhile (closed, moved, hibernated) closes the card.
 //
-// Closing: the ✕, the chord (peek.close), a press on the margin, Esc outside the terminal (in a terminal, the drawer's rule:
-// an agent keeps Esc). The keyboard goes back to the exact element that had it before the card opened.
+// Closing: the ✕, the chord (peek.close), a press on the margin, Esc on the header's buttons (in the terminal, agent or
+// shell, Esc is always the program's). The keyboard goes back to the exact element that had it before the card opened.
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { icon, KIND_ICON } from './icons.ts'
 import type { TerminalPanel } from './panel.ts'
@@ -134,13 +134,15 @@ export class PeekCard {
   /**
    * Shows the slot in the card; another slot already in it is swapped out (its own terminal detached, a lent one given
    * back). `lend`: the slot's tab's terminal, to borrow instead of building one (the slot has a tab not in view).
+   * `from`: where the keyboard goes back on close, when it is not where it sits now.
    */
-  open(slotId: string, lend?: TerminalPanel): void {
+  open(slotId: string, lend?: TerminalPanel, from?: HTMLElement): void {
     if (this.current?.slotId === slotId || lend?.isLent) { this.focusTerminal(); return }
     const opening = !this.current
     if (opening) {
+      // `from`: who asked when the keyboard no longer sits there (a menu that closed on its pick, a panel that hid itself).
       const active = document.activeElement
-      this.returnTo = active instanceof HTMLElement && active !== document.body && !this.root.contains(active) ? active : undefined
+      this.returnTo = from?.isConnected ? from : active instanceof HTMLElement && active !== document.body && !this.root.contains(active) ? active : undefined
     }
     if (this.current) this.release(this.current, true)
     if (lend) {

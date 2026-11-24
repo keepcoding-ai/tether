@@ -343,7 +343,7 @@ const host: PanelHost = {
   onKey: (ev, panel) => {
     if (ev.type !== 'keydown') return false
     if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) {
-      if (peekCard?.panel === panel) return peekEscapeInTerminal(panel)
+      if (peekCard?.panel === panel) return false // Esc in the card's terminal is always the program's (peek-rules.ts peekEscAction)
       return drawerEscapeInTerminal(panel) || builderEscape()
     }
     // Line editing (macOS: Cmd/Option + arrows, Backspace; Shift+Enter everywhere in an agent pane): bytes for the prompt, not app chords.
@@ -1559,21 +1559,23 @@ let peekCard: PeekCard | undefined
 const BEHIND_PEEK = [...BEHIND_DRAWER, 'drawer']
 /** The ones the open card made inert (those already inert, behind an open drawer or the closed drawer, stay as they were). */
 let peekInerted: string[] = []
-/** When the last Esc that counts toward a double Esc happened in the card's terminal (a shell at its prompt). */
-let peekLastEsc: number | undefined
 
 /**
  * Peek a slot (TetherUi `panes.peek`): a live slot without a tab opens in the card with a terminal of its own; one whose
  * tab is not in view opens in the card with the tab's terminal lent; one whose tab is in view only gets the keyboard.
  */
-function peek(slotId: string): void {
+function peek(slotId: string, from?: HTMLElement): void {
   if (peekCard?.slotId === slotId) { peekCard.open(slotId); return }
+  from ??= menuRunOwner
   const tab = findPanel(slotId)
   const route = peekRoute(slots.get(slotId), tab !== undefined, tab ? tabInView(tabPlaceOf(slotId, tab)) : true)
   const lend = route === 'lend' ? panels.get(slotId) : undefined
   if (route === 'reveal' || (route === 'lend' && !lend)) { peekCard?.close(); revealPane(slotId); return }
-  if (route === 'lend' || route === 'card') peekCard?.open(slotId, lend)
+  if (route === 'lend' || route === 'card') peekCard?.open(slotId, lend, from)
 }
+
+/** The element that owns the context menu whose item is running right now (set around `item.run()`): where a peek the item opens gives the keyboard back. */
+let menuRunOwner: HTMLElement | undefined
 
 /** Where a slot's tab is and what is on screen right now (peek-rules.ts tabInView reads it). */
 function tabPlaceOf(slotId: string, panel: IDockviewPanel): TabPlace {
@@ -1593,7 +1595,6 @@ function pickPeek(): void {
   const now = Date.now()
   const items: PickItem<string>[] = []
   for (const s of slots.values()) {
-    if (s.kind === 'shell') continue
     const tab = findPanel(s.slotId)
     const route = peekRoute(s, tab !== undefined, tab ? tabInView(tabPlaceOf(s.slotId, tab)) : true)
     if (route !== 'card' && route !== 'lend') continue
@@ -1656,10 +1657,10 @@ function openSlotOnDesk(slotId: string, deskId: string): void {
  * with it. A session whose conversation the daemon cannot pick by itself (unconfirmed: the person must choose to resume or
  * start over) gets the old way: a tab, where that choice is asked.
  */
-async function reviveAndPeek(slotId: string): Promise<void> {
+async function reviveAndPeek(slotId: string, from?: HTMLElement): Promise<void> {
   await startSlot(slotId)
   const s = slots.get(slotId)
-  if (s && isLiveSlot(s)) { peek(slotId); return }
+  if (s && isLiveSlot(s)) { peek(slotId, from); return }
   if (startErrors.get(slotId)?.code === 'unconfirmed') openSlot(slotId, false)
 }
 
@@ -1690,7 +1691,6 @@ function peekHost(): PeekHost {
     onLendChange: slotId => { tabs.get(slotId)?.render() },
     closeHint: () => shortcutHint(PEEK_CLOSE_COMMAND),
     onOpenChange: open => {
-      peekLastEsc = undefined
       if (open) {
         // Menus of the toolbar belong to the window behind: they close, they do not float over the card.
         $('app-menu').hidden = true
@@ -1708,25 +1708,6 @@ function peekHost(): PeekHost {
     },
     fallbackFocus: () => { const id = currentDesk().activePanel?.id; if (id) focusPane(id) },
   }
-}
-
-/** Esc in the card's terminal (peek-rules.ts): true when the card took it (it closes); false hands it to the program. */
-function peekEscapeInTerminal(panel: TerminalPanel): boolean {
-  const now = performance.now()
-  const action = peekEscAction({
-    blocked: escBlocked(),
-    focus: {
-      in: 'terminal',
-      kind: slots.get(panel.slotId)?.kind ?? 'claude', // unknown: treated as an agent, whose Esc is never taken
-      programOwnsScreen: panel.term.buffer.active.type === 'alternate' || panel.term.modes.mouseTrackingMode !== 'none',
-    },
-    now,
-    lastEsc: peekLastEsc,
-  })
-  peekLastEsc = action === 'arm' ? now : undefined
-  if (action !== 'close') return false
-  peekCard?.close()
-  return true
 }
 
 /** Esc anywhere but a terminal while the card is open (its header, its buttons): closes the card, never the drawer under it. */
@@ -2586,8 +2567,9 @@ function setupSessionsMenu(): void {
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     openSlot,
     ...placeHost(),
-    peekSlot: peek,
-    reviveAndPeek,
+    // The panel hides itself on Espiar: the keyboard goes back to the sessions button of the bar, not to a row that is gone.
+    peekSlot: id => peek(id, $('btn-sessions')),
+    reviveAndPeek: id => reviveAndPeek(id, $('btn-sessions')),
     contextMenu: (x, y, specs, opener) => showContextMenu(x, y, menuEntriesOf(specs), opener),
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     confirmBulkClose: async names => (await askDialog(bulkCloseSituation(names))).choice === 'close',
@@ -3084,7 +3066,9 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     li.addEventListener('click', ev => {
       ev.stopPropagation()
       if (item.disabled) return
-      close(false); item.run()
+      close(false)
+      menuRunOwner = owner
+      try { item.run() } finally { menuRunOwner = undefined }
       // The item left nothing focused (it did not open a dialog or move to a pane): back to the opener.
       if (document.activeElement === document.body && owner?.isConnected) owner.focus()
     })

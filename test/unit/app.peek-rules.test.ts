@@ -3,7 +3,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { closeTip, lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, tabInView } from '../../app/renderer/peek-rules.ts'
-import { DOUBLE_ESC_MS } from '../../app/renderer/drawer-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
 describe('where a peek goes', () => {
@@ -75,20 +74,13 @@ describe('a slot with a tab in the card', () => {
 
 describe('Esc inside the card', () => {
   const base = { blocked: false, now: 10_000, lastEsc: undefined }
-  test("an agent's terminal never gives Esc away (Claude interrupts with it), not even twice", () => {
-    for (const kind of ['claude', 'soul', 'codex'] as const) {
-      assert.equal(peekEscAction({ ...base, focus: { in: 'terminal', kind, programOwnsScreen: false } }), 'pass', kind)
-      assert.equal(peekEscAction({ ...base, lastEsc: 9_900, focus: { in: 'terminal', kind, programOwnsScreen: false } }), 'pass', `${kind} twice`)
+  test('in the card\'s terminal Esc is always the program\'s: agent or shell, once or twice, full screen or not', () => {
+    for (const kind of ['claude', 'soul', 'codex', 'shell'] as const) {
+      for (const programOwnsScreen of [false, true]) {
+        assert.equal(peekEscAction({ ...base, focus: { in: 'terminal', kind, programOwnsScreen } }), 'pass', kind)
+        assert.equal(peekEscAction({ ...base, lastEsc: 9_900, focus: { in: 'terminal', kind, programOwnsScreen } }), 'pass', `${kind} twice`)
+      }
     }
-  })
-  test('a shell at its prompt: the first Esc arms, a second within the window closes, a late one arms again', () => {
-    const shell = { in: 'terminal' as const, kind: 'shell' as const, programOwnsScreen: false }
-    assert.equal(peekEscAction({ ...base, focus: shell }), 'arm')
-    assert.equal(peekEscAction({ ...base, lastEsc: base.now - DOUBLE_ESC_MS, focus: shell }), 'close')
-    assert.equal(peekEscAction({ ...base, lastEsc: base.now - DOUBLE_ESC_MS - 1, focus: shell }), 'arm')
-  })
-  test('a shell running a full-screen program (vim, less) keeps Esc', () => {
-    assert.equal(peekEscAction({ ...base, lastEsc: 9_900, focus: { in: 'terminal', kind: 'shell', programOwnsScreen: true } }), 'pass')
   })
   test("outside the terminal (the card's header) Esc closes; a dialog or menu up keeps its own", () => {
     assert.equal(peekEscAction({ ...base, focus: { in: 'chrome' } }), 'close')
@@ -112,12 +104,15 @@ describe('texts', () => {
     assert.equal(peekLabel('conferente'), 'Espiando conferente')
   })
   test("the foot: how to close, and for an agent that Esc stays with the agent; one short line", () => {
-    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', false), 'Fechar: ✕ ou Ctrl+Shift+O. O Esc fica com o agente.')
-    assert.equal(peekFoot('claude', '', false), 'Fechar: ✕. O Esc fica com o agente.')
-    assert.equal(peekFoot('shell', 'Ctrl+Shift+O', false), 'Fechar: ✕, Ctrl+Shift+O ou Esc duas vezes.')
-    assert.equal(peekFoot('shell', '', false), 'Fechar: ✕ ou Esc duas vezes.')
-    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'Sessão encerrada. Fechar: ✕ ou Ctrl+Shift+O.')
-    for (const kind of ['claude', 'soul', 'codex', 'shell'] as const) assert.ok(peekFoot(kind, 'Ctrl+Shift+O', false).length <= 60, kind)
+    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', false), 'Feche pelo ✕, pela margem ou por Ctrl+Shift+O. O Esc fica com o agente.')
+    assert.equal(peekFoot('claude', '', false), 'Feche pelo ✕ ou pela margem. O Esc fica com o agente.')
+    assert.equal(peekFoot('shell', 'Ctrl+Shift+O', false), 'Feche pelo ✕, pela margem ou por Ctrl+Shift+O. O Esc fica com o terminal.')
+    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'Sessão encerrada. Feche pelo ✕, pela margem ou por Ctrl+Shift+O.')
+    for (const kind of ['claude', 'soul', 'codex', 'shell'] as const) {
+      const text = peekFoot(kind, 'Ctrl+Shift+O', false)
+      assert.ok(text.length <= 80, kind)
+      assert.doesNotMatch(text, /duas vezes/)
+    }
   })
   test('with the card open only the palette and the card\'s own close keep their chords', () => {
     assert.equal(peekKeeps(PEEK_CLOSE_COMMAND), true)
