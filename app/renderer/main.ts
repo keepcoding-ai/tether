@@ -3536,7 +3536,7 @@ function linkMenuFacts(target: LinkTarget, origin: LinkOrigin): LinkMenuFacts {
   const baseDir = (origin.slotId ? paneCwdOf(origin.slotId) : undefined) ?? origin.baseDir
   return {
     peekable: pane !== undefined && slots.has(pane), mac: IS_MAC, caseInsensitive: CASE_INSENSITIVE,
-    explorer: commands.all().some(c => c.id === 'explorer.reveal'),
+    ...(commands.all().some(c => c.id === 'explorer.reveal') ? { explorerRoots: projectFolders.map(f => f.path) } : {}),
     ...(baseDir ? { baseDir } : {}),
   }
 }

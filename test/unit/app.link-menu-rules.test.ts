@@ -27,7 +27,7 @@ describe('link menu rows', () => {
     assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/a', isDirectory: true }, facts)), ['Abrir pasta [Ctrl+clique]', '-', 'Copiar caminho'])
   })
   test('a file under the tab folder gets the full list, in the approved order', () => {
-    const plan = linkMenuPlan({ kind: 'file', path: 'C:/proj/src/a.ts', position: { line: 4 } }, { ...facts, explorer: true, baseDir: 'C:\\proj' })
+    const plan = linkMenuPlan({ kind: 'file', path: 'C:/proj/src/a.ts', position: { line: 4 } }, { ...facts, explorerRoots: ['C:/proj'], baseDir: 'C:\\proj' })
     assert.deepEqual(labels(plan), [
       'Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Mostrar no explorador do tether', 'Mostrar na pasta do sistema', '-', 'Copiar caminho', 'Copiar caminho relativo',
     ])
@@ -42,7 +42,20 @@ describe('link menu rows', () => {
     assert.equal(has(linkMenuPlan({ kind: 'file', path: 'C:/proj/a.ts' }, facts)), false)
   })
   test('a folder link gets no new rows', () => {
-    assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/proj/src', isDirectory: true }, { ...facts, explorer: true, baseDir: 'C:/proj' })), ['Abrir pasta [Ctrl+clique]', '-', 'Copiar caminho'])
+    assert.deepEqual(labels(linkMenuPlan({ kind: 'file', path: 'C:/proj/src', isDirectory: true }, { ...facts, explorerRoots: ['C:/proj'], baseDir: 'C:/proj' })), ['Abrir pasta [Ctrl+clique]', '-', 'Copiar caminho'])
+  })
+  test('the explorer row shows only when a folder the explorer shows holds the file', () => {
+    const has = (path: string, roots: readonly string[] | undefined, caseInsensitive = false): boolean =>
+      labels(linkMenuPlan({ kind: 'file', path }, { ...facts, ...(roots ? { explorerRoots: roots } : {}), caseInsensitive })).includes('Mostrar no explorador do tether')
+    assert.equal(has('C:/proj/a.ts', ['C:/proj']), true)
+    assert.equal(has('C:/other/a.ts', ['C:/proj']), false, 'outside every folder')
+    assert.equal(has('C:/project/a.ts', ['C:/proj']), false, 'a sibling that shares a prefix')
+    assert.equal(has('C:/proj', ['C:/proj']), false, 'the folder itself')
+    assert.equal(has('C:/x/b.ts', ['C:/proj', 'C:/x']), true, 'any of the folders')
+    assert.equal(has('C:/proj/a.ts', []), false, 'no folders')
+    assert.equal(has('C:/proj/a.ts', undefined), false, 'explorer off')
+    assert.equal(has('C:/PROJ/a.ts', ['C:/proj'], true), true)
+    assert.equal(has('C:/PROJ/a.ts', ['C:/proj'], false), false)
   })
   test('macOS reads Cmd and Option', () => {
     const plan = labels(linkMenuPlan({ kind: 'tether', url: 'tether://tab/abc123' }, { peekable: true, mac: true }))

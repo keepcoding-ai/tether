@@ -14,8 +14,8 @@ export interface LinkMenuFacts {
   /** The link names a pane of a slot the app knows (only then can it be peeked at). */
   peekable: boolean
   mac: boolean
-  /** The explorer extension is on (only then can a file be shown in its tree). */
-  explorer?: boolean
+  /** The folders the explorer shows (agents' and pinned ones); undefined when the explorer is off. Only a file under one can be shown in its tree. */
+  explorerRoots?: readonly string[]
   /** The folder of the tab the link came from; a file under it gets "Copiar caminho relativo". */
   baseDir?: string
   /** Paths compare without case (Windows, macOS). */
@@ -69,6 +69,13 @@ export function relativeCopyText(target: LinkTarget, facts: Pick<LinkMenuFacts, 
   return relativeToFolder(facts.baseDir, target.path, facts.caseInsensitive === true)
 }
 
+/** Whether the explorer can reveal the file: it lies under one of the folders the explorer shows (the folder itself does not count). */
+export function explorerCanReveal(target: LinkTarget, facts: Pick<LinkMenuFacts, 'explorerRoots' | 'caseInsensitive'>): boolean {
+  if (target.kind !== 'file' || !facts.explorerRoots) return false
+  const ci = facts.caseInsensitive === true
+  return facts.explorerRoots.some(root => relativeToFolder(root, target.path, ci) !== undefined)
+}
+
 /** The rows of a link's menu; empty for what is not followed (an anchor, an ignored link). */
 export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenuLine[] {
   const follow = followKey(facts.mac)
@@ -109,7 +116,7 @@ export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenu
         { action: 'follow', label: 'Abrir', icon: 'file', hint: follow },
         { action: 'follow-side', label: 'Abrir ao lado', icon: 'columns' },
         'sep',
-        ...(facts.explorer ? [{ action: 'reveal', label: 'Mostrar no explorador do tether', icon: 'target' } satisfies LinkMenuRow] : []),
+        ...(explorerCanReveal(target, facts) ? [{ action: 'reveal', label: 'Mostrar no explorador do tether', icon: 'target' } satisfies LinkMenuRow] : []),
         { action: 'show-in-folder', label: 'Mostrar na pasta do sistema', icon: 'arrow-square-out' },
         'sep',
         { action: 'copy', label: 'Copiar caminho', icon: 'copy' },

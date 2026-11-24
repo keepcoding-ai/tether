@@ -54,6 +54,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   delete env.TETHER_CLAUDE_ARGS
+  delete env.TETHER_USER_DIR // a real tether pane exports it: the app would read the real settings.json
   delete env.NODE_TEST_CONTEXT
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
@@ -204,7 +205,7 @@ test('menu de link de arquivo: mostrar no explorador do tether, na pasta do sist
     await focusPane(page, host)
     const apartText = await print(page, host, apart.slice(0, 12), apart.slice(12))
     const outRows = await rightClick(page, await pointOf(page, host, apartText))
-    assert.deepEqual(outRows, ['Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Mostrar no explorador do tether', 'Mostrar na pasta do sistema', '-', 'Copiar caminho'])
+    assert.deepEqual(outRows, ['Abrir [Ctrl+clique]', 'Abrir ao lado', '-', 'Mostrar na pasta do sistema', '-', 'Copiar caminho'], 'outside every folder the explorer shows: no explorer row, no relative row')
     await page.keyboard.press('Escape')
   } finally {
     if (app) {
