@@ -11,7 +11,13 @@
 // `tether://sync/now`, and at exit (a detached child, only when something changed since the last good cycle). Nothing runs without
 // <home>/sync.json: with sync off the cost is one asynchronous existence check per trigger.
 // What the child itself writes (settings through the watcher, keybindings through theirs, the reload) is an echo, never a change.
-// Pure of Electron: every effect is injected (unit-tested in test/unit/app.sync-runner.test.ts).
+// The runner is pure of Electron: every effect is injected (unit-tested in test/unit/app.sync-runner.test.ts); wireSyncRunner at the
+// end binds it to the app's process (node binary, CLI script, executor, window).
+import { spawn } from 'node:child_process'
+import { access } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { Executor } from '../../src/exec/executor.ts'
+import { saveLayoutFile } from './layout-file.ts'
 
 /** The machine-local settings the engine never sends (DEFAULT_LOCAL_SETTINGS of src/core/sync/codecs/settings.ts, copied: main must not import the engine). */
 const LOCAL_SETTING_ROOTS = new Set(['window', 'trayNoticeShown', 'extensionState'])
@@ -395,4 +401,49 @@ export function rendererLayoutFlusher(
       try { t.send(FLUSH_CHANNEL, id) } catch { waiting.delete(id); clearTimeout(timer); resolve(false) }
     })
   }
+}
+
+// ---- the app's process ----
+
+/**
+ * `node <bin/tether.mjs> ...args`, as tetherd is started (main.ts daemonSpawnOptions): the system Node ≥ 24 (Electron's cannot
+ * load the .ts sources), the app's env without ELECTRON_* (TETHER_HOME / TETHER_USER_DIR go through as they are). The node is
+ * looked up once (the lookup stats PATH entries synchronously).
+ */
+export function cliSpawner(o: { node: () => string | undefined; cli: string; cwd: string; env: NodeJS.ProcessEnv }): SyncRunnerDeps['spawnChild'] {
+  let node: string | undefined
+  return (args, detached) => {
+    node ??= o.node()
+    if (!node) throw new Error('não encontrei o node (≥ 24) para rodar o tether sync: ele precisa estar no PATH, ou em TETHER_NODE')
+    const env: NodeJS.ProcessEnv = {}
+    for (const [k, v] of Object.entries(o.env)) if (v !== undefined && !k.startsWith('ELECTRON_')) env[k] = v
+    return spawn(node, [o.cli, ...args], {
+      cwd: o.cwd, env, windowsHide: true,
+      ...(detached ? { detached: true, stdio: 'ignore' as const } : { stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'] }),
+    })
+  }
+}
+
+/** The runner bound to the app: <home>/sync.json, the CLI of this checkout, the executor for the disk, the window for flush and reload. */
+export function wireSyncRunner(o: {
+  home: string
+  /** bin/tether.mjs of this checkout. */
+  cli: string
+  node: () => string | undefined
+  exec: Executor
+  layoutPath: string
+  ipc: { on(channel: string, fn: (e: unknown, id: unknown) => void): unknown }
+  window: () => { webContents: { send(channel: string, ...args: unknown[]): void; reloadIgnoringCache(): void } } | undefined
+  log: (line: string) => void
+}): SyncRunner {
+  return createSyncRunner({
+    configExists: () => access(join(o.home, 'sync.json')).then(() => true, () => false),
+    spawnChild: cliSpawner({ node: o.node, cli: o.cli, cwd: o.home, env: process.env }),
+    kill: pid => o.exec.run('killTree', [pid]),
+    flushLayout: rendererLayoutFlusher(o.ipc, () => o.window()?.webContents),
+    writeLayout: layout => saveLayoutFile(o.exec, o.layoutPath, layout),
+    reload: () => o.window()?.webContents.reloadIgnoringCache(),
+    writeLast: async last => { await o.exec.run('mkdirp', [o.home]); await o.exec.run('writeTextAtomic', [join(o.home, 'sync-last.json'), JSON.stringify(last, null, 2)]) },
+    log: o.log,
+  })
 }
