@@ -177,8 +177,31 @@ function frameViews(desk: Obj): Obj {
   return isObject(desk.frames) && isObject(desk.frames.views) ? desk.frames.views : {}
 }
 
-/** Drops the view state from a desk (in place; `desk` is already a copy). */
-function stripViewState(desk: Obj): void {
+/**
+ * A desk-shaped holder of frames: a desk itself, or a frames pad's state (`{ frames, activeFrame }`, e.g. the
+ * `frame-pads.*` pads) nested anywhere inside it. Matched by shape, so every pad that holds frames is covered.
+ */
+function holdsFrames(x: unknown): x is Obj {
+  return isObject(x) && isObject(x.frames) && isObject(x.frames.grid) && isObject(x.frames.views)
+}
+
+/** Drops the view state from every frames holder in `value` (in place; `value` is already a copy). */
+function stripViewState(value: unknown): void {
+  if (Array.isArray(value)) { for (const v of value) stripViewState(v); return }
+  if (!isObject(value)) return
+  if (holdsFrames(value)) stripOwnViewState(value)
+  for (const v of Object.values(value)) stripViewState(v)
+}
+
+/** Gives every frames holder in `value` the view state of the holder at the same place in `mine`, or a default. */
+function restoreViewState(value: unknown, mine: unknown): void {
+  if (Array.isArray(value)) { value.forEach((v, i) => restoreViewState(v, Array.isArray(mine) ? mine[i] : undefined)); return }
+  if (!isObject(value)) return
+  if (holdsFrames(value)) restoreOwnViewState(value, holdsFrames(mine) ? mine : undefined)
+  for (const [k, v] of Object.entries(value)) restoreViewState(v, isObject(mine) && Object.hasOwn(mine, k) ? mine[k] : undefined)
+}
+
+function stripOwnViewState(desk: Obj): void {
   delete desk.activeFrame
   for (const view of Object.values(frameViews(desk))) {
     if (!isObject(view)) continue
@@ -188,7 +211,7 @@ function stripViewState(desk: Obj): void {
 }
 
 /** Gives a desk (stripped of view state) this machine's view state where still valid, else a default. */
-function restoreViewState(desk: Obj, mine: Obj | undefined): void {
+function restoreOwnViewState(desk: Obj, mine: Obj | undefined): void {
   const views = frameViews(desk)
   const mineViews = mine ? frameViews(mine) : {}
   const frames = isObject(desk.frames) ? frameLeafIds((desk.frames.grid as Obj | undefined)?.root) : []
@@ -259,7 +282,8 @@ export function exportLayout(
         put(kept, padId, converted)
       }
       put(entity, 'pads', kept)
-    } else if (pads !== undefined) put(entity, 'pads', pads)
+    } else if (pads !== undefined) put(entity, 'pads', structuredClone(pads))
+    stripViewState(entity.pads) // frames pads nest desks of their own
     put(desks, uid, entity)
     order.push(uid)
   })

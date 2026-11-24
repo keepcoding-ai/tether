@@ -719,3 +719,30 @@ describe('view state stays on the machine', () => {
     assert.equal(Object.hasOwn(entityDesks(again.entities).u1.frames.views.f1.grid.root.data, 'activeView'), false)
   })
 })
+
+describe('view state of frames pads stays on the machine', () => {
+  /** sample() with a `frame-pads.desk` pad on desk-1 whose nested desk shows `active`. */
+  function withPad(active: string): LayoutJson {
+    const l = sample()
+    const inner = desk('x', 'x', { p1: terminal('p1', 'C:\atrium'), p2: terminal('p2', 'C:\atrium') }) as Record<string, any>
+    inner.frames.views.f1.grid.root = { type: 'branch', data: [{ type: 'leaf', data: { views: ['p1', 'p2'], activeView: active, id: 'g1' } }] }
+    inner.frames.views.f1.activeGroup = 'g1'
+    deskOf(l, 'desk-1').pads['frame-pads.desk'] = { frames: inner.frames, activeFrame: 'f1' }
+    return l
+  }
+
+  test('switching the active tab inside a frame-pads pad changes no exported entity', () => {
+    const a = exportWin(withPad('p1'))
+    const b = exportWin(withPad('p2'))
+    assert.deepEqual(a.entities, b.entities)
+    const text = JSON.stringify(a.entities)
+    assert.doesNotMatch(text, /activeView|activeGroup|activeFrame/)
+  })
+
+  test('round trip is byte for byte with the nested local value kept', () => {
+    const layout = withPad('p2')
+    const other = exportWin(withPad('p1'))
+    const im = importLayout(other.entities, layout, other.map, other.ids, WIN)
+    assert.equal(JSON.stringify(im.layout), JSON.stringify(layout))
+  })
+})
