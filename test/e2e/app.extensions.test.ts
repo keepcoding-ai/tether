@@ -134,9 +134,14 @@ test('app extensions (F9 0b): generated ≡ menu equals the old one + "Extensõe
     assert.ok(rows.filter(r => r.role?.startsWith('menuitem') && r.cls !== 'sub').every(r => r.command), 'every item names a command')
     assert.equal(await page.locator('#app-menu li[data-command="extensions.show"] svg').count(), 1, 'icons are painted')
 
-    // 2. "Extensões" from the menu: the screen opens as a tab, listing the note (F9 slice 1), on, with its switch.
+    // 2. "Extensões" from the menu: the screen opens in the peek card, listing the note (F9 slice 1), on, with its switch;
+    //    the card's "Abrir nesta mesa" makes it a tab.
     await clickMenuItem(page, 'extensions.show')
     await page.waitForSelector('#app-menu', { state: 'hidden' })
+    await page.waitForSelector('#peek .ext-pane .ext-row[data-ext="note"]')
+    await page.click('#peek .peek-open')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await page.waitForSelector('.tether-tab.extensions')
     await page.waitForSelector('.ext-pane .ext-row[data-ext="note"]')
     assert.equal(await page.locator('.tether-tab.extensions .text').innerText(), 'Extensões')
     assert.equal(await page.locator('.ext-pane .ext-row[data-ext="note"]').getAttribute('data-state'), 'enabled')

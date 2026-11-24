@@ -357,6 +357,9 @@ test("panel pad manager: the pad's guides grouped by owner; focus, close, move b
     // ---- 8. affinity: the settings opened with the pad in focus land on the desk ----
     await page.click(`${shown}[data-panel="${c}"] .frame-dock`)
     await page.keyboard.press('Control+,')
+    // The page opens in the peek card; its "Abrir nesta mesa" puts it in a tab, which is where the affinity counts.
+    await page.waitForSelector('#peek .st-pane')
+    await page.click('#peek .peek-open')
     await page.waitForFunction(() => window.__tether.panelIds().some(id => id.startsWith('settings:')), undefined, { timeout: 5_000 })
     assert.ok(!(await page.evaluate(() => window.__tether.padFrames())).some(f => f.panes.some(p => p.startsWith('settings:'))), 'the settings are not inside a pad')
   } finally {

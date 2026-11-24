@@ -235,9 +235,12 @@ test('app keybindings-screen extension (F9 slice 3): on → the screen lists eve
     await page.locator('body').click()
     await page.keyboard.press('Control+K')
     await page.keyboard.press('Control+S')
-    await page.waitForSelector('.kb-pane')
+    await page.waitForSelector('#peek .kb-pane')
     const commands = await page.evaluate(() => (window.__tether as unknown as { keybindings(): { rows: { command: string }[] }[] }).keybindings()[0]!.rows.map(r => r.command))
     for (const id of ['pane.new', 'note.open', 'palette.quick-open', 'explorer.open-folder', 'keybindings.show']) assert.ok(commands.includes(id), `the screen lists ${id}`)
+    // The screen opens in the peek card (never saved); "Abrir nesta mesa" makes it a tab, which the layout keeps.
+    await page.click('#peek .peek-open')
+    await page.waitForSelector('.tether-tab.keybindings')
     await waitFor('the screen saved in layout.json', () => savedPanes(home).some(p => p.contentComponent === 'keybindings'))
     const saved = savedPanes(home).find(p => p.contentComponent === 'keybindings')!
     assert.match(saved.id, /^keybindings:/)
