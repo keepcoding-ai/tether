@@ -109,18 +109,23 @@ export function lacksMotorProfiles(file: Profile[]): boolean {
  * Per-motor fusion of the file's profiles with the defaults, in memory only (a read never writes it). A motor (`agent`,
  * shells included) with at least one profile in the file keeps just the file's; a motor with none gets its default profiles,
  * after the file's. A default whose id is taken by a profile of another motor enters under a free id (`-2`, `-3`...); the
- * file's profiles are never touched, and an entering default keeps the `default` flag the default declares.
+ * file's profiles are never touched, and an entering default keeps the `default` flag the default declares. A name already
+ * used by a profile (case-insensitive, as `upsertProfile` compares) gets the same treatment: ` 2`, ` 3`...
  */
 export function mergeMissingMotors(file: Profile[], defaults: Profile[]): Profile[] {
   const have = new Set<string>(file.map((p) => p.agent))
   const taken = new Set<string>(file.map((p) => p.id))
+  const names = new Set<string>(file.map((p) => p.name.trim().toLowerCase()))
   const out = [...file]
   for (const d of defaults) {
     if (have.has(d.agent)) continue
     let id = d.id
     for (let n = 2; taken.has(id); n++) id = `${d.id}-${n}`
     taken.add(id)
-    out.push(id === d.id ? d : { ...d, id })
+    let name = d.name
+    for (let n = 2; names.has(name.trim().toLowerCase()); n++) name = `${d.name} ${n}`
+    names.add(name.trim().toLowerCase())
+    out.push(id === d.id && name === d.name ? d : { ...d, id, name })
   }
   return out
 }
