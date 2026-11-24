@@ -240,6 +240,24 @@ export function failedDialog(what: string, code: string, reason?: string): Dialo
   }
 }
 
+/** A join of several that went through in part: who came in and who did not, each refusal in the plain words. */
+export interface JoinOutcome { name: string; code?: string; reason?: string }
+
+export function joinResultDialog(outcomes: readonly JoinOutcome[]): DialogSpec {
+  const entered = outcomes.filter(o => o.code === undefined).map(o => o.name)
+  const failed = outcomes.filter(o => o.code !== undefined)
+  const why = (o: JoinOutcome): string => {
+    const words = REFUSALS[o.code!] ?? `Não foi possível (${o.code})`
+    return `${o.name} (${words.replace(/\.$/, '')})`
+  }
+  return {
+    situation: 'channels.failed', tone: 'warn', icon: 'shield-warning',
+    title: 'Juntar agentes',
+    message: `${entered.length > 0 ? `Entraram: ${entered.join(', ')}. ` : ''}Não entrou: ${failed.map(why).join('; ')}.`,
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: entered.length > 0 ? 'Quem entrou segue no canal.' : 'Nada foi alterado.', tone: 'safe' }],
+  }
+}
+
 /** The picker that asks for the name of a new channel: the row is made by the typed text (PickSpec.create). */
 export const NAME_PICK = { title: 'Criar canal', placeholder: 'Nome do canal (ex.: conferencia)', empty: 'Digite o nome do novo canal.' } as const
 

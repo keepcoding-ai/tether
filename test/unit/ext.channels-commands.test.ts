@@ -7,7 +7,7 @@ import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import type { MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import {
-  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, PICK, removeDialog,
+  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, joinResultDialog, memberItems, memberMenu, muteDialog, PICK, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -18,6 +18,14 @@ const OBRA = sum({ id: 'desk_desk-1', name: 'obra', desk: 'desk-1', owner: { kin
 const CONF = sum({ id: 'c2', name: 'conferencia', members: 4 })
 const OLD = sum({ id: 'c3', name: 'revisao', closed: { at: '2026-11-22T10:00:00Z', by: 'user' } as ChannelSummary['closed'] })
 const LIST = [CONF, OLD, OBRA]
+
+test('joinResultDialog: tells who came in and who did not, each refusal in plain words', () => {
+  const d = joinResultDialog([{ name: 'ana' }, { name: 'bia', code: 'removed' }, { name: 'caio', code: 'unknown-agent' }])
+  assert.equal(d.title, 'Juntar agentes')
+  assert.equal(d.message, 'Entraram: ana. Não entrou: bia (Esse agente foi tirado do canal e só volta se for juntado de novo); caio (Esse agente não existe mais).')
+  const none = joinResultDialog([{ name: 'bia', code: 'closed' }, { name: 'caio', code: 'closed' }])
+  assert.equal(none.message, 'Não entrou: bia (O canal está encerrado); caio (O canal está encerrado).')
+})
 
 test('manifest: the eight commands, category Canais, ids never change', () => {
   const cmds = manifest.contributes!.commands!

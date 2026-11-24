@@ -167,7 +167,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).locator('.ch-bar .ch-join').click()
     await picker.waitFor()
     assert.equal(await pickTitle(), 'Juntar a #horizontes')
-    await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click()
+    await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click() // a click marks in the many box
+    await page.keyboard.press('Enter')
     await waitUntil(() => a in members(hz), 10_000, 'a joined by the header button')
     await pane(hz).locator('.ch-nobody').waitFor({ state: 'detached' })
     // A member came: the box is on again and the "Membros" button is back (the column itself follows the width).

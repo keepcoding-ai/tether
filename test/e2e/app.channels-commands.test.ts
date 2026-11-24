@@ -175,7 +175,8 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     const second = await rows.allInnerTexts()
     assert.equal(second.length, 2, 'only the agents outside the channel')
     assert.ok(second.every(t => !t.includes('bancada')), 'bancada is in already')
-    await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click()
+    await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click() // in the many box a click marks
+    await page.keyboard.press('Enter')
     await waitUntil(() => a in members(conf), 10_000, 'a joined by the picker')
     await run('channels.join', { channel: conf, agent: c })
     await waitUntil(() => c in members(conf), 10_000, 'c joined by the argument')
@@ -235,7 +236,7 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
     await run('channels.join', { channel: conf })
     await picker.waitFor()
-    await waitUntil(async () => (await rows.count()) >= 2, 10_000, 'the join list is drawn')
+    await page.waitForFunction(() => document.querySelectorAll('dialog.picker li.pk-item').length >= 2, undefined, { timeout: 10_000 })
     assert.equal(await title(), 'Juntar a #conferencia')
     const groups = await page.locator('dialog.picker li.pk-group').allInnerTexts()
     assert.match(groups[0]!, /^nesta mesa · /i, `the active desk first: ${groups.join(' | ')}`)
@@ -244,8 +245,21 @@ test('channel commands: picker, two steps, confirmations and menus', { timeout: 
     assert.ok(joinRows[0]!.includes('tirado deste canal'), `the one taken out is marked: ${joinRows.join(' | ')}`)
     await page.waitForTimeout(400) // the picker's opening fade
     await page.screenshot({ path: 'C:/atrium/.tmp/tether-agents/onda-3/gestao/g5-juntar.png' })
-    await page.keyboard.press('Escape')
+
+    // ---- 4a2. G6: mark two with Space and join both at once; one request each, no dialog when all go through ----
+    console.log('step 4a2')
+    const outsiders = joinRows.length
+    assert.ok(outsiders >= 2, 'two agents outside the channel')
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Space')
+    assert.equal(await page.locator('dialog.picker li.pk-item.marked').count(), 2, 'two rows marked')
+    await page.screenshot({ path: 'C:/atrium/.tmp/tether-agents/onda-3/gestao/g6-juntar-varios.png' })
+    const before = Object.keys(members(conf)).length
+    await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
+    await waitUntil(() => Object.keys(members(conf)).length === before + 2, 10_000, 'two joined at once')
+    await noPicker()
 
     const tabOf =(id: string) => page.locator(`.tether-tab[data-slot="${id}"]`)
     await tabOf(b).waitFor()

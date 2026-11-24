@@ -6,8 +6,8 @@ import type { Disposable, PickSpec, TetherUi } from '../../../app/renderer/ext-a
 import type { ChannelSummary } from '../daemon/requests.ts'
 import { CMD } from '../manifest.ts'
 import {
-  NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, memberItems, muteDialog, removeDialog,
-  type MemberText,
+  NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, joinResultDialog, memberItems, muteDialog, removeDialog,
+  type JoinOutcome, type MemberText,
   type AgentChoice, type ChannelScope, type MemberGesture,
 } from './texts.ts'
 import type { MembersAnswer } from './view-model.ts'
@@ -159,6 +159,22 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
     let channel = arg.channel !== undefined ? findChannel(list, arg.channel) : undefined
     if (arg.channel !== undefined && !channel) { await ui.dialogs.ask(failedDialog(what, 'unknown-channel')).catch(() => undefined); return }
     let agent = arg.agent !== undefined ? agentId(arg.agent) : undefined
+    if (kind === 'join' && agent === undefined) {
+      // Channel (when not given), then the agents to mark; Esc in the second step goes back to the first.
+      const asked = channel === undefined
+      for (;;) {
+        if (!channel) {
+          const id = await ui.pick.list(channelSpec(list, 'open', SCOPE_TEXT.join))
+          if (id === undefined) return
+          channel = list.find(c => c.id === id)
+          if (!channel) return
+        }
+        const chosen = await ui.pick.many({ ...agentSpec('join', channel), confirmLabel: 'Juntar', confirmHint: 'junta' })
+        if (chosen) { await joinAll(channel, chosen); return }
+        if (!asked) return
+        channel = undefined
+      }
+    }
     if (!channel && agent === undefined) {
       const spec = channelSpec(list, 'open', SCOPE_TEXT[kind])
       const r = await ui.pick.steps(spec, id => agentSpec(kind, list.find(c => c.id === id)!))
@@ -182,6 +198,24 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
       if (a?.choice !== kind) return
     }
     await act(what, kind, { channel: channel.id, agent })
+    await dir.refresh().catch(() => {})
+  }
+
+  /** One `join` request per agent, in order. All in: no dialog. One alone that fails: the usual dialog. Some fail: one result dialog. */
+  async function joinAll(channel: ChannelSummary, agentIds: readonly string[]): Promise<void> {
+    const outcomes: JoinOutcome[] = []
+    for (const id of agentIds) {
+      const name = ui.agents.get(id)?.name ?? id
+      try { await ui.daemon.request('join', { channel: channel.id, agent: id }); outcomes.push({ name }) } catch (e) {
+        outcomes.push({ name, code: codeOf(e), ...(e instanceof Error ? { reason: e.message } : {}) })
+      }
+    }
+    const failed = outcomes.filter(o => o.code !== undefined)
+    if (failed.length === 1 && outcomes.length === 1) {
+      await ui.dialogs.ask(failedDialog('Juntar agente', failed[0]!.code!, failed[0]!.reason)).catch(() => undefined)
+    } else if (failed.length > 0) {
+      await ui.dialogs.ask(joinResultDialog(outcomes)).catch(() => undefined)
+    }
     await dir.refresh().catch(() => {})
   }
 
