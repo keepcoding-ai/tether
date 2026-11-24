@@ -533,33 +533,57 @@ describe('channels fan-out (H2)', () => {
     await doorApi.slots.forget(shell)
   })
 
-  test('a commanded pane (attentionFor) is not touched', async () => {
+  test('a commanded pane (attentionFor) follows the same rule: a line turn\'s done is cleared, waiting and a turn with no line stay', async () => {
     const g = await running('dentro-comandada')
     const id = await channel(owner, 'comandada')
     await addMember(id, g)
     await doorApi.attention.route(g, owner)
+    // A turn a line opened: its routed done is cleared (the owner is not told "terminou").
+    let mark = states.length
     const said = await ch.say(owner, id, { body: 'para a comandada' })
     assert.ok(said.ok && said.receipts[g] === 'inside')
     report(g, 'start')
     await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'busy')
     report(g, 'done')
-    await waitUntil(() => doorApi.slots.get(g)?.attentionFor?.value === 'done', 10_000, 'the done goes to the owner')
-    await sleep(800)
-    assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'done', 'left for the owner')
-    // A line while busy, then the turn it opens: still left for the owner.
+    await waitUntil(() => statesOf(g, mark).some((s) => s.attentionFor?.value === 'done'), 10_000, 'the done edge goes to the owner')
+    await waitUntil(() => doorApi.slots.get(g)?.attentionFor === undefined && doorApi.slots.get(g)?.attention === undefined, 10_000, 'the done cleared')
+    // A line while busy, then the turn it opens: cleared too.
     report(g, 'start')
     await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'busy')
     const busySaid = await ch.say(owner, id, { body: 'no meio, comandada' })
     assert.ok(busySaid.ok && busySaid.receipts[g] === 'inside')
-    const mark = states.length
+    mark = states.length
     report(g, 'done')
     await waitUntil(() => statesOf(g, mark).some((s) => s.turn === undefined), 10_000, 'the turn ended')
+    if (doorApi.slots.get(g)?.attentionFor) doorApi.attention.seen(g) // the owner saw the done of its own turn
+    mark = states.length
     report(g, 'start')
     await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'the line turn')
     report(g, 'done')
-    await waitUntil(() => doorApi.slots.get(g)?.attentionFor?.value === 'done', 10_000, 'the done goes to the owner')
+    await waitUntil(() => statesOf(g, mark).some((s) => s.attentionFor?.value === 'done'), 10_000, 'the done edge goes to the owner')
+    await waitUntil(() => doorApi.slots.get(g)?.attentionFor === undefined, 10_000, 'the line turn of a commanded pane: cleared')
+    // A routed waiting in a line turn is never cleared: the owner gets the request.
+    const asked = await ch.say(owner, id, { body: 'pede permissão, comandada' })
+    assert.ok(asked.ok)
+    report(g, 'start')
+    await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'busy')
+    report(g, 'waiting')
+    await waitUntil(() => doorApi.slots.get(g)?.attentionFor?.value === 'waiting', 10_000, 'the waiting goes to the owner')
     await sleep(800)
-    assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'done', 'the line turn of a commanded pane: left for the owner')
+    assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'waiting', 'waiting stays for the owner')
+    doorApi.attention.seen(g) // the owner answered
+    report(g, 'done')
+    await waitUntil(() => doorApi.slots.get(g)?.turn === undefined, 10_000, 'the turn ended')
+    if (doorApi.slots.get(g)?.attentionFor) doorApi.attention.seen(g)
+    // A turn with no line since the last start (the owner's `agents send` goes by its own delivery): the done stays.
+    mark = states.length
+    report(g, 'start')
+    await waitUntil(() => doorApi.slots.get(g)?.turn === 'busy', 10_000, 'the owner\'s turn')
+    report(g, 'done')
+    await waitUntil(() => statesOf(g, mark).some((s) => s.attentionFor?.value === 'done'), 10_000, 'the done edge goes to the owner')
+    await sleep(800)
+    assert.equal(doorApi.slots.get(g)?.attentionFor?.value, 'done', 'a turn no line opened: left for the owner')
+    doorApi.attention.seen(g)
     await doorApi.attention.unroute(g)
     await doorApi.slots.forget(g)
   })

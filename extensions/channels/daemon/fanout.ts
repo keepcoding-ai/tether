@@ -15,7 +15,10 @@
 //     the person typed nothing after the latest such line nor since the member went idle, so the line opened it, even a line
 //     taken while the agent was busy, which Claude answers in a turn of its own right after its current one ends. The `done`
 //     that ends such a turn is cleared (`attention.seen`) unless the person typed in it; a turn she opened by typing is never
-//     cleared, lines in the middle or not; `waiting` is never cleared, and a commanded pane (`attentionFor`) is never touched.
+//     cleared, lines in the middle or not; `waiting` is never cleared. A commanded pane follows the same rule: its `done`
+//     comes as `attentionFor` (routed to the owner) and clearing it is what keeps for-agents' "terminou" from going to the
+//     owner (the notice drops an edge whose `attentionFor` is gone, whichever listener runs first). A turn the owner opened
+//     with `agents send` brings no line of ours, so its `done` stays and is told.
 // All of it is lost on a tetherd restart (the record and the core's queue stay on disk): at worst one return notice is missed.
 import { slotIsLive, slotTitle } from '../../../app/shared/agent-info.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
@@ -304,7 +307,6 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   // ---- the done of a turn a line opened (2.6) ----
   /** Follows one state of a watched member: a start edge decides who opened the turn; its end clears a line's `done`. */
   function observe(s: SlotState, w: TurnWatch): void {
-    if (s.attentionFor) w.opened = undefined
     if (s.turn === 'busy') {
       if (!s.busySince || s.busySince === w.busy) return
       const start = Date.parse(s.busySince)
@@ -312,7 +314,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
       w.busy = s.busySince
       w.line = undefined
       w.opened = undefined
-      if (line === undefined || s.attentionFor) return
+      if (line === undefined) return
       // The turn is hers when she typed after the latest line or since the member went idle (her prompt, even one sent
       // just before a line came in); otherwise the line opened it.
       const typed = api.slots.userTypedAt(s.slotId)
@@ -324,7 +326,8 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     const opened = w.opened
     w.opened = undefined
     // `waiting` keeps the turn busy, so only a finished turn gets here; a reset (no `done`) just ends the watch of the turn.
-    if (opened === undefined || s.attention !== 'done' || s.attentionFor) return
+    // The `done` of a commanded pane is in `attentionFor` (routed to its owner).
+    if (opened === undefined || (s.attention ?? s.attentionFor?.value) !== 'done') return
     const typed = api.slots.userTypedAt(s.slotId)
     if (typed !== undefined && typed >= opened) return
     try { api.attention.seen(s.slotId) } catch (e) { api.log(`attention.seen ${s.slotId}: ${(e as Error).message}`) }
