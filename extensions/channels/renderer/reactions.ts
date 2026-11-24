@@ -1,7 +1,7 @@
 // What the pane shows of the reactions, as pure functions (no DOM, no daemon): the pills of a message, the sum kept when a
 // reaction line is heard, the person's gesture shown before the daemon answers, and the words of the refusals. A reaction is a
 // signal, not a speech: nothing here touches the timeline's lines, the unread count or the "seen" mark.
-import { reactionKey, REACTION_SENSES, REACTIONS_PER_LINE, REACTIONS_PER_MEMBER, USER, type Line, type ReactionTally } from '../rules.ts'
+import { parseReaction, reactionKey, REACTION_SENSES, REACTIONS_PER_LINE, REACTIONS_PER_MEMBER, USER, type Line, type ReactionTally } from '../rules.ts'
 
 /** The five agreed reactions as the person reads them (the agent writes the `name`). */
 export const SENSE_TEXT: Record<string, { emoji: string; label: string; sense: string }> = Object.fromEntries(REACTION_SENSES.map((s) => [s.name, {
@@ -91,6 +91,60 @@ export function pillAria(p: Pick<Pill, 'by' | 'name' | 'emoji' | 'count' | 'mine
 /** The five an author's reactions of the person on one message (`reactionKey`s) — what the bar and the menu mark. */
 export function minesOf(tallies: readonly ReactionTally[] | undefined, pending?: Pending): Set<string> {
   return new Set(pillsOf(tallies, pending).filter((p) => p.mine).map((p) => reactionKey(p.emoji)))
+}
+
+/** What a screen reader hears of a message's reactions: "concordo, 2; 🎉, 1" (the agreed meaning when there is one, the emoji otherwise). */
+export function pillsSummary(pills: ReadonlyArray<Pick<Pill, 'name' | 'emoji' | 'count'>>): string {
+  return pills.map(p => `${(p.name ? SENSE_TEXT[p.name]?.sense : undefined) ?? p.emoji}, ${p.count}`).join('; ')
+}
+
+/** The name of a focused message: who, when, to whom, the text, then its reactions ("claude · nic, 09:15, para Guga. Terminei. Reações: concordo, 2."). */
+export function msgAria(m: { who: string; time: string; to: readonly string[]; body: string }, pills: ReadonlyArray<Pick<Pill, 'name' | 'emoji' | 'count'>>): string {
+  const head = `${m.who}${m.time ? `, ${m.time}` : ''}, ${m.to.length === 0 ? 'para todos' : `para ${m.to.join(', ')}`}`
+  const rx = pills.length === 0 ? '' : ` Reações: ${pillsSummary(pills)}.`
+  const body = m.body.trimEnd()
+  return `${head}. ${body}${/[.!?…:;]$/.test(body) ? '' : '.'}${rx}`
+}
+
+/** What is said aloud when a reaction changes (never the whole conversation): "nic reagiu com concordo à fala de Guga". */
+export function announceText(a: { who: string; emoji: string; name?: string; op: 'add' | 'remove'; author: string }): string {
+  const what = (a.name ? SENSE_TEXT[a.name]?.sense : undefined) ?? a.emoji
+  return a.op === 'add' ? `${a.who} reagiu com ${what} à fala de ${a.author}.` : `${a.who} tirou ${what} da fala de ${a.author}.`
+}
+
+/** The pills that fit before "+N": the rest are listed by the "+N" button (more room in a wide pane). */
+export const PILLS_SHOWN = { wide: 6, narrow: 4 } as const
+export function splitPills<T>(pills: readonly T[], narrow: boolean): { shown: T[]; hidden: T[] } {
+  const max = narrow ? PILLS_SHOWN.narrow : PILLS_SHOWN.wide
+  return pills.length <= max ? { shown: [...pills], hidden: [] } : { shown: pills.slice(0, max), hidden: pills.slice(max) }
+}
+
+/** The recent emojis of the person (newest first, the five agreed ones left out: they have their own row), kept short. */
+export const RECENTS_MAX = 6
+export function pushRecent(list: readonly string[], emoji: string): string[] {
+  const key = reactionKey(emoji)
+  if (REACTION_SENSES.some(s => reactionKey(s.emoji) === key)) return [...list]
+  return [emoji, ...list.filter(e => reactionKey(e) !== key)].slice(0, RECENTS_MAX)
+}
+/** The recents as saved (a JSON list of texts); anything else is no recents. */
+export function readRecents(raw: string | null | undefined): string[] {
+  try {
+    const v: unknown = JSON.parse(raw ?? '[]')
+    return Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string' && parseReaction(e) !== undefined).slice(0, RECENTS_MAX) : []
+  } catch { return [] }
+}
+
+/** The "other emoji" field: exactly one emoji (never a text, never one of the five's names), or the notice. */
+export const OTHER_EMOJI_REFUSAL = 'Use um emoji só.'
+export function otherEmoji(text: string): { emoji: string } | { error: string } {
+  const t = text.trim()
+  const r = parseReaction(t)
+  return r === undefined || r.name === t.toLowerCase() ? { error: OTHER_EMOJI_REFUSAL } : { emoji: r.emoji }
+}
+
+/** Where the system's own emoji picker lives, for the field's hint. */
+export function emojiKeyHint(platform: string): string {
+  return /^Win/i.test(platform) ? 'cole ou use Win + .' : /^Mac/i.test(platform) ? 'cole ou use Ctrl + Cmd + Espaço' : 'cole um emoji'
 }
 
 /** The short notice for a refusal of the daemon (the plan's words); `mine`/`kinds` tell the two meanings of `limit` apart. */

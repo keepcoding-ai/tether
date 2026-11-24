@@ -13,7 +13,10 @@ import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line } from '../rules.ts'
-import { applyReaction, FIVE, minesOf, pillAria, pillsOf, pillTitle, refusalText, type Pending, type Pill, type Tallies } from './reactions.ts'
+import {
+  announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, splitPills, whoText,
+  type Pending, type Pill, type Tallies,
+} from './reactions.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { engineOf } from '../../../app/renderer/agent-ui.ts'
@@ -48,7 +51,13 @@ const TOAST_MS = 6000
 /** Reaction lines heard before the first page came (more than this are dropped: the page brings the sums). */
 const EARLY_REACTIONS_MAX = 200
 
-interface Kept { timeline: Timeline; tallies: Tallies; scrollTop: number; stick: boolean }
+/** The recent emojis of the person live in this window's storage (a UI convenience, like the palette's recents). */
+const RECENTS_KEY = 'tether.channels.recentReactions'
+/** The command that opens the picker on the focused speech: its key is `r` here until the person binds the command to another. */
+export const REACT_COMMAND = 'channels.react'
+const REACT_DEFAULT_KEY = 'r'
+
+interface Kept { timeline: Timeline; tallies: Tallies; scrollTop: number; stick: boolean; floor: number | undefined }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -78,6 +87,12 @@ export interface PaneSnapshot {
   hasComposerSlot: boolean
   /** The short notice of a refused reaction, '' when none shows. */
   toast: string
+  /** What was last said aloud (the polite live region) about a reaction change. */
+  announce: string
+  /** The reaction picker: open, for which speech, its recents, the hint of its field and the field's notice. */
+  picker: { open: boolean; seq: number; recents: string[]; hint: string; error: string }
+  /** The speech that holds the keyboard focus (0 = none). */
+  focusSeq: number
   /** The speaking box; absent while the channel is closed. */
   composer?: ComposerSnapshot
   /** The bar over the conversation ("N novas para você" or "N falas novas"); '' while hidden. `barMe`: the one for her. */
@@ -188,6 +203,21 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private readonly hb = el('div', 'ch-hb')
     private readonly toastEl = el('div', 'ch-toast')
     private toastTimer: ReturnType<typeof setTimeout> | undefined
+    /** The lowest `seq` the pages asked cover: the cursor of the older page when a whole page is reactions (no line to read it from). */
+    private floor: number | undefined
+    /** The polite live region of reaction changes, apart from the conversation's log (which says only new speeches). */
+    private readonly announceEl = el('div', 'ch-announce')
+    private announced = ''
+    /** The reaction picker (one at a time), and the speech that had the keyboard when it opened (the focus goes back there). */
+    private picker: { box: HTMLElement; seq: number; input: HTMLInputElement; error: HTMLElement; off: () => void } | undefined
+    /** The last speech that held the focus: the palette's commands act on it when the focus is on the palette itself. */
+    private lastFocusSeq = 0
+    /** Where the focus returns to after a menu of a speech or of a pill closes (by the key table's hand or the mouse's). */
+    private menuReturn: { seq: number; key?: string; until: number } | undefined
+    /** What each speech's name is made of (its author, time and text): the name is rebuilt when its reactions change. */
+    private readonly msgMeta = new WeakMap<HTMLElement, { who: string; time: string; to: string[]; body: string }>()
+    private rxNarrow = false
+    private recents: string[] = []
     private readonly composerSlot = el('div', 'ch-composer-slot')
     private readonly side = el('div', 'ch-members')
     /** The narrow composition's strip of members (one button): over the conversation, folded or with its list down. */
@@ -221,8 +251,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.channelId = String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(p.api.id))
       this.element.dataset.channel = this.channelId
       const k = kept.get(this.channelId)
-      if (k) { this.timeline = k.timeline; this.tallies = new Map(k.tallies); this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
+      if (k) { this.timeline = k.timeline; this.tallies = new Map(k.tallies); this.floor = k.floor; this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
       else this.pendingScroll = 'end'
+      try { this.recents = readRecents(localStorage.getItem(RECENTS_KEY)) } catch { this.recents = [] }
       live.add(this)
 
       this.newBar.type = 'button'
@@ -231,10 +262,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.foot.append(this.composerSlot)
       this.toastEl.hidden = true
       this.toastEl.setAttribute('role', 'status')
+      this.announceEl.setAttribute('role', 'status')
+      this.announceEl.setAttribute('aria-live', 'polite')
+      this.announceEl.setAttribute('aria-atomic', 'true')
       // The "novas" bar floats over the end of the conversation only (not over the speaking box under it): the two share a positioned box.
       const wrap = el('div', 'ch-msgs-wrap')
       wrap.append(this.msgs, this.newBar)
-      this.conv.append(wrap, this.toastEl, this.muteBox, this.foot)
+      this.conv.append(wrap, this.toastEl, this.announceEl, this.muteBox, this.foot)
       this.buildHoverBar()
       this.msgs.addEventListener('mouseover', ev => {
         const m = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-msg') : null
@@ -246,7 +280,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         const m = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-msg') : null
         if (!m) return
         ev.preventDefault()
+        // The menu key already opened the menu (onMsgKey): its `contextmenu` event is the same gesture.
+        if (performance.now() - this.keyMenuAt < 400) return
         this.openMsgMenu(Number(m.dataset.seq), ev.clientX, ev.clientY)
+      })
+      // The keyboard: the arrows walk the speeches, R and 1-5 react, the menu key opens the speech's menu (see onMsgKey).
+      this.msgs.addEventListener('keydown', ev => this.onMsgKey(ev))
+      this.msgs.addEventListener('focusin', ev => {
+        const m = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-msg') : null
+        if (!m) return
+        this.lastFocusSeq = Number(m.dataset.seq)
+        if (ev.target === m) this.showBar(m)
       })
       this.side.id = `ch-members-${this.channelId}`
       this.fold.type = 'button'
@@ -272,7 +316,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
             // After the closing code ran (the core gives the focus back to its opener itself when that is still on the page).
             // A dialog closing ends the gesture (a menu may still be followed by its dialog, so the mark stays after it).
             const ended = n.tagName === 'DIALOG'
-            setTimeout(() => { this.returnFocus(); if (ended) this.memberReturn = undefined }, 0)
+            setTimeout(() => { this.returnFocus(); this.returnMsgFocus(); if (ended) this.memberReturn = undefined }, 0)
             return
           }
         }
@@ -313,6 +357,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       document.removeEventListener('visibilitychange', this.onWatch)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       if (this.toastTimer) clearTimeout(this.toastTimer)
+      this.closePicker(false)
       this.ro?.disconnect()
       this.contentRo?.disconnect()
       this.overlays?.disconnect()
@@ -320,7 +365,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
       // (The scroll is read from the last scroll event: by now the element has left the page and says 0.)
-      if (this.loaded) keep(this.channelId, { timeline: this.timeline, tallies: this.tallies, scrollTop: this.lastTop, stick: this.stick })
+      if (this.loaded) keep(this.channelId, { timeline: this.timeline, tallies: this.tallies, scrollTop: this.lastTop, stick: this.stick, floor: this.floor })
       marks.paneChanged(this.channelId)
     }
 
@@ -347,7 +392,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           this.ask<MembersAnswer>('members'),
         ])
         if (this.disposed) return
+        const heldFirst = this.timeline.lines[0]?.seq
         this.timeline = this.timeline.lines.length > 0 ? mergeNewest(this.timeline, page) : applyPage(this.timeline, page, false)
+        this.noteFloor(heldFirst, page.last)
         this.absorb(page)
         this.answer = members
         this.error = ''
@@ -378,6 +425,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         const members = await this.ask<MembersAnswer>('members')
         if (this.disposed) return
         this.answer = members
+        if (this.isClosed()) this.closePicker(false)
         this.syncTitle()
         this.paintHead()
         this.paintMembers()
@@ -395,18 +443,36 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.membersTimer = setTimeout(() => { this.membersTimer = undefined; void this.refreshMembers() }, MEMBERS_REFRESH_MS)
     }
 
+    /**
+     * The page of the newest lines (first load or a catch-up) fixes the floor when it REPLACED what was held (the held first line was
+     * not kept); the bound `last - PAGE_SIZE + 1` is never below the page's true start, so no `seq` is skipped (a few are asked twice).
+     */
+    private noteFloor(heldFirst: number | undefined, last: number): void {
+      const first = this.timeline.lines[0]?.seq
+      if (heldFirst === undefined || (first !== undefined && first > heldFirst)) this.floor = Math.max(1, last - PAGE_SIZE + 1)
+    }
+
+    /** The most pages of nothing but reactions skipped in one go (each reaction takes a number, so a long run is possible but bounded). */
+    private static readonly OLDER_SKIP_MAX = 40
+
     private async loadOlder(): Promise<void> {
-      const before = olderCursor(this.timeline)
-      if (before === undefined || this.loadingOlder || this.disposed) return
+      if (olderCursor(this.timeline, this.floor) === undefined || this.loadingOlder || this.disposed) return
       this.loadingOlder = true
       const m = this.msgs
       const oldHeight = m.scrollHeight
       const oldTop = m.scrollTop
       try {
-        const page = await this.ask<HistoryPage>('history', { before, limit: PAGE_SIZE })
-        if (this.disposed) return
-        this.timeline = applyPage(this.timeline, page, true)
-        this.absorb(page)
+        // A page that is all reactions brings no line (they come apart, as sums): the next one is asked at once, from the floor.
+        for (let i = 0; i < ChannelPane.OLDER_SKIP_MAX; i++) {
+          const before = olderCursor(this.timeline, this.floor)
+          if (before === undefined) break
+          const page = await this.ask<HistoryPage>('history', { before, limit: PAGE_SIZE })
+          if (this.disposed) return
+          this.floor = Math.max(1, before - PAGE_SIZE)
+          this.timeline = applyPage(this.timeline, page, true)
+          this.absorb(page)
+          if (page.lines.length > 0 || !page.more) break
+        }
         this.paintMsgs()
         // The lines went on top: what the person was reading stays where it was.
         m.scrollTop = oldTop + (m.scrollHeight - oldHeight)
@@ -445,10 +511,37 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // A message the pane does not hold gets its sum with the older page that brings it.
       const first = this.timeline.lines[0]?.seq
       if (first === undefined || seq < first) return
-      const next = applyReaction(this.tallies.get(seq), l)
+      const before = this.tallies.get(seq)
+      const next = applyReaction(before, l)
       if (next.length > 0) this.tallies.set(seq, next)
       else this.tallies.delete(seq)
       this.paintRx(seq)
+      // Said aloud in one short sentence when somebody else changed it live (the person's own gesture was said by `react`).
+      if (live && l.from.id !== USER && JSON.stringify(before ?? []) !== JSON.stringify(next) && l.react) {
+        const sense = FIVE.find(f => reactionKey(f.emoji) === reactionKey(l.react!.emoji))
+        this.announce(announceText({ who: l.from.name, emoji: l.react.emoji, ...(sense ? { name: sense.name } : {}), op: l.react.op, author: this.authorOf(seq) }))
+      }
+    }
+
+    /** "Guga" / "claude · nic" / "você": whose speech it is, as the reaction's sentence names it. */
+    private authorOf(seq: number): string {
+      const line = this.timeline.lines.find(l => l.seq === seq)
+      if (!line) return 'outra pessoa'
+      return line.from.id === USER || line.from.role === 'moderator' ? 'você' : line.from.name
+    }
+
+    /** One polite sentence in the live region (cleared first so the same sentence twice is heard twice). */
+    private announce(text: string): void {
+      this.announced = text
+      this.announceEl.textContent = ''
+      setTimeout(() => { if (!this.disposed && this.announced === text) this.announceEl.textContent = text }, 30)
+    }
+
+    private rememberRecent(emoji: string): void {
+      const next = pushRecent(this.recents, emoji)
+      if (next.join() === this.recents.join()) return
+      this.recents = next
+      try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)) } catch { /* storage unavailable: the recents stay for this pane */ }
     }
 
     /** The sums a page of the history brings replace the held ones of its messages. */
@@ -468,7 +561,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         if (this.disposed) return
         // Counted in lines held, not in `seq`s: a reaction takes a number and is not news.
         const before = this.timeline.last
+        const heldFirst = this.timeline.lines[0]?.seq
         this.timeline = mergeNewest(this.timeline, page)
+        this.noteFloor(heldFirst, page.last)
         this.absorb(page)
         this.quiet.clear()
         if (!this.stick) this.unread += this.timeline.lines.filter(l => l.seq > before).length
@@ -525,6 +620,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private onResize(): void {
       const narrow = this.element.clientWidth > 0 && this.element.clientWidth < NARROW_PX
       this.element.classList.toggle('narrow', narrow)
+      // The pills fold behind "+N" sooner in the narrow composition: the speeches are drawn again when it flips (the focus is kept).
+      if (narrow !== this.rxNarrow) { this.rxNarrow = narrow; if (this.loaded) this.paintMsgs() }
       this.paintBar()
       if (!this.membersTouched && this.element.clientWidth > 0 && this.membersOpen === narrow) this.membersOpen = !narrow
       this.paintSide()
@@ -817,8 +914,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const m = this.msgs
       // Emptying the box resets its scroll: while shown, what the person was reading is put back (the end is the caller's).
       const keepTop = this.visible() ? m.scrollTop : undefined
+      // A speech (or one of its pills) that holds the keyboard keeps it through the redraw: a new line must not throw the focus away.
+      const held = document.activeElement instanceof HTMLElement && m.contains(document.activeElement) ? document.activeElement : undefined
+      const heldSeq = held?.closest<HTMLElement>('.ch-msg')?.dataset.seq
+      const heldKey = held?.classList.contains('ch-pill') ? held.dataset.key : undefined
       m.replaceChildren()
       try { this.fillMsgs(m) } finally { if (keepTop !== undefined && this.visible()) m.scrollTop = keepTop }
+      if (heldSeq !== undefined) {
+        const msg = m.querySelector<HTMLElement>(`.ch-msg[data-seq="${heldSeq}"]`)
+        const again = heldKey !== undefined ? msg?.querySelector<HTMLElement>(`.ch-pill[data-key="${CSS.escape(heldKey)}"]`) : undefined
+        ;(again ?? msg)?.focus({ preventScroll: true })
+      }
       this.watchContent()
     }
 
@@ -915,9 +1021,29 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         e.append(who)
       } else e.title = r.time
       e.append(this.speech(r.body))
+      // The speech is a stop of its own for the arrows (the log stays the one Tab stop) and reads as a whole: author, time, text, reactions.
+      e.tabIndex = -1
+      e.setAttribute('role', 'article')
+      this.msgMeta.set(e, { who: r.name, time: r.time, to: r.to.map(t => t.name), body: r.body })
+      // The narrow composition has no hover bar: this "⋯" is always there and opens the same menu (the menu key does too).
+      const more = this.actionBtn('ch-msg-more', 'Reagir e mais ações da fala', 'dots-three', () => {
+        const b = more.getBoundingClientRect()
+        this.openMsgMenu(r.seq, b.left, b.bottom)
+      })
+      more.tabIndex = -1
+      more.setAttribute('aria-haspopup', 'menu')
+      e.append(more)
       const rx = this.rxEl(r.seq)
       if (rx) e.append(rx)
+      this.nameMsg(e, r.seq)
       return e
+    }
+
+    /** The speech's accessible name, with the sum of its reactions as they are now. */
+    private nameMsg(e: HTMLElement, seq: number): void {
+      const meta = this.msgMeta.get(e)
+      if (!meta) return
+      e.setAttribute('aria-label', msgAria(meta, pillsOf(this.tallies.get(seq), this.pendingOf(seq))))
     }
 
     // ---------- reactions ----------
@@ -929,8 +1055,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const box = el('div', 'ch-rx')
       box.setAttribute('role', 'group')
       box.setAttribute('aria-label', 'Reações')
+      // A change of the pills is told by the pane's own live region (one short sentence), not by the log re-reading the whole group.
+      box.setAttribute('aria-live', 'off')
       const readOnly = this.isClosed()
-      for (const p of pills) {
+      const { shown, hidden } = splitPills(pills, this.isNarrow())
+      for (const p of shown) {
         const b = readOnly ? el('span', 'ch-pill ro') : el('button', 'ch-pill')
         if (p.mine) b.classList.add('mine')
         if (p.pending) b.classList.add('pend')
@@ -944,9 +1073,36 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           b.type = 'button'
           b.setAttribute('aria-pressed', String(p.mine))
           b.addEventListener('click', ev => { ev.stopPropagation(); this.reactTo(seq, p.emoji) })
-          b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openPillMenu(seq, p, ev.clientX, ev.clientY) })
+          b.addEventListener('contextmenu', ev => {
+            ev.preventDefault(); ev.stopPropagation()
+            if (performance.now() - this.keyMenuAt < 400) return
+            this.openPillMenu(seq, p, ev.clientX, ev.clientY)
+          })
         } else b.setAttribute('role', 'img')
         box.append(b)
+      }
+      if (hidden.length > 0) {
+        // The pills that do not fit: one button lists them all (and lets the person put or take hers from the list).
+        const n = hidden.length
+        const b = el('button', 'ch-pill ch-pill-more', `+${n}`)
+        b.type = 'button'
+        b.dataset.key = '+n'
+        b.title = n === 1 ? 'Mais 1 reação' : `Mais ${n} reações`
+        b.setAttribute('aria-haspopup', 'menu')
+        b.setAttribute('aria-label', `${b.title}: ${pillsSummary(hidden)}. Abre a lista.`)
+        b.addEventListener('click', ev => { ev.stopPropagation(); const r = b.getBoundingClientRect(); this.openHiddenMenu(seq, hidden, r.left, r.bottom) })
+        box.append(b)
+      }
+      if (!readOnly) {
+        const add = el('button', 'ch-pill ch-pill-add')
+        add.type = 'button'
+        add.dataset.key = '+'
+        add.title = 'Reagir com outro emoji'
+        add.setAttribute('aria-label', 'Reagir com outro emoji')
+        add.setAttribute('aria-haspopup', 'dialog')
+        add.append(glyph('plus'))
+        add.addEventListener('click', ev => { ev.stopPropagation(); this.openPicker(seq) })
+        box.append(add)
       }
       return box
     }
@@ -961,7 +1117,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (old && next) old.replaceWith(next)
       else if (old) old.remove()
       else if (next) e.insertBefore(next, this.hb.parentElement === e ? this.hb : null)
-      if (heldKey !== undefined && next) next.querySelector<HTMLElement>(`.ch-pill[data-key="${CSS.escape(heldKey)}"]`)?.focus()
+      if (heldKey !== undefined) (next?.querySelector<HTMLElement>(`.ch-pill[data-key="${CSS.escape(heldKey)}"]`) ?? e).focus({ preventScroll: true })
+      this.nameMsg(e, seq)
       this.syncBar()
     }
 
@@ -991,7 +1148,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           const next = applyReaction(this.tallies.get(seq), line)
           if (next.length > 0) this.tallies.set(seq, next)
           else this.tallies.delete(seq)
+          const sense = FIVE.find(f => reactionKey(f.emoji) === key)
+          this.announce(announceText({ who: 'Você', emoji, ...(sense ? { name: sense.name } : {}), op: remove ? 'remove' : 'add', author: this.authorOf(seq) }))
         }
+        if (!remove) this.rememberRecent(emoji)
       } catch (e) {
         this.toast(refusalText((e as { code?: string }).code, limit))
       } finally {
@@ -1022,12 +1182,16 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.hb.append(b)
       }
       this.hb.append(el('span', 'ch-hb-sep'))
+      const face = this.actionBtn('ch-hb-b ch-hb-face', 'Outro emoji…', 'smiley', () => this.openPicker(Number(this.hb.dataset.seq)))
+      face.setAttribute('aria-haspopup', 'dialog')
       const more = this.actionBtn('ch-hb-b ch-hb-more', 'Mais ações da fala', 'dots-three', () => {
         const r = more.getBoundingClientRect()
         this.openMsgMenu(Number(this.hb.dataset.seq), r.left, r.bottom)
       })
       more.setAttribute('aria-haspopup', 'menu')
-      this.hb.append(more)
+      this.hb.append(face, more)
+      // The keys do all of this from the speech itself (1-5, R, the menu key): the bar's buttons are for the pointer, not Tab stops.
+      for (const b of this.hb.querySelectorAll<HTMLElement>('button')) b.tabIndex = -1
     }
 
     private showBar(msg: HTMLElement): void {
@@ -1056,11 +1220,14 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const line = this.timeline.lines.find(l => l.seq === seq)
       if (!line) return
       const rows: ContextMenuRow[] = []
+      this.menuReturn = { seq, until: Date.now() + JOIN_FOCUS_MS }
       if (!this.isClosed()) {
         const mine = minesOf(this.tallies.get(seq), this.pendingOf(seq))
         const who = line.from.id === USER || line.from.role === 'moderator' ? 'você' : line.from.name
         rows.push({ heading: `Reagir à fala de ${who}` })
+        // The key of the picker is written beside "Outro emoji…"; the digits 1-5 react from the speech itself (the picker lists them too).
         for (const f of FIVE) rows.push({ icon: '', label: `${f.emoji}  ${f.label}`, checked: mine.has(reactionKey(f.emoji)), run: () => this.reactTo(seq, f.emoji) })
+        rows.push({ icon: '', label: '🙂  Outro emoji…', hint: this.reactKeyLabel(), run: () => this.openPicker(seq) })
         rows.push('sep')
       }
       rows.push({ icon: 'clipboard-text', label: 'Copiar texto', run: () => this.copy(line.body) })
@@ -1070,6 +1237,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     /** The menu of a pill: put or take back the person's own, and who reacted. */
     private openPillMenu(seq: number, p: Pill, x: number, y: number): void {
+      this.menuReturn = { seq, key: reactionKey(p.emoji), until: Date.now() + JOIN_FOCUS_MS }
       const sense = p.name ? FIVE.find(f => f.name === p.name)?.sense : undefined
       const rows: ContextMenuRow[] = [
         { heading: `${p.emoji} ${sense ? `${sense} · ` : ''}${p.count}` },
@@ -1079,6 +1247,245 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         ...p.by.map((b): ContextMenuRow => ({ heading: b.id === USER ? 'Você' : b.name })),
       ]
       ui.menus.context(x, y, rows as ContextMenuEntry[])
+    }
+
+    /** The list behind "+N": every pill that did not fit, each a row that puts or takes the person's reaction, with who gave it. */
+    private openHiddenMenu(seq: number, hidden: readonly Pill[], x: number, y: number): void {
+      this.menuReturn = { seq, key: '+n', until: Date.now() + JOIN_FOCUS_MS }
+      const readOnly = this.isClosed()
+      const rows: ContextMenuRow[] = [{ heading: 'Outras reações' }]
+      for (const p of hidden) {
+        const sense = p.name ? FIVE.find(f => f.name === p.name)?.sense : undefined
+        rows.push({
+          icon: '', label: `${p.emoji}  ${p.count} · ${whoText(p.by)}${sense ? ` · ${sense}` : ''}`,
+          ...(readOnly ? { disabled: true } : { checked: p.mine }), run: () => this.reactTo(seq, p.emoji),
+        })
+      }
+      ui.menus.context(x, y, rows as ContextMenuEntry[])
+    }
+
+    /** After a menu closes the focus returns to the speech (or the pill) it was opened from, unless the person went somewhere else. */
+    private returnMsgFocus(): void {
+      const r = this.menuReturn
+      if (!r || this.disposed) return
+      this.menuReturn = undefined
+      if (Date.now() > r.until) return
+      const a = document.activeElement
+      if (a !== null && a !== document.body && !a.closest('#ctx-menu')) return
+      const msg = this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${r.seq}"]`)
+      const pill = r.key !== undefined ? msg?.querySelector<HTMLElement>(`.ch-pill[data-key="${CSS.escape(r.key)}"]`) : undefined
+      ;(pill ?? msg)?.focus({ preventScroll: true })
+    }
+
+    // ---------- the keyboard on the speeches ----------
+
+    /** The label of the picker's key beside the menu row: the key of the person's own binding when she moved it, `R` otherwise. */
+    private reactKeyLabel(): string {
+      const own = this.boundKeys()
+      return own.length > 0 ? own[0]! : REACT_DEFAULT_KEY.toUpperCase()
+    }
+
+    /** The labels of the keys the person bound to the picker's command (empty = she did not: the pane's own `R` holds). */
+    private boundKeys(): string[] {
+      try {
+        const table = ui.keybindings.table()
+        return table.bindingsOf(REACT_COMMAND).length > 0 ? [table.hint(REACT_COMMAND)] : []
+      } catch { return [] }
+    }
+
+    private sayLines(): HTMLElement[] { return [...this.msgs.querySelectorAll<HTMLElement>(':scope > .ch-msg')] }
+
+    /** Moves the focus to the neighbour speech (or, from the log itself, to the one at the foot of what is seen). */
+    private walk(from: HTMLElement | null, dir: 1 | -1): void {
+      const all = this.sayLines()
+      if (all.length === 0) return
+      let to: HTMLElement | undefined
+      if (from) {
+        const at = all.indexOf(from)
+        to = all[at + dir]
+        // Above the first held speech there may be older ones: they are asked for, and the focus stays where it is.
+        if (!to && dir === -1 && this.timeline.more) void this.loadOlder()
+        if (!to) return
+      } else {
+        const bottom = this.msgs.getBoundingClientRect().bottom
+        to = [...all].reverse().find(m => m.getBoundingClientRect().top < bottom) ?? all[all.length - 1]
+      }
+      if (!to) return
+      to.focus({ preventScroll: true })
+      to.scrollIntoView({ block: 'nearest' })
+    }
+
+    private onMsgKey(ev: KeyboardEvent): void {
+      if (ev.defaultPrevented || this.picker) return
+      const t = ev.target instanceof HTMLElement ? ev.target : null
+      if (!t) return
+      const msg = t.closest<HTMLElement>('.ch-msg')
+      const onMsg = t === msg
+      // The menu key and Shift+F10: the menu of the speech, or of the pill that holds the focus. Its own `contextmenu` event is ignored (keyMenuAt).
+      if (msg && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
+        ev.preventDefault()
+        this.keyMenuAt = performance.now()
+        const seq = Number(msg.dataset.seq)
+        const pill = t.classList.contains('ch-pill') && t.dataset.emoji !== undefined ? pillsOf(this.tallies.get(seq), this.pendingOf(seq)).find(p => reactionKey(p.emoji) === t.dataset.key) : undefined
+        const r = (pill ? t : msg).getBoundingClientRect()
+        const x = Math.max(0, r.left + 16), y = Math.min(r.bottom, r.top + 28)
+        if (pill && !this.isClosed()) this.openPillMenu(seq, pill, x, r.bottom)
+        else this.openMsgMenu(seq, x, y)
+        return
+      }
+      // Esc on something inside a speech (a pill, its "⋯") gives the focus back to the speech.
+      if (ev.key === 'Escape' && msg && !onMsg && !ev.ctrlKey && !ev.altKey && !ev.metaKey) { msg.focus({ preventScroll: true }); return }
+      if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+      if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && !ev.shiftKey && (t === this.msgs || onMsg)) {
+        ev.preventDefault()
+        this.walk(onMsg ? msg : null, ev.key === 'ArrowDown' ? 1 : -1)
+        return
+      }
+      if (!onMsg || !msg || this.isClosed()) return
+      const seq = Number(msg.dataset.seq)
+      const n = Number(ev.key)
+      if (ev.key.length === 1 && n >= 1 && n <= FIVE.length) { ev.preventDefault(); this.reactTo(seq, FIVE[n - 1]!.emoji); return }
+      // `R` is the pane's own until the person binds the picker's command to a key of hers (then the key table's dispatcher runs it).
+      if (ev.key.toLowerCase() === REACT_DEFAULT_KEY && this.boundKeys().length === 0) { ev.preventDefault(); this.openPicker(seq) }
+    }
+
+    /** The speech the palette's commands mean: the one that holds the focus (or held it last); the newest speech when none did. */
+    private focusedMsg(): HTMLElement | undefined {
+      const all = this.sayLines()
+      return all.find(m => Number(m.dataset.seq) === this.lastFocusSeq) ?? all[all.length - 1]
+    }
+
+    /** A palette command: react to the focused speech with `emoji`, or open the picker on it (`undefined`). `last`: the newest speech. */
+    reactFocused(emoji: string | undefined, last = false): void {
+      if (this.isClosed()) return
+      const all = this.sayLines()
+      const msg = last ? all[all.length - 1] : this.focusedMsg()
+      if (!msg) return
+      const seq = Number(msg.dataset.seq)
+      if (emoji === undefined) { this.openPicker(seq); return }
+      this.reactTo(seq, emoji)
+      // The palette closes after the row runs: the keyboard goes back to the speech it acted on unless the person already went elsewhere.
+      setTimeout(() => {
+        const a = document.activeElement
+        if (!this.disposed && (a === null || a === document.body || a.closest('#palette'))) this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${seq}"]`)?.focus({ preventScroll: true })
+      }, 80)
+    }
+
+    // ---------- the picker ----------
+
+    /** Opens the reaction picker on a speech: the five with their meaning, the recent ones and the field for any other emoji. */
+    openPicker(seq: number): void {
+      if (this.isClosed() || this.disposed) return
+      this.closePicker(false)
+      try { this.recents = readRecents(localStorage.getItem(RECENTS_KEY)) } catch { /* keep the held ones */ }
+      this.menuReturn = undefined
+      const mine = minesOf(this.tallies.get(seq), this.pendingOf(seq))
+      const box = el('div', 'ch-pick')
+      box.setAttribute('role', 'dialog')
+      box.setAttribute('aria-label', `Reagir à fala de ${this.authorOf(seq)}`)
+      box.dataset.seq = String(seq)
+      const choose = (emoji: string): void => { this.closePicker(true); this.reactTo(seq, emoji) }
+
+      box.append(el('h4', '', 'Com sentido combinado'))
+      const five = el('div', 'ch-pk-five')
+      FIVE.forEach((f, i) => {
+        const b = el('button', 'ch-pk-b')
+        b.type = 'button'
+        b.dataset.key = reactionKey(f.emoji)
+        b.append(el('span', 'e', f.emoji), el('span', 's', f.sense), el('kbd', '', String(i + 1)))
+        b.setAttribute('aria-label', `${f.label}: ${f.sense}. Tecla ${i + 1}.`)
+        b.setAttribute('aria-pressed', String(mine.has(reactionKey(f.emoji))))
+        b.classList.toggle('on', mine.has(reactionKey(f.emoji)))
+        b.addEventListener('click', () => choose(f.emoji))
+        five.append(b)
+      })
+      box.append(five)
+      if (this.recents.length > 0) {
+        box.append(el('h4', '', 'Usados há pouco'))
+        const rec = el('div', 'ch-pk-rec')
+        for (const e of this.recents) {
+          const b = el('button', 'ch-pk-b ch-pk-recent', e)
+          b.type = 'button'
+          b.dataset.key = reactionKey(e)
+          b.setAttribute('aria-label', `Reagir com ${e}`)
+          b.setAttribute('aria-pressed', String(mine.has(reactionKey(e))))
+          b.classList.toggle('on', mine.has(reactionKey(e)))
+          b.addEventListener('click', () => choose(e))
+          rec.append(b)
+        }
+        box.append(rec)
+      }
+      box.append(el('h4', '', 'Outro emoji'))
+      const other = el('div', 'ch-pk-other')
+      const input = el('input', 'ch-pk-in')
+      input.type = 'text'
+      input.autocomplete = 'off'
+      input.spellcheck = false
+      input.placeholder = emojiKeyHint(navigator.platform ?? '')
+      input.setAttribute('aria-label', 'Outro emoji')
+      const error = el('div', 'ch-pk-err')
+      error.setAttribute('role', 'alert')
+      const go = el('button', 'ch-pk-go', 'Reagir')
+      go.type = 'button'
+      const submit = (): void => {
+        const r = otherEmoji(input.value)
+        if ('error' in r) { error.textContent = r.error; input.setAttribute('aria-invalid', 'true'); return }
+        choose(r.emoji)
+      }
+      go.addEventListener('click', submit)
+      input.addEventListener('input', () => { error.textContent = ''; input.removeAttribute('aria-invalid') })
+      other.append(input, go)
+      box.append(other, error)
+      const foot = el('div', 'ch-pk-foot')
+      foot.append(el('span', '', '1–5 reage'), el('span', '', 'Esc fecha'))
+      box.append(foot)
+
+      box.addEventListener('keydown', ev => {
+        const k = ev.key
+        if (k === 'Escape') { ev.preventDefault(); ev.stopPropagation(); this.closePicker(true); return }
+        const inField = ev.target === input
+        if (k === 'Enter' && inField) { ev.preventDefault(); ev.stopPropagation(); submit(); return }
+        if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+        const n = Number(k)
+        if (!inField && k.length === 1 && n >= 1 && n <= FIVE.length) { ev.preventDefault(); ev.stopPropagation(); choose(FIVE[n - 1]!.emoji); return }
+        const stops = [...box.querySelectorAll<HTMLElement>('button, input')]
+        const at = stops.indexOf(ev.target as HTMLElement)
+        if (k === 'Tab') {
+          // Tab stays inside the picker (it is a dialog over the conversation).
+          if (at < 0) return
+          const to = stops[ev.shiftKey ? (at <= 0 ? stops.length - 1 : at - 1) : (at >= stops.length - 1 ? 0 : at + 1)]
+          ev.preventDefault(); to?.focus()
+          return
+        }
+        if (!inField && (k === 'ArrowRight' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowUp') && at >= 0) {
+          const fwd = k === 'ArrowRight' || k === 'ArrowDown'
+          const btns = stops.filter(s => s !== input && !s.classList.contains('ch-pk-go'))
+          const i = btns.indexOf(ev.target as HTMLElement)
+          if (i < 0) return
+          ev.preventDefault()
+          btns[(i + (fwd ? 1 : -1) + btns.length) % btns.length]?.focus()
+        }
+      })
+      // A press outside closes it; the focus stays where the person went.
+      const onDown = (ev: Event): void => { if (ev.target instanceof Node && !box.contains(ev.target)) this.closePicker(false) }
+      document.addEventListener('pointerdown', onDown, true)
+      this.msgs.parentElement?.append(box)
+      this.picker = { box, seq, input, error, off: () => document.removeEventListener('pointerdown', onDown, true) }
+      // A menu that opened the picker gives the focus back to its own opener as it closes: the picker takes it again.
+      const first = box.querySelector<HTMLElement>('.ch-pk-b')
+      first?.focus()
+      for (const ms of [0, 80]) setTimeout(() => { if (this.picker?.box === box && !box.contains(document.activeElement)) first?.focus() }, ms)
+    }
+
+    /** Closes the picker; `back`: the focus goes to the speech it was opened on. */
+    private closePicker(back: boolean): void {
+      const p = this.picker
+      if (!p) return
+      this.picker = undefined
+      p.off()
+      const had = p.box.contains(document.activeElement)
+      p.box.remove()
+      if (back || had) this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${p.seq}"]`)?.focus({ preventScroll: true })
     }
 
     /**
@@ -1422,6 +1829,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,
         hasComposerSlot: this.element.querySelector('.ch-composer-slot') !== null,
         toast: this.toastEl.hidden ? '' : (this.toastEl.textContent ?? ''),
+        announce: this.announceEl.textContent ?? '',
+        picker: {
+          open: this.picker !== undefined, seq: this.picker?.seq ?? 0, recents: [...this.recents],
+          hint: this.picker?.input.placeholder ?? '', error: this.picker?.error.textContent ?? '',
+        },
+        focusSeq: document.activeElement instanceof HTMLElement && this.msgs.contains(document.activeElement) ? Number(document.activeElement.closest<HTMLElement>('.ch-msg')?.dataset.seq ?? 0) : 0,
         ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
         bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe,
         actions: this.barState(),
@@ -1484,7 +1897,25 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     ui.panes.open({ id, component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB, title: `#${name ?? channelId}`, params: { channelId } })
   }
 
+  // The palette's rows to react to the focused speech (what has a key has a menu): they act on the channel pane that is active.
+  const activeChannelPane = (): ChannelPane | undefined => {
+    const id = ui.panes.activeId()
+    return id !== undefined && id.startsWith(CHANNEL_PANE_PREFIX) ? paneOf(channelIdOfPane(id)) : undefined
+  }
+  const inChannel = (ctx: { paneType?: string }): boolean => ctx.paneType === type.id
+  const reactRows = [
+    { id: REACT_COMMAND, title: 'Reagir à fala focada…', run: (p: ChannelPane) => p.reactFocused(undefined) },
+    { id: `${REACT_COMMAND}.last`, title: 'Reagir à última fala…', run: (p: ChannelPane) => p.reactFocused(undefined, true) },
+    ...FIVE.map(f => ({
+      id: `${REACT_COMMAND}.${f.name}`, title: `Reagir à fala focada: ${f.emoji} ${f.label}`, run: (p: ChannelPane) => p.reactFocused(f.emoji),
+    })),
+  ]
+
   const disposables: Disposable[] = [
+    ui.commands.register(...reactRows.map(r => ({
+      id: r.id, title: r.title, group: 'Canais', icon: 'chats-circle', when: inChannel, ignoreRepeat: true,
+      run: (): void => { const p = activeChannelPane(); if (p) r.run(p) },
+    }))),
     ui.panes.register({
       ...type, hasSlot: false, icon: 'chats-circle',
       create: () => new ChannelPane(),

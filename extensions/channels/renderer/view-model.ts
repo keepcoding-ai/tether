@@ -50,9 +50,16 @@ export function mergeNewest(t: Timeline, page: Pick<HistoryPage, 'lines' | 'more
   return { lines: mergeLines(held, page.lines), more: held[0]!.seq <= first ? t.more : page.more, last: Math.max(t.last, page.last) }
 }
 
-/** The `before` of the next older page, or undefined when there is none. */
-export function olderCursor(t: Timeline): number | undefined {
-  return t.more && t.lines.length > 0 ? t.lines[0]!.seq : undefined
+/**
+ * The `before` of the next older page, or undefined when there is none. `floor`: the lowest `seq` the pages asked so far cover.
+ * A page made only of reactions brings no line, so the first held line would not move and the same page would be asked again:
+ * the floor is what advances (the page of `before` N covers N-PAGE..N-1).
+ */
+export function olderCursor(t: Timeline, floor?: number): number | undefined {
+  if (!t.more) return undefined
+  const first = t.lines[0]?.seq
+  if (floor === undefined) return first
+  return first === undefined ? floor : Math.min(first, floor)
 }
 
 /**
