@@ -4,8 +4,10 @@
 //   2. its author closes another one (`channels_poll_close`), a non-author is refused;
 //   3. another closes by its deadline on the live clock (1 min), with "sem resposta"; who owes a vote may not open one;
 //   4. a third one's deadline passes with tetherd STOPPED: it comes back closed as soon as tetherd is up, marked as such;
-//   and that NOBODY got a delivery, a note, a queue entry or a turn from any of it (E1: nobody is woken yet).
-// Run alone: node --test test/e2e/channels.polls.test.ts (about 3 min: two deadlines of 1 min are waited for real).
+//   and the deliveries of E2: each agent called gets ONE request (kind request, poll, options, closes), a vote reaches no one, the
+//   author alone gets ONE result (none when it closed the poll itself); a called whose process is stopped gets the request when
+//   it runs again; a tetherd restart in the middle asks no one twice and delivers no second result.
+// Run alone: node --test test/e2e/channels.polls.test.ts (about 4 min: two deadlines of 1 min are waited for real).
 // Never touches the person's tether: home and pipe are the test's, every process is killed by pid + identity (test/kill.ts).
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -138,6 +140,19 @@ class Rig {
     return (await this.app.request({ t: 'ext-request', ext: 'channels', name, ...(args !== undefined ? { args } : {}) })).result as T
   }
 
+  /** What of a poll reached `slot`, inside (its notes) or still waiting (its queue file: its stream died with a tetherd). */
+  got(slot: string): Array<{ kind?: string; ref?: string; poll?: string; closedBy?: string; options?: string; closes?: string; body: string }> {
+    return [
+      ...this.notes(slot).map((n) => ({ kind: n.meta.kind, ref: n.meta.ref, poll: n.meta.poll, closedBy: n.meta.closed_by, options: n.meta.options, closes: n.meta.closes, body: n.content })),
+      ...(this.inbox(slot) as Array<{ msg: { kind: string; ref?: string; body: string; poll?: { poll: string; closedBy?: string; options?: string; closes?: string } } }>)
+        .map((i) => ({ kind: i.msg.kind, ref: i.msg.ref, poll: i.msg.poll?.poll, closedBy: i.msg.poll?.closedBy, options: i.msg.poll?.options, closes: i.msg.poll?.closes, body: i.msg.body })),
+    ]
+  }
+  asks(slot: string, room: string, seq: number) { return this.got(slot).filter((g) => g.kind === 'request' && g.ref === `${room}#${seq}`) }
+  results(slot: string, room: string, seq: number) { return this.got(slot).filter((g) => g.closedBy !== undefined && g.poll === `${room}#${seq}`) }
+  /** Every poll delivery `slot` got: requests and results. */
+  pollCount(slot: string): number { return this.got(slot).filter((g) => g.kind === 'request' || g.closedBy !== undefined).length }
+
   /** Everything that says "something reached an agent or woke it": its notes, what was typed, its queue file and its turn clock. */
   async footprint(slot: string): Promise<string> {
     const s = await this.state(slot)
@@ -189,15 +204,27 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
   await rig.waitFor('B and C heard the line', () => [B, C].every((s) => rig.notes(s).some((n) => n.content.includes('Vou pedir um ok'))))
   await sleep(SETTLE_MS)
 
-  // From here on, nothing may reach any agent.
-  const before = { A: await rig.footprint(A), B: await rig.footprint(B), C: await rig.footprint(C) }
+  // From here on, only a poll's request or result may reach an agent, and nothing is ever typed.
+  const before = { A: rig.notes(A).length, B: rig.notes(B).length, C: rig.notes(C).length, typed: [A, B, C].map((s) => rig.typed(s).length) }
 
   // 1. A opens by the CLI; B votes by the CLI and changes; C votes by the MCP tool (by number) and closes it.
   const p1 = await rig.cli(A, 'poll', 'horizontes', 'Posso fechar o seminário e subir a ata?')
   assert.ok(p1.ok, JSON.stringify(p1))
   const S1: number = p1.data.seq
   assert.deepEqual(p1.data.options, ['ok', 'não ok'])
-  assert.deepEqual((p1.data.to as Array<{ name: string }>).map((t) => t.name), [NAME_B, NAME_C])
+  // Sorted: the members are keyed by slot id, and an id made of digits only goes first in a JS object.
+  assert.deepEqual((p1.data.to as Array<{ name: string }>).map((t) => t.name).sort(), [NAME_B, NAME_C])
+  await rig.waitFor('B and C got the request', () => [B, C].every((s) => rig.asks(s, 'horizontes', S1).length === 1))
+  for (const s of [B, C]) {
+    const [r] = rig.asks(s, 'horizontes', S1)
+    assert.equal(r!.body, 'Posso fechar o seminário e subir a ata?', 'inside: the question alone')
+    assert.equal(r!.poll, 'ok')
+    assert.equal(r!.options, '1 ok | 2 não ok')
+    assert.match(r!.closes!, /^\d\d:\d\d \(em 10 min\)$/)
+  }
+  assert.equal(rig.asks(A, 'horizontes', S1).length, 0, 'the author is not asked')
+  await sleep(SETTLE_MS)
+  const afterAsk = { B: rig.notes(B).length, C: rig.notes(C).length }
   const b1 = await rig.cli(B, 'vote', 'horizontes', String(S1), '1')
   assert.ok(b1.ok, JSON.stringify(b1))
   const b2 = await rig.cli(B, 'vote', 'horizontes', String(S1), '2', '--reason', 'a ata ainda não tem os riscos')
@@ -212,6 +239,12 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
   assert.equal(c1.data.closed?.by, 'all-voted')
   assert.equal(c1.data.closed?.tally, 'ok 1 · não ok 1')
   assert.equal((await rig.cli(B, 'vote', 'horizontes', String(S1), '1')).code, 'poll-closed')
+  const res1 = await rig.waitFor('A got the result', () => (rig.results(A, 'horizontes', S1).length ? rig.results(A, 'horizontes', S1) : undefined))
+  assert.equal(res1[0]!.closedBy, 'all-voted')
+  assert.match(res1[0]!.body, new RegExp(`^Enquete horizontes#${S1} fechou: todos votaram\\.\\nok 1: ${NAME_C} · não ok 1: ${NAME_B} \\("a ata ainda não tem os riscos"\\)$`))
+  await sleep(SETTLE_MS)
+  assert.equal(rig.results(A, 'horizontes', S1).length, 1, 'one result')
+  assert.deepEqual({ B: rig.notes(B).length, C: rig.notes(C).length }, afterAsk, 'the votes and the close reached neither voter')
   const read1 = await rig.cli(B, 'read', 'horizontes')
   assert.ok(read1.ok, JSON.stringify(read1))
   const pollLine = (read1.data.lines as Array<{ seq: number; kind: string; pollState?: { state: string; result?: { by: string; tally: Array<{ voters: Array<{ name: string; reason?: string }> }> } } }>).find((l) => l.seq === S1)!
@@ -234,6 +267,9 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
   assert.ok(closed2.ok, JSON.stringify(closed2))
   assert.equal(closed2.data.by, 'author')
   assert.deepEqual(closed2.data.missing, [{ name: NAME_C, why: 'no-answer' }])
+  await sleep(SETTLE_MS)
+  assert.equal(rig.results(A, 'horizontes', S2).length, 0, 'the author who closed it has the result in the answer')
+  assert.equal(rig.asks(C, 'horizontes', S2).length, 1)
 
   // 3. B opens one of 1 min by the CLI; C owes it a vote, so C may not open one; only A votes; the live clock closes it.
   const p3 = await rig.cli(B, 'poll', 'horizontes', 'Subo a ata agora?', '--timeout', '1m')
@@ -251,19 +287,65 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
   assert.match(String(read3.text), new RegExp(`\\[enquete · fechada · o prazo venceu\\] Subo a ata agora\\?  \\[ok 1: ${NAME_A} · sem resposta 1: ${NAME_C} \\(não respondeu\\)\\]`))
   assert.ok(!String(read3.text).includes('enquetes esperando seu voto'), 'nothing owed any more')
 
-  // The pane that draws the conversation gets no line of a poll; nobody was reached or woken by any of it.
+  const res3 = await rig.waitFor('B, the author, got the result', () => (rig.results(B, 'horizontes', S3).length ? rig.results(B, 'horizontes', S3) : undefined))
+  assert.equal(res3[0]!.closedBy, 'timeout')
+
+  // The pane that draws the conversation gets no line of a poll; what reached each agent is the polls' requests and results
+  // and nothing else (2 requests and 1 result for A's polls... counted per agent), never typed.
   const hist = await rig.ask('history', { channel: CH })
   assert.ok((hist.lines as Array<{ kind: string; event?: { type: string } }>).every((l) => (l.kind === 'message' || l.kind === 'notice') && l.event?.type !== 'poll-close'))
   await sleep(SETTLE_MS)
-  assert.equal(await rig.footprint(A), before.A, 'A was not reached or woken by a poll')
-  assert.equal(await rig.footprint(B), before.B, 'B was not reached or woken by a poll')
-  assert.equal(await rig.footprint(C), before.C, 'C was not reached or woken by a poll')
+  // A: the request of S3 and the result of S1. B: the requests of S1 and S2 and the result of S3. C: the requests of S1, S2, S3.
+  assert.deepEqual({ A: rig.notes(A).length - before.A, B: rig.notes(B).length - before.B, C: rig.notes(C).length - before.C }, { A: 2, B: 3, C: 3 })
+  assert.deepEqual({ A: rig.pollCount(A), B: rig.pollCount(B), C: rig.pollCount(C) }, { A: 2, B: 3, C: 3 }, 'every note was a request or a result')
+  assert.deepEqual([A, B, C].map((s) => rig.typed(s).length), before.typed, 'nothing typed')
+
+  // 5. A called whose process is stopped, and a tetherd restart in the middle. D stops; A asks B and D; B gets the request, D
+  // nothing. tetherd restarts: nobody is asked again. D runs again: it gets the request, once. Both vote: A gets one result;
+  // another restart delivers it no second one.
+  const NAME_D = 'claude · dorme'
+  const D = await rig.agent(NAME_D, 'dorme')
+  assert.ok((await rig.cli(A, 'join', 'horizontes', NAME_D)).ok)
+  await rig.client.request({ t: 'stop', slotId: D })
+  await rig.waitFor('D stopped', async () => (await rig.state(D))?.status === 'exited')
+  const p5 = await rig.cli(A, 'poll', 'horizontes', 'Subo a versão?', '--to', 'bancada', '--to', 'dorme')
+  assert.ok(p5.ok, JSON.stringify(p5))
+  const S5: number = p5.data.seq
+  assert.deepEqual((p5.data.deaf as Array<{ name: string; why: string }>).map((d) => [d.name, d.why]), [[NAME_D, 'stopped']])
+  await rig.waitFor('B got the request of S5', () => rig.asks(B, 'horizontes', S5).length === 1)
+  assert.equal(rig.asks(D, 'horizontes', S5).length, 0, 'a stopped process gets nothing')
+  const restart = async (): Promise<void> => {
+    const oldPid = rig.client.hello.pid
+    rig.app.close()
+    await rig.client.request({ t: 'shutdown' }).catch(() => undefined)
+    rig.client.close()
+    for (const end = Date.now() + 30_000; pidAlive(oldPid) && Date.now() < end; await sleep(200));
+    assert.equal(pidAlive(oldPid), false, 'the old tetherd is gone')
+    await rig.connect()
+  }
+  await restart()
+  await sleep(3 * SETTLE_MS)
+  assert.equal(rig.asks(B, 'horizontes', S5).length, 1, 'no second request to B after the restart')
+  assert.equal(rig.asks(D, 'horizontes', S5).length, 0)
+  await rig.client.request({ t: 'start', slotId: D, choice: 'new' })
+  await rig.waitFor('D, back, got the request', () => rig.asks(D, 'horizontes', S5).length === 1, 45_000)
+  await sleep(3 * SETTLE_MS)
+  assert.equal(rig.asks(D, 'horizontes', S5).length, 1, 'once')
+  assert.ok((await rig.cli(D, 'vote', 'horizontes', String(S5), '1')).ok)
+  // B's own process may not have outlived the tetherd restart: its vote goes straight on the pipe with its identity.
+  assert.equal((await rig.verb(B, 'vote', { canal: 'horizontes', poll: S5, vote: 1 })).error, undefined)
+  await rig.waitFor('A got the result of S5', () => rig.results(A, 'horizontes', S5).length === 1)
+  await restart()
+  await sleep(3 * SETTLE_MS)
+  assert.equal(rig.results(A, 'horizontes', S5).length, 1, 'no second result after another restart')
+  assert.equal(rig.asks(B, 'horizontes', S5).length + rig.asks(D, 'horizontes', S5).length, 2, 'no request again')
 
   // 4. C opens one of 1 min and tetherd stops before its deadline; it comes back after it and closes the poll at once.
-  const p4 = await rig.cli(C, 'poll', 'horizontes', 'Fecha com o tether parado?', '--timeout', '1m', '--to', 'bancada')
-  assert.ok(p4.ok, JSON.stringify(p4))
-  const S4: number = p4.data.seq
-  const closesAt = Date.parse(p4.data.closesAt)
+  // On the pipe with C's identity: C's own process may not have outlived the restarts of step 5.
+  const p4 = await rig.verb(C, 'poll', { canal: 'horizontes', question: 'Fecha com o tether parado?', timeout: '1m', to: ['bancada'] })
+  assert.equal(p4.error, undefined, JSON.stringify(p4))
+  const S4: number = p4.seq
+  const closesAt = Date.parse(p4.closesAt)
   const oldPid = rig.client.hello.pid
   rig.app.close()
   await rig.client.request({ t: 'shutdown' }).catch(() => undefined)
@@ -280,8 +362,11 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
     } catch { return undefined }
   }, 30_000)
   assert.match(String(back.text), new RegExp(`${S4 + 1} tether: \\[enquete ${S4} fechou · o prazo venceu enquanto o tether estava fora\\] ok 0 · não ok 0`))
-  assert.match(String(back.text), new RegExp(`\\[enquete · fechada · o prazo venceu enquanto o tether estava fora\\] Fecha com o tether parado\\?  \\[nenhum voto · sem resposta 1: ${NAME_B} \\((parado|não respondeu)\\)\\]`))
+  assert.match(String(back.text), new RegExp(`\\[enquete · fechada · o prazo venceu enquanto o tether estava fora\\] Fecha com o tether parado\\?  \\[nenhum voto · sem resposta 1: ${NAME_B} \\((parado|não respondeu|com a pessoa)\\)\\]`))
   const index = JSON.parse(readFileSync(join(rig.home, 'channels', 'index.json'), 'utf8')) as { channels: Record<string, { polls?: unknown; pollsClosed?: Array<{ poll: number }> }> }
   assert.equal(index.channels[CH]!.polls, undefined, 'no open poll left in the index')
-  assert.deepEqual(index.channels[CH]!.pollsClosed!.map((c) => c.poll), [S1, S2, S3, S4])
+  assert.deepEqual(index.channels[CH]!.pollsClosed!.map((c) => c.poll), [S1, S2, S3, S5, S4])
+  // Its author C gets the result once (queued: its stream died with the first tetherd); B's request was taken out of the queue.
+  await rig.waitFor('C got the result of S4', () => rig.results(C, 'horizontes', S4).length === 1)
+  await rig.waitFor('no old request left waiting for B', () => !rig.inbox(B).some((i) => (i as { msg: { ref?: string } }).msg.ref === `horizontes#${S4}`), 10_000)
 })
