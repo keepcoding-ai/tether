@@ -1,5 +1,5 @@
 // E2E of the "Configurações" page (extensions/settings-screen) on a private TETHER_HOME and TETHER_USER_DIR:
-//   1. Ctrl+, opens the page as a tab; closed, "Configurações…" in ≡ opens it again;
+//   1. Ctrl+, opens the page in the peek card; closed, "Configurações…" in ≡ opens it again; "Abrir nesta mesa" makes it a tab;
 //   2. the ui.deskLine switch: the DOM (the desk line goes off), the file (only that key), the modified bar;
 //   3. ↺ removes the key from the file and the bar goes away;
 //   4. the search "minimapa" leaves only the note's minimap;
@@ -104,18 +104,24 @@ test('app settings screen: Ctrl+, and ≡ open it; a switch writes one key with 
     assert.ok(daemonPid && pidAlive(daemonPid), 'the app spawned a tetherd')
     daemons.push(await claim(daemonPid, { cmdIncludes: daemonMain, what: 'tetherd' }))
 
-    // 1. Ctrl+, opens the page; closed, ≡ "Configurações…" opens it again.
+    // 1. Ctrl+, opens the page in the peek card; closed, ≡ "Configurações…" opens it again there, and the card's
+    //    "Abrir nesta mesa" makes it a tab (the rest of the test works on the tab).
     await page.locator('body').click({ position: { x: 600, y: 400 } }).catch(() => {})
     await page.keyboard.press('Control+Comma')
-    await page.waitForSelector('.st-pane .st-item[data-key="ui.deskLine"]')
+    await page.waitForSelector('#peek .st-pane .st-item[data-key="ui.deskLine"]')
     await until('the page is listed', async () => !!(await snap(page)))
-    await page.click('.tether-tab.settings .close')
+    await page.click('#peek .peek-close')
     await until('the page closed', async () => !(await snap(page)))
     await page.click('#btn-menu')
     await page.waitForSelector('#app-menu:not([hidden])')
     assert.equal(await page.locator('#app-menu li[data-command="settings.show"] svg').count(), 1, 'the gear icon')
     await page.click('#app-menu li[data-command="settings.show"]')
+    await page.waitForSelector('#peek .st-pane .st-item[data-key="ui.deskLine"]')
+    await page.click('#peek .peek-open')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await page.waitForSelector('.tether-tab.settings')
     await page.waitForSelector('.st-pane .st-item[data-key="ui.deskLine"]')
+    await until('the tab\'s page is listed', async () => !!(await snap(page)))
     let s = (await snap(page))!
     assert.ok(s.toc.includes('core/Janela') && s.toc.includes('note/Nota'), `the TOC: ${s.toc.join(', ')}`)
     assert.ok(s.sections.includes('core/Confirmações'), 'the confirmations action section')

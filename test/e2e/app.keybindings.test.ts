@@ -1,7 +1,8 @@
 // E2E of the keyboard scheme (F5, delivery 5): against the real tetherd on a private home/pipe, hidden window, a
 // PowerShell pane in a temporary folder.
 //   1. Ctrl+K from inside the terminal shows the pill (with the terminal's reminder) and Ctrl+S opens the "Atalhos de
-//      teclado" tab in the shell's group, with the keyboard in it; the Esc of a pending prefix cancels;
+//      teclado" screen in the peek card, whose "Abrir nesta mesa" makes it a tab in the shell's group, with the keyboard
+//      in it; the Esc of a pending prefix cancels;
 //   2. the screen: search "fechar mesa", double-click records; Ctrl+W is typed, the dialog names the conflict with
 //      "Fechar painel…", Enter assigns: "Fechar mesa…" has Ctrl+W, "Fechar painel…" lost it (Ctrl+F4 stays);
 //      <home>/keybindings.json holds exactly that (a `-pane.close` and a `desk.close`), the row says "você";
@@ -146,7 +147,12 @@ test('app keybindings: Ctrl+K Ctrl+S opens the screen, Ctrl+W recorded with its 
     await page.keyboard.press('Control+K')
     await page.waitForFunction(() => window.__tether.pill().state === 'wait')
     await page.keyboard.press('Control+S')
-    await page.waitForFunction(() => window.__tether.keybindings().length === 1)
+    // The screen opens in the peek card; its "Abrir nesta mesa" makes it a tab of the shell's group (the rest works on the tab).
+    await page.waitForSelector('#peek .kb-pane')
+    await page.click('#peek .peek-open')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await page.waitForSelector('.tether-tab.keybindings')
+    await page.waitForFunction(() => window.__tether.keybindings().length === 1 && !window.__tether.keybindings()[0]!.id.includes('peek'))
     const kb = (await screen(page))!
     assert.equal(await page.evaluate(() => window.__tether.activeId()), kb.id, 'the screen is the active pane')
     assert.equal(await page.evaluate(([a, b]: string[]) => window.__tether.groupOf(a!) === window.__tether.groupOf(b!), [kb.id, shell!]), true, 'a tab of the shell\'s group')
