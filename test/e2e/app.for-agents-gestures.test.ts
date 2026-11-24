@@ -188,7 +188,9 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     const given = obj<{ owner: string; givenBy: string; since: string }>('desk', D1, 'owner')!
     assert.deepEqual([given.owner, given.givenBy, typeof given.since], [A, 'user', 'string'], 'desk.<id>.owner = { owner, since, givenBy: user }')
     await until(() => [C1, C2, G, K].every(id => heldBy(id) === byA), 'the four panes held by Atrium')
-    assert.equal(heldBy(A), undefined, 'the owner\'s own pane is not commanded by the desk')
+    // ownPanePort: a live owner's own pane with no commander is held by itself, with no route (it is never commanded).
+    assert.equal(heldBy(A), byA, 'the owner\'s own pane is held by its owner')
+    assert.equal(routeOf(A), undefined, 'the owner\'s own pane has no route')
     assert.deepEqual(await state(), noView, 'giving the desk activated nothing')
 
     // ---- 2. the pill menu, state by state, and the gestures of the desk ----
