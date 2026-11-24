@@ -545,9 +545,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
 
     private paintBar(): void {
       const s = this.barState()
+      const held = document.activeElement
       if (this.joinBtn) { this.joinBtn.hidden = s.primary !== 'join'; this.joinBtn.classList.toggle('labeled', s.labeled) }
       if (this.reopenBtn) { this.reopenBtn.hidden = s.primary !== 'reopen'; this.reopenBtn.classList.toggle('labeled', s.labeled) }
       if (this.endBtn) this.endBtn.hidden = !s.toEnd
+      // The accent changes face when the channel closes or reopens: the focus follows it (the button that held it just went away).
+      if (held && held === this.joinBtn && this.joinBtn.hidden && this.reopenBtn && !this.reopenBtn.hidden) this.reopenBtn.focus()
+      else if (held && held === this.reopenBtn && this.reopenBtn.hidden && this.joinBtn && !this.joinBtn.hidden) this.joinBtn.focus()
     }
 
     private paintHead(): void {
