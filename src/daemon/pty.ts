@@ -64,12 +64,26 @@ function dispose(p: pty.IPty): void {
   for (const s of steps) { try { s() } catch { /* best effort, in order */ } }
 }
 
+/**
+ * Returns `env` with a UTF-8 locale guaranteed (non-Windows). An app launched from Finder has no LANG/LC_*, so its
+ * children run in the C locale and tools like pbcopy read UTF-8 bytes as Mac Roman (mojibake). An explicit LC_ALL or
+ * LC_CTYPE is never touched; a LANG without UTF-8 keeps its language part (pt_BR -> pt_BR.UTF-8). Pure: never mutates.
+ */
+export function withUtf8Locale(env: Record<string, string>, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  if (platform === 'win32' || env.LC_ALL || env.LC_CTYPE) return env
+  const lang = env.LANG ?? ''
+  if (/utf-?8/i.test(lang)) return env
+  const base = lang.split(/[.@]/)[0]
+  const language = base && base !== 'C' && base !== 'POSIX' ? base : 'en_US'
+  return { ...env, LANG: `${language}.UTF-8` }
+}
+
 export function spawnPty(plan: PtyPlan, opts: SpawnOptions): PtyHandle {
   const p = pty.spawn(plan.command, plan.args, {
     cols: opts.cols,
     rows: opts.rows,
     cwd: plan.cwd,
-    env: plan.env,
+    env: withUtf8Locale(plan.env),
     useConpty: true,
     name: 'xterm-256color',
   })
