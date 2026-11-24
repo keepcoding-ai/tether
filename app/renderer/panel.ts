@@ -263,6 +263,8 @@ export interface PanelHost {
   fontsReady(): Promise<void>
   /** 1-based place in the start queue, when known. */
   queuePosition(slotId: string): number | undefined
+  /** The pane's terminal is lent to the peek card: its tab shows a discreet eye; the text is the eye's tooltip. */
+  lentTip?(slotId: string): string | undefined
 }
 
 /** The hint the layout keeps in a pane's params (main.ts addPanel/updateHint), when there is one. */
@@ -346,6 +348,15 @@ export class VisibilityReporter {
     this.send(visible)
   }
 
+  /**
+   * Reads the state again now: the element moved to another place in the DOM (a terminal lent to the peek card and given
+   * back), where the IntersectionObserver may see no change (visibility:hidden layers intersect too) and the layer to watch differs.
+   */
+  refresh(): void {
+    this.rewatch()
+    this.recompute()
+  }
+
   /** Says the current state again when it is hidden (the main starts a pane visible; on a fresh attach it must hear "hidden" again). */
   resend(): void {
     if (!this.visible && !this.timer) { this.told = undefined; this.tell(false) }
@@ -384,7 +395,13 @@ export class TerminalPanel implements IContentRenderer {
   private attached = false
   private attaching: Promise<void> | undefined
   private lastSize = { cols: 0, rows: 0 }
+  /** The next fit sends its size to the pty even if `lastSize` says it did not change (a terminal given back by the peek card). */
+  private forceResize = false
   private fitTimer: ReturnType<typeof setTimeout> | undefined
+  /** The terminal's body (xterm, loading skeleton, suspended sign, overlays): the part lent to the peek card. */
+  private readonly body: HTMLElement
+  /** While the body is lent: what stands in its place in the pane, and who hears if the pane goes away meanwhile. */
+  private loan: { notice: HTMLElement; lost: () => void } | undefined
   private readonly host: PanelHost
   /** WebGL and ligatures, in xterm's order (created once the xterm exists; started after `open()`). */
   private readonly addons: TerminalAddons
@@ -450,6 +467,7 @@ export class TerminalPanel implements IContentRenderer {
     sign.append(icon('leaf'), signText)
     this.suspendedSign = sign
     body.append(this.termHost, loading, sign, this.overlay)
+    this.body = body
     for (const type of ['pointerdown', 'wheel'] as const) body.addEventListener(type, () => { if (this.slotId) this.host.onUse?.(this.slotId) }, { passive: true, capture: true })
     // The header sits in a grid wrapper whose row animates between 0fr and 1fr (styles.css); `inert` while
     // collapsed keeps its pill out of the tab order.
@@ -823,9 +841,49 @@ export class TerminalPanel implements IContentRenderer {
     this.fit.fit()
     if (!this.attached) return // attach() in flight: it schedules a fit when done
     const { cols, rows } = this.term
-    if (cols === this.lastSize.cols && rows === this.lastSize.rows) return
+    if (!this.forceResize && cols === this.lastSize.cols && rows === this.lastSize.rows) return
+    this.forceResize = false
     this.lastSize = { cols, rows }
     void window.tether.request({ t: 'resize', slotId: this.slotId, cols, rows })
+  }
+
+  /** Whether the terminal is lent to the peek card right now. */
+  get isLent(): boolean { return this.loan !== undefined }
+
+  /**
+   * Lends the terminal to the peek card: the body (the same xterm, with its scrollback, selection and scroll position; no
+   * new attach, no detach) leaves the pane and `notice` takes its place. The caller mounts the returned body elsewhere;
+   * the fit, the pty size and the visibility follow it there. `lost` runs if the pane is disposed while lent (closed,
+   * moved, its desk hibernated): the caller drops the body then, and nothing is given back.
+   */
+  lend(notice: HTMLElement, lost: () => void): HTMLElement {
+    if (this.loan) throw new Error(`terminal ${this.slotId} is already lent`)
+    this.loan = { notice, lost }
+    this.body.replaceWith(notice)
+    this.afterMove()
+    return this.body
+  }
+
+  /**
+   * The terminal comes back from the peek card, in place of the notice: it refits to the pane and sends its size to the
+   * pty even if unchanged by `lastSize` (another view may have left the pty at another size). A pane hidden right now
+   * fits when it shows (the ResizeObserver), with the size still forced. Nothing once disposed.
+   */
+  takeBack(): void {
+    const loan = this.loan
+    if (!loan || this.disposed) return
+    this.loan = undefined
+    if (loan.notice.parentNode) loan.notice.replaceWith(this.body)
+    else this.element.append(this.body)
+    this.forceResize = true
+    this.afterMove()
+  }
+
+  /** The body moved in the DOM: fit to the new place and say again whether it is on screen. */
+  private afterMove(): void {
+    this.scheduleFit()
+    this.visibility?.refresh()
+    requestAnimationFrame(() => { if (!this.disposed) this.visibility?.refresh() })
   }
 
   private attach(): Promise<void> {
@@ -868,6 +926,10 @@ export class TerminalPanel implements IContentRenderer {
     if (this.attached && this.slotId && opts.detach !== false) void window.tether.request({ t: 'detach', slotId: this.slotId })
     this.attached = false
     this.term.dispose()
+    // Disposed while lent: the borrower drops the body (it closes); there is nothing left to give back.
+    const loan = this.loan
+    this.loan = undefined
+    loan?.lost()
   }
 }
 
@@ -894,6 +956,8 @@ export class SlotTab implements ITabRenderer {
   private readonly unsafe: HTMLElement
   private readonly ronda: HTMLElement
   private readonly attn: HTMLElement
+  /** The eye while the pane's terminal is lent to the peek card. */
+  private readonly spied: HTMLElement
   private disposers: Array<() => void> = []
   private readonly host: PanelHost
   /** What the layout file remembers of the pane, painted before the daemon answers. */
@@ -908,8 +972,9 @@ export class SlotTab implements ITabRenderer {
     this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
+    this.spied = document.createElement('span'); this.spied.className = 'peek-mark'; this.spied.hidden = true; this.spied.append(icon('eye'))
     const h = createTabHeader({
-      emblems: [this.attn, this.unsafe, this.ronda], dot: this.dot,
+      emblems: [this.attn, this.unsafe, this.ronda, this.spied], dot: this.dot,
       close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
       onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
       onDblClick: () => this.startRename(),
@@ -958,6 +1023,10 @@ export class SlotTab implements ITabRenderer {
     if (this.unsafe.hidden !== !s?.unsafe) this.unsafe.hidden = !s?.unsafe
     if (this.ronda.hidden !== !s?.ronda) this.ronda.hidden = !s?.ronda
     if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
+    const lentTip = this.host.lentTip?.(this.api.id)
+    if (this.spied.hidden !== !lentTip) this.spied.hidden = !lentTip
+    if (lentTip) setAttr(this.spied, 'title', lentTip)
+    if ((this.element.dataset.spied ?? '') !== (lentTip ? 'true' : '')) { if (lentTip) this.element.dataset.spied = 'true'; else delete this.element.dataset.spied }
     const att = this.host.attentionOf?.(this.api.id) ?? { level: s?.attention, lines: attentionLines(s?.attention, [], s?.attentionHeld) }
     // Attention (the terminal's or an extension's seal) beats busy; the class keeps the level, data-mark says which mark.
     // An attention that waits for an agent owner, not for the person: a diamond in the owner's colour (door.css), not the orange dot.

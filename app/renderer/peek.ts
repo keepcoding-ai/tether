@@ -1,18 +1,22 @@
 // The peek card: a floating card over everything (the open drawer included), 16 px from the window's edges, with the live,
-// interactive terminal of ONE slot that no tab shows. The window behind dims and goes `inert` (main.ts does that through
-// `onOpenChange`); the native surfaces behind freeze (overlay-freeze.ts reads `#peek[data-open]`).
+// interactive terminal of ONE slot. The window behind dims and goes `inert` (main.ts does that through `onOpenChange`); the
+// native surfaces behind freeze (overlay-freeze.ts reads `#peek[data-open]`).
 //
-// The terminal is a real TerminalPanel (panel.ts) built outside dockview: links, copy/paste, theme, font, the exited
-// overlay and the app's key routing come with it. The host registers it in the window's slot→panel map, so the slot's
-// output reaches it like any pane's; it attaches on open and detaches on close. A slot has one pty size: the card is the
-// only view of a slot without a tab, so its size is the one in force while it is open.
+// A slot has one terminal and one pty size (the last resize wins), so the card never mirrors:
+//   - a slot WITHOUT a tab: the card's terminal is a real TerminalPanel (panel.ts) built outside dockview (links, copy/paste,
+//     theme, font, the exited overlay and the app's key routing come with it). The host registers it in the window's
+//     slot→panel map, so the slot's output reaches it like any pane's; it attaches on open and detaches on close;
+//   - a slot WITH a tab not in view: the card BORROWS the tab's terminal (TerminalPanel.lend): the same xterm moves into
+//     the card (scrollback, selection and scroll position kept; no new attach, no detach) and the tab shows "sendo
+//     espiado" in its place. Closing gives it back (TerminalPanel.takeBack), which refits the tab and forces the pty size;
+//     a tab disposed meanwhile (closed, moved, hibernated) closes the card.
 //
 // Closing: the ✕, the chord (peek.close), a press on the margin, Esc outside the terminal (in a terminal, the drawer's rule:
 // an agent keeps Esc). The keyboard goes back to the exact element that had it before the card opened.
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { icon, KIND_ICON } from './icons.ts'
 import type { TerminalPanel } from './panel.ts'
-import { closeTip, peekFoot, peekHeader, peekLabel, peekMenuPlan } from './peek-rules.ts'
+import { closeTip, lentNotice, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton } from './peek-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
 import { OPEN_ELSEWHERE_LABEL } from './sessions-rules.ts'
 
@@ -28,6 +32,10 @@ export interface PeekHost extends PlaceHost {
   releasePanel(panel: TerminalPanel, detach: boolean): void
   /** "Abrir nesta mesa": puts the slot in a tab of the active desk (the card is already closed). */
   openHere(slotId: string): void
+  /** "Ir para a guia": brings the slot's tab forward and gives it the keyboard (the card is already closed, the terminal back). */
+  goToTab(slotId: string): void
+  /** The tab's terminal was lent to the card or given back: the tab's eye mark and anything that reads `lentSlot` repaint. */
+  onLendChange(slotId: string, lent: boolean): void
   /** The chord that closes the card, as the person reads it ("" when unbound). */
   closeHint(): string
   /** The card opened or closed: the window behind goes inert / comes back. Called before the focus moves. */
@@ -45,11 +53,13 @@ export class PeekCard {
   private readonly state: HTMLElement
   private readonly foot: HTMLElement
   private readonly openBtn: HTMLButtonElement
+  private readonly openLabel: HTMLElement
   private readonly moreBtn: HTMLButtonElement
   private readonly menuBtn: HTMLButtonElement
   private readonly closeBtn: HTMLButtonElement
   private readonly host: PeekHost
-  private current: { slotId: string; panel: TerminalPanel } | undefined
+  /** The slot shown; `lent` when the panel is the slot's tab's terminal, borrowed (else the card's own). */
+  private current: { slotId: string; panel: TerminalPanel; lent: boolean } | undefined
   /** The element that had the keyboard when the card opened; it gets it back on close. */
   private returnTo: HTMLElement | undefined
 
@@ -72,11 +82,8 @@ export class PeekCard {
     const acts = el('div', 'peek-acts')
     this.openBtn = el('button', 'peek-open primary')
     this.openBtn.type = 'button'
-    this.openBtn.title = 'Abrir nesta mesa: o agente ganha uma guia na mesa em que você está'
-    const label = el('span', 'label'); label.textContent = 'Abrir nesta mesa'
-    this.openBtn.append(icon('plus'), label)
-    this.openBtn.setAttribute('aria-label', 'Abrir nesta mesa')
-    this.openBtn.addEventListener('click', () => this.openHere())
+    this.openLabel = el('span', 'label')
+    this.openBtn.addEventListener('click', () => { if (this.current?.lent) this.goToTab(); else this.openHere() })
     // The split button: "Abrir nesta mesa" with the ▾ stuck to it, which lists the other desks.
     this.moreBtn = el('button', 'peek-open-more primary')
     this.moreBtn.type = 'button'
@@ -87,6 +94,7 @@ export class PeekCard {
     this.moreBtn.addEventListener('click', () => this.showPlaces())
     const split = el('div', 'peek-split')
     split.append(this.openBtn, this.moreBtn)
+    this.paintOpenButton(false)
     this.menuBtn = el('button', 'peek-menu ib')
     this.menuBtn.type = 'button'
     this.menuBtn.title = 'Mais ações'
@@ -112,22 +120,33 @@ export class PeekCard {
 
   get isOpen(): boolean { return this.current !== undefined }
   get slotId(): string | undefined { return this.current?.slotId }
-  /** The card's terminal (main.ts asks whether a key event came from it). */
+  /** The slot whose tab's terminal is lent to the card right now. */
+  get lentSlot(): string | undefined { return this.current?.lent ? this.current.slotId : undefined }
+  /** The card's terminal, its own or the lent one (main.ts asks whether a key event came from it). */
   get panel(): TerminalPanel | undefined { return this.current?.panel }
   contains(node: Node | null): boolean { return !!node && this.root.contains(node) }
 
-  /** Shows the slot in the card; another slot already in it is swapped out (its terminal detached). */
-  open(slotId: string): void {
-    if (this.current?.slotId === slotId) { this.focusTerminal(); return }
+  /**
+   * Shows the slot in the card; another slot already in it is swapped out (its own terminal detached, a lent one given
+   * back). `lend`: the slot's tab's terminal, to borrow instead of building one (the slot has a tab not in view).
+   */
+  open(slotId: string, lend?: TerminalPanel): void {
+    if (this.current?.slotId === slotId || lend?.isLent) { this.focusTerminal(); return }
     const opening = !this.current
     if (opening) {
       const active = document.activeElement
       this.returnTo = active instanceof HTMLElement && active !== document.body && !this.root.contains(active) ? active : undefined
     }
-    if (this.current) this.host.releasePanel(this.current.panel, true)
-    const panel = this.host.createPanel(slotId)
-    this.current = { slotId, panel }
-    this.body.replaceChildren(panel.element)
+    if (this.current) this.release(this.current, true)
+    if (lend) {
+      this.current = { slotId, panel: lend, lent: true }
+      this.body.replaceChildren(lend.lend(this.noticeFor(slotId), () => this.lost(lend)))
+      this.host.onLendChange(slotId, true)
+    } else {
+      const panel = this.host.createPanel(slotId)
+      this.current = { slotId, panel, lent: false }
+      this.body.replaceChildren(panel.element)
+    }
     this.render()
     if (opening) {
       this.root.hidden = false
@@ -138,14 +157,14 @@ export class PeekCard {
   }
 
   /**
-   * Closes the card; the session keeps running. `detach: false` when another view of the slot already attached (a tab
-   * opened meanwhile). `restoreFocus: false` when the caller moves the keyboard itself (Abrir nesta mesa).
+   * Closes the card; the session keeps running. A lent terminal goes back to its tab. `detach: false` when another view of
+   * the slot already attached (a tab opened meanwhile). `restoreFocus: false` when the caller moves the keyboard itself.
    */
   close(opts: { detach?: boolean; restoreFocus?: boolean } = {}): void {
     const cur = this.current
     if (!cur) return
     this.current = undefined
-    this.host.releasePanel(cur.panel, opts.detach !== false)
+    this.release(cur, opts.detach !== false)
     this.body.replaceChildren()
     this.root.dataset.open = 'false'
     this.root.hidden = true
@@ -171,13 +190,59 @@ export class PeekCard {
     this.state.className = `peek-state ${h.state}`
     if (this.state.textContent !== h.text) { this.state.replaceChildren(Object.assign(document.createElement('span'), { className: 'dot' }), document.createTextNode(h.text)) }
     this.card.setAttribute('aria-label', peekLabel(h.title))
+    this.card.dataset.lent = String(cur.lent)
     const hint = this.host.closeHint()
     const tip = closeTip(hint)
     if (this.closeBtn.title !== tip) this.closeBtn.title = tip
-    this.openBtn.disabled = h.state === 'ended'
+    this.paintOpenButton(cur.lent)
+    this.openBtn.disabled = !cur.lent && h.state === 'ended'
     this.moreBtn.disabled = h.state === 'ended'
-    const foot = peekFoot(s?.kind, hint, h.state === 'ended')
+    const foot = peekFoot(s?.kind, hint, h.state === 'ended', cur.lent)
     if (this.foot.textContent !== foot) this.foot.textContent = foot
+  }
+
+  /** "Abrir nesta mesa" (primary, with the ▾) without a tab; "Ir para a guia" (secondary, alone) with one (rules: peekOpenButton). */
+  private paintOpenButton(hasTab: boolean): void {
+    const b = peekOpenButton(hasTab)
+    if (this.openBtn.dataset.action === b.action) return
+    this.openBtn.dataset.action = b.action
+    this.openBtn.classList.toggle('primary', b.primary)
+    this.openBtn.title = b.title
+    this.openBtn.setAttribute('aria-label', b.label)
+    this.openLabel.textContent = b.label
+    this.openBtn.replaceChildren(icon(b.icon), this.openLabel)
+    this.moreBtn.hidden = !b.split
+    this.openBtn.parentElement?.classList.toggle('alone', !b.split)
+  }
+
+  /** What the tab shows in place of its terminal while the card has it (screen 6 of the preview). */
+  private noticeFor(slotId: string): HTMLElement {
+    const s = this.host.slot(slotId)
+    const n = lentNotice(s ? peekHeader(s, Date.now()).title : slotId)
+    const root = document.createElement('div'); root.className = 'peek-lent'; root.setAttribute('role', 'status')
+    const ill = document.createElement('span'); ill.className = 'ill'; ill.append(icon('eye'))
+    const t = document.createElement('p'); t.className = 't'; t.textContent = n.title
+    const p = document.createElement('p'); p.className = 'mut'; p.textContent = n.text
+    const row = document.createElement('div'); row.className = 'row'
+    const see = document.createElement('button'); see.type = 'button'; see.className = 'peek-lent-see'; see.textContent = n.see
+    see.addEventListener('click', () => this.focusTerminal())
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'peek-lent-close link'; close.textContent = n.close
+    close.addEventListener('click', () => this.close())
+    row.append(see, close)
+    root.append(ill, t, p, row)
+    return root
+  }
+
+  /** Gives back what the card holds: a lent terminal to its tab, the card's own terminal to the host (disposed). */
+  private release(cur: { slotId: string; panel: TerminalPanel; lent: boolean }, detach: boolean): void {
+    if (!cur.lent) { this.host.releasePanel(cur.panel, detach); return }
+    cur.panel.takeBack()
+    this.host.onLendChange(cur.slotId, false)
+  }
+
+  /** The tab whose terminal the card holds was disposed (closed, moved, its desk hibernated): the card closes, nothing to give back. */
+  private lost(panel: TerminalPanel): void {
+    if (this.current?.panel === panel) this.close({ detach: false })
   }
 
   private openHere(): void {
@@ -186,6 +251,14 @@ export class PeekCard {
     // Closed (detached) before the tab is born: the tab's own attach comes after, so nothing cuts its output.
     this.close({ restoreFocus: false })
     this.host.openHere(slotId)
+  }
+
+  /** "Ir para a guia": the terminal goes back to the tab first, then the tab comes forward with the keyboard. */
+  private goToTab(): void {
+    const slotId = this.current?.slotId
+    if (!slotId) return
+    this.close({ restoreFocus: false })
+    this.host.goToTab(slotId)
   }
 
   /** The ▾ list "Abrir em outra mesa": the card closes on a pick and the person stays where they are. */
@@ -199,16 +272,18 @@ export class PeekCard {
 
   /** The "⋯" menu (rules: peekMenuPlan). */
   private showMenu(): void {
-    const slotId = this.current?.slotId
-    if (!slotId) return
+    const cur = this.current
+    if (!cur) return
+    const slotId = cur.slotId
     const hint = this.host.closeHint()
     const ended = this.host.slot(slotId)?.status === 'exited'
-    const icons = { 'open-here': 'plus', 'open-other': 'arrow-square-out', 'copy-link': 'link', close: 'x' } as const
+    const icons = { 'open-here': 'plus', 'open-other': 'arrow-square-out', 'go-tab': 'arrow-square-out', 'copy-link': 'link', close: 'x' } as const
     const entries: MenuSpec[] = []
-    for (const item of peekMenuPlan(hint, ended)) {
+    for (const item of peekMenuPlan(hint, ended, cur.lent)) {
       if (item.sepBefore) entries.push('sep')
       const run = (): void => {
         if (item.action === 'open-here') this.openHere()
+        else if (item.action === 'go-tab') this.goToTab()
         else if (item.action === 'copy-link') this.host.copyLink(slotId)
         else if (item.action === 'close') this.close()
       }

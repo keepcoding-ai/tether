@@ -95,7 +95,7 @@ import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { PEEK_CLOSE_COMMAND, peekEscAction, peekRoute } from './peek-rules.ts'
+import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekRoute, tabInView, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -370,6 +370,7 @@ const host: PanelHost = {
   daemonReady: () => daemonReadyPromise,
   fontsReady: () => appearanceReady,
   queuePosition: id => queue.position(id),
+  lentTip: id => peekCard?.lentSlot === id ? lentNotice('').tip : undefined,
 }
 
 // ---------- font size ----------
@@ -1556,11 +1557,28 @@ let peekInerted: string[] = []
 /** When the last Esc that counts toward a double Esc happened in the card's terminal (a shell at its prompt). */
 let peekLastEsc: number | undefined
 
-/** Peek a slot (TetherUi `panes.peek`): a live slot without a tab opens in the card; one with a tab is revealed there. */
+/**
+ * Peek a slot (TetherUi `panes.peek`): a live slot without a tab opens in the card with a terminal of its own; one whose
+ * tab is not in view opens in the card with the tab's terminal lent; one whose tab is in view only gets the keyboard.
+ */
 function peek(slotId: string): void {
-  const route = peekRoute(slots.get(slotId), findPanel(slotId) !== undefined)
-  if (route === 'reveal') { peekCard?.close(); revealPane(slotId); return }
-  if (route === 'card') peekCard?.open(slotId)
+  if (peekCard?.slotId === slotId) { peekCard.open(slotId); return }
+  const tab = findPanel(slotId)
+  const route = peekRoute(slots.get(slotId), tab !== undefined, tab ? tabInView(tabPlaceOf(slotId, tab)) : true)
+  const lend = route === 'lend' ? panels.get(slotId) : undefined
+  if (route === 'reveal' || (route === 'lend' && !lend)) { peekCard?.close(); revealPane(slotId); return }
+  if (route === 'lend' || route === 'card') peekCard?.open(slotId, lend)
+}
+
+/** Where a slot's tab is and what is on screen right now (peek-rules.ts tabInView reads it). */
+function tabPlaceOf(slotId: string, panel: IDockviewPanel): TabPlace {
+  const drawerOpen = !!drawer?.isOpen
+  const inDrawer_ = inDrawer(slotId)
+  const pad = inDrawer_ ? undefined : framePadOf(slotId)
+  const placeShown = inDrawer_ ? drawerOpen
+    : pad ? pad.isVisible && (!pad.deskId || pad.deskId === desks.activeDeskId)
+    : desks.deskOf(slotId) === desks.activeDeskId
+  return { inDrawer: inDrawer_, placeShown, activeInFrame: panel.group?.activePanel?.id === panel.id, drawerOpen }
 }
 
 function closePeek(): void { peekCard?.close() }
@@ -1648,6 +1666,8 @@ function peekHost(): PeekHost {
       if (panels.get(id) === panel) panels.delete(id)
     },
     openHere: slotId => revealPane(slotId),
+    goToTab: slotId => revealPane(slotId),
+    onLendChange: slotId => { tabs.get(slotId)?.render() },
     closeHint: () => shortcutHint(PEEK_CLOSE_COMMAND),
     onOpenChange: open => {
       peekLastEsc = undefined
@@ -2237,7 +2257,11 @@ function applyState(slot: SlotState): void {
   // Every queued pane's position may have moved.
   for (const id of slots.keys()) if (id !== slot.slotId && slots.get(id)?.status === 'queued') panels.get(id)?.render()
   renderSlot(slot.slotId)
-  if (peekCard?.slotId === slot.slotId) peekCard.render()
+  if (peekCard?.slotId === slot.slotId) {
+    // A lent terminal goes back to its tab when the session ends: the tab shows the end, never a tab without a terminal.
+    if (peekCard.lentSlot === slot.slotId && effectiveStatus(slot) === 'exited') peekCard.close()
+    else peekCard.render()
+  }
   refreshSessions()
   refreshSessionsDialog()
   renderStrip()
@@ -2479,6 +2503,9 @@ function focusedPaneIds(): Set<string> {
   if (active) ids.add(active)
   const keyboard = (document.activeElement as Element | null)?.closest?.('.panel')?.getAttribute('data-slot-id')
   if (keyboard) ids.add(keyboard)
+  // A tab's terminal lent to the peek card is on screen in the person's hands (outside its `.panel` meanwhile).
+  const lent = peekCard?.lentSlot
+  if (lent) ids.add(lent)
   return ids
 }
 
@@ -4298,7 +4325,7 @@ declare global {
       runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
       /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
       peek(slotId: string): void
-      peekState(): { open: boolean; slotId?: string; routed: boolean }
+      peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean }
       /** The palette: open or not, its mode, the ids on screen in order, the field's text. */
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
@@ -4493,7 +4520,7 @@ function setupTestHooks(): void {
     peek: slotId => peek(slotId),
     peekState: () => {
       const slotId = peekCard?.slotId
-      return { open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel }
+      return { open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel, lent: !!peekCard?.lentSlot }
     },
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
