@@ -1,11 +1,10 @@
-// The keybindings screen's renderer entry: the pane type (the screen as a tab of the active group, one at a time), the
+// The keybindings screen's renderer entry: the pane type (the screen in the peek card or as a tab, one at a time), the
 // commands keybindings.show / keybindings.record, the tab menu and the test hooks. What it edits is the core's key table
 // (TetherUi.keybindings); the file it writes goes through its main side.
 import type { TetherUi, PaneType, ContextMenuEntry } from '../../app/renderer/ext-api.ts'
 import { formatKeybindingsFile, overridesFor } from '../../app/renderer/keybindings-rules.ts'
 import type { Keybinding } from '../../app/renderer/shortcuts.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import { KEYBINDINGS_COMPONENT, KEYBINDINGS_TAB, KEYBINDINGS_TITLE, newKeybindingsPanelId } from '../../app/shared/keybindings.ts'
 import type { KeybindingsScreenChannels } from './ipc.ts'
 import { KEYBINDINGS_SCREEN_LAYOUT } from './layouts.ts'
 import { manifest } from './manifest.ts'
@@ -25,6 +24,9 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   /** "Abrir keybindings.json": the file in an editor tab beside the screen (an empty file is created first so the tab has something to show). */
   function openFile(): void {
+    // The file opens in a tab behind the card: the card's screen closes so the person sees it.
+    const peeked = ui.panes.peekedScreen()
+    if (peeked && panels.has(peeked)) ui.panes.close(peeked)
     void ipc.invoke('ensure', formatKeybindingsFile([])).then(r => {
       if (r.ok) void ui.openers.open(r.path, { side: false, root: '', source: true })
     })
@@ -42,23 +44,19 @@ export function activate(ui: TetherUi): IDisposable[] {
     onClose: id => ui.panes.close(id),
   }
 
-  /** Ctrl+K Ctrl+S: the screen as a tab of the active group (one screen: a second call brings it forward). */
+  /**
+   * Ctrl+K Ctrl+S: the screen in the peek card (one screen: a tab of it already open is brought forward; the one in the
+   * card gets the keyboard). The card's "Abrir nesta mesa" makes it a tab.
+   */
   function show(): void {
-    const existing = panels.keys().next().value as string | undefined
-    const found = existing ? ui.panes.find(existing) : undefined
-    if (existing && found) {
-      found.api.setActive()
-      requestAnimationFrame(() => ui.panes.focus(existing))
-      return
-    }
-    const reference = ui.panes.activeId()
-    const within = reference && ui.panes.find(reference)
-    const panel = ui.panes.open(
-      { id: newKeybindingsPanelId(), component: KEYBINDINGS_COMPONENT, tabComponent: KEYBINDINGS_TAB, title: KEYBINDINGS_TITLE, params: {} },
-      within ? { target: { level: 'pane', placement: 'within' }, reference } : {},
-    )
-    ui.layout.scheduleSave()
-    requestAnimationFrame(() => ui.panes.focus(panel.id))
+    const id = ui.panes.peekScreen(KEYBINDINGS_SCREEN_LAYOUT.id)
+    if (id) requestAnimationFrame(() => ui.panes.focus(id))
+  }
+
+  /** The screen the keys act on: the one in the peek card, else the active pane when it is this screen. */
+  function target(): KeybindingsPanel | undefined {
+    for (const id of [ui.panes.peekedScreen(), ui.panes.activeId()]) if (id && panels.has(id)) return panels.get(id)
+    return undefined
   }
 
   function tabMenu(id: string, x: number, y: number): void {
@@ -82,7 +80,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
 
   const type: PaneType = {
-    ...KEYBINDINGS_SCREEN_LAYOUT, hasSlot: false, icon: 'question',
+    // The tab's icon: the hidden-tabs list and the peek card's header show it too.
+    ...KEYBINDINGS_SCREEN_LAYOUT, hasSlot: false, icon: 'keyboard',
     create: () => tracked(new KeybindingsPanel(host)),
     createTab: () => new KeybindingsTab(host),
     has: id => panels.has(id),
@@ -98,10 +97,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   return [
     ui.panes.register(type),
     ui.commands.registerCommand('keybindings.show', () => show()),
-    ui.commands.registerCommand('keybindings.record', () => {
-      const a = ui.panes.activeId()
-      if (a) panels.get(a)?.recordSelected()
-    }),
+    ui.commands.registerCommand('keybindings.record', () => { target()?.recordSelected() }),
     ui.keybindings.onDidChangeFile(() => { for (const p of panels.values()) p.refresh() }),
   ]
 }

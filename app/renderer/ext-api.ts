@@ -364,6 +364,16 @@ export interface TetherUi {
      * over everything, the drawer included); a slot with a tab is revealed there. An unknown or ended slot without a tab: nothing.
      */
     peek(slotId: string): void
+    /**
+     * Shows a system screen (a registered pane type without a slot, by its type id: 'settings', 'keybindings') in the peek
+     * card, ONE instance: a live tab of the type is brought forward instead (the card closes); the one already in the card
+     * gets the keyboard; else the type's `create()` builds one outside dockview (with an always-active api), never saved in
+     * the layout. Over an agent shown in the card it stacks one level ("← <agent>" goes back). The card's "Abrir nesta mesa"
+     * makes it a tab. Returns the screen's pane id (a tab's, when one was brought); undefined for an unknown type.
+     */
+    peekScreen(typeId: string): string | undefined
+    /** The pane id of the screen shown in the peek card right now (none: undefined). */
+    peekedScreen(): string | undefined
     /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
     copyLink(id: string): void
     /** Draws the eye to a pane's tab with a short pulse (bring it up first: `reveal`). */

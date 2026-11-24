@@ -1,11 +1,10 @@
-// The settings screen's renderer entry: the pane type (the page as a tab of the active group, one at a time), the
+// The settings screen's renderer entry: the pane type (the page in the peek card or as a tab, one at a time), the
 // command settings.show (Ctrl+, and "Configurações…" in ≡), the tab menu and the test hooks. Everything it reads and
 // writes goes through TetherUi.configuration (the core is settings.json's single writer).
 import type { ContextMenuEntry, PaneType, TetherUi } from '../../app/renderer/ext-api.ts'
 import type { SettingEntry, SettingsList } from '../../app/shared/api.ts'
 import type { SettingValue } from '../../app/shared/vscode-configuration-registry.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
-import { SETTINGS_COMPONENT, SETTINGS_TAB, SETTINGS_TITLE, newSettingsPanelId } from '../../app/shared/settings-screen.ts'
 import { SETTINGS_SCREEN_LAYOUT } from './layouts.ts'
 import { manifest } from './manifest.ts'
 import { SettingsPanel, SettingsTab, type SettingsHost } from './panel.ts'
@@ -29,29 +28,21 @@ export function activate(ui: TetherUi): IDisposable[] {
       return ui.configuration.set(key, value)
     },
     reset: key => ui.configuration.reset(key),
-    openFile: () => { void ui.configuration.openFile() },
+    // The file opens in a tab behind the card: the card's screen closes so the person sees it.
+    openFile: () => { const peeked = ui.panes.peekedScreen(); if (peeked && panels.has(peeked)) ui.panes.close(peeked); void ui.configuration.openFile() },
     runCommand: id => { void ui.commands.run(id) },
     onTabMenu: (id, ev) => ui.panes.showTabMenu(id, ev.clientX, ev.clientY),
     onClose: id => ui.panes.close(id),
   }
 
-  /** Ctrl+,: the page as a tab of the active group (one page: a second call brings it forward). `key`: the setting to show. */
+  /**
+   * Ctrl+,: the page in the peek card (one page: a tab of it already open is brought forward; the one in the card gets the
+   * keyboard). The card's "Abrir nesta mesa" makes it a tab. `key`: the setting to show.
+   */
   function show(key?: string): void {
-    const existing = panels.keys().next().value as string | undefined
-    const found = existing ? ui.panes.find(existing) : undefined
-    if (existing && found) {
-      found.api.setActive()
-      requestAnimationFrame(() => { if (key) void panels.get(existing)?.reveal(key); else ui.panes.focus(existing) })
-      return
-    }
-    const reference = ui.panes.activeId()
-    const within = reference && ui.panes.find(reference)
-    const panel = ui.panes.open(
-      { id: newSettingsPanelId(), component: SETTINGS_COMPONENT, tabComponent: SETTINGS_TAB, title: SETTINGS_TITLE, params: {} },
-      within ? { target: { level: 'pane', placement: 'within' }, reference } : {},
-    )
-    ui.layout.scheduleSave()
-    requestAnimationFrame(() => { if (key) void panels.get(panel.id)?.reveal(key); else ui.panes.focus(panel.id) })
+    const id = ui.panes.peekScreen(SETTINGS_SCREEN_LAYOUT.id)
+    if (!id) return
+    requestAnimationFrame(() => { if (key) void panels.get(id)?.reveal(key); else ui.panes.focus(id) })
   }
 
   function tabMenu(id: string, x: number, y: number): void {

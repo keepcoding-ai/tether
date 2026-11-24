@@ -92,13 +92,12 @@ import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type D
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
 import { extensionRows } from './extensions-list.ts'
-import { EXTENSIONS_COMPONENT, EXTENSIONS_TAB, EXTENSIONS_TITLE, newExtensionsPanelId } from '../shared/extensions-screen.ts'
 import { agentPaneChanges, agentPaneOf, loosePaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, tabInView, type TabPlace } from './peek-rules.ts'
+import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -305,7 +304,8 @@ function commandContext(): CommandContext {
   const activeId = currentDesk().activePanel?.id
   // The active pane's type and its context flags (PaneType.contextFlags: 'markdown.note', 'keybindings.screen'…).
   const type = activeId ? liveTypeOf(paneTypes, activeId) : undefined
-  const flags: ReadonlySet<string> = new Set(activeId ? type?.contextFlags?.(activeId) ?? [] : [])
+  // A screen in the peek card adds its flags: its own commands work while it is there (the desk's pane stays the active one).
+  const flags: ReadonlySet<string> = new Set([...(activeId ? type?.contextFlags?.(activeId) ?? [] : []), ...peekScreenFlags()])
   const keybindings = flags.has('keybindings.screen')
   const pad = sidebars?.current()
   const activeSlot = activeId ? slots.get(activeId) : undefined
@@ -313,6 +313,26 @@ function commandContext(): CommandContext {
     pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, peekOpen: !!peekCard?.isOpen, focus, ...(keybindings ? { keybindings } : {}),
     pads: padRegistry.all().length, ...(pad ? { pad, padMoved: sidebars!.isMoved(pad) } : {}),
   }
+}
+
+/** The context flags of the screen shown in the peek card (none without one). */
+function peekScreenFlags(): readonly string[] {
+  const id = peekCard?.screenId
+  return id ? liveTypeOf(paneTypes, id)?.contextFlags?.(id) ?? [] : []
+}
+
+/**
+ * The chords that fire with the card open: the card's own few (peek-rules.ts peekKeeps) and, with a screen in it, the
+ * screen's own commands (peek-rules.ts screenOwns: true only thanks to the screen's flags).
+ */
+function peekChordKeeps(command: string): boolean {
+  if (peekKeeps(command)) return true
+  const screen = peekScreenFlags()
+  const when = commands.get(command)?.when
+  if (!screen.length || !when) return false
+  const { keybindings: _derived, ...ctx } = commandContext()
+  const base = new Set([...ctx.flags ?? []].filter(f => !screen.includes(f)))
+  return screenOwns(flags => when({ ...ctx, flags, ...(flags.has('keybindings.screen') ? { keybindings: true } : {}) }), base, screen)
 }
 
 const commands = new CommandRegistry(commandContext, {
@@ -1589,7 +1609,8 @@ function tabPlaceOf(slotId: string, panel: IDockviewPanel): TabPlace {
   return { inDrawer: inDrawer_, placeShown, activeInFrame: panel.group?.activePanel?.id === panel.id, drawerOpen }
 }
 
-function closePeek(): void { peekCard?.close() }
+/** `peek.close`: closes what the card shows (a screen over an agent goes back to the agent; else the card closes). */
+function closePeek(): void { peekCard?.dismiss() }
 
 /** "Espiar agente…": the live agents the card can show (no tab, or a tab out of view), in the shared picker; the pick opens in the card. */
 function pickPeek(): void {
@@ -1675,6 +1696,58 @@ function createPeekPanel(slotId: string): TerminalPanel {
   return panel
 }
 
+/** The same minimal api as the card's terminal: always active, parameters that never change. */
+function peekApi(id: string): unknown {
+  const none = { dispose: () => {} }
+  return { id, isActive: true, onDidActiveChange: () => none, onDidParametersChange: () => none }
+}
+
+/**
+ * A system screen (a pane type without a slot: Configurações, Atalhos de teclado, Extensões) in the peek card, ONE instance:
+ * a live tab of the type is brought forward instead (the card closes); the one already in the card gets the keyboard; else
+ * the type builds one outside dockview, never saved in the layout (what is changed in it is saved as always). Over an agent
+ * shown in the card it stacks one level (peek.ts). Returns the screen's pane id (undefined: no such screen type).
+ */
+function peekScreen(typeId: string, from?: HTMLElement): string | undefined {
+  const type = paneTypes.get(typeId)
+  if (!type || type.hasSlot || !peekCard) return undefined
+  const tab = allPanels().find(p => type.has(p.id))
+  if (tab) { peekCard.close({ restoreFocus: false }); revealPane(tab.id); return tab.id }
+  const shown = peekCard.screenType === typeId ? peekCard.screenId : undefined
+  if (shown) { requestAnimationFrame(() => type.focus?.(shown)); return shown }
+  const options = type.optionsOf({ id: `${type.idPrefix}peek-${(peekSeq++).toString(36)}` })
+  const content = type.create()
+  content.init({ params: options.params ?? {}, api: peekApi(options.id), title: options.title } as unknown as GroupPanelPartInitParameters)
+  const paneId = options.id
+  peekCard.openScreen({
+    paneId, typeId, title: options.title ?? typeId, icon: type.icon as IconName, element: content.element,
+    focus: () => type.focus?.(paneId),
+    dispose: () => content.dispose?.(),
+  }, from ?? menuRunOwner)
+  return paneId
+}
+let peekSeq = 0
+
+/** "Abrir nesta mesa" of a screen: a tab of the active group, as its command opened it before the card (one screen: a live tab is brought forward). */
+function openScreenTab(typeId: string, deskId?: string): string | undefined {
+  const type = paneTypes.get(typeId)
+  if (!type) return undefined
+  const live = allPanels().find(p => type.has(p.id))
+  if (live) { if (!deskId) revealPane(live.id); return live.id }
+  const options = type.optionsOf({ id: `${type.idPrefix}${Date.now().toString(36)}` })
+  if (deskId && deskId !== desks.activeDeskId) {
+    // "Abrir em outra mesa": the tab is born there and the person stays where they are.
+    desks.desk(deskId)?.addPanel(options)
+    scheduleSave()
+    return options.id
+  }
+  const reference = currentDesk().activePanel?.id
+  const panel = addPaneOptions(options, reference && findPanel(reference) ? { level: 'pane', placement: 'within' } : undefined, reference && findPanel(reference) ? reference : undefined)
+  scheduleSave()
+  requestAnimationFrame(() => focusPane(panel.id))
+  return panel.id
+}
+
 function peekHost(): PeekHost {
   return {
     ...placeHost(),
@@ -1688,6 +1761,13 @@ function peekHost(): PeekHost {
       panel.dispose({ detach })
       if (panels.get(id) === panel) panels.delete(id)
     },
+    openScreenHere: typeId => { openScreenTab(typeId) },
+    screenPlaces: () => ({
+      desks: () => desks.desks,
+      currentDesk: () => desks.activeDeskId,
+      openOnDesk: (typeId, deskId) => { openScreenTab(typeId, deskId) },
+      choosePlace: typeId => { const id = openScreenTab(typeId); if (id) void openMove(id) },
+    }),
     openHere: slotId => revealPane(slotId),
     goToTab: slotId => revealPane(slotId),
     onLendChange: slotId => { tabs.get(slotId)?.render() },
@@ -1716,9 +1796,11 @@ function peekHost(): PeekHost {
 /** Esc anywhere but a terminal while the card is open (its header, its buttons): closes the card, never the drawer under it. */
 function peekEscapeOutside(ev: KeyboardEvent): void {
   if (ev.defaultPrevented || (ev.target as Element | null)?.closest?.('.xterm')) return
+  // One rule: Esc in the card's content (a terminal, or a screen's list, field or button) never closes the card.
+  if (peekCard?.inContent(ev.target instanceof Node ? ev.target : null)) return
   if (peekEscAction({ blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
   ev.preventDefault()
-  peekCard?.close()
+  peekCard?.dismiss()
 }
 
 /** A tab born for the slot the card shows (an agent, the CLI): the card gives way without detaching, the tab attaches. */
@@ -1726,7 +1808,7 @@ function peekYieldsTo(panel: TerminalPanel): TerminalPanel {
   const init = panel.init.bind(panel)
   panel.init = params => {
     const id = String((params.params as { slotId?: unknown }).slotId ?? params.api.id)
-    if (peekCard?.slotId === id) peekCard.close({ detach: false })
+    if (peekCard?.slotId === id) peekCard.dropSlot(id, false)
     init(params)
   }
   return panel
@@ -2263,7 +2345,7 @@ function applyState(slot: SlotState): void {
   renderSlot(slot.slotId)
   if (peekCard?.slotId === slot.slotId) {
     // A lent terminal goes back to its tab when the session ends: the tab shows the end, never a tab without a terminal.
-    if (peekCard.lentSlot === slot.slotId && effectiveStatus(slot) === 'exited') peekCard.close()
+    if (peekCard.lentSlot === slot.slotId && effectiveStatus(slot) === 'exited') peekCard.dropSlot(slot.slotId)
     else peekCard.render()
   }
   refreshSessions()
@@ -2293,7 +2375,7 @@ function onDaemonEvent(ev: DaemonEvent): void {
       slots.delete(ev.slotId)
       door.slotRemoved(ev.slotId)
       startErrors.delete(ev.slotId)
-      if (peekCard?.slotId === ev.slotId) peekCard.close()
+      if (peekCard?.slotId === ev.slotId) peekCard.dropSlot(ev.slotId)
       const panel = findPanel(ev.slotId)
       if (panel) removeAnyPanel(panel)
       refreshSessions()
@@ -3772,7 +3854,7 @@ const commandHost: CommandHost = {
   deskActions: () => { if (desks.isSystem(desks.activeDeskId)) return; const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
   closeDesk: () => { if (!desks.isSystem(desks.activeDeskId)) void closeDesk(desks.activeDeskId) },
   // With the card open the key closes the card and nothing else: the drawer under it stays as it is (a second press toggles it).
-  toggleDrawer: () => { if (peekCard?.isOpen) peekCard.close(); else setDrawerOpen(!drawer.isOpen) },
+  toggleDrawer: () => { if (peekCard?.isOpen) peekCard.dismiss(); else setDrawerOpen(!drawer.isOpen) },
   quickShell: () => { void quickShell() },
   closePeek,
   pickPeek,
@@ -3931,20 +4013,13 @@ function allFixedBindings(): FixedBinding[] {
   return [...native, ...pane, ...contributed]
 }
 
-/** The "Extensões" screen as a tab of the active group (one screen: a second call brings it forward and refreshes it). */
+/**
+ * The "Extensões" screen, in the peek card (one screen: a tab of it already open is brought forward and refreshed; the one
+ * in the card gets the keyboard). "Abrir nesta mesa" in the card makes it a tab (openScreenTab).
+ */
 function openExtensions(): void {
-  const existing = extensionsPanels.keys().next().value as string | undefined
-  if (existing && findPanel(existing)) {
-    findPanel(existing)!.api.setActive()
-    void extensionsPanels.get(existing)?.refresh()
-    requestAnimationFrame(() => focusPane(existing))
-    return
-  }
-  const reference = currentDesk().activePanel?.id
-  const options: AddPanelOptions = { id: newExtensionsPanelId(), component: EXTENSIONS_COMPONENT, tabComponent: EXTENSIONS_TAB, title: EXTENSIONS_TITLE, params: {} }
-  const panel = addPaneOptions(options, reference && findPanel(reference) ? { level: 'pane', placement: 'within' } : undefined, reference && findPanel(reference) ? reference : undefined)
-  scheduleSave()
-  requestAnimationFrame(() => focusPane(panel.id))
+  const id = peekScreen(extensionsLayout.id)
+  if (id && findPanel(id)) void extensionsPanels.get(id)?.refresh()
 }
 
 const extensionsHost: ExtensionsHost = {
@@ -3961,7 +4036,7 @@ const extensionsHost: ExtensionsHost = {
 const dispatcher = new ChordDispatcher({
   modalOpen,
   // The peek card open: only the palette and the card's own close keep their chords (peek-rules.ts PEEK_KEEPS).
-  keeps: () => peekCard?.isOpen ? peekKeeps : undefined,
+  keeps: () => peekCard?.isOpen ? peekChordKeeps : undefined,
   editorChord: (first, second) => { const id = currentDesk().activePanel?.id; return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
 })
 let pill: ChordPill
@@ -4393,7 +4468,7 @@ declare global {
       runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
       /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
       peek(slotId: string): void
-      peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean }
+      peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; screen?: string; screenType?: string; under?: string; underRouted?: boolean }
       /** The palette: open or not, its mode, the ids on screen in order, the field's text. */
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
@@ -4588,7 +4663,12 @@ function setupTestHooks(): void {
     peek: slotId => peek(slotId),
     peekState: () => {
       const slotId = peekCard?.slotId
-      return { open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel, lent: !!peekCard?.lentSlot }
+      const screen = peekCard?.screenId
+      const under = peekCard?.underSlot
+      return {
+        open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel, lent: !!peekCard?.lentSlot,
+        ...(screen ? { screen, screenType: peekCard!.screenType! } : {}), ...(under ? { under, underRouted: !!panels.get(under) } : {}),
+      }
     },
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
@@ -4779,10 +4859,17 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
         peek: slotId => peek(slotId),
+        peekScreen: typeId => peekScreen(typeId),
+        peekedScreen: () => peekCard?.screenId,
         copyLink: paneId => copyPaneLink(paneId),
         attention: paneId => drawAttention(paneId),
-        close: paneId => closeSlotless(paneId),
-        showTabMenu: (paneId, x, y, opener, opts) => { if (opts?.from) showPaneMenu(paneId, x, y, opener, opts); else showTabMenu(paneId, x, y, opener) },
+        // The screen in the peek card has no tab: closing it closes the card's screen, its menu is the card's "⋯".
+        close: paneId => { if (peekCard?.screenId === paneId) peekCard.dismiss(); else closeSlotless(paneId) },
+        showTabMenu: (paneId, x, y, opener, opts) => {
+          if (peekCard?.screenId === paneId) peekCard.showMenuAt(x, y)
+          else if (opts?.from) showPaneMenu(paneId, x, y, opener, opts)
+          else showTabMenu(paneId, x, y, opener)
+        },
         tabMenuEntries: (paneId, opts) => paneMenuEntries(paneId, opts).flatMap((e): ContextMenuEntry[] => e === SEP ? ['sep'] : 'heading' in e ? [] : [e]),
         newPanelDialog: (reference, opts) => { void openNewDialog({ reference, ...(opts?.cwd ? { cwd: opts.cwd } : {}) }) },
         newPanelLabel: NEW_PANEL_LABEL,
