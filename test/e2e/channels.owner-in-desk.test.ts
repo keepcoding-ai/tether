@@ -1,6 +1,8 @@
 // The owner of a desk with its OWN pane inside that desk: does it fall into a loop? Suspicion: every turn of the owner tells the desk,
 // and the desk tells the owner back. Reading the code says no (for-agents: the owner's own pane is never routed to itself, `ownPanePort`;
 // channels: the speaker is skipped by the fan-out and no "finished" notice exists in a channel). This test MEASURES it, with no LLM.
+// It also measures the cut of the loop a real LLM owner made: a turn a channel line opened in a guia of the desk does not send
+// the posse's "terminou" to the owner (the channels extension clears that routed `done`).
 //
 // Rig: a PRIVATE tetherd (own home, own pipe, own pane host) as in channels.flow.test.ts; three fake `claude` agents A, B, C
 // (test/fixtures/channels/agent-live.cjs) in one desk; the person gives the desk to A by the gestures the app writes (`desk-map`,
@@ -284,17 +286,15 @@ test('owner of a desk with its own pane inside: every act ends, and the system i
   assert.equal(channelLines(s2.B!).length, 1, 'B hears the line once')
   assert.equal(channelLines(s2.C!).length, 1, 'C hears the line once')
   assert.equal(channelLines(s2.A!).length, 0, 'A does not hear itself')
-  const finishedAtA = s2.A!.filter((d) => /terminou · guia/.test(d.text))
-  say(`2. "terminou" notices that reached A: ${finishedAtA.length}${finishedAtA.map((d) => `\n   [${d.via}] ${d.text.replace(/\s+/g, ' ')}`).join('')}`)
-  assert.equal(finishedAtA.length, s2.A!.length, 'what reaches A after its line is only the posse notices of the finished turns')
+  // The turns of B and C were opened by a channel line: their "terminou" is silenced (the channels' rule C6 holds for a commanded
+  // pane too), so nothing reaches A and no turn of A is opened by them.
+  say(`2. what reached A after its line: ${s2.A!.length}${s2.A!.map((d) => `\n   [${d.via}] ${d.text.replace(/\s+/g, ' ')}`).join('')}`)
+  assert.equal(s2.A!.length, 0, 'the turns a channel line opened tell A nothing ("terminou" silenced)')
 
-  // ---- 3. A got a "terminou" from B and ended the turn that notice opened: nothing more, anywhere ----
-  const fromB = finishedAtA.find((d) => d.text.includes(B))
-  assert.ok(fromB, `A got the notice of B's finish: ${JSON.stringify(finishedAtA.map((d) => d.text))}`)
+  // ---- 3. nothing more, anywhere ----
   const total = rig.got.length
   await sleep(QUIET_WINDOW_MS)
-  assert.equal(rig.got.length, total, `3: nothing new in ${QUIET_WINDOW_MS / 1000} s after A ended the turn the notice opened:\n${dump(total)}`)
-  say(`3. after A's turn opened by "terminou" ended: total ${rig.got.length - c2} deliveries since A's line, stable for ${QUIET_WINDOW_MS / 1000} s`)
-  say(`3. per pane since A's line: ${JSON.stringify(counts(c2))}`)
+  assert.equal(rig.got.length, total, `3: nothing new in ${QUIET_WINDOW_MS / 1000} s more:\n${dump(total)}`)
+  say(`3. total ${rig.got.length - c2} deliveries since A's line, stable for ${QUIET_WINDOW_MS / 1000} s more; per pane: ${JSON.stringify(counts(c2))}`)
   assert.ok(!/error|uncaught/i.test(rig.daemonLog().split('\n').filter((l) => /channels|for-agents/.test(l)).join('\n')), 'the daemon log has no channels/for-agents error')
 })
