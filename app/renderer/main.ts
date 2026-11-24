@@ -78,6 +78,7 @@ import { CORE_SETTINGS } from '../shared/core-settings.ts'
 import { generateSettingsSchema } from '../shared/settings-schema.ts'
 import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
+import { openChannelLink, setChannelSource } from './channel-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
 import { type LinkMenuAct, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu } from './link-menu.ts'
 import { type LinkMenuAction, type LinkMenuFacts, linkCopyText, linkMenuPlan, paneOfLink, peekKey, relativeCopyText } from './link-menu-rules.ts'
@@ -2908,6 +2909,7 @@ async function followTetherLink(url: string, side = false): Promise<void> {
     })
     return
   }
+  if (link.kind === 'channel') { openChannelLink(link.id); return }
   if (findPanel(link.id)) { revealPane(link.id); drawAttention(link.id); return }
   if (revealSavedFramePane(link.id)) { drawAttention(link.id); return }
   const slot = slots.get(link.id)
@@ -3508,6 +3510,7 @@ function followLink(target: LinkTarget, origin: LinkOrigin): void {
     void followTetherLink(target.url, origin.side === true)
     return
   }
+  if (target.kind === 'channel') { openChannelLink(target.id); return }
   if (target.kind !== 'file') return
   if (target.isDirectory) {
     void window.tether.openPath(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
@@ -4999,6 +5002,7 @@ function activateRendererExtensions(): void {
       links: {
         follow: (target, origin) => openLink(target, origin),
         showMenu: (x, y, target, origin) => showLinkMenu(x, y, target, origin),
+        provideChannels: source => add(toDisposable(setChannelSource(source).dispose)),
       },
       layout: { scheduleSave: () => scheduleSave() },
       dialogs: { ask: spec => askDialog(spec) },

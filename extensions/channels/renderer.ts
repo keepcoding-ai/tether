@@ -8,6 +8,7 @@ import { holds } from './renderer/holds.ts'
 import { createMarks } from './renderer/marks.ts'
 import { createMenus } from './renderer/menus.ts'
 import { createStatus } from './renderer/status.ts'
+import { failedDialog } from './renderer/texts.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -16,7 +17,17 @@ export function activate(ui: TetherUi): Disposable[] {
   // The marks hear the daemon's `line` before the panes do: a line seen the moment it comes never counts as unread.
   const marks = createMarks(ui, directory)
   const panes = createChannelPanes(ui, marks, directory.list)
+  // `#name` of an existing channel is a link on every surface, and tether://channel/<id> opens it: the core asks this cache, never the daemon.
+  const links = ui.links.provideChannels({
+    list: () => directory.list().map(c => ({ id: c.id, name: c.name, ...(c.closed !== undefined ? { closed: true } : {}) })),
+    open: id => {
+      const c = directory.list().find(x => x.id === id)
+      if (c) panes.open(c.id, c.name)
+      else void ui.dialogs.ask(failedDialog('Abrir canal', 'unknown-channel')).catch(() => undefined)
+    },
+  })
   return [
+    links,
     ...directory.disposables, ...marks.disposables, ...panes.disposables,
     ...createStatus(ui, marks, directory.list),
     ...createCommands(ui, { open: panes.open, directory }),

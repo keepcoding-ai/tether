@@ -8,7 +8,8 @@
 //     nothing goes through Monaco's default `window.open`: it all lands on openLink, like the terminal and the preview.
 // Monaco already follows a link only with Ctrl (Cmd) + click and underlines it on hover.
 import { Action, Separator } from 'monaco-editor/base/common/actions.js'
-import { detectUrlLinks, isExternalUrl, type LinkTarget, linkTargetOfUrl, parsePositionFragment, positionFragment } from '../shared/links.ts'
+import { channelRefs } from './channel-links.ts'
+import { detectChannelRefs, detectUrlLinks, isExternalUrl, type LinkTarget, linkTargetOfUrl, parsePositionFragment, positionFragment } from '../shared/links.ts'
 import { detectLinks, getLinkSuffix, type LinkOs } from '../shared/vscode-terminal-link-parsing.ts'
 import { type LinkMenuAct, linkMenuRows } from './link-menu.ts'
 import { openLink } from './link-open.ts'
@@ -34,13 +35,18 @@ export function installMonacoLinks(): void {
       if (model.uri.scheme !== 'file') return { links: [] }
       const baseDir = folderOf(model.uri.fsPath)
       const links: monaco.languages.ILink[] = []
+      const channels = channelRefs()
       const jobs: Promise<void>[] = []
       for (let n = 1; n <= model.getLineCount(); n++) {
         const line = model.getLineContent(n)
         if (line.length === 0 || line.length > MAX_LINE) continue
         // tether:// links (Monaco's own detection only knows http(s)): no disk to ask.
         for (const u of detectUrlLinks(line)) {
-          if (linkTargetOfUrl(u.url).kind === 'tether') links.push({ range: new monaco.Range(n, u.start + 1, n, u.end + 1), url: u.url })
+          if (isAppUrl(u.url)) links.push({ range: new monaco.Range(n, u.start + 1, n, u.end + 1), url: u.url })
+        }
+        // `#name` of an existing channel (the extension's own list: no request per line).
+        for (const r of detectChannelRefs(line, channels)) {
+          if (!detectUrlLinks(line).some(u => r.start < u.end && u.start < r.end)) links.push({ range: new monaco.Range(n, r.start + 1, n, r.end + 1), url: r.url })
         }
         for (const parsed of detectLinks(line, os).slice(0, MAX_PER_LINE)) {
           const start = parsed.prefix?.index ?? parsed.path.index
@@ -79,8 +85,14 @@ function targetOfResource(resource: monaco.Uri): LinkTarget | undefined {
   }
   const url = resource.toString(true)
   if (isExternalUrl(url)) return { kind: 'external', url }
-  if (linkTargetOfUrl(url).kind === 'tether') return { kind: 'tether', url }
-  return undefined
+  const target = linkTargetOfUrl(url)
+  return target.kind === 'tether' || target.kind === 'channel' ? target : undefined
+}
+
+/** A tether:// link (a pane, a note, a channel): Monaco's own detection does not know the scheme. */
+function isAppUrl(url: string): boolean {
+  const kind = linkTargetOfUrl(url).kind
+  return kind === 'tether' || kind === 'channel'
 }
 
 /**

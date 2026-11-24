@@ -2,7 +2,7 @@
 // One menu for every surface (terminal, markdown preview, channel): right-click on a link opens it; Ctrl+click still follows
 // the link, and Alt+click on a link to a pane peeks at it. The hint on the right of a row names the gesture that does the same.
 import type { LinkTarget } from '../shared/links.ts'
-import { parseTetherUrl } from '../shared/tether-url.ts'
+import { channelUrl, parseTetherUrl } from '../shared/tether-url.ts'
 
 /** What a row does. `follow` is what Ctrl+click does; `follow-side` opens it beside; `peek` is Alt+click on a pane link. */
 export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative'
@@ -45,6 +45,7 @@ export function paneOfLink(target: LinkTarget): string | undefined {
 /** What "copy" puts in the clipboard: the link, or the path of a file. */
 export function linkCopyText(target: LinkTarget): string | undefined {
   if (target.kind === 'external' || target.kind === 'tether') return target.url
+  if (target.kind === 'channel') return channelUrl(target.id)
   if (target.kind === 'file') return target.path
   return undefined
 }
@@ -98,6 +99,12 @@ export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenu
         { action: 'copy', label: 'Copiar link', icon: 'copy' },
       ]
     }
+    case 'channel':
+      return [
+        { action: 'follow', label: 'Abrir canal', icon: 'arrow-square-out', hint: follow },
+        'sep',
+        { action: 'copy', label: 'Copiar link', icon: 'copy' },
+      ]
     case 'external':
       return [
         { action: 'follow', label: 'Abrir no navegador do sistema', icon: 'arrow-square-out', hint: follow },

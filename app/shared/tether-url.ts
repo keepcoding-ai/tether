@@ -1,7 +1,8 @@
 // The tether:// link: an address of a place in the app that anyone (an agent writing a note, the person pasting it in a
 // chat) can follow from anywhere — the OS hands it to the app, which brings the window up and reveals that place,
-// wherever it lives (a desk, a pad, the drawer). Two kinds:
+// wherever it lives (a desk, a pad, the drawer). Three kinds:
 //   tether://tab/<pane id>          a pane (a terminal's slot id, or any pane's id)
+//   tether://channel/<channel id>   a channel's pane (opened or brought forward; a closed channel opens to be read)
 //   tether://note?path=<abs path>   a file: the note open on it is revealed, or the file is opened as a note
 //       &pad=panel|desk|global     opened INSIDE that pad (a note already open elsewhere MOVES into it, never duplicated)
 //       &slot=<pane id>            the pane the pad belongs to (panel pad: that panel; desk pad: that panel's desk)
@@ -19,6 +20,8 @@ export interface NotePad { scope: PadScopeName; slot?: string }
 export type TetherLink =
   | { kind: 'tab'; id: string }
   | { kind: 'note'; path: string; pad?: NotePad }
+  /** A channel of the channels extension, by its id (stable across renames): its pane is opened or brought forward. */
+  | { kind: 'channel'; id: string }
 
 /** Pane ids the link accepts: slot ids (8 hex) and the app's panel ids (`note-…`, `empty-…`), never anything with a path or a query in it. */
 const PANE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
@@ -26,6 +29,11 @@ const ABSOLUTE = /^(?:[a-zA-Z]:[\\/]|\/(?!\/))/
 
 export function tabUrl(id: string): string {
   return `${TETHER_SCHEME}://tab/${encodeURIComponent(id)}`
+}
+
+/** `tether://channel/<id>`: the channel's address; it survives a rename (the id never changes). */
+export function channelUrl(id: string): string {
+  return `${TETHER_SCHEME}://channel/${encodeURIComponent(id)}`
 }
 
 export function noteUrl(path: string, pad?: NotePad): string {
@@ -45,6 +53,11 @@ export function parseTetherUrl(text: string): TetherLink | undefined {
     let id: string
     try { id = decodeURIComponent(url.pathname.replace(/^\/+|\/+$/g, '')) } catch { return undefined }
     return PANE_ID.test(id) ? { kind: 'tab', id } : undefined
+  }
+  if (host === 'channel') {
+    let id: string
+    try { id = decodeURIComponent(url.pathname.replace(/^\/+|\/+$/g, '')) } catch { return undefined }
+    return PANE_ID.test(id) ? { kind: 'channel', id } : undefined
   }
   if (host === 'note') {
     const path = url.searchParams.get('path')

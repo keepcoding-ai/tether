@@ -387,7 +387,7 @@ export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
   ]
 }
 
-export type ChannelMenuId = 'join' | 'members' | 'toEnd' | 'mute' | 'unmute' | 'remove' | 'link' | 'move' | 'closePane' | 'close' | 'reopen'
+export type ChannelMenuId = 'join' | 'members' | 'toEnd' | 'mute' | 'unmute' | 'remove' | 'link' | 'channelLink' | 'move' | 'closePane' | 'close' | 'reopen'
 
 /** A row of the channel's menu: an act the pane runs (`id`), a line of information, or a separator. */
 export type ChannelMenuEntry =
@@ -423,6 +423,7 @@ export function channelMenu(c: ChannelSummary, answer: MembersAnswer | undefined
   }
   rows.push('sep',
     { id: 'link', icon: 'link', label: 'Copiar link do painel' },
+    { id: 'channelLink', icon: 'link', label: 'Copiar link do canal' },
     { id: 'move', icon: 'arrow-square-out', label: 'Mover…' },
     { id: 'closePane', icon: 'x', label: 'Fechar painel' })
   if (!desk) rows.push('sep', closed ? { id: 'reopen', icon: ICON.reopen, label: MENU.reopen } : { id: 'close', icon: ICON.close, label: MENU.close, danger: true })

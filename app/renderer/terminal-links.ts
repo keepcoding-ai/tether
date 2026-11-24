@@ -7,7 +7,8 @@
 // only a click with it follows the link.
 import type { IBufferRange, ILink, ILinkDecorations, ILinkProvider, Terminal } from '@xterm/xterm'
 import type { LinkTarget } from '../shared/links.ts'
-import { detectUrlLinks, linkTargetOfUrl } from '../shared/links.ts'
+import { detectChannelRefs, detectUrlLinks, linkTargetOfUrl } from '../shared/links.ts'
+import { channelRefs } from './channel-links.ts'
 import {
   convertLinkRangeToBuffer, getXtermLineContent, type LinkBufferLine, provideLocalLinks,
 } from '../shared/vscode-terminal-link-detector.ts'
@@ -94,7 +95,10 @@ function webLinksAt(term: Terminal, bufferLineNumber: number): { range: IBufferR
   while (start > 0 && buffer.getLine(start)?.isWrapped) { const prev = buffer.getLine(start - 1); if (!prev) break; lines.unshift(prev); start-- }
   while (end + 1 < buffer.length && buffer.getLine(end + 1)?.isWrapped) { const next = buffer.getLine(end + 1); if (!next) break; lines.push(next); end++ }
   const text = getXtermLineContent(buffer, start, end, term.cols)
-  return detectUrlLinks(text).map(l => ({
+  const urls = detectUrlLinks(text)
+  // `#name` of an existing channel: a link too (tether://channel/<id>), unless it sits inside a URL.
+  const refs = detectChannelRefs(text, channelRefs()).filter(r => !urls.some(u => r.start < u.end && u.start < r.end))
+  return [...urls, ...refs].map(l => ({
     url: l.url,
     range: convertLinkRangeToBuffer(lines, term.cols, { startColumn: l.start + 1, startLineNumber: 1, endColumn: l.end + 1, endLineNumber: 1 }, start),
   }))

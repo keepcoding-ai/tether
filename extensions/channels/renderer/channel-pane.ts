@@ -10,6 +10,7 @@ import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } fro
 import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
+import { channelUrl } from '../../../app/shared/tether-url.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line } from '../rules.ts'
@@ -936,6 +937,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         toEnd: () => this.toEnd(),
         mute: ask(CMD.mute), unmute: ask(CMD.unmute), remove: ask(CMD.remove), close: ask(CMD.close), reopen: ask(CMD.reopen),
         link: () => ui.panes.copyLink(paneId),
+        channelLink: () => ui.shell.writeClipboard(channelUrl(channel)),
         move: () => ui.panes.move(paneId),
         closePane: () => ui.panes.close(paneId),
       }

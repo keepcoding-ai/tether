@@ -586,6 +586,11 @@ export interface TetherUi {
     follow(target: LinkTarget, origin?: LinkOrigin): void
     /** The right-click menu of a link at page coordinates; false when the link has none (an anchor, an ignored one). */
     showMenu(x: number, y: number, target: LinkTarget, origin?: LinkOrigin): boolean
+    /**
+     * The channels extension tells the core which channels exist (a synchronous cache, open and closed) and how to open one:
+     * `#name` of an existing channel becomes a link on every surface, and tether://channel/<id> opens its pane.
+     */
+    provideChannels(source: { list(): readonly { id: string; name: string; closed?: boolean }[]; open(channelId: string): void }): IDisposable
   }
   layout: {
     /** A pane's params changed (dockview's updateParameters): the layout is saved soon. */

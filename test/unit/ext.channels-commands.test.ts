@@ -242,7 +242,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
   // Open, loose, nobody muted: no "Devolver a voz…"; "Encerrar canal…" last.
   const open = ans(CONF, [member('a', false), member('b', false)])
   assert.deepEqual(ids(channelMenu(CONF, open)),
-    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', '-', 'link', 'move', 'closePane', '-', 'close'])
+    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'close'])
   const close = channelMenu(CONF, open).at(-1) as { label: string; danger?: boolean }
   assert.deepEqual([close.label, close.danger], ['Encerrar canal…', true])
 
@@ -264,7 +264,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
 
   // Closed loose channel: the gestures go, reading stays, "Reabrir canal" takes the last place.
   const closed = channelMenu(OLD, ans(OLD, [member('a', true)]))
-  assert.deepEqual(ids(closed), ['# Dono: Você · 1 membro · 1 calado', '# canal avulso · encerrado', 'members', 'toEnd', '-', 'link', 'move', 'closePane', '-', 'reopen'])
+  assert.deepEqual(ids(closed), ['# Dono: Você · 1 membro · 1 calado', '# canal avulso · encerrado', 'members', 'toEnd', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'reopen'])
 
   // Empty open channel: nothing to mute or take out (disabled), no "Membros" (no column).
   const empty = channelMenu(CONF, ans(CONF, []))

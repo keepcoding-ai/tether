@@ -18,6 +18,7 @@ import { noteDirOf } from '../shared/notes.ts'
 import { classifyLink } from '../shared/markdown-links.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { isPeekModifier, openLink } from './link-open.ts'
+import { linkifyChannelRefs } from './channel-links.ts'
 import { showLinkMenu } from './link-menu.ts'
 import { renderMarkdown, slugify } from '../shared/markdown-render.ts'
 import { lineAtOffset, offsetOfLine, type LineBlock } from '../shared/markdown-scroll.ts'
@@ -228,6 +229,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     const root = doc.getElementById('root')
     if (root && this.renderedHtml !== undefined) {
       root.innerHTML = this.renderedHtml
+      linkifyChannelRefs(root)
       this.lastHtml = this.renderedHtml
       if (this.line !== undefined) this.scrollToLine(this.line)
     }
@@ -285,6 +287,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     const keep = this.firstRender ? this.line : (this.measure().length > 0 ? this.topLine() : this.line)
     if (html !== this.lastHtml) {
       root.innerHTML = html
+      linkifyChannelRefs(root)
       this.lastHtml = html
       this.renderedHtml = html
       this.blocksCache = undefined
@@ -372,7 +375,7 @@ export class PreviewPanel implements IContentRenderer, PreviewPane {
     const href = link?.getAttribute('href')
     if (!href) return undefined
     const target = classifyLink(href, noteDirOf(this.path))
-    if (target.kind === 'external' || target.kind === 'tether') return target
+    if (target.kind === 'external' || target.kind === 'tether' || target.kind === 'channel') return target
     if (target.kind === 'file') return { kind: 'file', path: target.path, ...(target.line ? { position: { line: target.line } } : {}) }
     return undefined
   }

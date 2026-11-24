@@ -6,14 +6,14 @@
 // Which URLs may leave the app is the app's links policy (app/shared/links.ts isExternalUrl), the same for every surface.
 // Paths are handled lexically with both separators, so a Windows note path works the same in a unit test on any OS.
 
-import { isExternalUrl } from './links.ts'
-import { parseTetherUrl } from './tether-url.ts'
+import { isExternalUrl, linkTargetOfUrl } from './links.ts'
 
 export type LinkTarget =
   | { kind: 'external'; url: string }
   | { kind: 'anchor'; id: string }
   | { kind: 'file'; path: string; line?: number }
   | { kind: 'tether'; url: string }
+  | { kind: 'channel'; id: string }
   | { kind: 'ignore' }
 
 const SCHEME = /^([a-zA-Z][a-zA-Z0-9+.-]*):/
@@ -86,7 +86,7 @@ export function classifyLink(href: string, noteDir: string): LinkTarget {
   if (scheme) {
     // `C:\x` looks like a scheme; only http(s) goes anywhere.
     if (isExternalUrl(link)) return { kind: 'external', url: link }
-    return parseTetherUrl(link) ? { kind: 'tether', url: link } : { kind: 'ignore' }
+    return linkTargetOfUrl(link)
   }
   if (link.startsWith('//')) return { kind: 'ignore' } // protocol-relative: a remote host, not a file
   const cut = link.search(/[?#]/)
