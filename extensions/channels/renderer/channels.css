@@ -221,4 +221,23 @@ body.no-tab-close .ch-tab .close { display: none; }
 .ch-pop-tail.me { color: var(--x-alert); font-weight: 600; }
 .ch-pop-more { display: block; width: 100%; margin-top: 4px; padding: 6px 12px; border: 0; border-top: 1px solid var(--border); background: none; color: var(--fg-dim); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer; }
 .ch-pop-more:hover { background: var(--bg-hover); color: var(--fg); }
+/* Reactions: the pills under a speech, the hover bar in its corner, the short notice of a refusal. A speech with none takes no room. */
+.ch-msgs-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ch-msg { position: relative; }
+.ch-rx { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.ch-pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-3); color: var(--fg); font: 11.5px var(--ui); cursor: pointer; }
+.ch-pill .e { font: 13px var(--emoji, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif); line-height: 1; }
+.ch-pill:hover { background: var(--bg-hover); }
+.ch-pill.mine { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg-3)); }
+.ch-pill.pend { opacity: .55; }
+.ch-pill.ro { cursor: default; background: none; }
+.ch-pill.ro:hover { background: none; }
+.ch-hb { position: absolute; right: 8px; top: -14px; z-index: 2; display: none; align-items: center; gap: 1px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); box-shadow: var(--shadow); }
+.ch-msg:hover > .ch-hb, .ch-msg:focus-within > .ch-hb { display: flex; }
+.ch-hb-b { display: inline-grid; place-items: center; width: 26px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: 14px var(--emoji, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif); cursor: pointer; }
+.ch-hb-b:hover { background: var(--bg-hover); }
+.ch-hb-b.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.ch-hb-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--border); }
+.ch-toast { flex: none; margin: 0 14px 6px; padding: 6px 10px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--err, var(--x-alert)) 50%, var(--border)); background: color-mix(in srgb, var(--err, var(--x-alert)) 10%, var(--bg-2)); font-size: 12px; }
+.ch-toast[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .ch-pane * { transition: none !important; animation: none !important; } }

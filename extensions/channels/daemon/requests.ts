@@ -9,7 +9,7 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { USER, type Channel, type ChannelId, type Line } from '../rules.ts'
+import { REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { PAGE } from './store.ts'
 
@@ -49,6 +49,25 @@ export function summaryOf(ch: Channel): ChannelSummary {
     owner: ch.owner, ...(ch.ownerEnded ? { ownerEnded: ch.ownerEnded } : {}), ...(ch.closed ? { closed: ch.closed } : {}),
     members: Object.keys(ch.members).length, seenByUser: ch.seenByUser, createdAt: ch.createdAt,
   }
+}
+
+/** The reactions of one message as the pane draws them: who gave which emoji, in the order they came. */
+export interface MessageReactions { seq: number; tallies: ReactionTally[] }
+
+/**
+ * The sum of the reactions of the messages of a page. A reaction to a message sits within REACTION_WINDOW lines after it, so the page
+ * and that much past its end are read (the same bound as `channels read`: never the whole channel, a file or two).
+ */
+async function reactionsOf(c: Channels, id: ChannelId, page: readonly Line[], lines: readonly Line[]): Promise<MessageReactions[]> {
+  if (!lines.some((l) => l.kind === 'message')) return []
+  const after = await c.store.since(id, page[page.length - 1]!.seq, REACTION_WINDOW)
+  const sums = sumReactions([...page, ...after])
+  const out: MessageReactions[] = []
+  for (const l of lines) {
+    const tallies = l.kind === 'message' ? sums.get(l.seq) : undefined
+    if (tallies?.length) out.push({ seq: l.seq, tallies })
+  }
+  return out
 }
 
 const refuse = (code: string, message: string): DoorError => new DoorError(code as ErrorCode, message)
@@ -118,9 +137,20 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const before = int(a, 'before')
       const limit = Math.min(Math.max(int(a, 'limit') ?? PAGE, 1), PAGE)
       const page: Line[] = await c.store.history(ch.id, before, limit)
-      // Reaction lines are not conversation: the pane that draws lines does not get them until it draws reactions.
+      // Reaction lines are not conversation: the pane gets the messages and, apart, the sum of the reactions of each of them.
       const lines = page.filter((l) => l.kind !== 'reaction')
-      return { channel: summaryOf(ch), lines, more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
+      return { channel: summaryOf(ch), lines, reactions: await reactionsOf(c, ch.id, page, lines), more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
+    }],
+
+    // The person reacts (as the moderator): the same rules as an agent's `react`, every refusal comes back as the request's error code.
+    ['react', async (c, a, ctx) => {
+      moderator(ctx)
+      const ch = channelOf(c, a)
+      const seq = int(a, 'seq')
+      if (seq === undefined) throw refuse('bad-request', 'o argumento seq é um inteiro')
+      if (a.remove !== undefined && typeof a.remove !== 'boolean') throw refuse('bad-request', 'o argumento remove é verdadeiro ou falso')
+      const r = done(await c.react(USER, ch.id, { seq, reaction: text(a, 'reaction'), ...(a.remove === true ? { remove: true } : {}) }))
+      return { changed: r.changed, emoji: r.reaction.emoji, ...(r.reaction.name ? { name: r.reaction.name } : {}) }
     }],
 
     ['say', async (c, a, ctx) => {

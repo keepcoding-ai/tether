@@ -6,10 +6,10 @@ import { agentHue } from '../../../app/shared/agent-color.ts'
 import { tabUrl } from '../../../app/shared/tether-url.ts'
 import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import type { Line, LineEventType } from '../rules.ts'
-import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
+import type { ChannelSummary, MemberInfo, MessageReactions } from '../daemon/requests.ts'
 
 /** The answer of the `history` request. */
-export interface HistoryPage { channel: ChannelSummary; lines: Line[]; more: boolean; last: number }
+export interface HistoryPage { channel: ChannelSummary; lines: Line[]; reactions?: MessageReactions[]; more: boolean; last: number }
 /** The answer of the `members` request. */
 export interface MembersAnswer { channel: ChannelSummary; members: MemberInfo[]; removed: string[] }
 
@@ -59,9 +59,12 @@ export function olderCursor(t: Timeline): number | undefined {
  * A new line from the `line` event. `gap`: the pane missed some (its `seq` is not the next one), so it asks the newest page again.
  * A line already held (or older than what is) changes nothing.
  */
-export function applyLine(t: Timeline, line: Line): { timeline: Timeline; added: boolean; gap: boolean } {
+export function applyLine(t: Timeline, line: Line, quiet?: ReadonlySet<number>): { timeline: Timeline; added: boolean; gap: boolean } {
   if (line.seq <= t.last) return { timeline: t, added: false, gap: false }
-  const gap = t.last > 0 && line.seq !== t.last + 1
+  // `quiet`: the `seq`s of reactions heard live (they take a number but are no line of the conversation): not a hole.
+  let next = t.last + 1
+  while (quiet?.has(next)) next++
+  const gap = t.last > 0 && line.seq !== next
   return { timeline: { lines: mergeLines(t.lines, [line]), more: t.more, last: line.seq }, added: true, gap }
 }
 
