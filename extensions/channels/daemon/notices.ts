@@ -18,26 +18,29 @@ export const MODERATOR_NAME = 'usuário'
 /** How many speakers a merged notice names before "e mais N". */
 export const NAMES_SHOWN = 5
 
-// A pane that does not hear inside is taught both ways, tool first: the core does not tell an extension whether the pane's
-// client has the tether's MCP tools (only the delivery path), and a sandboxed client (Codex) may be denied the CLI's pipe while
-// the tool works.
+// A pane that does not hear inside is taught the tool only when the door KNOWS its client has the tether's MCP tools (`tools`,
+// from `delivery.hasTools`: sticky, true once its stream opened). Otherwise `tools` false means "not known", not "none", so both
+// ways are taught, tool first: a sandboxed client (Codex) may be denied the CLI's pipe while the tool works.
 /** The way to speak in `room` from a pane that does not hear inside (the ronda writes the CLI form the same way). */
-const sayHow = (room: string): string => `pela ferramenta channels_say (room "${room}") ou node "$TETHER_CLI" channels say ${room} "<texto>"`
+const sayHow = (room: string, tools: boolean): string =>
+  tools ? `pela ferramenta channels_say (room "${room}")` : `pela ferramenta channels_say (room "${room}") ou node "$TETHER_CLI" channels say ${room} "<texto>"`
 /** The way to read `room` from such a pane; `since` narrows it to what came after that seq. */
-const readHow = (room: string, since?: number): string =>
-  `pela ferramenta channels_read (room "${room}"${since === undefined ? '' : `, since ${since}`}) ou node "$TETHER_CLI" channels read ${room}${since === undefined ? '' : ` --since ${since}`}`
-/** The CLI line a pane that does not hear inside needs. */
-function cliHint(room: string): string {
-  return `para falar: ${sayHow(room)}; para ler o que perdeu: ${readHow(room)} (no PowerShell, $env:TETHER_CLI)`
+const readHow = (room: string, tools: boolean, since?: number): string => {
+  const tool = `pela ferramenta channels_read (room "${room}"${since === undefined ? '' : `, since ${since}`})`
+  return tools ? tool : `${tool} ou node "$TETHER_CLI" channels read ${room}${since === undefined ? '' : ` --since ${since}`}`
+}
+/** The how-to line a pane that does not hear inside needs. */
+function cliHint(room: string, tools: boolean): string {
+  return `para falar: ${sayHow(room, tools)}; para ler o que perdeu: ${readHow(room, tools)}${tools ? '' : ' (no PowerShell, $env:TETHER_CLI)'}`
 }
 
 /**
  * The last line of a SPOKEN message delivered to a pane that does not hear inside (typed in its terminal): what it writes in its
  * own tab reaches nobody in the channel, and how to speak there. Notices and the `inside` road are left as they are.
  */
-export function withReplyHint(body: string, room: string, path: 'inside' | 'terminal' | 'wait'): string {
+export function withReplyHint(body: string, room: string, path: 'inside' | 'terminal' | 'wait', tools = false): string {
   if (path === 'inside') return body
-  return `${body.replace(/\n+$/, '')}\n(para responder no canal: o que você escreve na sua guia ninguém no canal vê; fale ${sayHow(room)})`
+  return `${body.replace(/\n+$/, '')}\n(para responder no canal: o que você escreve na sua guia ninguém no canal vê; fale ${sayHow(room, tools)})`
 }
 
 /** HH:MM, local time. */
@@ -85,10 +88,10 @@ export const createdNotice = (room: string): string => `você abriu #${room} e �
  * To the agent that joined. `by` absent: it joined itself. `path` is the delivery's `routeOf` (the road, not the instant): a pane that does not hear
  * inside learns how to speak by the CLI, and one that hears nothing now (`wait`) is told the lines wait for it.
  */
-export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait'): string {
+export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait', tools = false): string {
   let text = `você entrou em #${room}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
   if (path === 'inside') text += ` · para responder no canal chame a ferramenta ${claudeToolName('say')} (se ela não estiver carregada, carregue-a antes pela busca de ferramentas); o texto do seu turno não vai ao canal`
-  else text += ` · ${cliHint(room)}; o texto do seu turno não vai ao canal`
+  else text += ` · ${cliHint(room, tools)}; o texto do seu turno não vai ao canal`
   if (path === 'wait') text += ' · agora esta guia não ouve as falas: elas esperam até ela poder ouvir, juntadas num aviso só'
   return text
 }
@@ -127,15 +130,15 @@ function amount(t: Tally): string {
 type Path = 'inside' | 'terminal' | 'wait'
 
 /** `inside` keeps the short form; any other road is taught the tool and the CLI. */
-const readHint = (room: string, since: number, path: Path): string =>
-  path === 'inside' ? `ler: channels read ${room} --since ${since - 1}` : `ler: ${readHow(room, since - 1)}`
+const readHint = (room: string, since: number, path: Path, tools: boolean): string =>
+  path === 'inside' ? `ler: channels read ${room} --since ${since - 1}` : `ler: ${readHow(room, tools, since - 1)}`
 
 /** In place of the second line that would wait behind the first: what waits now, and how to read it. */
-export function mergedNotice(room: string, t: Tally, path: Path = 'inside'): string {
-  return `#${room}: ${amount(t)}; ${readHint(room, t.since, path)}`
+export function mergedNotice(room: string, t: Tally, path: Path = 'inside', tools = false): string {
+  return `#${room}: ${amount(t)}; ${readHint(room, t.since, path, tools)}`
 }
 
 /** The one notice per channel a member gets when its process runs again. */
-export function returnNotice(room: string, t: Tally, path: Path = 'inside'): string {
-  return `você voltou · #${room}: ${amount(t)}; ${readHint(room, t.since, path)}`
+export function returnNotice(room: string, t: Tally, path: Path = 'inside', tools = false): string {
+  return `você voltou · #${room}: ${amount(t)}; ${readHint(room, t.since, path, tools)}`
 }

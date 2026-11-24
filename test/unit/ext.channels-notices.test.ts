@@ -49,4 +49,36 @@ describe('channels notices: how to answer and read, by road', () => {
       assert.ok(text.includes('para ler o que perdeu: pela ferramenta channels_read (room "cena") ou node "$TETHER_CLI" channels read cena'), path)
     }
   })
+
+  // `tools` true = the door KNOWS the client has the tether's tools (sticky): only the tool is taught, never the CLI.
+  test('tools known: the reply footer teaches only the tool and keeps "what you write in your tab nobody sees"', () => {
+    for (const path of ['terminal', 'wait'] as const) {
+      const out = withReplyHint('@soul quero o resumo', 'cena', path, true)
+      assert.equal(
+        out.split('\n')[1],
+        '(para responder no canal: o que você escreve na sua guia ninguém no canal vê; fale pela ferramenta channels_say (room "cena"))',
+      )
+      assert.ok(!out.includes('TETHER_CLI'), path)
+    }
+    assert.equal(withReplyHint('oi', 'cena', 'inside', true), 'oi', 'inside never changes')
+  })
+
+  test('tools known: the merged and the return notices teach only the read tool', () => {
+    const want = 'ler: pela ferramenta channels_read (room "cena", since 4)'
+    for (const path of ['terminal', 'wait'] as const) {
+      assert.equal(mergedNotice('cena', tally, path, true), `#cena: 2 falas novas desde 19:05, de soul · bancada; ${want}`)
+      assert.equal(returnNotice('cena', tally, path, true), `você voltou · #cena: 2 falas novas desde 19:05, de soul · bancada; ${want}`)
+    }
+    assert.equal(mergedNotice('cena', tally, 'inside', true), mergedNotice('cena', tally), 'inside never changes')
+  })
+
+  test('tools known: the join notice teaches only the tools, with no CLI and no PowerShell remark', () => {
+    for (const path of ['terminal', 'wait'] as const) {
+      const text = joinedNotice('cena', undefined, ['a'], path, true)
+      assert.ok(text.includes('para falar: pela ferramenta channels_say (room "cena"); para ler o que perdeu: pela ferramenta channels_read (room "cena");'), path)
+      assert.ok(!text.includes('TETHER_CLI') && !text.includes('PowerShell'), path)
+      assert.ok(text.includes('o texto do seu turno não vai ao canal'), path)
+    }
+    assert.equal(joinedNotice('cena', undefined, ['a'], 'inside', true), joinedNotice('cena', undefined, ['a'], 'inside'), 'inside never changes')
+  })
 })

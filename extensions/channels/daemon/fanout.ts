@@ -188,11 +188,11 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     for (const s of t.speakers) if (!into.speakers.includes(s)) into.speakers.push(s)
   }
 
-  const envelopeOf = (ch: Channel, line: Line, path: 'inside' | 'terminal' | 'wait'): DeliveryMessage => {
+  const envelopeOf = (ch: Channel, line: Line, path: 'inside' | 'terminal' | 'wait', tools: boolean): DeliveryMessage => {
     const ref = `${ch.name}#${line.seq}`
     if (line.kind === 'notice') return { kind: 'notice', room: ch.name, from: { ...SYSTEM_FROM }, body: line.body, ref }
     const msg: DeliveryMessage = {
-      kind: 'message', room: ch.name, body: withReplyHint(line.body, ch.name, path), ref,
+      kind: 'message', room: ch.name, body: withReplyHint(line.body, ch.name, path, tools), ref,
       from: { name: line.from.name, id: line.from.id, role: deliveryRoleOf(line.from.role) },
     }
     if (line.to?.length) msg.to = line.to
@@ -259,12 +259,12 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
     const w = untrack(key)
     if (w && api.delivery.cancel(w.receipt)) {
       count(w, line)
-      const r = await send(agent, noticeOf(ch, mergedNotice(ch.name, w, api.delivery.routeOf(agent)), line.seq))
+      const r = await send(agent, noticeOf(ch, mergedNotice(ch.name, w, api.delivery.routeOf(agent), api.delivery.hasTools(agent)), line.seq))
       if (!r) return 'away'
       track(agent, ch.id, r, w)
       return receiptState(r)
     }
-    const r = await send(agent, envelopeOf(ch, line, api.delivery.routeOf(agent)))
+    const r = await send(agent, envelopeOf(ch, line, api.delivery.routeOf(agent), api.delivery.hasTools(agent)))
     if (!r) return 'away'
     track(agent, ch.id, r, tallyOf(line))
     return receiptState(r)
@@ -361,7 +361,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   const refused = (v: Channel | { ok: false; error: Refusal }): v is { ok: false; error: Refusal } => 'ok' in v
   /** The join notice of each joiner, for the fan-out of the line that brought them. */
   const joinNotices = (ch: Channel, joined: readonly AgentId[]): Map<AgentId, string> =>
-    new Map(joined.map((a) => [a, joinedNotice(ch.name, DESK_JOINER, Object.keys(ch.members).filter((m) => m !== a).map(nameOf), api.delivery.routeOf(a))]))
+    new Map(joined.map((a) => [a, joinedNotice(ch.name, DESK_JOINER, Object.keys(ch.members).filter((m) => m !== a).map(nameOf), api.delivery.routeOf(a), api.delivery.hasTools(a))]))
   /** Joins `agent` by 'desk' in the store; whether it is new. Inside the lane. */
   async function deskJoin(ch: Channel, agent: AgentId): Promise<boolean> {
     const done = await store.join(ch.id, agent, nameOf(agent), 'desk')
@@ -542,7 +542,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
         const line = await notice(ch, joinedLine(ch.name, nameOf(target)), 'join', target, who)
         emitChannel(ch)
         const members = Object.keys(ch.members).filter((m) => m !== target).map(nameOf)
-        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target))
+        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target), api.delivery.hasTools(target))
         await fanout(ch, line, undefined, new Map([[target, text]]))
         return { ok: true as const, channel: ch, already: false, line }
       })
@@ -673,7 +673,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
         // What still waited from before it stopped joins the same notice.
         const w = untrack(keyOf(agent, id))
         if (w && api.delivery.cancel(w.receipt)) merge(t, w)
-        const r = await send(agent, noticeOf(ch, returnNotice(ch.name, t, api.delivery.routeOf(agent))))
+        const r = await send(agent, noticeOf(ch, returnNotice(ch.name, t, api.delivery.routeOf(agent), api.delivery.hasTools(agent))))
         if (r) track(agent, id, r, t)
       })))
     },
