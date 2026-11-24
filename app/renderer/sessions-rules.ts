@@ -394,6 +394,59 @@ function skipWhy(s: SessionSlot | undefined): string | undefined {
   return undefined
 }
 
+// ---------- the rows' actions: where a session goes, and the right-click menus ----------
+
+/** The two groups of rows that have a tab-less session. */
+export type RowGroup = 'free' | 'ended'
+
+/** What a row's menu items do (main.ts maps each to a function). */
+export type RowAction = 'peek' | 'open-here' | 'open-other' | 'stop' | 'reopen' | 'reopen-here' | 'reopen-other' | 'forget'
+
+export interface RowMenuItem {
+  action: RowAction
+  label: string
+  /** A submenu row (the desks, a separator, "Escolher o lugar…"). */
+  submenu?: boolean
+  danger?: boolean
+  /** A separator line goes before it. */
+  sepBefore?: boolean
+}
+
+/** The right-click menu of a row: "Sem guia" peeks, opens here or elsewhere, stops; "Encerradas" revives without a tab, here, elsewhere, or forgets. */
+export function rowMenuPlan(group: RowGroup): RowMenuItem[] {
+  if (group === 'free') {
+    return [
+      { action: 'peek', label: 'Espiar' },
+      { action: 'open-here', label: 'Abrir nesta mesa' },
+      { action: 'open-other', label: 'Abrir em outra mesa', submenu: true },
+      { action: 'stop', label: 'Encerrar…', danger: true, sepBefore: true },
+    ]
+  }
+  return [
+    { action: 'reopen', label: 'Reabrir' },
+    { action: 'reopen-here', label: 'Reabrir nesta mesa' },
+    { action: 'reopen-other', label: 'Reabrir em outra mesa', submenu: true },
+    { action: 'forget', label: 'Esquecer', danger: true, sepBefore: true },
+  ]
+}
+
+/** The last row of every "in another desk" list, after a separator: the move screen decides the exact place. */
+export const CHOOSE_PLACE_LABEL = 'Escolher o lugar…'
+/** The list's heading ("Abrir em outra mesa") and the button that opens it. */
+export const OPEN_ELSEWHERE_LABEL = 'Abrir em outra mesa'
+
+export interface DeskChoice {
+  id: string
+  label: string
+  /** The desk the person is on (marked in the list; picking it opens the session there, as "nesta mesa" does). */
+  current: boolean
+}
+
+/** The desks as the list shows them, in the strip's order; a nameless one reads "Mesa N". */
+export function deskChoices(desks: readonly { id: string; name: string }[], currentId: string): DeskChoice[] {
+  return desks.map((d, i) => ({ id: d.id, label: d.name.trim() || `Mesa ${i + 1}`, current: d.id === currentId }))
+}
+
 /** Before "Retomar": who goes back (and with which note) and who would be skipped, from the sessions' state right now. */
 export function resumePreview(batch: PauseBatch | null | undefined, slots: Iterable<SessionSlot>): ResumePreview {
   const bySlot = new Map<string, SessionSlot>()

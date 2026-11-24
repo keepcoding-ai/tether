@@ -59,6 +59,28 @@ export function closeTip(hint: string): string {
   return hint ? `Fechar (${hint})` : 'Fechar'
 }
 
+export type PeekMenuAction = 'open-here' | 'open-other' | 'copy-link' | 'close'
+
+export interface PeekMenuItem {
+  action: PeekMenuAction
+  label: string
+  submenu?: boolean
+  sepBefore?: boolean
+  /** The chord shown at the right (only on "Fechar", and only when bound). */
+  trail?: string
+  disabled?: boolean
+}
+
+/** The "⋯" of the card: open here, open on another desk, copy the pane link, and close (with the chord when there is one). Opening is off once the session ended. */
+export function peekMenuPlan(hint: string, ended: boolean): PeekMenuItem[] {
+  return [
+    { action: 'open-here', label: 'Abrir nesta mesa', disabled: ended },
+    { action: 'open-other', label: 'Abrir em outra mesa', submenu: true, disabled: ended },
+    { action: 'copy-link', label: 'Copiar link do painel' },
+    { action: 'close', label: 'Fechar', sepBefore: true, ...(hint ? { trail: hint } : {}) },
+  ]
+}
+
 /** The accessible name of the card. */
 export function peekLabel(title: string): string {
   return `Espiando ${title}`

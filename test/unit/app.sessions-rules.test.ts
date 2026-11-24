@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
-  bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
+  CHOOSE_PLACE_LABEL, deskChoices, rowMenuPlan, bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
   resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
@@ -346,5 +346,31 @@ describe('memory and time texts', () => {
   test('liveMemoryTotal sums live sessions only', () => {
     assert.equal(liveMemoryTotal([mk('a', { memoryMB: 500 }), mk('b', { memoryMB: 600 }), mk('c', { status: 'exited', memoryMB: 9000 })]), '1,1 GB')
     assert.equal(liveMemoryTotal([mk('a')]), '')
+  })
+})
+
+describe('the rows\' right-click menus and the desk list', () => {
+  test('"Sem guia": peek, open here, open elsewhere (a submenu), a separator, then stop', () => {
+    const plan = rowMenuPlan('free')
+    assert.deepEqual(plan.map(i => i.label), ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Encerrar…'])
+    assert.deepEqual(plan.map(i => i.action), ['peek', 'open-here', 'open-other', 'stop'])
+    assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['open-other'])
+    assert.deepEqual(plan.filter(i => i.sepBefore).map(i => i.action), ['stop'])
+    assert.equal(plan.find(i => i.action === 'stop')?.danger, true)
+  })
+  test('"Encerradas": reopen, reopen here, reopen elsewhere (a submenu), a separator, then forget', () => {
+    const plan = rowMenuPlan('ended')
+    assert.deepEqual(plan.map(i => i.label), ['Reabrir', 'Reabrir nesta mesa', 'Reabrir em outra mesa', 'Esquecer'])
+    assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['reopen-other'])
+    assert.deepEqual(plan.filter(i => i.sepBefore).map(i => i.action), ['forget'])
+  })
+  test('the desk list marks the current desk, keeps the order and names a nameless desk', () => {
+    const list = deskChoices([{ id: 'a', name: 'obra' }, { id: 'b', name: '  ' }, { id: 'c', name: 'casa' }], 'c')
+    assert.deepEqual(list, [
+      { id: 'a', label: 'obra', current: false },
+      { id: 'b', label: 'Mesa 2', current: false },
+      { id: 'c', label: 'casa', current: true },
+    ])
+    assert.equal(CHOOSE_PLACE_LABEL, 'Escolher o lugar…')
   })
 })

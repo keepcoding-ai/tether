@@ -2,7 +2,7 @@
 // foot texts; and the chord that closes the card.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { closeTip, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekLabel, peekRoute } from '../../app/renderer/peek-rules.ts'
+import { closeTip, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekRoute } from '../../app/renderer/peek-rules.ts'
 import { DOUBLE_ESC_MS } from '../../app/renderer/drawer-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
@@ -63,6 +63,22 @@ describe('texts', () => {
     assert.match(peekFoot('shell', 'Ctrl+Shift+O', false), /Esc duas vezes/)
     assert.match(peekFoot('claude', '', false), /não encerra a sessão/)
     assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'A sessão terminou. Feche o cartão pelo ✕ ou por Ctrl+Shift+O.')
+  })
+})
+
+describe('the card\'s "⋯" menu', () => {
+  test('open here, open elsewhere, copy the link, then close with the chord at the right', () => {
+    const plan = peekMenuPlan('Ctrl+Shift+O', false)
+    assert.deepEqual(plan.map(i => i.label), ['Abrir nesta mesa', 'Abrir em outra mesa', 'Copiar link do painel', 'Fechar'])
+    assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['open-other'])
+    const close = plan.find(i => i.action === 'close')!
+    assert.equal(close.sepBefore, true)
+    assert.equal(close.trail, 'Ctrl+Shift+O')
+  })
+  test('no chord, no hint; an ended session cannot be opened from the card', () => {
+    assert.equal(peekMenuPlan('', false).find(i => i.action === 'close')!.trail, undefined)
+    const ended = peekMenuPlan('', true)
+    assert.deepEqual(ended.filter(i => i.disabled).map(i => i.action), ['open-here', 'open-other'])
   })
 })
 
