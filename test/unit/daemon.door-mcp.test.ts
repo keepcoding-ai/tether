@@ -13,6 +13,7 @@ import '../../src/agents/load.ts'
 import { agentRegistry, channelArgsOf, type AgentContribution } from '../../src/agents/registry.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import type { SlotMeta } from '../../src/core/event.ts'
+import { soulChannelPlan } from '../../extensions/soul/daemon.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
 import { DoorMcp, DOOR_INSTRUCTIONS, toolNameOf } from '../../src/daemon/door/mcp.ts'
 import type { LaunchContext, SlotPort } from '../../src/daemon/door/port.ts'
@@ -308,6 +309,74 @@ describe('agent door MCP server (D5)', () => {
     assert.deepEqual(channelArgsOf({ channel: (s) => ['--ch', s], channels: (ss) => ['--all', ss.join(',')] }, ['a', 'b']), ['--all', 'a,b'])
     assert.deepEqual(channelArgsOf({ channel: (s) => (s === 'a' ? ['--x', s] : ['--y', s]) }, ['a', 'b']), ['--x', 'a', '--y', 'b'])
     assert.equal(toolNameOf({ ns: 'my-ext', name: 'read-screen' }), 'my_ext_read_screen')
+  })
+
+  test('soul: the delivery on appends `--channels tether` after its MCP file; nothing on, or a remote host, gives no channel', async () => {
+    const { mcp, verbs } = make()
+    const soul = agentRegistry.get('soul')!
+    assert.equal(soul.mcp?.http, true)
+    assert.equal(soul.channel, undefined, 'no ronda for soul')
+    const soulPlan = (...args: string[]): LaunchPlan => ({ command: 'node', args: ['soul.mjs', '-g', ...args], cwd: '.', env: { PATH: 'x' } })
+    const sctx = (slotId: string): LaunchContext => ctxOf(slotId, { agent: soul, channel: undefined, rondaOffered: false })
+    const own = new DisposableStore()
+    own.add(verbs.register('ext', verb('tool')))
+    const tools = await mcp.prepare(soulPlan(), sctx('st'))
+    assert.equal(tools.offered, true)
+    assert.equal(tools.channel, false, 'the tools alone take no channel')
+    assert.ok(!tools.plan.args.includes('--channels'))
+    own.dispose()
+    const on = mcp.enableDelivery()
+    const out = await mcp.prepare(soulPlan(), sctx('s1'))
+    assert.equal(out.channel, true)
+    const file = out.plan.args[out.plan.args.indexOf('--mcp-config') + 1]!
+    assert.deepEqual(out.plan.args, ['soul.mjs', '-g', '--mcp-config', file, '--channels', DOOR_MCP_SERVER], 'the script stays first, the channel last')
+    for (const remote of [['-H', 'https://x'], ['--host=https://x'], ['--target', 'y']]) {
+      const r = await mcp.prepare(soulPlan(...remote), sctx('s2'))
+      assert.equal(r.offered, true)
+      assert.equal(r.channel, false, `no channel with ${remote.join(' ')}`)
+      assert.ok(!r.plan.args.includes('--channels'))
+    }
+    on.dispose()
+    assert.equal(soulChannelPlan(soulPlan(), []), undefined)
+    assert.deepEqual(soulChannelPlan(soulPlan(), ['a', 'b'])!.args.slice(-2), ['--channels', 'a,b'])
+  })
+
+  test('wakes: soul only when its launch took --channels tether (the declared capability proves nothing); codex never; claude by the stream', async () => {
+    const { mcp, verbs } = make()
+    const own = new DisposableStore()
+    const streams: AbortController[] = []
+    const open = async (slotId: string, client: string, ctx: LaunchContext): Promise<void> => {
+      const out = await mcp.prepare(plainPlan(), ctx)
+      assert.ok(out.offered)
+      const file = out.plan.args[out.plan.args.lastIndexOf('--mcp-config') + 1]!
+      const url = JSON.parse(readFileSync(file, 'utf8')).mcpServers[DOOR_MCP_SERVER].url as string
+      const key = out.plan.env[ENV_DOOR_MCP_KEY]!
+      const init = await post(url, key, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: { experimental: { 'claude/channel': {} } }, clientInfo: { name: client, version: '1' } } })
+      const ac = new AbortController()
+      streams.push(ac)
+      await fetch(url, { headers: { accept: 'text/event-stream', authorization: `Bearer ${key}`, 'mcp-session-id': init.session! }, signal: ac.signal })
+      await waitUntil(() => mcp.connected(slotId), 5_000, `${slotId} stream open`)
+    }
+    const soulCtx = (slotId: string): LaunchContext => ctxOf(slotId, { agent: agentRegistry.get('soul')!, channel: undefined, rondaOffered: false })
+    // Tools only, no ronda: soul's stream opens and its client declares the capability (as soul does), but the plan took no channel.
+    own.add(verbs.register('ext', verb('tool')))
+    await open('w1', 'claude-code', soulCtx('w1'))
+    assert.equal(mcp.wakes('w1'), false, 'soul: declared capability, no --channels in the plan')
+    await open('w2', 'claude-code', ctxOf('w2', { rondaOffered: false }))
+    assert.equal(mcp.wakes('w2'), true, 'claude: the stream (provisional rule, unchanged)')
+    const on = mcp.enableDelivery()
+    await open('w3', 'codex-mcp-client', ctxOf('w3', { rondaOffered: false }))
+    assert.equal(mcp.wakes('w3'), false, 'codex stays out')
+    await open('w4', 'claude-code', soulCtx('w4'))
+    assert.equal(mcp.wakes('w4'), true, 'soul launched with --channels tether')
+    // A new launch of the same slot without the channel takes the wake back; the revoke clears the mark.
+    on.dispose()
+    await open('w4', 'claude-code', soulCtx('w4'))
+    assert.equal(mcp.wakes('w4'), false, 'relaunched without the channel')
+    mcp.revoke('w1')
+    assert.equal(mcp.wakes('w1'), false)
+    for (const ac of streams) ac.abort()
+    own.dispose()
   })
 
   function homesLast(): string { return homes.at(-1)! }

@@ -144,6 +144,11 @@ export class DoorMcp {
   private readonly fileOps = new Map<string, Promise<void>>()
   /** Slots whose MCP file may be on disk (a write was queued and no removal since). */
   private readonly filed = new Set<string>()
+  /**
+   * Slots whose current run is of an agent whose channel the launch turns on (`channelPlan`, soul) and whose plan did NOT take
+   * it (what `wakes` reads); emptied by the revoke.
+   */
+  private readonly unchanneled = new Set<string>()
   private readonly streamListeners = new Set<(slotId: string, open: boolean) => void>()
   private readonly verbsSub: IDisposable
   private deliveryUsers = 0
@@ -208,6 +213,7 @@ export class DoorMcp {
       const joined = withDoorChannel(next, ctx, this.deliveryUsers > 0)
       if (this.runs.get(slotId) !== run) return { plan, offered: false, channel: false }
       this.host.grant(slotId, key, { create: () => { const b = new DoorBackend(slotId, this); this.backends.set(slotId, b); return b } })
+      if (ctx.agent?.channelPlan && !joined.channel) this.unchanneled.add(slotId)
       return { plan: joined.plan, offered: true, channel: joined.channel, run }
     } catch (e) {
       this.opts.log(`door: slot ${slotId}: servidor tether não oferecido (${e instanceof Error ? e.message : String(e)})`)
@@ -223,6 +229,7 @@ export class DoorMcp {
   revoke(slotId: string, run?: number): void {
     if (run !== undefined && this.runs.get(slotId) !== run) return
     this.runs.set(slotId, (this.runs.get(slotId) ?? 0) + 1)
+    this.unchanneled.delete(slotId)
     this.host.revoke(slotId)
     this.backends.delete(slotId)
     const home = this.opts.port()?.home
@@ -240,12 +247,14 @@ export class DoorMcp {
   connected(slotId: string): boolean { return this.host.streamOpen(slotId) }
 
   /**
-   * Connected AND the client starts a turn from a channel message. Provisional deny-list: Codex keeps the message and wakes
-   * nothing; an unnamed or unknown client still counts as waking (the proven Claude path). The rule underneath (what the launch
-   * plan declared of the channel) comes later.
+   * Connected AND the client starts a turn from a channel message. For an agent whose channel the launch turns on
+   * (`channelPlan`: soul's `--channels tether`) the rule is what the tether knows of its own launch: the plan took the channel.
+   * The capability a client declares proves nothing (soul declares `claude/channel` always and drops the message without the
+   * flag). Provisional for the rest: Codex keeps the message and wakes nothing (deny by name); any other client counts as
+   * waking (the proven Claude path, whose tests launch fake agents with the channel turned off).
    */
   wakes(slotId: string): boolean {
-    if (!this.connected(slotId)) return false
+    if (!this.connected(slotId) || this.unchanneled.has(slotId)) return false
     return !/^codex/i.test(this.backends.get(slotId)?.client.name ?? '')
   }
 
@@ -359,6 +368,10 @@ export class DoorMcp {
 export function withDoorChannel(plan: LaunchPlan, ctx: Pick<LaunchContext, 'agent' | 'channel' | 'rondaOffered'>, delivery = false): { plan: LaunchPlan; channel: boolean } {
   if (!ctx.agent) return { plan, channel: false }
   if (!ctx.rondaOffered) {
+    if (delivery && ctx.agent.channelPlan) {
+      const next = ctx.agent.channelPlan(plan, [DOOR_MCP_SERVER])
+      return next ? { plan: next, channel: true } : { plan, channel: false }
+    }
     const own = delivery ? channelArgsOf(ctx.agent, [DOOR_MCP_SERVER]) : []
     return own.length === 0 ? { plan, channel: false } : { plan: { ...plan, args: [...own, ...plan.args] }, channel: true }
   }

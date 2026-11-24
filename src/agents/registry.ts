@@ -59,6 +59,13 @@ export interface AgentContribution {
    */
   channels?: (servers: readonly string[]) => string[]
   /**
+   * The plan with the agent door's channel turned on, for a CLI whose channel flag cannot simply go first or depends on the
+   * rest of the command line (soul: its plan may start with the script node runs, and `--channels` is refused next to a remote
+   * host). Undefined: this launch takes no channel. Without the ronda it wins over `channel`/`channels` for the door's channel;
+   * the ronda's channel still needs `channel`.
+   */
+  channelPlan?: (plan: LaunchPlan, servers: readonly string[]) => LaunchPlan | undefined
+  /**
    * How this CLI takes a typed and submitted text (agent door delivery through the terminal): the chunks to write, each
    * after its wait. Absent: the core's default (door/typing.ts).
    */
