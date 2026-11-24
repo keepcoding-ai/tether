@@ -111,6 +111,18 @@
 .ch-say-to { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--fg-dim); }
 .ch-dsel { height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12px var(--ui); max-width: 100%; }
 .ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--ui); }
+/* The "@" list floats over the box, above the caret's line. A mark ("calado", "não ouve agora") is dim, like the member list's. */
+.ch-say { position: relative; }
+.ch-mention-list { position: absolute; z-index: 5; margin: 0; padding: 4px; list-style: none; min-width: 180px; max-width: min(320px, calc(100% - 16px)); max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2); box-shadow: 0 6px 20px rgb(0 0 0 / .25); font: 12.5px var(--ui); color: var(--fg); }
+.ch-mention-list[hidden] { display: none; }
+.ch-mention-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 5px; cursor: pointer; }
+.ch-mention-opt[aria-selected="true"], .ch-mention-opt:hover { background: var(--bg-hover); }
+.ch-mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-mention-opt.all .ch-mention-name { font-style: italic; }
+.ch-mention-mark { flex: none; font-size: 11px; color: var(--fg-dim); }
+/* A mention in a speech: same look as an agent's name (weight and a faint wash), no link look. */
+.ch-mention { font-weight: 600; padding: 0 2px; margin: 0 -2px; border-radius: 3px; background: color-mix(in srgb, currentColor 10%, transparent); }
+.ch-mention[style*="--oh"] { color: hsl(var(--oh) var(--mark-s) var(--mark-fg-l)); }
 .ch-field:focus-visible, .ch-dsel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-say-error { font-size: 12px; color: var(--fg-dim); border-left: 3px solid var(--fg-dim); padding: 2px 8px; }
 .ch-say-error[hidden] { display: none; }

@@ -407,3 +407,11 @@ export const MENU = {
   close: 'Encerrar canal…',
   reopen: 'Reabrir canal',
 } as const
+
+/** The words of the "@" list in the speaking box. */
+export const MENTION_TEXT = {
+  listLabel: 'Membros do canal',
+  everyone: 'todos',
+  muted: 'calado',
+  deaf: 'não ouve agora',
+} as const

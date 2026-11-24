@@ -17,7 +17,9 @@ import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPa
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { isPeekModifier } from '../../../app/renderer/link-open.ts'
-import { PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
+import { agentHue } from '../../../app/shared/agent-color.ts'
+import { mentionSpans } from './mentions.ts'
+import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
   agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
@@ -668,6 +670,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
       if (!this.answer) return
       this.composer.setMembers(this.answer.members.map(m => m.name))
+      this.composer.setMarks(new Map(memberRows(this.answer).flatMap((m): Array<[string, string]> =>
+        m.muted ? [[m.name, MENTION_TEXT.muted]] : m.tone === 'wait' ? [[m.name, MENTION_TEXT.deaf]] : [])))
       this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }
@@ -822,7 +826,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const p = el('p', '')
       let at = 0
       for (const l of detectUrlLinks(body)) {
-        if (l.start > at) p.append(body.slice(at, l.start))
+        if (l.start > at) this.plainSpeech(p, body.slice(at, l.start))
         const target = linkTargetOfUrl(l.url)
         const a = el('a', 'ch-link', l.url)
         a.href = '#'
@@ -831,8 +835,25 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         p.append(a)
         at = l.end
       }
-      if (at < body.length) p.append(body.slice(at))
+      if (at < body.length) this.plainSpeech(p, body.slice(at))
       return p
+    }
+
+    /** Plain text into `p`, with each `@name` of a known member lightly highlighted (text nodes and spans only, never innerHTML). */
+    private plainSpeech(p: HTMLElement, text: string): void {
+      const members = this.answer?.members ?? []
+      const spans = members.length === 0 ? [] : mentionSpans(text, members.map(m => m.name))
+      let at = 0
+      for (const s of spans) {
+        if (s.start > at) p.append(text.slice(at, s.start))
+        const m = el('span', 'ch-mention', text.slice(s.start, s.end))
+        const id = members.find(x => x.name === s.name)?.id
+        if (id !== undefined) hueStyle(m, agentHue(id))
+        m.dataset.member = s.name
+        p.append(m)
+        at = s.end
+      }
+      if (at < text.length) p.append(text.slice(at))
     }
 
     /**
