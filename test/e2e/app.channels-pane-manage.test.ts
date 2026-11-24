@@ -234,7 +234,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await row.locator('.ch-mmore').click()
     await page.waitForSelector('#ctx-menu li')
     const memberLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '')
-    assert.deepEqual(memberLabels, [`${nameA} · membro`, 'Calar', 'Tirar do canal', `Falar com ${nameA}`, 'Ir para a guia do agente'])
+    // The way to the guia (with its hints) comes first, as in the menu of the name anywhere (app.channels-pane-peek.test.ts).
+    assert.deepEqual(memberLabels.map(t => t.replace(/\s+/g, ' ')), [`${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', `Falar com ${nameA}`, 'Calar', 'Tirar do canal'])
     await page.screenshot({ path: join(SHOTS, 'g3-menu.png') })
     await page.locator('#ctx-menu li', { hasText: /^Calar$/ }).click()
     await ask('channels.mute').waitFor()

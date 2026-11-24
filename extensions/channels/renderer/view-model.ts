@@ -3,6 +3,7 @@
 // paints these. Words on the screen are Portuguese (P12: dono, membro, moderador, calado); the code says owner, member, moderator,
 // muted. Nothing here is orange: the "to me" mark is the U3's.
 import { agentHue } from '../../../app/shared/agent-color.ts'
+import { tabUrl } from '../../../app/shared/tether-url.ts'
 import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import type { Line, LineEventType } from '../rules.ts'
 import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
@@ -276,7 +277,17 @@ export const MODERATOR_ARIA = 'Você, moderador, lê tudo e fala em qualquer can
 
 export const membersCount = (n: number): string => (n === 1 ? '1 membro' : `${n} membros`)
 
+/**
+ * The tether://tab link of an agent's pane (a member's id is its pane's id). The person ("user") and the tether's own lines have no
+ * pane: no link, so no clickable name.
+ */
+export function agentLinkOf(id: string | undefined): string | undefined {
+  return id === undefined || id === '' || id === 'user' || id === 'tether' ? undefined : tabUrl(id)
+}
+
 export interface Header {
+  /** The owner agent's id (its pane id); absent when the person owns the channel. */
+  ownerId?: string
   title: string
   /** "4 membros · dono: Atrium" */
   sub: string
@@ -293,7 +304,7 @@ export function headerOf(answer: MembersAnswer): Header {
   const mutedCount = answer.members.filter(m => m.muted).length
   const parts = [membersCount(answer.members.length), `dono: ${owner.name}`]
   if (c.closed) parts.push('encerrado')
-  return { title: `#${c.name}`, sub: parts.join(' · '), closed: c.closed !== undefined, ownerName: owner.name, ...('hue' in owner ? { ownerHue: owner.hue } : {}), mutedCount }
+  return { title: `#${c.name}`, sub: parts.join(' · '), closed: c.closed !== undefined, ownerName: owner.name, ...(c.owner.kind === 'agent' ? { ownerId: c.owner.id } : {}), ...('hue' in owner ? { ownerHue: owner.hue } : {}), mutedCount }
 }
 
 /** How many emblems the folded strip of the narrow composition stacks (the rest is in the count). */

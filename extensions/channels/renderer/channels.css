@@ -135,7 +135,12 @@
 .ch-l1 .ch-emblem { flex: none; margin-left: auto; }
 .ch-l1 .ch-oname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
-.ch-link:hover { text-decoration: underline; }
+/* An agent's name is a way to its pane (click: go; Alt+click or right-click: peek) but does not look like a link: same colour and weight,
+   a hand, a faint wash on hover and a ring on focus. The :where() keeps the colour rules of .ch-oname and .ch-author in charge. */
+:where(button.ch-agent) { background: none; border: 0; padding: 0 2px; margin: 0 -2px; font: inherit; font-weight: 600; color: inherit; text-align: left; cursor: pointer; border-radius: 3px; max-width: 100%; }
+button.ch-agent:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+button.ch-agent:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-dest button.ch-agent { font-weight: 500; }
 .ch-act[hidden] { display: none; }
 .ch-sec { display: flex; align-items: center; justify-content: space-between; }
 .ch-macts { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; opacity: 0; }

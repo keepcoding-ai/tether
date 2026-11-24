@@ -16,10 +16,11 @@ import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
-import { PANE_TEXT, channelMenu, memberMenu, type ChannelMenuId } from './texts.ts'
+import { isPeekModifier } from '../../../app/renderer/link-open.ts'
+import { PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
+  agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
   MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
@@ -562,7 +563,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const h = headerOf(this.answer)
       const sub = el('span', 'ch-sub')
       sub.append(`${this.answer.members.length === 1 ? '1 membro' : `${this.answer.members.length} membros`} · dono: `)
-      const owner = el('span', 'ch-oname', h.ownerName)
+      const owner = this.agentName(h.ownerId, 'ch-oname', h.ownerName)
       hueStyle(owner, h.ownerHue)
       sub.append(owner)
       if (h.closed) sub.append(' · encerrado')
@@ -806,7 +807,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
             dest.append(n)
           })
         }
-        who.append(em, el('span', 'ch-author', r.name), role, dest, el('time', '', r.time))
+        who.append(em, this.agentName(r.authorId, 'ch-author', r.name), role, dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
       e.append(this.speech(r.body))
@@ -832,6 +833,24 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
       if (at < body.length) p.append(body.slice(at))
       return p
+    }
+
+    /**
+     * An agent's name: a button that goes to its pane on click (the same path as a tether://tab link, with its dialogs for a pane
+     * that is closed or unknown) and peeks at it on Alt+click; a plain name for who has no pane (the person). It does not look like a
+     * link (channels.css). `rowMenu`: a right-click on it reaches the member row's own menu by bubbling, so it does not open one itself.
+     */
+    private agentName(id: string | undefined, cls: string, text: string, rowMenu = false): HTMLElement {
+      const url = agentLinkOf(id)
+      if (id === undefined || url === undefined) return el('span', cls, text)
+      const b = el('button', `${cls} ch-agent`, text)
+      b.type = 'button'
+      b.title = PANE_TEXT.nameTip
+      b.dataset.agent = id
+      const target = linkTargetOfUrl(url)
+      b.addEventListener('click', ev => { if (isPeekModifier(ev)) ui.panes.peek(id); else ui.links.follow(target) })
+      if (!rowMenu) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
+      return b
     }
 
     /** A gesture on a member (the commands ask the consequence in their dialog). Taking someone out may leave the list empty: the focus then goes to the accent. */
@@ -891,17 +910,33 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private openMemberMenu(m: MemberRow, x: number, y: number, act = 'more'): void {
       this.markReturn(m.id, act)
       this.side.querySelector(`.ch-mrow[data-member="${CSS.escape(m.id)}"] .ch-mmore`)?.setAttribute('aria-expanded', 'true')
-      const reachable = ui.panes.find(m.id) !== undefined
+      this.showAgentMenu(m.id, memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }), x, y, m)
+    }
+
+    /**
+     * The menu of an agent's name wherever the name shows (the member's row, the author of a speech, the owner in the header): the way
+     * to its pane on top, then the member's rows. Who is no longer a member (or any name of a closed channel) has only the way and the link.
+     */
+    private openNameMenu(id: string, name: string, x: number, y: number): void {
+      const m = this.isClosed() || !this.answer ? undefined : memberRows(this.answer).find(r => r.id === id)
+      this.showAgentMenu(id, m ? memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }) : agentNameMenu(name), x, y, m)
+    }
+
+    private showAgentMenu(id: string, entries: MemberMenuEntry[], x: number, y: number, m?: MemberRow): void {
       const run: Record<string, () => void> = {
-        mute: () => this.memberAct('mute', m.id),
-        unmute: () => this.memberAct('unmute', m.id),
-        remove: () => this.memberAct('remove', m.id),
-        talk: () => this.composer.address(m.name),
-        reveal: () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) },
+        go: () => ui.links.follow(linkTargetOfUrl(agentLinkOf(id) ?? '')),
+        peek: () => ui.panes.peek(id),
+        copy: () => ui.panes.copyLink(id),
+        ...(m ? {
+          mute: () => this.memberAct('mute', id),
+          unmute: () => this.memberAct('unmute', id),
+          remove: () => this.memberAct('remove', id),
+          talk: () => this.composer.address(m.name),
+        } : {}),
       }
-      const rows: ContextMenuRow[] = memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }).map((e): ContextMenuRow =>
+      const rows: ContextMenuRow[] = entries.map((e): ContextMenuRow =>
         e === 'sep' || 'heading' in e ? e
-          : { icon: e.icon, label: e.label, run: run[e.id]!, ...(e.danger ? { danger: true } : {}), ...(e.id === 'reveal' && !reachable ? { disabled: true } : {}) })
+          : { icon: e.icon, label: e.label, run: run[e.id]!, ...(e.hint ? { hint: e.hint } : {}), ...(e.danger ? { danger: true } : {}) })
       // The menu takes headings (the core's `fromExtMenu`); only its declared parameter type leaves them out.
       ui.menus.context(x, y, rows as ContextMenuEntry[])
     }
@@ -932,10 +967,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         const l1 = el('div', 'ch-l1')
         const em = el('span', `ch-em${m.crown ? ' crown' : ''}`)
         em.append(glyph(m.crown ? 'crown-simple' : 'robot'))
-        const name = el('button', 'ch-oname ch-link', m.name)
-        name.type = 'button'
-        name.title = 'Ir para a guia deste agente'
-        name.addEventListener('click', () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) })
+        // The row's own right-click menu (open channel) is the name's menu too: it bubbles up from the name.
+        const name = this.agentName(m.id, 'ch-oname ch-link', m.name, !this.isClosed())
         l1.append(em, name)
         // The narrow row is one line: the role, the muted mark and the state as a dot ride on it (the second line is away there).
         const nrole = el('span', 'ch-nrole')

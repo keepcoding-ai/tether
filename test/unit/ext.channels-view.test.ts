@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
+  agentLinkOf, applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -239,4 +239,19 @@ test('memberAria: one sentence per row (who, role, muted, how it hears); the dot
   assert.equal(memberAria(by('claude · conferente')), 'claude · conferente, membro, ouvindo')
   assert.equal(memberAria(by('Atrium')), 'Atrium, dono, ouvindo')
   assert.equal(memberAria(by('codex · conferência')), 'codex · conferência, membro, calado, não ouve agora · falas em espera')
+})
+
+test('an agent name is a tether://tab link by its pane id; the person and the tether have none', () => {
+  assert.equal(agentLinkOf('921e9d3e'), 'tether://tab/921e9d3e')
+  assert.equal(agentLinkOf('user'), undefined)
+  assert.equal(agentLinkOf('tether'), undefined)
+  assert.equal(agentLinkOf(undefined), undefined)
+  const rows = rowsOf([say(1, '921e9d3e', 'Atrium', 'member', 'oi'), say(2, 'user', 'usuário', 'moderator', 'oi')])
+  const says = rows.filter((r): r is SayRow => r.kind === 'say')
+  assert.deepEqual(says.map(r => agentLinkOf(r.authorId)), ['tether://tab/921e9d3e', undefined])
+})
+
+test('the header names the owner agent id, and none when the person owns the channel', () => {
+  assert.equal(headerOf(answer()).ownerId, 'a1')
+  assert.equal(headerOf(answer({ channel: summary({ owner: { kind: 'user' } }) })).ownerId, undefined)
 })

@@ -308,7 +308,13 @@ export const PANE_TEXT = {
   /** Title of a member's action: "Calar Nome". */
   on: (verb: string, member: string): string => `${verb} ${member}`,
   talkTo: (member: string): string => `Falar com ${member}`,
-  reveal: 'Ir para a guia do agente',
+  /** The agent's name in the channel is a way to its pane: the tooltip says both gestures; the menu has both rows with their hints. */
+  goTab: 'Ir para a guia',
+  peekTab: 'Espiar',
+  copyLink: 'Copiar link',
+  goHint: 'Clique',
+  peekHint: 'Alt+clique',
+  nameTip: 'Clique: ir para a guia · Alt+clique ou botão direito: espiar',
   /** The "⋯" of a member's row. */
   memberMore: (member: string): string => `Mais ações de ${member}`,
 } as const
@@ -317,25 +323,38 @@ export const PANE_TEXT = {
 export type MemberMenuEntry =
   | { heading: string }
   | 'sep'
-  | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'reveal'; icon: string; label: string; danger?: boolean }
+  | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'go' | 'peek' | 'copy'; icon: string; label: string; hint?: string; danger?: boolean }
+
+const goRows = (): MemberMenuEntry[] => [
+  { id: 'go', icon: 'arrow-square-out', label: PANE_TEXT.goTab, hint: PANE_TEXT.goHint },
+  { id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.peekHint },
+]
+
+/**
+ * The menu of the name of an agent that is no longer a member of the channel (the author of an old speech): only the way to its
+ * pane and the link.
+ */
+export function agentNameMenu(name: string): MemberMenuEntry[] {
+  return [{ heading: name }, ...goRows(), 'sep', { id: 'copy', icon: 'copy', label: PANE_TEXT.copyLink }]
+}
 
 export interface MemberMenuInput { name: string; owner: boolean; muted: boolean; fromDesk: boolean }
 
 /**
- * The member's menu (plan 2.6): who it is, then mute or give the voice back, take out, talk to, go to the agent's pane.
- * The owner has the same rows: taking him out is allowed and the dialog tells what follows.
+ * The member's menu (plan 2.6), also the menu of the agent's name wherever it shows: who it is, the way to its pane (go, peek), then
+ * talk to, mute or give the voice back, take out. The owner has the same rows: taking him out is allowed and the dialog tells what follows.
  */
 export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
   const info = [m.name, m.owner ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.fromDesk ? ['da mesa'] : [])].join(' · ')
   return [
     { heading: info },
+    ...goRows(),
+    'sep',
+    { id: 'talk', icon: ICON.channel, label: PANE_TEXT.talkTo(m.name) },
     m.muted
       ? { id: 'unmute', icon: ICON.unmute, label: PANE_TEXT.unmute }
       : { id: 'mute', icon: ICON.mute, label: PANE_TEXT.mute },
     { id: 'remove', icon: ICON.remove, label: PANE_TEXT.remove, danger: true },
-    'sep',
-    { id: 'talk', icon: ICON.channel, label: PANE_TEXT.talkTo(m.name) },
-    { id: 'reveal', icon: 'arrow-square-out', label: PANE_TEXT.reveal },
   ]
 }
 

@@ -7,7 +7,7 @@ import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import type { MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import {
-  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, joinResultDialog, memberItems, memberMenu, muteDialog, PICK, removeDialog, reopenDialog,
+  agentNameMenu, channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, joinResultDialog, memberItems, memberMenu, muteDialog, PICK, removeDialog, reopenDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -189,9 +189,13 @@ test('removeDialog: three variants of the consequence (member, owner of a common
 test('memberMenu: member, muted, owner and desk member; the rows and their order', () => {
   const ids = (m: ReturnType<typeof memberMenu>): string[] => m.map(e => (e === 'sep' ? '-' : 'heading' in e ? `# ${e.heading}` : e.id))
   assert.deepEqual(ids(memberMenu({ name: 'claude · conferente', owner: false, muted: false, fromDesk: false })),
-    ['# claude · conferente · membro', 'mute', 'remove', '-', 'talk', 'reveal'])
+    ['# claude · conferente · membro', 'go', 'peek', '-', 'talk', 'mute', 'remove'])
   assert.deepEqual(ids(memberMenu({ name: 'codex · conferência', owner: false, muted: true, fromDesk: false })),
-    ['# codex · conferência · membro · calado', 'unmute', 'remove', '-', 'talk', 'reveal'])
+    ['# codex · conferência · membro · calado', 'go', 'peek', '-', 'talk', 'unmute', 'remove'])
+  // The way to the pane comes first and names its gestures; a name that is no longer a member has only the way and the link.
+  const way = memberMenu({ name: 'x', owner: false, muted: false, fromDesk: false }).filter((e): e is Exclude<typeof e, 'sep' | { heading: string }> => e !== 'sep' && 'id' in e)
+  assert.deepEqual(way.slice(0, 2).map(e => [e.label, e.hint]), [['Ir para a guia', 'Clique'], ['Espiar', 'Alt+clique']])
+  assert.deepEqual(ids(agentNameMenu('claude · conferente')), ['# claude · conferente', 'go', 'peek', '-', 'copy'])
   assert.equal((memberMenu({ name: 'Atrium', owner: true, muted: false, fromDesk: true })[0] as { heading: string }).heading, 'Atrium · dono · da mesa')
   const rows = memberMenu({ name: 'soul · bancada', owner: false, muted: false, fromDesk: true })
   const talk = rows.find(e => e !== 'sep' && 'id' in e && e.id === 'talk') as { label: string }
