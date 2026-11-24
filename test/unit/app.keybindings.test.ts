@@ -177,6 +177,27 @@ describe('the dispatch with a prefix', () => {
     assert.equal(d.waiting, undefined)
   })
 
+  test('with the peek card open only the kept commands run; a prefix does not open and a pending one is dropped', () => {
+    let open = false
+    const keeps = new Set(['peek.close', 'palette.show'])
+    const d = new ChordDispatcher({ table: () => table, keeps: () => open ? (c: string) => keeps.has(c) : undefined })
+    assert.equal(d.press(ev('Tab', { ctrl: true }, 'Tab'), 'window').type, 'run', 'Ctrl+Tab switches desks while the card is shut')
+    d.press(ev('KeyK', { ctrl: true }), 'window')
+    assert.ok(d.waiting)
+    open = true
+    assert.deepEqual(d.press(ev('KeyS', { ctrl: true }), 'window'), { type: 'pass' })
+    assert.equal(d.waiting, undefined)
+    assert.deepEqual(d.press(ev('Tab', { ctrl: true }, 'Tab'), 'window'), { type: 'pass' }, 'the desk switch is quiet')
+    assert.deepEqual(d.press(ev('KeyK', { ctrl: true }), 'terminal'), { type: 'pass' }, 'no prefix opens: ^K is the terminal\'s')
+    assert.equal(d.waiting, undefined)
+    const close = d.press(ev('KeyO', { ctrl: true, shift: true }), 'terminal')
+    assert.equal(close.type, 'run')
+    if (close.type === 'run') assert.equal(close.command, 'peek.close')
+    const palette = d.press(ev('KeyP', { ctrl: true, shift: true }), 'window')
+    assert.equal(palette.type, 'run')
+    if (palette.type === 'run') assert.equal(palette.command, 'palette.show')
+  })
+
   test('the scope of a key by its target', () => {
     const el = (hit: string): unknown => ({ closest: (sel: string) => (sel === hit ? {} : null) })
     assert.equal(scopeOf(el('.xterm')), 'terminal')

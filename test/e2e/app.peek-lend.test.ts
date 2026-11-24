@@ -176,7 +176,7 @@ test('espiar quem tem guia: empréstimo do terminal, aviso na guia, devolução 
     await run(page, g, "Write-Output ('pk-' + (6*7))", /^pk-42$/m) // typing in the card works; the output flows while lent
     assert.equal(await page.locator('#peek .peek-open .label').textContent(), 'Ir para a guia')
     assert.equal(await page.locator('#peek .peek-open-more').isHidden(), true, 'no ▾ for a slot with a tab')
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /volta para a guia/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Fechar: ✕/)
     const cardWide = await sizeOf(page, g)
     assert.deepEqual(await ptySize(page, g), cardWide, 'the pty takes the card\'s size')
     await page.screenshot({ path: join(shots, 'e2-cartao-emprestado.png') })
@@ -185,7 +185,7 @@ test('espiar quem tem guia: empréstimo do terminal, aviso na guia, devolução 
     const lent = page.locator(`.panel[data-slot-id="${g}"] .peek-lent`)
     assert.equal(await lent.locator('p.t').textContent(), `${cwd.split(/[\\/]/).pop()} está sendo espiado`)
     assert.equal(await lent.locator('p.mut').textContent(), 'O terminal dele está no cartão aberto na tela. Quando você fechar o cartão, ele volta para cá.')
-    assert.deepEqual(await lent.locator('button').allTextContents(), ['Ver o cartão', 'Fechar o cartão'])
+    assert.equal(await lent.locator('button').count(), 0, 'no buttons: they would be out of reach behind the card')
     await page.evaluate(id => window.__tether.switchDesk(id), deskA)
     await page.evaluate(() => { document.getElementById('peek')!.style.visibility = 'hidden' })
     await sleep(600)

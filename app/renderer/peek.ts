@@ -78,6 +78,8 @@ export class PeekCard {
     this.kind = el('span', 'peek-kind')
     this.title = el('span', 'peek-title')
     this.state = el('span', 'peek-state')
+    // The state changes while the card is open (working, waiting, ended): a screen reader hears it, politely.
+    this.state.setAttribute('aria-live', 'polite')
     id.append(this.kind, this.title, this.state)
     const acts = el('div', 'peek-acts')
     this.openBtn = el('button', 'peek-open primary')
@@ -115,6 +117,9 @@ export class PeekCard {
     this.root.append(this.card)
     // The layer is the margin: a press that lands on it (not on the card) closes.
     this.root.addEventListener('mousedown', ev => { if (ev.target === this.root) { ev.preventDefault(); this.close() } })
+    // Tab goes round inside the card: the header's buttons, then the terminal, then the buttons again. (Inside the terminal
+    // Tab is the program's: xterm sends it, so it never gets here.)
+    this.root.addEventListener('keydown', ev => this.trapTab(ev))
     document.body.append(this.root)
   }
 
@@ -197,7 +202,7 @@ export class PeekCard {
     this.paintOpenButton(cur.lent)
     this.openBtn.disabled = !cur.lent && h.state === 'ended'
     this.moreBtn.disabled = h.state === 'ended'
-    const foot = peekFoot(s?.kind, hint, h.state === 'ended', cur.lent)
+    const foot = peekFoot(s?.kind, hint, h.state === 'ended')
     if (this.foot.textContent !== foot) this.foot.textContent = foot
   }
 
@@ -219,17 +224,12 @@ export class PeekCard {
   private noticeFor(slotId: string): HTMLElement {
     const s = this.host.slot(slotId)
     const n = lentNotice(s ? peekHeader(s, Date.now()).title : slotId)
+    // (The card sits over it: a button here could not be reached, so the notice is the icon, the title and the sentence.)
     const root = document.createElement('div'); root.className = 'peek-lent'; root.setAttribute('role', 'status')
     const ill = document.createElement('span'); ill.className = 'ill'; ill.append(icon('eye'))
     const t = document.createElement('p'); t.className = 't'; t.textContent = n.title
     const p = document.createElement('p'); p.className = 'mut'; p.textContent = n.text
-    const row = document.createElement('div'); row.className = 'row'
-    const see = document.createElement('button'); see.type = 'button'; see.className = 'peek-lent-see'; see.textContent = n.see
-    see.addEventListener('click', () => this.focusTerminal())
-    const close = document.createElement('button'); close.type = 'button'; close.className = 'peek-lent-close link'; close.textContent = n.close
-    close.addEventListener('click', () => this.close())
-    row.append(see, close)
-    root.append(ill, t, p, row)
+    root.append(ill, t, p)
     return root
   }
 
@@ -297,6 +297,24 @@ export class PeekCard {
     }
     const r = this.menuBtn.getBoundingClientRect()
     this.host.contextMenu(r.right, r.bottom + 2, entries, this.menuBtn)
+  }
+
+  /** What Tab visits in the card, in order: the header's enabled buttons, then the terminal's input. */
+  private tabStops(): HTMLElement[] {
+    const buttons = [...this.card.querySelectorAll<HTMLButtonElement>('.peek-head button')].filter(b => !b.disabled && !b.hidden && !b.closest('[hidden]'))
+    const term = this.body.querySelector<HTMLElement>('textarea.xterm-helper-textarea')
+    return term ? [...buttons, term] : buttons
+  }
+
+  private trapTab(ev: KeyboardEvent): void {
+    if (ev.key !== 'Tab' || ev.ctrlKey || ev.altKey || ev.metaKey || (ev.target as Element | null)?.closest?.('.xterm')) return
+    const stops = this.tabStops()
+    if (stops.length === 0) return
+    const at = stops.indexOf(document.activeElement as HTMLElement)
+    const next = at < 0 ? 0 : ev.shiftKey ? (at - 1 + stops.length) % stops.length : (at + 1) % stops.length
+    ev.preventDefault()
+    ev.stopPropagation()
+    stops[next]!.focus()
   }
 
   private focusTerminal(): void {

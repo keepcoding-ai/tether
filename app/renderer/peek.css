@@ -50,13 +50,11 @@ button.peek-open:disabled { opacity: .5; cursor: default; }
 .peek-lent p { margin: 0; max-width: 360px; line-height: 1.5; }
 .peek-lent p.t { font-weight: 650; font-size: 14px; }
 .peek-lent p.mut { color: var(--fg-dim); }
-.peek-lent .row { display: flex; gap: 8px; margin-top: 8px; justify-content: center; align-items: center; }
-.peek-lent .peek-lent-close { align-self: center; }
 .tether-tab .peek-mark { display: inline-flex; flex: none; color: var(--fg-dim); }
 .tether-tab .peek-mark[hidden] { display: none; }
 .tether-tab .peek-mark .ph { width: 12px; height: 12px; }
 .tether-tab[data-spied="true"] .text { opacity: .75; }
-.peek-foot { flex: none; padding: 6px 14px; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; }
+.peek-foot { flex: none; padding: 6px 14px; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* A small window: the margin shrinks to 6 px (still a margin that closes), the header wraps and "Abrir nesta mesa" is an icon. */
 @media (max-width: 560px), (max-height: 420px) {

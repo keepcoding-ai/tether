@@ -133,12 +133,10 @@ export function peekOpenButton(hasTab: boolean): PeekOpenButton {
     : { action: 'open-here', label: 'Abrir nesta mesa', title: 'Abrir nesta mesa: o agente ganha uma guia na mesa em que você está', icon: 'plus', primary: true, split: true }
 }
 
-/** What the tab says while its terminal is lent to the card (screen 6 of the preview). */
+/** What the tab says while its terminal is lent to the card (screen 6 of the preview). No buttons: the card covers them. */
 export interface LentNotice {
   title: string
   text: string
-  see: string
-  close: string
   /** The tab's eye mark tooltip. */
   tip: string
 }
@@ -147,8 +145,6 @@ export function lentNotice(name: string): LentNotice {
   return {
     title: `${name} está sendo espiado`,
     text: 'O terminal dele está no cartão aberto na tela. Quando você fechar o cartão, ele volta para cá.',
-    see: 'Ver o cartão',
-    close: 'Fechar o cartão',
     tip: 'Sendo espiado: o terminal está no cartão aberto na tela',
   }
 }
@@ -159,14 +155,25 @@ export function peekLabel(title: string): string {
 }
 
 /**
- * The line at the card's foot: the card never ends the session, and, for an agent, Esc is the agent's (said on the
- * screen itself, since Esc does not close here).
+ * The line at the card's foot, short enough for one line in a narrow window: how to close it and, for an agent, that Esc
+ * stays with the agent (said on the screen itself, since Esc does not close here).
  */
-export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean, lent = false): string {
-  const way = hint ? `pelo ✕ ou por ${hint}` : 'pelo ✕'
-  if (ended) return `A sessão terminou. Feche o cartão ${way}.`
-  const keep = lent
-    ? 'O terminal da guia está emprestado ao cartão: ao fechar, ele volta para a guia.'
-    : 'Sem guia: fechar o cartão não encerra a sessão, ela segue viva em "Sem guia", no painel de sessões.'
-  return kind === 'shell' ? `${keep} Feche ${way}, ou com Esc duas vezes.` : `${keep} Esc vai para o agente; feche ${way}.`
+export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean): string {
+  const way = hint ? `✕ ou ${hint}` : '✕'
+  if (ended) return `Sessão encerrada. Fechar: ${way}.`
+  return kind === 'shell' ? `Fechar: ${hint ? `✕, ${hint}` : '✕'} ou Esc duas vezes.` : `Fechar: ${way}. O Esc fica com o agente.`
+}
+
+// ---------- keys while the card is open ----------
+
+/**
+ * The app commands whose chords keep working while the card is open: the palette (and through it, every command) and the
+ * card's own close. Everything else of the app's table is quiet, as with a dialog up; the card's terminal keeps its own keys
+ * (copy and paste are the panel's, not the table's) and hands the rest to the program.
+ */
+export const PEEK_KEEPS: readonly string[] = [PEEK_CLOSE_COMMAND, 'palette.show']
+
+/** Whether a command's chord still fires with the card open. */
+export function peekKeeps(command: string): boolean {
+  return PEEK_KEEPS.includes(command)
 }

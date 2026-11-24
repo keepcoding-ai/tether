@@ -86,7 +86,7 @@ import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
-import type { DeskView, PaneInfo } from './ext-api.ts'
+import type { DeskView, PaneInfo, PickItem } from './ext-api.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
@@ -97,7 +97,7 @@ import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekRoute, tabInView, type TabPlace } from './peek-rules.ts'
+import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, tabInView, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -358,6 +358,8 @@ const host: PanelHost = {
     // which the single-key policy would read as the prefix again.
     // (Clipboard chords are the panel's own: shortcuts.ts PANE_SHORTCUTS.)
     if (ev === letThrough) return false
+    // The card's terminal keeps every key the app's table would take, except the ones the card keeps (the dispatcher ran them).
+    if (peekCard?.panel === panel) { const o = terminalKeyOwner(ev); return o.owner === 'app' && !!o.command && peekKeeps(o.command) }
     return terminalKeyOwner(ev).owner === 'app'
   },
   getScheme: () => theme.scheme,
@@ -1585,6 +1587,21 @@ function tabPlaceOf(slotId: string, panel: IDockviewPanel): TabPlace {
 }
 
 function closePeek(): void { peekCard?.close() }
+
+/** "Espiar agente…": the live agents the card can show (no tab, or a tab out of view), in the shared picker; the pick opens in the card. */
+function pickPeek(): void {
+  const now = Date.now()
+  const items: PickItem<string>[] = []
+  for (const s of slots.values()) {
+    if (s.kind === 'shell') continue
+    const tab = findPanel(s.slotId)
+    const route = peekRoute(s, tab !== undefined, tab ? tabInView(tabPlaceOf(s.slotId, tab)) : true)
+    if (route !== 'card' && route !== 'lend') continue
+    const h = peekHeader(s, now)
+    items.push({ value: s.slotId, label: h.title, detail: h.text, icon: KIND_ICON[s.kind] ?? 'terminal-window' })
+  }
+  void door.pickList<string>({ title: 'Espiar agente', placeholder: 'Buscar agente…', items, emptyText: 'Nenhum agente vivo fora da tela.' }).then(id => { if (id) peek(id) })
+}
 
 /** A menu a view described as data (place-menu.ts MenuSpec) as the context menu's rows. */
 function menuEntriesOf(specs: readonly MenuSpec[]): MenuEntry[] {
@@ -3744,6 +3761,7 @@ const commandHost: CommandHost = {
   toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
   quickShell: () => { void quickShell() },
   closePeek,
+  pickPeek,
   setTheme: setting => window.tether.setTheme(normalizeTheme(setting)),
   toggleDeskLine: () => window.tether.setUi({ ...ui, deskLine: !ui.deskLine }),
   toggleTabBorder: () => window.tether.setUi({ ...ui, tabBorder: !ui.tabBorder }),
@@ -3928,6 +3946,8 @@ const extensionsHost: ExtensionsHost = {
 
 const dispatcher = new ChordDispatcher({
   modalOpen,
+  // The peek card open: only the palette and the card's own close keep their chords (peek-rules.ts PEEK_KEEPS).
+  keeps: () => peekCard?.isOpen ? peekKeeps : undefined,
   editorChord: (first, second) => { const id = currentDesk().activePanel?.id; return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
 })
 let pill: ChordPill

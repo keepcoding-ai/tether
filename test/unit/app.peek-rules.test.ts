@@ -2,7 +2,7 @@
 // foot texts; and the chord that closes the card.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { closeTip, lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, tabInView } from '../../app/renderer/peek-rules.ts'
+import { closeTip, lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, tabInView } from '../../app/renderer/peek-rules.ts'
 import { DOUBLE_ESC_MS } from '../../app/renderer/drawer-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
@@ -65,16 +65,11 @@ describe('a slot with a tab in the card', () => {
     assert.deepEqual(plan.map(i => i.action), ['go-tab', 'copy-link', 'close'])
     assert.equal(plan.some(i => i.submenu), false)
   })
-  test('the tab says who is being peeked and what the two buttons do', () => {
+  test('the tab says who is being peeked, with no buttons (the card covers them)', () => {
     const n = lentNotice('claude · nic')
     assert.equal(n.title, 'claude · nic está sendo espiado')
     assert.equal(n.text, 'O terminal dele está no cartão aberto na tela. Quando você fechar o cartão, ele volta para cá.')
-    assert.equal(n.see, 'Ver o cartão')
-    assert.equal(n.close, 'Fechar o cartão')
-  })
-  test('the foot says the terminal goes back to the tab', () => {
-    assert.match(peekFoot('claude', 'Ctrl+Shift+O', false, true), /^O terminal da guia está emprestado ao cartão: ao fechar, ele volta para a guia\. Esc vai para o agente/)
-    assert.doesNotMatch(peekFoot('shell', '', false, true), /Sem guia/)
+    assert.deepEqual(Object.keys(n).sort(), ['text', 'tip', 'title'])
   })
 })
 
@@ -116,11 +111,18 @@ describe('texts', () => {
     assert.equal(closeTip(''), 'Fechar')
     assert.equal(peekLabel('conferente'), 'Espiando conferente')
   })
-  test("the foot: the card never ends the session; for an agent it says Esc is the agent's", () => {
-    assert.match(peekFoot('claude', 'Ctrl+Shift+O', false), /Esc vai para o agente; feche pelo ✕ ou por Ctrl\+Shift\+O\./)
-    assert.match(peekFoot('shell', 'Ctrl+Shift+O', false), /Esc duas vezes/)
-    assert.match(peekFoot('claude', '', false), /não encerra a sessão/)
-    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'A sessão terminou. Feche o cartão pelo ✕ ou por Ctrl+Shift+O.')
+  test("the foot: how to close, and for an agent that Esc stays with the agent; one short line", () => {
+    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', false), 'Fechar: ✕ ou Ctrl+Shift+O. O Esc fica com o agente.')
+    assert.equal(peekFoot('claude', '', false), 'Fechar: ✕. O Esc fica com o agente.')
+    assert.equal(peekFoot('shell', 'Ctrl+Shift+O', false), 'Fechar: ✕, Ctrl+Shift+O ou Esc duas vezes.')
+    assert.equal(peekFoot('shell', '', false), 'Fechar: ✕ ou Esc duas vezes.')
+    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'Sessão encerrada. Fechar: ✕ ou Ctrl+Shift+O.')
+    for (const kind of ['claude', 'soul', 'codex', 'shell'] as const) assert.ok(peekFoot(kind, 'Ctrl+Shift+O', false).length <= 60, kind)
+  })
+  test('with the card open only the palette and the card\'s own close keep their chords', () => {
+    assert.equal(peekKeeps(PEEK_CLOSE_COMMAND), true)
+    assert.equal(peekKeeps('palette.show'), true)
+    for (const c of ['pane.next-tab', 'desk.next', 'desk.go.2', 'drawer.toggle', 'pane.close', 'palette.quick-open', 'app.quit-all']) assert.equal(peekKeeps(c), false, c)
   })
 })
 

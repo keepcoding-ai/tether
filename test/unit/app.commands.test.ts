@@ -18,7 +18,7 @@ function stubHost(calls: string[]): CommandHost {
     renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), hibernatePane: log('hibernatePane'), toggleUnread: log('toggleUnread'), toggleDetails: log('toggleDetails'),
     copyLink: log('copyLink'), copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
-    toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'), closePeek: log('closePeek'), asleepMenu: log('asleepMenu'),
+    toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'), closePeek: log('closePeek'), pickPeek: log('pickPeek'), asleepMenu: log('asleepMenu'),
     setTheme: log('setTheme'), toggleDeskLine: log('toggleDeskLine'), toggleTabBorder: log('toggleTabBorder'), toggleDimUnfocused: log('toggleDimUnfocused'), toggleTabClose: log('toggleTabClose'), setDimLevel: log('setDimLevel'), openTerminalTheme: log('openTerminalTheme'), fontSize: log('fontSize'),
     openProfiles: log('openProfiles'), sessionsManage: log('sessionsManage'), sessionSearch: log('sessionSearch'), sessionsMenu: log('sessionsMenu'), restoreConfirmations: log('restoreConfirmations'), associateLinks: log('associateLinks'), closeWindow: log('closeWindow'), quitAll: log('quitAll'),
     restartDaemon: log('restartDaemon'), reloadAll: log('reloadAll'), relaunchApp: log('relaunchApp'), toggleDevTools: log('toggleDevTools'), toggleFullscreen: log('toggleFullscreen'), showPalette: log('showPalette'),
@@ -152,6 +152,18 @@ describe('the app commands', () => {
     const drawer = avail({ pane: true, desks: 3, drawerOpen: true, focus: 'terminal' })
     for (const id of ['desk.next', 'desk.go.1', 'desk.new']) assert.ok(!drawer.has(id), `${id} waits while the drawer is open`)
     assert.ok(drawer.has('drawer.toggle'))
+  })
+
+  test('the peek commands: "Espiar agente…" is always there; "Fechar o cartão de espiar" only with the card open', () => {
+    const ctx: CommandContext = { ...CTX, peekOpen: false }
+    const registry = new CommandRegistry(() => ctx)
+    registry.register(...list)
+    const titles = (): string[] => registry.available(ctx).map(c => c.title)
+    assert.ok(titles().includes('Espiar agente…'))
+    assert.ok(!titles().includes('Fechar o cartão de espiar'))
+    assert.ok(!titles().some(t => /desta guia/.test(t)), 'there is no peek at the active tab: it is in view')
+    ctx.peekOpen = true
+    assert.ok(titles().includes('Fechar o cartão de espiar'))
   })
 
   test('the unread mark: one command of the pair per slot pane, none for other panes', async () => {

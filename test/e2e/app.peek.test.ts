@@ -168,7 +168,7 @@ test('cartão de espiar: slot sem guia, terminal vivo, Esc, fechar e foco, gavet
     await page.keyboard.press('Escape')
     await sleep(300)
     assert.equal((await state(page)).open, true, "an agent's terminal keeps Esc, even twice")
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /Esc vai para o agente/, 'the screen says Esc is the agent\'s')
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /Esc fica com o agente/, 'the screen says Esc is the agent\'s')
     await page.evaluate(s => window.__tether.applyState(s), shellState)
     await sleep(700) // past the double-Esc window of the presses above
     await page.keyboard.press('Escape')
@@ -236,7 +236,7 @@ test('cartão de espiar: slot sem guia, terminal vivo, Esc, fechar e foco, gavet
     await page.waitForFunction(() => /^encerrada/.test(document.querySelector('#peek .peek-state')?.textContent ?? ''))
     assert.equal((await state(page)).open, true, 'the card stays, showing the end')
     assert.equal(await page.locator('#peek .peek-open').isDisabled(), true)
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^A sessão terminou/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Sessão encerrada/)
     await page.click('#peek .peek-close')
     await waitClosed(page)
     assert.equal((await focusIs(page)).slot, keep)

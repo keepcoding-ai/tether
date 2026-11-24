@@ -37,6 +37,11 @@ export interface DispatcherHooks {
   /** Something modal is up: keys are not ours (a pending prefix is dropped). */
   modalOpen?(): boolean
   table?(): KeyTable
+  /**
+   * A surface limits the app's chords (the peek card): returns which commands still fire; the rest pass to the target as
+   * with a modal, and a two-key chord never opens. Undefined = no limit.
+   */
+  keeps?(): ((command: string) => boolean) | undefined
 }
 
 export class ChordDispatcher {
@@ -60,6 +65,13 @@ export class ChordDispatcher {
   /** A keydown in a scope. */
   press(ev: DispatchEvent, where: Where): DispatchAction {
     if (this.hooks.modalOpen?.()) { this.cancel(); return { type: 'pass' } }
+    const keeps = this.hooks.keeps?.()
+    if (keeps) {
+      this.cancel()
+      if (isModifierOnly(ev.code)) return { type: 'pass' }
+      const r = this.table.resolve([ev], where)
+      return r.kind === 'command' && keeps(r.command) ? { type: 'run', command: r.command, binding: r.binding, keys: [chordOfEvent(ev)] } : { type: 'pass' }
+    }
     if (this.waiting) {
       if (isModifierOnly(ev.code)) return { type: 'wait' }
       if (ev.key === 'Escape' && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) { this.cancel(); return { type: 'cancel' } }
