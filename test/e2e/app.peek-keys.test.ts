@@ -6,8 +6,8 @@
 //      "Fechar o cartão de espiar" closes the card; the chord Ctrl+Shift+O closes it too;
 //   3. the card is a modal dialog named after the agent, its buttons have names, the state is a polite live region; the focus starts
 //      in the terminal and Tab / Shift+Tab never leave the card;
-//   4. the keyboard goes back to where it was: (a) the sessions panel row -> the bar's sessions button (the panel hid itself), (b) a
-//      context menu item -> where the menu was opened from. (The channel's speech box is in app.peek-keys-channel.test.ts.)
+//   4. the keyboard goes back to where it was: a sessions panel row -> the bar's sessions button (the panel hid itself). (The
+//      channel's speech box and a context menu item are in app.peek-keys-channel.test.ts.)
 // Run alone: node --test test/e2e/app.peek-keys.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -203,7 +203,7 @@ test('cartão de espiar pelo teclado: comandos, chords quietas, foco preso, foco
     assert.match((await page.locator('#peek .peek-close').getAttribute('class'))!, /primary/)
     assert.doesNotMatch((await page.locator('#peek .peek-open').getAttribute('class'))!, /primary/)
     assert.match((await page.locator('#peek .peek-close').getAttribute('title'))!, /^Fechar \(Ctrl\+` ou Ctrl\+Shift\+O\)$/)
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo botão, pela margem ou por Ctrl` ou Ctrl\+Shift\+O\. O Esc fica com o terminal\.$/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo botão, pela margem ou por Ctrl\+` ou Ctrl\+Shift\+O\. O Esc fica com o terminal\.$/)
     const closeBox = (await page.locator('#peek .peek-close').boundingBox())!
     const menuBox = (await page.locator('#peek .peek-menu').boundingBox())!
     assert.ok(menuBox.x < closeBox.x, '"⋯" sits left of "Fechar"')
@@ -236,20 +236,7 @@ test('cartão de espiar pelo teclado: comandos, chords quietas, foco preso, foco
     await waitClosed(page)
     assert.equal((await focusIs(page)).id, 'btn-sessions', 'the keyboard is back on the sessions button')
 
-    // ---- 4b. from a context menu item: back to where the menu was opened ----
-    console.log('step 4b')
-    const c = await createShell(page, cwd) // `keep` becomes a background tab of the same frame: not in view
-    await page.locator(`.panel[data-slot-id="${c}"] .xterm`).click()
-    const before = await page.evaluateHandle(() => document.activeElement)
-    await page.locator(`.tether-tab[data-slot="${keep}"]`).click({ button: 'right' })
-    await page.waitForSelector('#ctx-menu li')
-    const espiar = page.locator('#ctx-menu li[role^=menuitem]', { hasText: /^\s*Espiar/ }).first()
-    await espiar.focus()
-    await page.keyboard.press('Enter')
-    await waitPeek(page, keep)
-    await page.keyboard.press('Control+Shift+O')
-    await waitClosed(page)
-    assert.equal(await page.evaluate(el => document.activeElement === el, before), true, 'the keyboard is back where the menu was opened from')
+    // (the speech box and the context-menu item are in app.peek-keys-channel.test.ts: they need the channel's pane)
   } finally {
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})

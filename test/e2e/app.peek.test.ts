@@ -152,7 +152,7 @@ test('cartão de espiar: slot sem guia, terminal vivo, Esc, fechar e foco, gavet
     assert.match((await head.locator('.peek-state').textContent())!, /^(ocioso|trabalhando)/)
     assert.equal(await page.locator('#peek .peek-close').getAttribute('title'), 'Fechar (Ctrl+` ou Ctrl+Shift+O)')
     assert.equal(await page.locator('#peek .peek-card').getAttribute('aria-label'), `Espiando ${cwd.split(/[\\/]/).pop()}`)
-    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo botão, pela margem ou por Ctrl` ou Ctrl\+Shift\+O\./)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo botão, pela margem ou por Ctrl\+` ou Ctrl\+Shift\+O\./)
     assert.equal(await page.evaluate(() => document.getElementById('dock')!.hasAttribute('inert')), true, 'the desks behind are inert')
     assert.equal(await page.evaluate(() => document.getElementById('toolbar')!.hasAttribute('inert')), true, 'the toolbar behind is inert')
     assert.ok((await page.evaluate(() => window.__tether.freeze().reasons)).includes('peek'), 'the card holds the freeze')
