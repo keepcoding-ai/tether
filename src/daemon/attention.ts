@@ -106,6 +106,18 @@ export class AttentionState {
   }
 
   /**
+   * The agent said its own wait (soul's `waiting` event). `open` is the same pending 'waiting' a Claude permission hook
+   * raises (it resists the focus 'seen'; the turn stays busy); `closed` drops it, only when it is still the shown value.
+   * Returns true when the value or `pending` changed.
+   */
+  waitSignal(state: 'open' | 'closed', reason: string): boolean {
+    this.signaled = true
+    if (state === 'open') return this.hook('waiting', reason)
+    this.disarm()
+    return this.value === 'waiting' ? this.set(undefined) : false
+  }
+
+  /**
    * Input from a client. Typing clears the attention; a line submitted (Enter) arms the idle heuristic.
    * Input that starts with ESC is not counted as typing: terminals answer queries (DA, cursor position,
    * focus reports) and arrow keys through the same channel, even from a pane nobody looks at. A lone ESC is the
@@ -271,6 +283,33 @@ export function parseTurnReports(text: string): TurnReport[] {
     const r = x as Record<string, unknown>
     if (r.kind !== 'turn' || typeof r.ts !== 'string' || (r.state !== 'busy' && r.state !== 'idle')) continue
     out.push({ ts: r.ts, state: r.state })
+  }
+  return out
+}
+
+/** One `waiting` line of the soul's events file: a request to the person opened or closed (`reason`: permission|question|elicitation). */
+export interface WaitingReport { ts: string; kind: 'waiting'; state: 'open' | 'closed'; reason: string }
+/** A soul line that moves the attention, in file order: a turn change or a wait edge. */
+export type SoulReport = (TurnReport & { kind: 'turn' }) | WaitingReport
+
+/**
+ * The `turn` and `waiting` lines of an events file's text, in order (their order matters: a `busy` voids a wait). Any other
+ * line, a malformed one, or a `waiting` without a valid `state` is skipped; an unknown or missing `reason` still counts
+ * (as `request`), so a newer soul never hides a wait.
+ */
+export function parseSoulReports(text: string): SoulReport[] {
+  const out: SoulReport[] = []
+  for (const line of text.split('\n')) {
+    if (!line.includes('"turn"') && !line.includes('"waiting"')) continue
+    let x: unknown
+    try { x = JSON.parse(line) } catch { continue }
+    if (!x || typeof x !== 'object' || Array.isArray(x)) continue
+    const r = x as Record<string, unknown>
+    if (typeof r.ts !== 'string') continue
+    if (r.kind === 'turn' && (r.state === 'busy' || r.state === 'idle')) out.push({ kind: 'turn', ts: r.ts, state: r.state })
+    else if (r.kind === 'waiting' && (r.state === 'open' || r.state === 'closed')) {
+      out.push({ kind: 'waiting', ts: r.ts, state: r.state, reason: typeof r.reason === 'string' && r.reason ? r.reason : 'request' })
+    }
   }
   return out
 }

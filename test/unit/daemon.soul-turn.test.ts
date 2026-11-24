@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { appendFileSync } from 'node:fs'
 import { after, describe, test } from 'node:test'
 import { slotEventsPath } from '../../src/core/paths.ts'
-import { AttentionState, attentionOptions, parseTurnReports } from '../../src/daemon/attention.ts'
+import { AttentionState, attentionOptions, parseSoulReports, parseTurnReports } from '../../src/daemon/attention.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import type { AgentAdapter, LaunchPlan } from '../../src/agents/types.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe } from './daemon.helpers.ts'
@@ -60,6 +60,46 @@ describe('attention: soul turn signal (state machine)', () => {
       { ts: '2026-11-09T10:00:01.000Z', state: 'busy' },
       { ts: '2026-11-09T10:00:03.000Z', state: 'idle' },
     ])
+  })
+})
+
+describe('attention: soul waiting signal', () => {
+  const line = (o: object) => JSON.stringify({ v: 1, ts: '2026-11-24T10:00:00.000Z', ...o })
+
+  test('parseSoulReports reads waiting open/closed with reason, skips malformed ones, keeps turn order', () => {
+    const text = [
+      line({ kind: 'turn', state: 'busy' }),
+      line({ kind: 'waiting', state: 'open', reason: 'permission' }),
+      '{broken "waiting"',
+      line({ kind: 'waiting', state: 'weird', reason: 'permission' }),
+      line({ kind: 'waiting', state: 'open', reason: 'telepathy' }),
+      line({ kind: 'waiting', state: 'closed', reason: 'question' }),
+      '',
+    ].join('\n')
+    const r = parseSoulReports(text)
+    assert.deepEqual(r.map((x) => x.kind === 'turn' ? 'turn' : `${x.state}:${x.reason}`), ['turn', 'open:permission', 'open:telepathy', 'closed:question'])
+  })
+
+  test('open lights a pending waiting that the focus does not clear; closed puts it out', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    a.signal('busy')
+    assert.equal(a.waitSignal('open', 'permission'), true)
+    assert.equal(a.value, 'waiting')
+    assert.equal(a.turn, 'busy')
+    assert.equal(a.seen(), false, 'a pending request resists the focus')
+    assert.equal(a.value, 'waiting')
+    assert.equal(a.waitSignal('closed', 'permission'), true)
+    assert.equal(a.value, undefined)
+    assert.equal(a.waitSignal('closed', 'permission'), false, 'a close with nothing waiting changes nothing')
+  })
+
+  test('closed does not erase a done', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    a.signal('busy')
+    a.signal('idle')
+    assert.equal(a.value, 'done')
+    assert.equal(a.waitSignal('closed', 'question'), false)
+    assert.equal(a.value, 'done')
   })
 })
 

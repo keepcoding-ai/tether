@@ -8,7 +8,7 @@ import { mkdir, readFile, stat as statAsync } from 'node:fs/promises'
 import { watch, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { isAbsolute, join } from 'node:path'
-import { AttentionState, attentionOptions, parseAttentionReport, parseTurnReports, type TurnReport } from './attention.ts'
+import { AttentionState, attentionOptions, parseAttentionReport, parseSoulReports, type SoulReport } from './attention.ts'
 import { memoryChanged, sampleProcessTable, treeBytes } from './memory.ts'
 import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
@@ -281,8 +281,8 @@ interface Slot {
   wakeTimer?: NodeJS.Timeout
   /** What the slot's events file held when last read: the file is append-only, so only the appended bytes are read again. */
   events?: EventsView
-  /** `turn` reports read but not yet applied (see applyTurnReports). */
-  turnPending?: TurnReport[]
+  /** `turn` and `waiting` reports read but not yet applied (see applyTurnReports). */
+  turnPending?: SoulReport[]
   /** The slot's boot load (events, binding, ronda) in flight or done; undefined until something asks for it. */
   hydrating?: Promise<void>
   /** An incremental read of the events file in flight; `pullAgain`: the file changed meanwhile, read once more. */
@@ -1219,7 +1219,7 @@ class DaemonImpl implements Daemon {
       v.kept = v.kept.concat(added)
       for (let i = v.kept.length - 1; i > 0; i--) if (v.kept[i]!.kind === 'start') { v.kept = v.kept.slice(i); break }
     }
-    const turns = parseTurnReports(r.complete)
+    const turns = parseSoulReports(r.complete)
     if (turns.length) slot.turnPending = (slot.turnPending ?? []).concat(turns)
     v.resume = r.resume
     v.fragment = r.fragment
@@ -2546,7 +2546,8 @@ class DaemonImpl implements Daemon {
     let changed = false
     for (const report of reports) {
       if (slot.spawnedAt && report.ts < slot.spawnedAt) continue
-      if (slot.attention.signal(report.state)) changed = true
+      const moved = report.kind === 'turn' ? slot.attention.signal(report.state) : slot.attention.waitSignal(report.state, report.reason)
+      if (moved) changed = true
     }
     if (changed) this.broadcastState(slot)
   }
