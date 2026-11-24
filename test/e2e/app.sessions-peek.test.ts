@@ -1,6 +1,6 @@
 // E2E of the sessions menu feeding the peek card (hidden window, private home/pipe, real tetherd, shells only, CLAUDE* stripped):
-//   1. "Sem guia": "Espiar" is the main button, "Abrir" a named secondary one with its ▾, "Encerrar" an icon; "Espiar" and a
-//      click on the row both close the panel and open the card;
+//   1. "Sem guia": "Espiar" is the main button, "Abrir" a named secondary one with its ▾, "Encerrar" an icon; "Espiar" closes
+//      the panel and opens the card; a click on the row does NOT peek; the "⋯" at the row's end lists every act;
 //   2. "Abrir" puts the session in a tab of the current desk, the card stays closed;
 //   3. the ▾ list "Abrir em outra mesa": the desks (the current one checked), a separator, "Escolher o lugar…"; a desk picked
 //      opens the tab THERE and the active desk does not change; "Escolher o lugar…" opens the tab here and the move screen;
@@ -152,8 +152,17 @@ test('painel de sessões e cartão: espiar, abrir, abrir em outra mesa, reabrir 
     await closeCard(page)
     await openMenu(page)
     await row(page, b).locator('.tt').click()
+    await sleep(500)
+    assert.equal((await page.evaluate(() => window.__tether.peekState())).open, false, 'a click on the row does not peek')
+    assert.equal(await page.locator('#sessions-list').isHidden(), false, 'the panel stays open')
+    // the "⋯" at the end of the row lists every act, same as the right-click menu
+    await row(page, b).locator('button.more').click()
+    await page.waitForSelector('#ctx-menu')
+    const moreLabels = await ctxLabels(page)
+    for (const l of ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Encerrar…']) assert.ok(moreLabels.includes(l), `"⋯" lists ${l}: ${moreLabels.join(' | ')}`)
+    await ctxPick(page, 'Espiar').click()
     await peekOpenOn(page, b)
-    assert.equal(await page.locator('#sessions-list').isHidden(), true, 'a click on the row closes the panel too')
+    assert.equal(await page.locator('#sessions-list').isHidden(), true, '"Espiar" from the "⋯" closes the panel')
     await closeCard(page)
 
     // ---- 2. Abrir: a tab on the current desk, no card ----
@@ -210,7 +219,7 @@ test('painel de sessões e cartão: espiar, abrir, abrir em outra mesa, reabrir 
     console.log('step 5')
     await row(page, a).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu')
-    assert.deepEqual(await ctxLabels(page), ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Encerrar…'])
+    assert.deepEqual(await ctxLabels(page), ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Renomear…', 'Encerrar…'])
     assert.equal(await page.locator('#ctx-menu li.sub').count(), 1, 'one submenu')
     await page.locator('#ctx-menu li.sub').click()
     const sub = (await page.locator('#ctx-menu .submenu li[role^=menuitem]').allTextContents()).map(x => x.trim())
