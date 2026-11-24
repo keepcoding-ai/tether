@@ -221,6 +221,7 @@ function reservedReason(agent: AgentName, arg: string): string | undefined {
 function reservedEnvReason(key: string): string | undefined {
   if (/^TETHER_/i.test(key)) return 'as variáveis TETHER_* identificam o slot para o tether'
   if (key === 'SOUL_SESSION_REPORT') return 'é por ela que o soul reporta a sessão ao tether'
+  if (key === 'HANDS_SESSION_EVENTS' || key === 'HANDS_SLOT_ID') return 'é por ela que o hands reporta a sessão ao tether'
   return undefined
 }
 

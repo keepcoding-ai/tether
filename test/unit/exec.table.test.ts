@@ -9,9 +9,10 @@ import { agentOps } from '../../src/exec/ops-agents.ts'
 import { extOps } from '../../src/exec/ops-ext.ts'
 import { fsOps } from '../../src/exec/ops-fs.ts'
 import { osOps } from '../../src/exec/ops-os.ts'
+import { handsOps } from '../../src/exec/ops-hands.ts'
 import { lazyNames, table } from '../../src/exec/table.ts'
 
-const modules = { agents: agentOps, ext: extOps, os: osOps } as const
+const modules = { agents: agentOps, ext: extOps, os: osOps, hands: handsOps } as const
 
 describe('exec table', () => {
   for (const group of Object.keys(modules) as (keyof typeof modules)[]) {
@@ -25,7 +26,7 @@ describe('exec table', () => {
   }
 
   test('no name is served by two modules', () => {
-    const all = [...Object.keys(fsOps), ...lazyNames.agents, ...lazyNames.ext, ...lazyNames.os]
+    const all = [...Object.keys(fsOps), ...lazyNames.agents, ...lazyNames.ext, ...lazyNames.os, ...lazyNames.hands]
     assert.deepEqual(all.filter((n, i) => all.indexOf(n) !== i), [])
   })
 

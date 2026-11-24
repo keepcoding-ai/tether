@@ -42,7 +42,7 @@ describe('profiles over the protocol', () => {
     const c = await Recorder.connect(daemon.pipe)
     const { profiles, problem } = await c.client.request({ t: 'profiles-list' })
     assert.equal(problem, undefined)
-    assert.deepEqual(profiles!.filter((p) => p.agent !== 'shell').map((p) => p.id), ['claude', 'claude-dev', 'soul', 'codex', 'codex-dev'])
+    assert.deepEqual(profiles!.filter((p) => p.agent !== 'shell').map((p) => p.id), ['claude', 'claude-dev', 'soul', 'hands', 'codex', 'codex-dev'])
     assert.deepEqual(JSON.parse(readFileSync(profilesPath(home), 'utf8')).profiles, profiles)
     c.close()
   })
