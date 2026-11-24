@@ -83,6 +83,27 @@ describe('userDir', () => {
   test('~/.tether otherwise', () => {
     assert.equal(userDir({}), join(homedir(), '.tether'))
   })
+  const win = { platform: 'win32' as const, homedir: 'C:\\Users\\p' }
+  const nix = { platform: 'linux' as const, homedir: '/home/p' }
+  test('no variables: ~/.tether on each platform', () => {
+    assert.equal(userDir({}, win), 'C:\\Users\\p\\.tether')
+    assert.equal(userDir({}, nix), '/home/p/.tether')
+  })
+  test('a temporary TETHER_HOME takes userDir along', () => {
+    assert.equal(userDir({ TETHER_HOME: 'C:\\Temp\\t1' }, win), 'C:\\Temp\\t1')
+    assert.equal(userDir({ TETHER_HOME: '/tmp/t1' }, nix), '/tmp/t1')
+  })
+  test('TETHER_HOME equal to the default home is no override', () => {
+    assert.equal(userDir({ TETHER_HOME: 'C:\\Users\\p\\AppData\\Local\\tether' }, win), 'C:\\Users\\p\\.tether')
+    assert.equal(userDir({ TETHER_HOME: 'c:\\users\\P\\appdata\\local\\TETHER\\' }, win), 'C:\\Users\\p\\.tether')
+    assert.equal(userDir({ TETHER_HOME: 'C:/Users/p/AppData/Local/tether/' }, win), 'C:\\Users\\p\\.tether')
+    assert.equal(userDir({ TETHER_HOME: 'D:\\L\\tether', LOCALAPPDATA: 'd:\\l' }, win), 'C:\\Users\\p\\.tether')
+    assert.equal(userDir({ TETHER_HOME: '/home/p/.local/state/tether/' }, nix), '/home/p/.tether')
+    assert.equal(userDir({ TETHER_HOME: '/home/p/.local/state/Tether' }, nix), '/home/p/.local/state/Tether')
+  })
+  test('TETHER_USER_DIR wins over a default TETHER_HOME', () => {
+    assert.equal(userDir({ TETHER_USER_DIR: 'C:\\u', TETHER_HOME: 'C:\\Users\\p\\AppData\\Local\\tether' }, win), 'C:\\u')
+  })
 })
 
 describe('settings.json: dotted and nested keys (VS Code toValuesTree / configurationEditing)', () => {

@@ -133,7 +133,7 @@ export interface TetherMain {
   readonly brand: Brand
   /** TETHER_HOME. */
   readonly home: string
-  /** The person's own configuration folder (settings.json, keybindings.json): TETHER_USER_DIR, else TETHER_HOME, else ~/.tether. */
+  /** The person's own configuration folder (settings.json, keybindings.json, sync/): userDir() of src/core/paths.ts. */
   readonly userDir: string
   /** app/dist (workers, assets). */
   readonly dist: string
