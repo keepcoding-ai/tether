@@ -291,10 +291,14 @@ async function build(note: (s: string) => void): Promise<World> {
     const options = card.split('\n').map((l) => l.trim()).filter((l) => /^[›>]?\s*\d+\.\s/.test(l))
     cardOptions.push(options)
     evidence(`card-${cards}-screen.txt`, `conductor read-screen state: ${v.data.state}\noptions: ${JSON.stringify(options)}\n${card}\n`)
-    const ans = await rig.verb('answer', pane, 'yes')
+    // E4C_PLAIN_ANSWER=session picks option 2 ("Allow for this session") by number: `agents answer` has no named choice for it.
+    // Never option 3 ("Always allow"): it may write to the user's real Codex configuration.
+    const choice = process.env.E4C_PLAIN_ANSWER === 'session' ? '2' : 'yes'
+    const tool = /tool "([^"]+)"/.exec(card)?.[1] ?? 'unknown'
+    const ans = await rig.verb('answer', pane, choice)
     lastAnswerAt = Date.now()
-    note(`card #${cards} answered by the owner (agents answer yes): ok ${ans.ok}; options ${JSON.stringify(options)}`)
-    if (!ans.ok) throw new Error(`agents answer yes failed: ${ans.err}`)
+    note(`card #${cards} (tool ${tool}) answered by the owner (agents answer ${choice}): ok ${ans.ok}; options ${JSON.stringify(options)}`)
+    if (!ans.ok) throw new Error(`agents answer ${choice} failed: ${ans.err}`)
     await sleep(1000)
     return true
   }
