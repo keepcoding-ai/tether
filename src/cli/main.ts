@@ -75,6 +75,11 @@ export const USAGE = `uso: tether <comando> [opções]
   proc <ls|info|start|wait|stop|restart|rm|use|release|ports|logs|history|host> …
                                       processos de fundo geridos pelo tether (servidores, workers):
                                       sobrevivem ao painel e ao tetherd (veja: tether proc help)
+  sync connect <url>                  liga este perfil (mesas, perfis, preferências) a um repositório git
+                                      e faz a primeira sincronização
+  sync now [--json]                   sincroniza: envia o que mudou aqui e traz o que mudou lá
+  sync status [--json]                o que está ligado, pendências e a última sincronização
+  sync disconnect                     desliga (os arquivos ficam)
   <ns> <verbo> [args]                 verbo contribuído por uma extensão (precisa do tetherd; sem
                                       <verbo>, lista os do <ns>)
   link                                imprime o link tether:// deste painel (só dentro do tether)

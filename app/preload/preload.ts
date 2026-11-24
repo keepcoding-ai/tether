@@ -34,6 +34,7 @@ const api: TetherApi = {
   reconnect: () => ipcRenderer.send('tether:reconnect'),
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: layout => ipcRenderer.invoke('layout:save', layout),
+  onFlushLayout: listener => on<number>('tether:flush-layout', id => { void Promise.resolve().then(listener).catch(() => {}).finally(() => ipcRenderer.send('tether:layout-flushed', id)) }),
   backupLayout: (version?: 1 | 2 | 3) => ipcRenderer.invoke('layout:backup', version ?? 1),
   recentFolders: () => ipcRenderer.invoke('recent:list'),
   rememberFolder: folder => ipcRenderer.invoke('recent:remember', folder),

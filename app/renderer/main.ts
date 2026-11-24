@@ -752,6 +752,8 @@ function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => { saveTimer = undefined; void window.tether.saveLayout(layoutJSON()); door.layoutSaved() }, SAVE_DEBOUNCE_MS)
 }
+// Main is about to sync (app/main/sync-runner.ts): the pending save goes now, before the child reads layout.json.
+window.tether.onFlushLayout(async () => { if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined } if (layoutRestored) { await window.tether.saveLayout(layoutJSON()); door.layoutSaved() } })
 
 /**
  * Adds the pane of a slot: relative to `reference` at `target`'s level (in the reference's desk or the drawer), or in

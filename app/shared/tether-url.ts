@@ -59,6 +59,21 @@ export function parseTetherUrl(text: string): TetherLink | undefined {
   return undefined
 }
 
+/**
+ * `tether://sync/now`: the one link that is not a place. `tether sync now|connect`, run in a terminal while the app is open,
+ * hands it to the app, which runs its own sync cycle (app/main/sync-runner.ts); main answers it, the renderer never sees it.
+ * It carries nothing (no query, no extra path): the worst any program can do with it is start the sync the person set up.
+ */
+export const SYNC_NOW_URL = `${TETHER_SCHEME}://sync/now`
+
+export function isSyncNowUrl(text: string): boolean {
+  const raw = text.trim()
+  if (!/^tether:\/\//i.test(raw) || raw.length > 256) return false
+  let url: URL
+  try { url = new URL(raw) } catch { return false }
+  return url.hostname.toLowerCase() === 'sync' && url.pathname.replace(/\/+$/, '').toLowerCase() === '/now' && url.search === '' && url.hash === ''
+}
+
 /** The first tether:// link among a process's arguments (how the OS hands one to the app). */
 export function tetherUrlInArgv(argv: readonly string[]): string | undefined {
   return argv.find(a => /^tether:\/\//i.test(a))
