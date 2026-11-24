@@ -351,6 +351,11 @@ export interface TetherUi {
     reveal(id: string): void
     /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
     copyLink(id: string): void
+    /**
+     * Follows a tether:// link as if it came from outside (app/shared/tether-url.ts): the place comes to the front; a pane
+     * closed but still known is offered back, an unknown one is said so (the same dialogs as any link).
+     */
+    followLink(url: string): void
     /** Draws the eye to a pane's tab with a short pulse (bring it up first: `reveal`). */
     attention(id: string): void
     /** Closes a pane without a slot behind it (remembered for "reabrir o último painel fechado"). */

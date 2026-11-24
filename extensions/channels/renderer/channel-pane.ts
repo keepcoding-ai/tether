@@ -18,7 +18,7 @@ import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { PANE_TEXT, channelMenu, memberMenu, type ChannelMenuId } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
+  agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
   MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
@@ -561,7 +561,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const h = headerOf(this.answer)
       const sub = el('span', 'ch-sub')
       sub.append(`${this.answer.members.length === 1 ? '1 membro' : `${this.answer.members.length} membros`} · dono: `)
-      const owner = el('span', 'ch-oname', h.ownerName)
+      const owner = this.agentLink(h.ownerId, 'ch-oname', h.ownerName) ?? el('span', 'ch-oname', h.ownerName)
       hueStyle(owner, h.ownerHue)
       sub.append(owner)
       if (h.closed) sub.append(' · encerrado')
@@ -771,6 +771,21 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
     }
 
+    /**
+     * An agent's name as a link to its pane: a button (focusable, Enter and click) that follows the pane's tether:// link, so a
+     * pane that is closed or unknown lands on the same dialogs as any link. Undefined for who has no pane (the person, the tether).
+     */
+    private agentLink(id: string | undefined, cls: string, text: string): HTMLButtonElement | undefined {
+      const url = agentLinkOf(id)
+      if (url === undefined) return undefined
+      const b = el('button', `${cls} ch-link`, text)
+      b.type = 'button'
+      b.title = PANE_TEXT.goToAgent
+      b.dataset.agent = id
+      b.addEventListener('click', () => ui.panes.followLink(url))
+      return b
+    }
+
     private rowEl(r: Row): HTMLElement {
       if (r.kind === 'day') return el('div', 'ch-day', r.label)
       if (r.kind === 'unseen') {
@@ -805,7 +820,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
             dest.append(n)
           })
         }
-        who.append(em, el('span', 'ch-author', r.name), role, dest, el('time', '', r.time))
+        const author = this.agentLink(r.authorId, 'ch-author', r.name) ?? el('span', 'ch-author', r.name)
+        who.append(em, author, role, dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
       e.append(el('p', '', r.body))
@@ -910,10 +926,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         const l1 = el('div', 'ch-l1')
         const em = el('span', `ch-em${m.crown ? ' crown' : ''}`)
         em.append(glyph(m.crown ? 'crown-simple' : 'robot'))
-        const name = el('button', 'ch-oname ch-link', m.name)
-        name.type = 'button'
-        name.title = 'Ir para a guia deste agente'
-        name.addEventListener('click', () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) })
+        const name = this.agentLink(m.id, 'ch-oname', m.name) ?? el('span', 'ch-oname', m.name)
         l1.append(em, name)
         // The narrow row is one line: the role, the muted mark and the state as a dot ride on it (the second line is away there).
         const nrole = el('span', 'ch-nrole')

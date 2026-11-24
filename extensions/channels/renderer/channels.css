@@ -134,7 +134,12 @@
 .ch-l1 .ch-emblem { flex: none; margin-left: auto; }
 .ch-l1 .ch-oname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
-.ch-link:hover { text-decoration: underline; }
+.ch-link:hover, .ch-link:focus-visible { text-decoration: underline; }
+.ch-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+/* The author and the owner are links too: the colour of the name stays (the button inherits none by default). */
+button.ch-author, button.ch-oname { color: var(--fg); }
+[style*="--oh"] > .ch-who > button.ch-author, button.ch-oname[style*="--oh"], [style*="--oh"] > .ch-l1 > button.ch-oname { color: hsl(var(--oh) var(--mark-s) var(--mark-fg-l)); }
+.ch-sub button.ch-oname { font-weight: 600; }
 .ch-act[hidden] { display: none; }
 .ch-sec { display: flex; align-items: center; justify-content: space-between; }
 .ch-macts { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; opacity: 0; }

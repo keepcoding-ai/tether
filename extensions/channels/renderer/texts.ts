@@ -310,6 +310,8 @@ export const PANE_TEXT = {
   talkTo: (member: string): string => `Falar com ${member}`,
   reveal: 'Ir para a guia do agente',
   /** The "⋯" of a member's row. */
+  /** The tooltip of an agent's name (a link to its pane). */
+  goToAgent: 'Ir para a guia deste agente',
   memberMore: (member: string): string => `Mais ações de ${member}`,
 } as const
 

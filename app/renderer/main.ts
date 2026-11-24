@@ -4496,6 +4496,7 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
         copyLink: paneId => copyPaneLink(paneId),
+        followLink: url => { void followTetherLink(url) },
         attention: paneId => drawAttention(paneId),
         close: paneId => closeSlotless(paneId),
         showTabMenu: (paneId, x, y, opener, opts) => { if (opts?.from) showPaneMenu(paneId, x, y, opener, opts); else showTabMenu(paneId, x, y, opener) },
