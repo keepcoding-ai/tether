@@ -212,8 +212,9 @@ export interface DoorDelivery {
   /** The route a slot has, ignoring the interlock (busy, draft, settle): `pathOf` is the instant, `routeOf` is the road. */
   routeOf(slotId: string): 'inside' | 'terminal' | 'wait'
   /**
-   * The slot's client has the tether's MCP tools now: its MCP session is open (a client that has the tools but does not wake on a
-   * channel message, like Codex, counts). False for a client with no MCP, and for a session that is closed at this instant.
+   * The slot's client has the tether's MCP tools: its MCP stream is open now or opened once in this daemon's life (sticky; a
+   * client that has the tools but does not wake on a channel message, like Codex, counts). False means "not known", not "none":
+   * a client that never opened its stream, or one the daemon has not seen since it started.
    */
   hasTools(slotId: string): boolean
 }

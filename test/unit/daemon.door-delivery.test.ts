@@ -190,6 +190,9 @@ describe('agent door delivery (D6)', () => {
     await waitUntil(() => delivery.pathOf(id) === 'terminal', 10_000, 'the terminal path')
     await waitUntil(() => receiptOf(r.id)?.state === 'typed', 15_000, 'typed, not inside')
     assert.equal(readLines<Record<string, any>>(chanLog(id)).some((l) => l.method === 'notifications/claude/channel'), false, 'no channel message')
+    await slots.stop(id)
+    await waitUntil(() => !door.mcp.connected(id), 15_000, 'the stream closed with the process')
+    assert.equal(delivery.hasTools(id), true, 'sticky: it had the stream once, so "not known" never comes back for it')
     await slots.forget(id)
   })
 

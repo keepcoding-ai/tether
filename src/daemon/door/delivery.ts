@@ -130,6 +130,8 @@ export class DeliveryService {
   private readonly listeners = new Set<{ ext: string; fn: (r: DeliveryReceipt) => void }>()
   /** engine (SlotMeta.agent) -> its typist; the last one registered is in place. */
   private readonly typists = new Map<string, { typist: Typist }>()
+  /** Slots whose MCP stream opened at least once in this daemon's life (memory only; `forgotten` clears it). */
+  private readonly hadStream = new Set<string>()
   readonly presence = new UserPresence()
   /** > 0 while the delivery itself writes to a PTY: those writes are not the user's (nor the holder's). */
   private selfWriting = 0
@@ -142,7 +144,10 @@ export class DeliveryService {
   constructor(opts: DeliveryOptions) {
     this.opts = opts
     this.now = opts.now ?? Date.now
-    this.streamSub = opts.mcp.onDidStream((slotId, open) => { if (open && this.queues.has(slotId)) void this.kick(slotId) })
+    this.streamSub = opts.mcp.onDidStream((slotId, open) => {
+      if (open) this.hadStream.add(slotId)
+      if (open && this.queues.has(slotId)) void this.kick(slotId)
+    })
   }
 
   // ---- server hooks (through DoorHost) ---------------------------------------------------------
@@ -172,6 +177,7 @@ export class DeliveryService {
     const items = this.queues.get(slotId) ?? []
     this.queues.delete(slotId)
     this.settleAt.delete(slotId)
+    this.hadStream.delete(slotId)
     this.presence.forget(slotId)
     for (const item of items) this.emit(item, 'dropped')
     await this.persist(slotId)
@@ -244,9 +250,12 @@ export class DeliveryService {
     return this.holdsTerminal(port, slotId) ? 'terminal' : 'wait'
   }
 
-  /** The slot has an open MCP session, so the tether's tools are in its hands (`connected`, not `wakes`: Codex has tools and does not wake). */
+  /**
+   * Sticky: the stream is open now, or it opened once in this daemon's life (an agent restarting has no stream for a while and
+   * still has the tools). `connected`, not `wakes`: Codex has tools and does not wake. False means "not known", not "none".
+   */
   hasTools(slotId: string): boolean {
-    return this.opts.mcp.connected(slotId)
+    return this.hadStream.has(slotId) || this.opts.mcp.connected(slotId)
   }
 
   /** Stops the silence timer and the stream subscription (tests, teardown). */
