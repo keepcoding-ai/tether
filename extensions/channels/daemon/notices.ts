@@ -43,6 +43,25 @@ export function withReplyHint(body: string, room: string, path: 'inside' | 'term
   return `${body.replace(/\n+$/, '')}\n(para responder no canal: o que você escreve na sua guia ninguém no canal vê; fale ${sayHow(room, tools)})`
 }
 
+/**
+ * The last line of a poll's request typed in a pane that does not hear inside: how to vote, and that voting is not speaking.
+ * Inside, the body is the question alone (the instructions teach `channels_vote`).
+ */
+export function withVoteHint(question: string, room: string, seq: number, path: 'inside' | 'terminal' | 'wait', tools = false): string {
+  if (path === 'inside') return question
+  const cli = `node "$TETHER_CLI" channels vote ${room} ${seq} <número> [--reason "…"]`
+  const how = tools ? `pela ferramenta channels_vote (canal "${room}", poll ${seq}, vote <número>)` : `pela ferramenta channels_vote (canal "${room}", poll ${seq}, vote <número>) ou ${cli}`
+  return `${question}\n(para votar: ${how}. Votar não abre turno em ninguém; não responda falando.)`
+}
+
+/** `10:42 (em 10 min)`: a deadline in local hours and minutes and how far it is, so the reader needs no time zone. */
+export function clockText(iso: string, now = Date.now()): string {
+  const at = new Date(iso)
+  const min = Math.max(0, Math.round((at.getTime() - now) / 60_000))
+  const far = min < 120 ? `${min} min` : `${Math.round(min / 60)} h`
+  return `${hourOf(at)} (em ${far})`
+}
+
 /** HH:MM, local time. */
 export function hourOf(at: string | Date): string {
   const d = typeof at === 'string' ? new Date(at) : at

@@ -24,28 +24,35 @@
 // `reactionsSeen` in the index: it is read from the channel's tail, never alone delivered, and never repeated after a restart.
 // Polls: the open ones and their current votes live in the index (store.ts), the deadline is an absolute time, and ONE timer
 // for the whole tether points at the nearest deadline of every channel (`arm`), re-pointed when a poll opens or closes; on
-// start it rings at once for what passed while the tether was down. Nothing of a poll is delivered yet.
+// start it rings at once for what passed while the tether was down. Two deliveries only, never a vote:
+//   - the REQUEST (`kind: 'request'`), one per agent called, ever: its receipt goes into the poll's `asked` in the index, so a
+//     restart or a process coming back never asks twice. It is never in `pending`: a line that finds it waiting does not merge
+//     it (the question would be lost), and it does not merge lines. A called whose process does not run gets nothing and is
+//     asked when it runs again (`spawned`) if the poll is still open; one the person holds waits in the core's queue. The
+//     queued request carries `until` = the deadline (the core drops it then, a restart included) and is cancelled when the
+//     poll closes before its time: a closed poll is never asked.
+//   - the RESULT, to the author alone (an agent), once, after the poll left the index. The result line is delivered to no one.
 import { slotIsLive, slotTitle } from '../../../app/shared/agent-info.ts'
 import { DisposableStore, toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { DeliveryMessage, DeliveryReceipt, TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../src/daemon/protocol.ts'
 import {
   allVoted, closeRefusal, deliveryRoleOf, deskChannelId, isCalled, isDeskChannel, isMember, joinRefusal, joinsByDesk, mayClosePoll, mayModerate,
-  nextPollDeadline, oneLine, openPolls, parseReaction, parseVoteOption, POLL_QUESTION_MAX, POLL_REASON_MAX,
+  nextPollDeadline, numberedOptions, oneLine, openPolls, owesRequest, parseReaction, parseVoteOption, POLL_QUESTION_MAX, POLL_REASON_MAX,
   POLL_TIMEOUT_DEFAULT_MS, POLL_TIMEOUT_MAX_MS, POLL_TIMEOUT_MIN_MS, POLL_VOTE_CHANGES, pollOpenRefusal, pollOptions, pollResult, pollResultText, reactionKey,
-  reactionLimit, reactionRide, reactRefusal, REACTION_WINDOW, REACTIONS_PER_MINUTE, reopenRefusal, roleIn, sayRefusal, slugOf, sumReactions, USER,
-  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type OpenPoll, type PollClosedBy, type PollPerson, type PollResult,
-  type Reaction, type ReactionRide, type Who,
+  reactionLimit, reactionRide, reactRefusal, REACTION_WINDOW, REACTIONS_PER_MINUTE, reopenRefusal, roleIn, sayRefusal, slugOf, sumReactions, tallyText, USER,
+  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type OpenPoll, type PollClosedBy, type PollMissingWhy, type PollPerson,
+  type PollResult, type Reaction, type ReactionRide, type Who,
 } from '../rules.ts'
 import { TAIL_LINES, type ChannelStore, type NewLine, type StoreError } from './store.ts'
 import {
-  closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
+  clockText, closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
   joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
-  removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, withReplyHint, type DeskClosedWhy, type Tally,
+  removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, withReplyHint, withVoteHint, type DeskClosedWhy, type Tally,
 } from './notices.ts'
 
-/** What the fan-out uses of the daemon API. */
-export type ChannelsApi = Pick<TetherDaemon, 'slots' | 'delivery' | 'attention' | 'events' | 'settings' | 'log'>
+/** What the fan-out uses of the daemon API (`desks` tells a sleeping desk from a stopped process; without it, "parado"). */
+export type ChannelsApi = Pick<TetherDaemon, 'slots' | 'delivery' | 'attention' | 'events' | 'settings' | 'log'> & Partial<Pick<TetherDaemon, 'desks'>>
 
 /** The moderator's name setting. */
 export const MODERATOR_NAME_KEY = 'extensions.channels.moderatorName'
@@ -79,6 +86,9 @@ export interface VoteInput {
   vote: string | number
   reason?: string
 }
+
+/** Why a called does not hear now: its process does not run, its desk sleeps, or the person has its pane. */
+export type Deaf = Extract<PollMissingWhy, 'stopped' | 'asleep' | 'with-user'>
 
 /** A closed poll: its result and the notice line that carries it. */
 export interface PollClosed { line: Line; result: PollResult }
@@ -131,10 +141,11 @@ export interface Channels {
    */
   react(who: Who, id: ChannelId, input: ReactInput): Promise<Outcome<{ changed: boolean; reaction: Reaction; line?: Line }>>
   /**
-   * Opens a poll: a line of its own (`kind: 'poll'`) and the poll in the channel's index, the event `poll`, and nothing else in
-   * this version: no delivery, no notice, no turn.
+   * Opens a poll: a line of its own (`kind: 'poll'`) and the poll in the channel's index, the event `poll`, and ONE request to
+   * each agent called (no line event, no notice). `deaf`: the called that do not hear now and why (asked when they run again,
+   * or waiting in the queue while the person has their pane).
    */
-  poll(who: Who, id: ChannelId, input: PollInput): Promise<Outcome<{ line: Line; poll: OpenPoll }>>
+  poll(who: Who, id: ChannelId, input: PollInput): Promise<Outcome<{ line: Line; poll: OpenPoll; deaf: Array<PollPerson & { why: Deaf }> }>>
   /**
    * A vote (or a change of it) on an open poll: a line of its own (`kind: 'vote'`), the event `poll`, nothing delivered.
    * `changed: false` (no line) when it is the same option and reason. The last one still called voting closes it (`closed`).
@@ -298,9 +309,9 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     ({ kind: 'notice', room: ch.name, from: { ...SYSTEM_FROM }, body, ...(ref !== undefined ? { ref: `${ch.name}#${ref}` } : {}) })
 
   /** Delivers; a refusal of the core (the slot vanished) is logged and reads as `away`. */
-  async function send(agent: AgentId, msg: DeliveryMessage): Promise<DeliveryReceipt | undefined> {
+  async function send(agent: AgentId, msg: DeliveryMessage, until?: string): Promise<DeliveryReceipt | undefined> {
     try {
-      return await api.delivery.deliver(agent, msg)
+      return await api.delivery.deliver(agent, msg, until ? { until } : undefined)
     } catch (e) {
       api.log(`entrega para ${agent} em #${msg.room ?? '?'} falhou: ${(e as Error).message}`)
       return undefined
@@ -485,7 +496,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
   const fail = (error: Refusal): { ok: false; error: Refusal } => ({ ok: false, error })
 
   // ---- polls: lines of their own, the open ones in the index, ONE clock for every channel ----
-  // Nothing of a poll is delivered in this version and no line of a poll is a `line` event: the event is `poll`.
+  // No line of a poll is a `line` event (the event is `poll`); only the request and the result are delivered (see the header).
   let clockTimer: unknown
   let clockAt: number | undefined
   let disposed = false
@@ -494,9 +505,44 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
   const pollEvent = (ch: Channel, line: Line, poll?: OpenPoll): void => {
     api.events.emit('poll', { channelId: ch.id, room: ch.name, line, ...(poll ? { poll } : {}) } satisfies PollEvent)
   }
-  const missingWhy = (id: Who): 'stopped' | 'no-answer' => (id !== USER && isAway(id) ? 'stopped' : 'no-answer')
+  /** The pane is on a sleeping desk (or sleeps itself). */
+  const asleep = (agent: AgentId): boolean => {
+    const d = api.desks?.deskOf(agent)
+    return d !== undefined && (d.asleep === true || d.panes.some((p) => p.id === agent && p.asleep === true))
+  }
+  /** Why an agent does not hear now, or undefined when it does (inside, or a terminal an agent holds). */
+  const deafWhy = (agent: AgentId): Deaf | undefined => {
+    if (isAway(agent)) return asleep(agent) ? 'asleep' : 'stopped'
+    return api.delivery.routeOf(agent) === 'wait' ? 'with-user' : undefined
+  }
+  const missingWhy = (id: Who): PollMissingWhy => (id === USER ? 'no-answer' : deafWhy(id) ?? 'no-answer')
 
-  /** Closes the open poll `p`: the result notice (delivered to no one), the index, the event. Inside the lane. */
+  /** The request of `p` as `agent` gets it: the question (and how to vote, when typed); the poll's parts are attributes. */
+  const requestOf = (ch: Channel, p: OpenPoll, agent: AgentId): DeliveryMessage => ({
+    kind: 'request', room: ch.name, ref: `${ch.name}#${p.seq}`,
+    from: { name: p.author.name, id: p.author.id, role: deliveryRoleOf(roleIn(p.author.id, ch) ?? 'member') },
+    body: withVoteHint(p.question, ch.name, p.seq, api.delivery.routeOf(agent), api.delivery.hasTools(agent)),
+    poll: { poll: p.type, options: numberedOptions(p.options), closes: clockText(p.closesAt, clock.now()) },
+  })
+  /**
+   * Hands the request of the open poll `p` to each of `agents` still owed it and running, then writes who got it (`asked`)
+   * in one index write. A called that does not run is left for `spawned`. Inside the lane.
+   */
+  async function ask(ch: Channel, p: OpenPoll, agents: readonly AgentId[]): Promise<void> {
+    if (Date.parse(p.closesAt) <= clock.now()) return
+    const asked: Record<AgentId, string> = {}
+    await Promise.all(agents.map(async (agent) => {
+      if (!owesRequest(ch, p, agent) || isAway(agent)) return
+      const r = await send(agent, requestOf(ch, p, agent), p.closesAt)
+      if (r && r.state !== 'dropped') asked[agent] = r.id
+    }))
+    if (Object.keys(asked).length) await store.setAsked(ch.id, p.seq, asked)
+  }
+
+  /**
+   * Closes the open poll `p`: the result notice (a line delivered to no one), the index, the event; what of its requests still
+   * waits in the queue is cancelled, and its author (an agent) gets the result, once. Inside the lane.
+   */
   async function closePoll(ch: Channel, p: OpenPoll, how: Pick<PollResult, 'by' | 'closer' | 'away'>): Promise<PollClosed> {
     const result = pollResult(ch, p, how, missingWhy)
     const line = await store.append(ch.id, {
@@ -505,6 +551,14 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     })
     await store.closePoll(ch.id, p.seq, line.seq)
     pollEvent(ch, line)
+    for (const receipt of Object.values(p.asked ?? {})) api.delivery.cancel(receipt)
+    // The author who closed it has the result in the verb's answer: a delivery would only open one more turn.
+    if (p.author.id !== USER && how.closer?.id !== p.author.id) {
+      await send(p.author.id, {
+        kind: 'notice', room: ch.name, from: { ...SYSTEM_FROM }, body: line.body, ref: `${ch.name}#${line.seq}`,
+        poll: { poll: `${ch.name}#${p.seq}`, closedBy: result.by, tally: tallyText(result.tally) },
+      })
+    }
     return { line, result }
   }
   /** The open polls of `ch` all of whose still called voted close (one called left). Inside the lane. */
@@ -804,7 +858,9 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         await store.openPoll(id, poll)
         pollEvent(ch, line, poll)
         arm()
-        return { ok: true as const, line, poll }
+        const deaf = spec.to.flatMap((t) => { const why = t.id === USER ? undefined : deafWhy(t.id); return why ? [{ ...t, why }] : [] })
+        await ask(ch, poll, spec.to.map((t) => t.id))
+        return { ok: true as const, line, poll, deaf }
       })
     },
 
@@ -995,6 +1051,9 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     },
 
     async spawned(agent) {
+      // A poll still open that never reached it: the request now, with the time that is left.
+      await Promise.all(store.channelsOf(agent).filter((c) => openPolls(c).some((p) => owesRequest(c, p, agent)))
+        .map((c) => lane(c.id, async () => { for (const p of openPolls(c)) await ask(c, p, [agent]) })))
       const per = missed.get(agent)
       if (!per) return
       missed.delete(agent)
@@ -1030,6 +1089,10 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
   }
   // A deadline that passed while the tether was down rings at once.
   arm()
+  // A called that runs and was never asked (it came back while the tether was down) is asked now; `asked` keeps the others.
+  void Promise.all(store.channels().filter((c) => openPolls(c).length).map((c) => lane(c.id, async () => {
+    for (const p of openPolls(c)) await ask(c, p, p.to.map((t) => t.id))
+  }))).catch((e: unknown) => api.log(`canais: pedidos de enquete na volta: ${(e as Error).message}`))
   return channels
 }
 

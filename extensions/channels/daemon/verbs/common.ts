@@ -8,6 +8,7 @@ import type { VerbCaller, VerbResult } from '../../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../../src/daemon/protocol.ts'
 import { isMember, ownerOf, USER, type AgentId, type Channel, type Who } from '../../rules.ts'
 import type { Channels, ChannelsApi, Refusal } from '../fanout.ts'
+import { clockText } from '../notices.ts'
 import type { TetherDaemon } from '../../../../src/daemon/ext-api.ts'
 
 export type VerbApi = ChannelsApi & Pick<TetherDaemon, 'verbs'>
@@ -182,14 +183,7 @@ export function settle<T extends { ok: true }>(r: T | { ok: false; error: Refusa
   return r
 }
 
-/** `10:42 (em 10 min)`: a deadline in local hours and minutes and how far it is, so the reader needs no time zone. */
-export function clockText(iso: string, now = Date.now()): string {
-  const at = new Date(iso)
-  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-  const min = Math.max(0, Math.round((at.getTime() - now) / 60_000))
-  const far = min < 120 ? `${min} min` : `${Math.round(min / 60)} h`
-  return `${hhmm} (em ${far})`
-}
+export { clockText }
 
 /** `10:42`: a time in local hours and minutes. */
 export function hhmm(iso: string): string {

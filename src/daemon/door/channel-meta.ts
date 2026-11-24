@@ -12,6 +12,8 @@ import type { DeliveryMessage } from './types.ts'
 export const META_VALUE_MAX = 120
 /** The `reactions` value is the only longer one: the extension caps its ride at ~60 tokens, this is the core's ceiling. */
 export const REACTIONS_MAX = 240
+/** A poll's `options` and `tally` (up to 6 options of 60 characters, numbered): the ceiling of those two values. */
+export const POLL_OPTIONS_MAX = 420
 const KEY_RE = /^[A-Za-z0-9_]+$/
 // C0 controls (line breaks included), DEL and the C1 range.
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/g
@@ -67,5 +69,16 @@ export function deliveryMeta(msg: DeliveryMessage, origin: string, id: string): 
   })
   const reactions = msg.reactions ? oneLine(msg.reactions, REACTIONS_MAX) : ''
   if (reactions) meta.reactions = reactions
+  if (msg.poll) {
+    const p = msg.poll
+    const fields: Array<[string, string | undefined, number]> = [
+      ['poll', p.poll, META_VALUE_MAX], ['options', p.options, POLL_OPTIONS_MAX], ['closes', p.closes, META_VALUE_MAX],
+      ['closed_by', p.closedBy, META_VALUE_MAX], ['tally', p.tally, POLL_OPTIONS_MAX],
+    ]
+    for (const [key, raw, max] of fields) {
+      const value = raw ? oneLine(raw, max) : ''
+      if (value) meta[key] = value
+    }
+  }
   return meta
 }

@@ -29,7 +29,7 @@ import { DoorError, doorUnavailable, type InputMark, type InputOrigin, type Slot
 import { terminalText } from './terminal-text.ts'
 import { typingOf, type Typing } from './typing.ts'
 import { UserPresence } from './user-presence.ts'
-import type { DeliveryMessage, DeliveryReceipt, DeliveryRole, DeliveryState, DoorDelivery, Typist, TypistContext } from './types.ts'
+import type { DeliveryMessage, DeliveryPoll, DeliveryReceipt, DeliveryRole, DeliveryState, DoorDelivery, Typist, TypistContext } from './types.ts'
 
 /** After a terminal delivery, the next one to the same slot waits this long (and then for the turn it opened to end). */
 export const DOOR_SETTLE_MS = 2_000
@@ -47,6 +47,8 @@ interface QueuedItem {
   msg: DeliveryMessage
   paths?: Path[]
   at: string
+  /** Still queued at this time (ISO): dropped, never delivered late. */
+  until?: string
 }
 
 /** What the delivery needs of the MCP server (DoorMcp): the stream state, the channel, the stream edges. */
@@ -87,9 +89,13 @@ export function checkMessage(raw: unknown): DeliveryMessage {
   if (!m || typeof m !== 'object' || !isStr(m.kind) || !KINDS.has(m.kind) || !isStr(m.body)
     || !from || !isStr(from.name) || !isStr(from.id) || !from.id || !isStr(from.role) || !ROLES.has(from.role as DeliveryRole)
     || (m.room !== undefined && !isStr(m.room)) || (m.inReplyTo !== undefined && !isStr(m.inReplyTo))
-    || (m.ref !== undefined && !isStr(m.ref)) || (m.reactions !== undefined && !isStr(m.reactions)) || (m.to !== undefined && !(Array.isArray(m.to) && m.to.every(isStr)))) {
+    || (m.ref !== undefined && !isStr(m.ref)) || (m.reactions !== undefined && !isStr(m.reactions)) || (m.to !== undefined && !(Array.isArray(m.to) && m.to.every(isStr)))
+    || (m.poll !== undefined && !isPoll(m.poll))) {
     throw new DoorError('bad-request', 'delivery.deliver: mensagem inválida (kind, from {name, id, role} e body são obrigatórios)')
   }
+  const poll = m.poll
+    ? { poll: m.poll.poll, ...(['options', 'closes', 'closedBy', 'tally'] as const).reduce<Partial<DeliveryPoll>>((o, k) => (m.poll![k] ? { ...o, [k]: m.poll![k] } : o), {}) }
+    : undefined
   return {
     kind: m.kind,
     ...(m.room ? { room: m.room } : {}),
@@ -99,7 +105,21 @@ export function checkMessage(raw: unknown): DeliveryMessage {
     ...(m.to && m.to.length ? { to: [...m.to] } : {}),
     ...(m.ref ? { ref: m.ref } : {}),
     ...(m.reactions ? { reactions: m.reactions } : {}),
+    ...(poll ? { poll } : {}),
   }
+}
+
+/** A poll part: `poll` a non-empty string, the other fields strings when present. */
+function isPoll(p: unknown): p is DeliveryPoll {
+  const x = p as Partial<DeliveryPoll> | null
+  return !!x && typeof x === 'object' && isStr(x.poll) && x.poll !== ''
+    && [x.options, x.closes, x.closedBy, x.tally].every((v) => v === undefined || isStr(v))
+}
+
+function checkUntil(raw: unknown): string | undefined {
+  if (raw === undefined) return undefined
+  if (!isStr(raw) || !Number.isFinite(Date.parse(raw))) throw new DoorError('bad-request', 'delivery.deliver: until deve ser uma data ISO')
+  return raw
 }
 
 function checkPaths(raw: unknown): Path[] | undefined {
@@ -114,7 +134,7 @@ function parseItem(line: string, slotId: string): QueuedItem | undefined {
   try {
     const x = JSON.parse(line) as Partial<QueuedItem>
     if (!isStr(x.id) || !isStr(x.ext) || x.slotId !== slotId || !isStr(x.at)) return undefined
-    return { id: x.id, ext: x.ext, slotId, msg: checkMessage(x.msg), ...(x.paths ? { paths: checkPaths(x.paths) } : {}), at: x.at }
+    return { id: x.id, ext: x.ext, slotId, msg: checkMessage(x.msg), ...(x.paths ? { paths: checkPaths(x.paths) } : {}), at: x.at, ...(x.until ? { until: checkUntil(x.until) } : {}) }
   } catch {
     return undefined
   }
@@ -196,7 +216,7 @@ export class DeliveryService {
   /** Extension `ext`'s delivery, without `enable` (the host adds it: it is the MCP server's switch). */
   apiFor(ext: string, own: DisposableStore): Omit<DoorDelivery, 'enable'> {
     return {
-      deliver: (slotId, msg, opts) => this.deliver(ext, slotId, msg, opts?.paths),
+      deliver: (slotId, msg, opts) => this.deliver(ext, slotId, msg, opts?.paths, opts?.until),
       pending: (slotId) => (this.queues.get(slotId) ?? []).filter((i) => i.ext === ext).map((i) => this.receipt(i, 'queued', i.at)),
       cancel: (id) => this.cancel(ext, id),
       onDidDeliver: (fn) => {
@@ -278,14 +298,18 @@ export class DeliveryService {
 
   // ---- delivery --------------------------------------------------------------------------------
 
-  private async deliver(ext: string, slotId: string, rawMsg: DeliveryMessage, rawPaths: unknown): Promise<DeliveryReceipt> {
+  private async deliver(ext: string, slotId: string, rawMsg: DeliveryMessage, rawPaths: unknown, rawUntil?: unknown): Promise<DeliveryReceipt> {
     const port = this.opts.port()
     if (!port) throw doorUnavailable(`delivery.deliver, extensão ${ext}`)
     const msg = checkMessage(rawMsg)
     const paths = checkPaths(rawPaths)
+    const until = checkUntil(rawUntil)
     await this.ready
     if (!port.meta(slotId)) throw new DoorError('unknown-slot', `slot desconhecido: ${slotId}`)
-    const item: QueuedItem = { id: `m_${Date.now().toString(36)}${randomBytes(5).toString('hex')}`, ext, slotId, msg, ...(paths ? { paths } : {}), at: new Date().toISOString() }
+    const item: QueuedItem = {
+      id: `m_${Date.now().toString(36)}${randomBytes(5).toString('hex')}`, ext, slotId, msg, ...(paths ? { paths } : {}), at: new Date().toISOString(),
+      ...(until ? { until } : {}),
+    }
     let result: DeliveryReceipt | undefined
     const listen = { ext: '', fn: (r: DeliveryReceipt): void => { if (r.id === item.id) result = r } }
     this.listeners.add(listen)
@@ -342,6 +366,11 @@ export class DeliveryService {
     for (;;) {
       const item = this.queues.get(slotId)?.[0]
       if (!item) break
+      if (item.until !== undefined && Date.parse(item.until) <= this.now()) {
+        this.shift(item, 'dropped')
+        delivered = true
+        continue
+      }
       const insideOk = !item.paths || item.paths.includes('inside')
       const terminalOk = !item.paths || item.paths.includes('terminal')
       if (insideOk && this.opts.mcp.wakes(slotId) && this.opts.mcp.sendChannel(slotId, item.msg.body, deliveryMeta(item.msg, item.ext, item.id))) {

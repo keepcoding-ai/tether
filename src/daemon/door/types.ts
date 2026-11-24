@@ -158,6 +158,21 @@ export interface DeliveryMessage {
    * extension, never by who wrote the body: the `reactions` attribute inside, a part of the header when typed.
    */
   reactions?: string
+  /**
+   * A poll, written by the extension from its record, never by who wrote the body. On a `request` (the poll asked of the
+   * addressee): `poll` is its type, `options` the numbered options, `closes` the deadline. On the result `notice` (to its
+   * author): `poll` is the poll's ref, `closedBy` why it closed, `tally` the counts. Inside, the attributes `poll`, `options`,
+   * `closes`, `closed_by`, `tally`; typed, parts of the header.
+   */
+  poll?: DeliveryPoll
+}
+
+export interface DeliveryPoll {
+  poll: string
+  options?: string
+  closes?: string
+  closedBy?: string
+  tally?: string
 }
 
 export type DeliveryState =
@@ -211,8 +226,11 @@ export interface DoorDelivery {
    * it, and disposing removes only the one in place. None: the engine's `typing` (as before this seam).
    */
   useTypist(agent: string, typist: Typist): IDisposable
-  /** Never rejects for lack of a path: answers 'queued' and delivers when it can. */
-  deliver(slotId: string, msg: DeliveryMessage, opts?: { paths?: readonly ('inside' | 'terminal')[] }): Promise<DeliveryReceipt>
+  /**
+   * Never rejects for lack of a path: answers 'queued' and delivers when it can. `until` (ISO): a queued delivery still waiting
+   * at that time is `dropped` instead of delivered late (a restart keeps it, on disk).
+   */
+  deliver(slotId: string, msg: DeliveryMessage, opts?: { paths?: readonly ('inside' | 'terminal')[]; until?: string }): Promise<DeliveryReceipt>
   /** What waits for a slot (this extension's). */
   pending(slotId: string): DeliveryReceipt[]
   /** Takes out of the queue what still waits. */

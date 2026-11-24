@@ -8,7 +8,7 @@
 // - the body loses every control character but the line break and the tab: an ESC would let it end the bracketed paste
 //   (`ESC[201~`) and submit half a message, or move the cursor over the user's screen; CR and CRLF become LF.
 // Pure: no state, no I/O.
-import { oneLine, REACTIONS_MAX, toNames } from './channel-meta.ts'
+import { oneLine, POLL_OPTIONS_MAX, REACTIONS_MAX, toNames } from './channel-meta.ts'
 import type { DeliveryMessage } from './types.ts'
 
 export const HEADER_TAG = '[tether ·'
@@ -22,7 +22,8 @@ function field(value: string, max = HEADER_FIELD_MAX): string {
 
 /**
  * `[tether · <origin> · #<room> · de <from> (<role>) · <id>]`; the room part is left out when there is none; a delivery with
- * reactions riding ends with ` · reações às suas falas: <reactions>`.
+ * reactions riding ends with ` · reações às suas falas: <reactions>`; a poll's request with ` · enquete · fecha <closes> ·
+ * opções: <options>`, its result with ` · enquete <ref> · resultado: <tally>`.
  */
 export function terminalHeader(msg: DeliveryMessage, origin: string, id: string): string {
   const room = msg.room ? field(msg.room) : ''
@@ -35,6 +36,14 @@ export function terminalHeader(msg: DeliveryMessage, origin: string, id: string)
   ]
   const reactions = msg.reactions ? field(msg.reactions, REACTIONS_MAX) : ''
   if (reactions) parts.push(`reações às suas falas: ${reactions}`)
+  const p = msg.poll
+  if (p) {
+    const closes = p.closes ? field(p.closes) : ''
+    const options = p.options ? field(p.options, POLL_OPTIONS_MAX) : ''
+    const tally = p.tally ? field(p.tally, POLL_OPTIONS_MAX) : ''
+    if (msg.kind === 'request') parts.push(['enquete', closes && `fecha ${closes}`, options && `opções: ${options}`].filter(Boolean).join(' · '))
+    else parts.push(`enquete ${field(p.poll)}${tally ? ` · resultado: ${tally}` : ''}`)
+  }
   return `${HEADER_TAG} ${parts.join(' · ')}]`
 }
 

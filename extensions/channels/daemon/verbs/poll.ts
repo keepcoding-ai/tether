@@ -1,7 +1,7 @@
 // `channels poll`: I ask every member (or the ones I name) for an answer by a deadline, instead of asking in a message. The
 // tether writes the poll from the arguments (type, options, who is called, the absolute deadline) and closes it by itself when
-// everyone called voted or the deadline passed. In this version nobody is told of it: `channels read` shows it.
-import { parsePollTimeout, POLL_TIMEOUT_DEFAULT_MS } from '../../rules.ts'
+// everyone called voted or the deadline passed. Each agent called gets the request once; the result reaches me when it closes.
+import { MISSING_TEXT, parsePollTimeout, POLL_TIMEOUT_DEFAULT_MS } from '../../rules.ts'
 import { CANAL_PROP, clockText, ok, optStrings, refOf, refuse, resolveChannel, settle, wantString, whoByRef, type VerbDef } from './common.ts'
 
 export const pollVerb: VerbDef = {
@@ -41,10 +41,11 @@ export const pollVerb: VerbDef = {
     const p = done.poll
     const ref = `${ch.name}#${p.seq}`
     const opts = p.options.map((o, i) => `${i + 1} ${o}`).join(', ')
-    const text = `Enquete ${ref} aberta (opções: ${opts}). Chamou ${p.to.map((t) => t.name).join(', ')}. Fecha às ${clockText(p.closesAt, Date.parse(p.closesAt) - timeoutMs)}. Ninguém é avisado nesta versão; veja votos e resultado com channels_read.`
+    const deaf = done.deaf.length ? ` (${done.deaf.map((d) => `${d.name}: ${MISSING_TEXT[d.why]}`).join('; ')}; não ouve agora, recebe ao voltar se ainda estiver aberta)` : ''
+    const text = `Enquete ${ref} aberta (opções: ${opts}). Chamou ${p.to.map((t) => t.name).join(', ')}${deaf}. Fecha às ${clockText(p.closesAt, Date.parse(p.closesAt) - timeoutMs)}. O resultado chega a você quando fechar; não fique esperando.`
     return ok(text, {
       channel: refOf(ch), ref, seq: p.seq, type: p.type, question: p.question, options: p.options,
-      to: p.to.map((t) => ({ id: t.id, name: t.name })), closesAt: p.closesAt,
+      to: p.to.map((t) => ({ id: t.id, name: t.name })), closesAt: p.closesAt, deaf: done.deaf.map((d) => ({ id: d.id, name: d.name, why: d.why })),
     })
   },
 }

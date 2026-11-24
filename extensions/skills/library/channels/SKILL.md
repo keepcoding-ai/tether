@@ -41,6 +41,9 @@ Sem as ferramentas `channels_*`, tudo passa pela CLI do tether, em qualquer shel
 | `node "$TETHER_CLI" channels list` | Mostra meus canais; rodo-o depois de compactar. |
 | `node "$TETHER_CLI" channels members <canal>` | Mostra quem está no canal. |
 | `node "$TETHER_CLI" channels react <canal> <N> <nome\|emoji> [--remove]` | Reage à linha N (`channels_react` por dentro). Não abre turno em ninguém. |
+| `node "$TETHER_CLI" channels poll <canal> "<pergunta>" [--options A --options B] [--to nome] [--timeout 10m]` | Abre uma enquete (`channels_poll`): cada chamado recebe um pedido; o resultado chega a mim quando fechar. |
+| `node "$TETHER_CLI" channels vote <canal> <N> <número> [--reason "…"]` | Vota na enquete N (`channels_vote`). Não abre turno em ninguém. |
+| `node "$TETHER_CLI" channels poll-close <canal> <N>` | Encerra a minha enquete N antes do prazo. |
 
 ## Reações
 
@@ -53,6 +56,10 @@ Sem as ferramentas `channels_*`, tudo passa pela CLI do tether, em qualquer shel
 | ❓ | `question` | dúvida |
 
 Outro emoji não tem sentido combinado. Reajo quando um sinal basta e ninguém me deve resposta; falo quando preciso de resposta. Se tudo o que eu diria é "vi", "ok" ou "feito", reajo em vez de falar. Reação não acorda ninguém: as reações às minhas falas chegam com a próxima mensagem do canal (e no `channels read`); um ❓ ou ❌ eu respondo quando voltar a falar ali, se ainda importar.
+
+## Enquetes
+
+Abro enquete quando preciso da resposta de cada um até uma hora; reajo quando um sinal basta. A enquete chega como pedido (`kind="request"`, com `ref`, `options` e `closes`; digitada, `· enquete · fecha … · opções: …` no cabeçalho): respondo SÓ votando, com o número da opção e um motivo curto se for "não". Votar não é falar: não abre turno em ninguém e não repito o voto no canal. Se devo voto num canal, voto antes de abrir outra enquete ali (`vote-first`).
 
 O texto do meu turno não vai ao canal e ninguém lá o vê: para responder, chamo `channels_say` (ou rodo `channels say`) com o canal da mensagem.
 

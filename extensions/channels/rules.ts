@@ -154,8 +154,11 @@ export interface PollVote { poll: number; option: number; reason?: string }
 
 /** Why a poll closed: every one still called voted, the deadline passed, its author (or the person) closed it, the channel closed. */
 export type PollClosedBy = 'all-voted' | 'timeout' | 'author' | 'channel-closed'
-/** Why one called has no vote: it did not answer, its process does not run, or it is no longer in the channel. */
-export type PollMissingWhy = 'no-answer' | 'stopped' | 'left'
+/**
+ * Why one called has no vote: it did not answer, its process does not run, its desk sleeps, the person has its pane (the
+ * request waited in the queue), or it is no longer in the channel.
+ */
+export type PollMissingWhy = 'no-answer' | 'stopped' | 'asleep' | 'with-user' | 'left'
 
 export interface PollTally { option: number; text: string; voters: Array<PollPerson & { reason?: string }> }
 
@@ -178,9 +181,24 @@ export interface OpenPoll extends PollSpec {
   votes: Record<Who, { option: number; reason?: string; at: string; name: string }>
   /** How many times each one changed its vote. */
   changes?: Record<Who, number>
+  /**
+   * Each agent called that was handed the request, and the core's receipt of it: asked once, ever (a restart or its process
+   * coming back never asks again), and what still waits in the queue is cancelled when the poll closes.
+   */
+  asked?: Record<Who, string>
 }
 
-/** A line of a poll (open, vote, close): never a line of the conversation, never delivered by its own in this version. */
+/** Options as the request carries them: `1 ok | 2 não ok`. */
+export function numberedOptions(options: readonly string[], sep = ' | '): string {
+  return options.map((o, i) => `${i + 1} ${o}`).join(sep)
+}
+
+/** Whether `who` is still owed the request of `p`: called, an agent, no vote, never handed it. */
+export function owesRequest(ch: Channel, p: OpenPoll, who: Who): boolean {
+  return who !== USER && isCalled(ch, p, who) && !Object.hasOwn(p.votes, who) && !Object.hasOwn(p.asked ?? {}, who)
+}
+
+/** A line of a poll (open, vote, close): never a line of the conversation; only the request and the result are delivered. */
 export function isPollLine(l: Line): boolean {
   return l.kind === 'poll' || l.kind === 'vote' || (l.kind === 'notice' && l.event?.type === 'poll-close')
 }
@@ -301,7 +319,9 @@ export function votersText(tally: readonly PollTally[]): string {
   return tally.filter((t) => t.voters.length).map((t) => `${t.text} ${t.voters.length}: ${t.voters.map((v) => `${v.name}${v.reason ? ` (${JSON.stringify(v.reason)})` : ''}`).join(', ')}`).join(' · ')
 }
 
-export const MISSING_TEXT: Record<PollMissingWhy, string> = { 'no-answer': 'não respondeu', stopped: 'parado', left: 'saiu do canal' }
+export const MISSING_TEXT: Record<PollMissingWhy, string> = {
+  'no-answer': 'não respondeu', stopped: 'parado', asleep: 'mesa dormindo', 'with-user': 'com a pessoa', left: 'saiu do canal',
+}
 
 /** `sem resposta 2: bancada (parado), nic (não respondeu)`, '' when nobody is missing. */
 export function missingText(missing: PollResult['missing']): string {

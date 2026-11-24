@@ -94,6 +94,8 @@ export interface ChannelStore {
   openPoll(id: ChannelId, poll: OpenPoll): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
   /** The vote of `who` on the open poll `seq` (its line already written): it replaces the previous one; `change` counts a change. */
   setVote(id: ChannelId, seq: number, who: Who, vote: OpenPoll['votes'][string], change: boolean): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
+  /** The request of the open poll `seq` was handed to these agents (receipt ids): merged into its `asked`, one index write. */
+  setAsked(id: ChannelId, seq: number, asked: Readonly<Record<Who, string>>): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
   /** The open poll `seq` closed, its result at the line `line`: it leaves the open polls and joins the last closed ones. */
   closePoll(id: ChannelId, seq: number, line: number): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
 
@@ -493,6 +495,16 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
       if (!poll) return failure('unknown-poll')
       poll.votes[who] = vote
       if (change) poll.changes = { ...(poll.changes ?? {}), [who]: (poll.changes?.[who] ?? 0) + 1 }
+      await persist()
+      return { ok: true, channel: ch, poll }
+    },
+
+    async setAsked(id, seq, asked) {
+      const ch = need(id)
+      if (!ch) return failure('unknown-channel')
+      const poll = ch.polls?.[String(seq)]
+      if (!poll) return failure('unknown-poll')
+      poll.asked = { ...(poll.asked ?? {}), ...asked }
       await persist()
       return { ok: true, channel: ch, poll }
     },

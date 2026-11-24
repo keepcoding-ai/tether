@@ -2,7 +2,8 @@
 // fan-out's `poll`, `vote` and `pollClose` over the real store (lines of their own, the index, the refusals, the limits,
 // `vote-first`, the muted voting, the channel closing), the ONE clock of the whole tether (a fake one here: never more than one
 // timer, whatever the number of polls), a deadline passed while the tether was down, and the `poll`, `vote`, `poll-close` and
-// `read` verbs. THE IRON RULE OF E1: nothing of a poll reaches a delivery queue, a notice, a `line` event or a member's state.
+// `read` verbs. THE IRON RULE OF E1, as E2 left it: a vote reaches no delivery, notice, `line` event or member's state; only the
+// requests (one per agent called) and the author's result are delivered (ext.channels-poll-delivery.test.ts tests them).
 import assert from 'node:assert/strict'
 import { after, before, describe, test } from 'node:test'
 import type { DeliveryMessage, VerbCaller } from '../../src/daemon/ext-api.ts'
@@ -179,7 +180,9 @@ describe('polls: the fan-out, the clock and the verbs over the real store', () =
     assert.equal(JSON.stringify((await ch.store.history(obra)).slice(0, -1)), earlier, 'no earlier line was touched')
     assert.equal(ch.store.get(obra)!.polls?.[String(seq)]?.seq, seq, 'the index has it open')
     await flush()
-    assert.deepEqual(iron(), before, 'no delivery, no line event')
+    // E2: one request per agent called, nothing else (E1's iron rule held until the requests existed).
+    assert.deepEqual(iron(), { ...before, delivered: before.delivered + 3 }, 'three requests, no line event')
+    assert.deepEqual(delivered.slice(-3).map((m) => m.kind), ['request', 'request', 'request'])
     assert.equal(queued.length, 0)
     assert.equal(events.at(-1)!.name, 'poll')
     assert.equal(ch.store.get(obra)!.seenByUser, 0)
@@ -237,7 +240,9 @@ describe('polls: the fan-out, the clock and the verbs over the real store', () =
     assert.equal(codeOf(await run(voteVerb, 'B', { canal: 'obra', poll: seq, vote: 2 })), 'poll-closed')
     assert.equal(codeOf(await run(pollCloseVerb, 'A', { canal: 'obra', poll: seq })), 'poll-closed', 'closes once')
     await flush()
-    assert.deepEqual(iron(), before, 'no vote and no close was delivered nor a line event')
+    assert.deepEqual(iron(), { ...before, delivered: before.delivered + 1 }, 'no vote was delivered nor a line event; the close is the author\'s result alone')
+    assert.equal(delivered.at(-1)!.kind, 'notice')
+    assert.equal(delivered.at(-1)!.poll?.closedBy, 'all-voted')
     assert.equal(queued.length, 0)
     assert.deepEqual(ch.pollClock(), { armed: false }, 'no open poll: the clock is disarmed')
   })
@@ -289,7 +294,7 @@ describe('polls: the fan-out, the clock and the verbs over the real store', () =
     assert.equal(closeLine.result?.away, undefined)
     assert.deepEqual(closeLine.result?.missing, [{ id: 'B', name: 'bravo', why: 'no-answer' }, { id: 'S', name: 'parado', why: 'stopped' }])
     assert.equal(closeLine.body, `Enquete sala#${seq} fechou: o prazo venceu.\nquarta 1: alfa · sem resposta 2: bravo (não respondeu), parado (parado)`)
-    assert.deepEqual(iron(), before, 'the close is delivered to no one')
+    assert.deepEqual(iron(), { ...before, delivered: before.delivered + 1 }, 'the close is delivered to its author alone')
     assert.equal(timers.size, 0)
     const read = await run(readVerb, 'Z', { canal: 'sala' })
     assert.match(read.text, /\[enquete · fechada · o prazo venceu\] Revisão terça ou quarta\?  \[quarta 1: alfa · sem resposta 2: bravo \(não respondeu\), parado \(parado\)\]/)
