@@ -105,11 +105,19 @@ export function testHomeOfDaemon(p: Owned): string | undefined {
   if (!m) return undefined
   const home = resolve(m[1]!)
   const same = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
-  return basename(home).startsWith('tether-') && same(dirname(home), resolve(tmpdir())) ? home : undefined
+  return basename(home).startsWith('tether-') && testTmpBases().some((b) => same(dirname(home), b)) ? home : undefined
 }
 
 /**
- * Kills the tether-ptyd of a test home (never of a home outside the OS temp dir) and its tree: the host runs as
+ * The only directories a test home may live directly in: the OS temp dir and the checkout's own scratch dir
+ * (`<repo>/../../.tmp`, the `tmpBase` the app E2Es use when it exists). Nothing else is ever a test home.
+ */
+export function testTmpBases(): string[] {
+  return [resolve(tmpdir()), resolve(import.meta.dirname, '..', '..', '..', '.tmp')]
+}
+
+/**
+ * Kills the tether-ptyd of a test home (never of a home outside the test temp bases) and its tree: the host runs as
  * `<home>/bin/tether-ptyd.exe`, so its command line names the home, which is the identity checked.
  */
 export async function killTestPtyd(home: string): Promise<Owned[]> {

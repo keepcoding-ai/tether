@@ -25,7 +25,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { gitBashPath } from '../../src/core/profile.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import type { Profile, SlotState } from '../../src/daemon/protocol.ts'
-import { claim, killOwned, type Owned } from '../kill.ts'
+import { claim, killOwned, killTestPtyd, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
 
@@ -409,6 +409,7 @@ ${readFileSync(join(home, 'slots', f), 'utf8')}`) } catch { /* no slots */ }
       } catch { /* not answering */ }
       await waitUntil(() => !pidAlive(d.pid), 10_000, 'tetherd to exit').catch(async () => { await killOwned(d, { tree: true }) })
     }
+    await killTestPtyd(home) // the pane host outlives its daemon by design
     const deadline = Date.now() + 15_000
     let left = await aliveProcs(trees.flat())
     while (left.length && Date.now() < deadline) { await sleep(500); left = await aliveProcs(trees.flat()) }

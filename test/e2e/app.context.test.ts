@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron, type ElectronApplication } from 'playwright-core'
 import { DaemonClient } from '../../src/daemon/client.ts'
-import { claim, killOwned, type Owned } from '../kill.ts'
+import { claim, killOwned, killTestPtyd, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
 import { cleanEnv, daemonMain, electronPath, mainPath, pidAlive, root, sleep } from './browser-kit.ts'
 import { aliveProcs, CLAUDE_DIALECT, processTree, type Proc } from './harness.ts'
@@ -228,6 +228,7 @@ test('context pad: statusline header, /context measure, plain terminal, no polli
       while (pidAlive(d.pid) && Date.now() < end) await sleep(300)
       if (pidAlive(d.pid)) await killOwned(d, { tree: true })
     }
+    await killTestPtyd(home) // the pane host outlives its daemon by design
     let left = await aliveProcs(trees.flat())
     for (let i = 0; i < 20 && left.length; i++) { await sleep(500); left = await aliveProcs(trees.flat()) }
     for (const p of left) await killOwned(p, { tree: true })
