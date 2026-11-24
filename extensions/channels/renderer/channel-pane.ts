@@ -74,6 +74,10 @@ export interface PaneSnapshot {
    * `more`: the "⋯" is there; `toEnd`: "Ir para o fim" is in the bar (not in the narrow one).
    */
   actions: { primary: 'join' | 'reopen' | 'none'; labeled: boolean; more: boolean; toEnd: boolean }
+  /** Whether nobody is in the (open) channel: the empty state shows, the column and the "Membros" button are away, the box is off. */
+  empty: boolean
+  /** What is drawn of the members: the column, and the "Membros" button of the bar (both away while the channel is empty). */
+  column: { shown: boolean; button: boolean }
 }
 
 export interface ChannelPanes {
@@ -248,6 +252,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         this.syncTitle()
         this.paintHead()
         this.paintMembers()
+        this.paintSide()
+        this.paintBar()
         this.paintMuteBar()
         this.paintFoot()
         if (this.noMembers() !== this.drewNoMembers) this.paintMsgs()
@@ -355,7 +361,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       const narrow = this.element.clientWidth > 0 && this.element.clientWidth < NARROW_PX
       this.element.classList.toggle('narrow', narrow)
       this.paintBar()
-      if (!this.membersTouched && this.element.clientWidth > 0 && this.membersOpen === narrow) { this.membersOpen = !narrow; this.paintSide() }
+      if (!this.membersTouched && this.element.clientWidth > 0 && this.membersOpen === narrow) this.membersOpen = !narrow
+      this.paintSide()
       const vis = this.visible()
       const shown = vis && !this.wasVisible
       this.wasVisible = vis
@@ -481,10 +488,14 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       this.titleBox.append(glyph(h.closed ? 'lock' : 'chats-circle'), el('span', 'ch-name-title', h.title), sub)
     }
 
+    /** The column is drawn when the person has it open and somebody is in the channel (a lone "Você" says nothing). */
+    private sideShown(): boolean { return this.membersOpen && !this.noMembers() }
+
     private paintSide(): void {
-      this.side.hidden = !this.membersOpen
-      this.element.classList.toggle('members-off', !this.membersOpen)
-      this.membersBtn?.classList.toggle('on', this.membersOpen)
+      const shown = this.sideShown()
+      this.side.hidden = !shown
+      this.element.classList.toggle('members-off', !shown)
+      if (this.membersBtn) { this.membersBtn.hidden = this.noMembers(); this.membersBtn.classList.toggle('on', shown) }
     }
 
     /** "N novas para você" (the lines addressed to her, unseen) beats "N falas novas"; neither shows while reading the end. */
@@ -519,6 +530,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
       if (!this.answer) return
       this.composer.setMembers(this.answer.members.map(m => m.name))
+      this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }
 
@@ -586,10 +598,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       this.drewNoMembers = this.noMembers()
       for (const r of rows) m.append(this.rowEl(r))
       if (this.drewNoMembers) {
-        // Nobody is here: under the system lines, the way to bring someone in (it goes when a member comes).
+        // Nobody is here: under the system lines, the empty state and the way to bring someone in (it goes when a member comes).
         const box = el('div', 'ch-empty ch-nobody')
-        box.append(el('p', 't', PANE_TEXT.noMembers))
-        const join = this.actionBtn('ch-btn ch-join-empty', PANE_TEXT.joinMenu, 'user-plus', () => this.joinAgent())
+        const ill = el('span', 'ch-ill')
+        ill.append(glyph('chats-circle'))
+        box.append(ill, el('p', 't', PANE_TEXT.noMembers), el('p', 'help', PANE_TEXT.noMembersHelp))
+        const join = this.actionBtn('ch-btn primary ch-join-empty', PANE_TEXT.joinMenu, 'user-plus', () => this.joinAgent())
         join.append(PANE_TEXT.joinMenu)
         box.append(join)
         m.append(box)
@@ -723,6 +737,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         ...(this.composerSlot.contains(this.composer.element) ? { composer: this.composer.snapshot() } : {}),
         bar: this.newBar.hidden ? '' : (this.newBar.textContent ?? ''), barMe: this.newBar.classList.contains('me'), toMe: marks.of(this.channelId).toMe,
         actions: this.barState(),
+        empty: this.noMembers(),
+        column: { shown: !this.side.hidden, button: this.membersBtn !== undefined && !this.membersBtn.hidden },
       }
     }
     scrollTo(top: number): void { this.msgs.scrollTop = top; this.onScroll() }

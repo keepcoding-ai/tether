@@ -28,9 +28,15 @@ import { USER } from '../../extensions/channels/rules.ts'
 import { removeHome, tempHome, uniquePipe, waitUntil } from '../unit/daemon.helpers.ts'
 import { killElectron } from './electron.ts'
 
+type Snap = {
+  actions: { primary: string; labeled: boolean; more: boolean; toEnd: boolean }
+  empty: boolean
+  column: { shown: boolean; button: boolean }
+  composer?: { enabled: boolean; placeholder: string }
+}
 type Hooks = {
   panelIds(): string[]
-  ext: { channels: { run(id: string, arg?: unknown): void; view(id: string): { actions: { primary: string; labeled: boolean; more: boolean; toEnd: boolean } } | undefined } }
+  ext: { channels: { run(id: string, arg?: unknown): void; view(id: string): Snap | undefined } }
 }
 declare const window: { __tether: Hooks }
 
@@ -130,7 +136,17 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await run('channels.open', { channel: hz })
     await pane(hz).waitFor()
     await pane(hz).locator('.ch-nobody').waitFor()
-    assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Ninguém no canal ainda\./)
+    assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Ninguém aqui ainda\./)
+    assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Junte um agente para a conversa começar/)
+    // G2: no members, no column and no "Membros" button; the speaking box is off with its own words until someone hears.
+    const empty = (await view(hz))!
+    assert.equal(empty.empty, true)
+    assert.deepEqual(empty.column, { shown: false, button: false })
+    assert.equal(empty.composer?.enabled, false)
+    assert.equal(empty.composer?.placeholder, 'Escreva para o canal… ninguém ouve ainda')
+    assert.equal(await pane(hz).locator('.ch-composer-slot textarea').isDisabled(), true)
+    assert.equal(await pane(hz).locator('.ch-composer-slot .ch-send').isDisabled(), true)
+    assert.equal(await pane(hz).locator('.ch-bar button[aria-label="Membros"]').isVisible(), false)
     assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('aria-label'), 'Juntar agente…')
     assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('title'), 'Juntar agente…')
     // The empty state says the words once, in the body: the accent of the bar is only an icon here, and the column has no "+".
@@ -152,6 +168,11 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click()
     await waitUntil(() => a in members(hz), 10_000, 'a joined by the header button')
     await pane(hz).locator('.ch-nobody').waitFor({ state: 'detached' })
+    // A member came: the box is on again and the "Membros" button is back (the column itself follows the width).
+    await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.composer?.enabled === true, hz)
+    assert.equal((await view(hz))!.composer?.placeholder, 'Escreva para o canal…')
+    assert.equal(await pane(hz).locator('.ch-composer-slot textarea').isDisabled(), false)
+    assert.equal((await view(hz))!.column.button, true)
     // A narrow pane folds the members away: the person opens the column.
     if (!(await pane(hz).locator('.ch-members').isVisible())) await pane(hz).locator('.ch-bar button[aria-label="Membros"]').click()
     await pane(hz).locator(`.ch-mrow[data-member="${a}"]`).waitFor()
@@ -191,6 +212,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await ask('channels.remove').locator('button.choice[data-choice="remove"]').click()
     await waitUntil(() => !(a in members(hz)), 10_000, 'a removed')
     await pane(hz).locator('.ch-nobody').waitFor()
+    // Back to nobody: the box goes off again (the whole way back).
+    await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.composer?.enabled === false, hz)
 
     // The channel's tab menu has the gesture, and closing (from the menus hook).
     await page.locator('.ch-tab', { hasText: '#horizontes' }).first().click({ button: 'right' })
@@ -250,6 +273,24 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     assert.deepEqual((await view(hz))!.actions, { primary: 'join', labeled: false, more: true, toEnd: false })
     assert.equal(await pane(hz).locator('.ch-bar .ch-end').isVisible(), false)
     await pane(hz).screenshot({ path: join(SHOTS, 'g1-estreita.png') })
+
+    // ---- 7. the empty channel, wide and narrow (the pictures of G2) ----
+    console.log('step 7')
+    const vazio = await ch.create(USER, { name: 'vazio' })
+    assert.ok(vazio.ok)
+    const vz = vazio.channel.id
+    await run('channels.open', { channel: vz })
+    await pane(vz).locator('.ch-nobody').waitFor()
+    await resize(1900, 760)
+    await page.waitForFunction(id => (document.querySelector(`.ch-pane[data-channel="${id}"]`)?.clientWidth ?? 0) >= 560, vz)
+    const wide = (await view(vz))!
+    assert.deepEqual(wide.column, { shown: false, button: false })
+    assert.equal(wide.actions.labeled, false, 'the words live in the body once')
+    await pane(vz).screenshot({ path: join(SHOTS, 'g2-vazio-larga.png') })
+    await resize(1650, 760)
+    await page.waitForFunction(id => document.querySelector(`.ch-pane[data-channel="${id}"]`)?.classList.contains('narrow') === true, vz)
+    assert.deepEqual((await view(vz))!.column, { shown: false, button: false })
+    await pane(vz).screenshot({ path: join(SHOTS, 'g2-vazio-estreita.png') })
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})

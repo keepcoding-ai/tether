@@ -102,6 +102,16 @@
 .ch-mact { height: 22px; min-width: 22px; }
 .ch-mact svg.ph { width: 13px; height: 13px; }
 .ch-nobody { min-height: 0; padding-top: 16px; }
+.ch-ill { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--bg-3); color: var(--fg-dim); }
+.ch-ill svg.ph { width: 24px; height: 24px; }
+.ch-empty p.help { color: var(--fg-dim); }
+/* The filled button of the empty state (the one place the words "Juntar agente…" are written). */
+.ch-btn.primary { height: 30px; padding: 0 14px; margin-top: 8px; border: 0; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.ch-btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
+.ch-say[hidden], .ch-say-to[hidden] { display: none; }
+/* The box before anyone hears: dimmed, field and send button off. */
+.ch-say.off .ch-field { opacity: .6; cursor: not-allowed; }
+.ch-say.off .ch-say-hint { visibility: hidden; }
 .ch-l2 { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding-left: 23px; min-height: 20px; }
 .ch-state { font-size: 11px; color: var(--fg-dim); }
 .ch-state[data-tone="on"]::before, .ch-state[data-tone="wait"]::before, .ch-state[data-tone="off"]::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--fg-dim); }

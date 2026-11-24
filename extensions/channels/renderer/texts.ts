@@ -218,7 +218,9 @@ export const PANE_TEXT = {
   more: 'Mais',
   members: 'Membros',
   toEnd: 'Ir para o fim',
-  noMembers: 'Ninguém no canal ainda.',
+  /** The empty channel: the title, the explanation and (below it) the button "Juntar agente…". */
+  noMembers: 'Ninguém aqui ainda.',
+  noMembersHelp: 'Junte um agente para a conversa começar. Você lê tudo e pode falar a qualquer momento.',
   mute: 'Calar',
   unmute: 'Devolver a voz',
   remove: 'Tirar do canal',
