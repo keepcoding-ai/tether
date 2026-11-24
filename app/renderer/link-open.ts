@@ -11,7 +11,14 @@ export const isModifierDown = (ev: MouseEvent | KeyboardEvent): boolean => isFol
 export interface LinkOrigin {
   slotId?: string
   baseDir?: string
+  /** Open a file or a note beside the reference pane instead of in it ("Abrir ao lado"). */
+  side?: boolean
+  /** A link to a pane peeks at it (Alt+click, "Espiar") instead of going to its tab. */
+  peek?: boolean
 }
+
+/** Whether the peek modifier is down: Alt (Option on macOS), alone (Ctrl or Cmd with it is the follow gesture). */
+export const isPeekModifier = (ev: MouseEvent | KeyboardEvent): boolean => ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey
 
 type LinkHandler = (target: LinkTarget, origin: LinkOrigin) => void
 
