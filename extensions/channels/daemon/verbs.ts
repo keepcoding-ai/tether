@@ -20,6 +20,9 @@ import { leaveVerb } from './verbs/leave.ts'
 import { listVerb } from './verbs/list.ts'
 import { membersVerb } from './verbs/members.ts'
 import { muteVerb } from './verbs/mute.ts'
+import { pollCloseVerb } from './verbs/poll-close.ts'
+import { pollVerb } from './verbs/poll.ts'
+import { voteVerb } from './verbs/vote.ts'
 import { reactVerb } from './verbs/react.ts'
 import { readVerb } from './verbs/read.ts'
 import { removeVerb } from './verbs/remove.ts'
@@ -27,10 +30,10 @@ import { reopenVerb } from './verbs/reopen.ts'
 import { sayVerb } from './verbs/say.ts'
 import { unmuteVerb } from './verbs/unmute.ts'
 
-/** The verbs: those of the contract's table 3.1, then `reopen` (C7). */
+/** The verbs: those of the contract's table 3.1, then `reopen` (C7), `react` and the poll's three. */
 export const CHANNEL_VERBS: readonly VerbDef[] = [
   listVerb, createVerb, membersVerb, readVerb, closeVerb, reopenVerb,
-  joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb, reactVerb,
+  joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb, reactVerb, pollVerb, voteVerb, pollCloseVerb,
 ]
 
 const TOOLS = ['say', 'list', 'read'].map((v) => `\`${claudeToolName(v)}\``).join(', ')

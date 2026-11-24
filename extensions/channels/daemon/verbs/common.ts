@@ -6,7 +6,7 @@
 import { slotIsLive, slotTitle } from '../../../../app/shared/agent-info.ts'
 import type { VerbCaller, VerbResult } from '../../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../../src/daemon/protocol.ts'
-import { ownerOf, USER, type AgentId, type Channel } from '../../rules.ts'
+import { isMember, ownerOf, USER, type AgentId, type Channel, type Who } from '../../rules.ts'
 import type { Channels, ChannelsApi, Refusal } from '../fanout.ts'
 import type { TetherDaemon } from '../../../../src/daemon/ext-api.ts'
 
@@ -166,12 +166,58 @@ const REFUSALS: Record<Refusal, string> = {
   'bad-reaction': 'reação é um emoji só ou um destes nomes: seen, agree, done, disagree, question',
   limit: 'a fala já tem reações demais (3 por membro, 12 diferentes no total)',
   'slow-down': 'reações demais em pouco tempo; espere um minuto',
+  'unknown-poll': 'não há enquete com esse número no canal',
+  'too-long': 'texto longo demais (pergunta até 300 caracteres, opção até 60, motivo até 140)',
+  'vote-first': 'você deve voto numa enquete aberta deste canal: vote antes de abrir outra',
+  'nobody-called': 'a enquete não chamaria ninguém (quem abre não vota)',
+  'poll-closed': 'a enquete já fechou',
+  'not-called': 'a enquete não chama você',
+  'bad-option': 'opção inválida: use o número da opção ou o texto dela',
+  'not-author': 'só quem abriu a enquete (ou você, a pessoa) a encerra',
 }
 
-/** The fan-out's answer as the verb's: the success, or the refusal thrown with the verb's error code. */
-export function settle<T extends { ok: true }>(r: T | { ok: false; error: Refusal }): T {
-  if (!r.ok) refuse(r.error, REFUSALS[r.error] ?? r.error)
+/** The fan-out's answer as the verb's: the success, or the refusal thrown with the verb's error code (`messages` overrides the text). */
+export function settle<T extends { ok: true }>(r: T | { ok: false; error: Refusal }, messages?: Partial<Record<Refusal, string>>): T {
+  if (!r.ok) refuse(r.error, messages?.[r.error] ?? REFUSALS[r.error] ?? r.error)
   return r
+}
+
+/** `10:42 (em 10 min)`: a deadline in local hours and minutes and how far it is, so the reader needs no time zone. */
+export function clockText(iso: string, now = Date.now()): string {
+  const at = new Date(iso)
+  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const min = Math.max(0, Math.round((at.getTime() - now) / 60_000))
+  const far = min < 120 ? `${min} min` : `${Math.round(min / 60)} h`
+  return `${hhmm} (em ${far})`
+}
+
+/** `10:42`: a time in local hours and minutes. */
+export function hhmm(iso: string): string {
+  const at = new Date(iso)
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
+/** Lower case, no accents: how a segment of a name is compared with what the agent wrote. */
+const fold = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/**
+ * Who `ref` names in the channel: the person (`usuário`, or the moderator's name), or a member by id, whole name, or one segment
+ * of the name split on " · " (a name like `claude · bancada` is answered to as `bancada`) when a single member has it.
+ * `ambiguous` when several do; `unknown-member`, with the valid names in `members`, when nothing matches.
+ */
+export function whoByRef(deps: VerbDeps, ch: Channel, ref: string): Who {
+  const moderator = deps.channels.nameOf(USER)
+  if (ref === moderator || ref.toLowerCase() === 'usuário' || ref.toLowerCase() === 'usuario') return USER
+  if (isMember(ch, ref)) return ref
+  const hits = Object.keys(ch.members).filter((id) => deps.channels.nameOf(id) === ref)
+  if (hits.length > 1) refuse('ambiguous', `mais de um membro se chama ${JSON.stringify(ref)}`, { options: hits.map((id) => ({ id, name: ref })) })
+  if (hits.length === 1) return hits[0]!
+  const want = fold(ref)
+  const segs = want === '' ? [] : Object.keys(ch.members).filter((id) => deps.channels.nameOf(id).split(' · ').some((seg) => fold(seg) === want))
+  if (segs.length > 1) refuse('ambiguous', `mais de um membro tem ${JSON.stringify(ref)} no nome`, { options: segs.map((id) => ({ id, name: deps.channels.nameOf(id) })) })
+  if (segs.length === 1) return segs[0]!
+  const members = Object.keys(ch.members).map((id) => deps.channels.nameOf(id))
+  refuse('unknown-member', `${JSON.stringify(ref)} não é membro do canal nem a pessoa; nomes válidos: ${members.join(', ')}`, { members })
 }
 
 /** The channel as the results name it. */

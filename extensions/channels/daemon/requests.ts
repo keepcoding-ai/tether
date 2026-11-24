@@ -9,7 +9,7 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
+import { isPollLine, personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { PAGE } from './store.ts'
 
@@ -138,7 +138,8 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const limit = Math.min(Math.max(int(a, 'limit') ?? PAGE, 1), PAGE)
       const page: Line[] = await c.store.history(ch.id, before, limit)
       // Reaction lines are not conversation: the pane gets the messages and, apart, the sum of the reactions of each of them.
-      const lines = page.filter((l) => l.kind !== 'reaction')
+      // The lines of a poll (open, vote, close) neither: the pane does not draw polls yet.
+      const lines = page.filter((l) => l.kind !== 'reaction' && !isPollLine(l))
       return { channel: summaryOf(ch), lines, reactions: await reactionsOf(c, ch.id, page, lines), more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
     }],
 

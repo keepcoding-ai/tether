@@ -56,6 +56,13 @@ export interface Channel {
   removed?: AgentId[]
   /** The last `seq` the person saw (the channel's pane visible): what she has not read is counted from here. */
   seenByUser: number
+  /**
+   * The open polls by their seq (a JSON key), with the current vote of each one called. At most POLLS_OPEN_PER_CHANNEL, so
+   * the votes kept are at most that many times the members. A closed poll leaves this map; the record keeps every line.
+   */
+  polls?: Record<string, OpenPoll>
+  /** The last POLLS_CLOSED_KEPT polls closed and the seq of each one's result line (read finds a result without a scan). */
+  pollsClosed?: Array<{ poll: number; line: number }>
 }
 
 export interface Member {
@@ -73,15 +80,19 @@ export interface Member {
 /** A role in a channel. The envelope carries 'member' for an owner who speaks (deliveryRoleOf). */
 export type ChannelRole = 'owner' | 'member' | 'moderator'
 
-export type LineEventType = 'create' | 'join' | 'leave' | 'remove' | 'mute' | 'unmute' | 'close' | 'reopen' | 'owner-ended' | 'owner-changed'
+export type LineEventType = 'create' | 'join' | 'leave' | 'remove' | 'mute' | 'unmute' | 'close' | 'reopen' | 'owner-ended' | 'owner-changed' | 'poll-close'
 
 /** One line of a channel's record (<home>/channels/<channelId>/NNNNNN.jsonl, 500 lines per file). */
 export interface Line {
   /** 1, 2, 3… per channel; the envelope's `ref` is `<name>#<seq>`. */
   seq: number
   at: string
-  /** A `reaction` is a light signal on a message (`react`): it takes a seq, is never delivered and opens no turn in anyone. */
-  kind: 'message' | 'notice' | 'reaction'
+  /**
+   * A `reaction` is a light signal on a message (`react`): it takes a seq, is never delivered and opens no turn in anyone. A
+   * `poll` opens a poll (`poll` says what), a `vote` is one called's vote on it (the latest one counts); the poll's close is a
+   * `notice` with `event.type: 'poll-close'` and `result`. None of the three is a line of the conversation (isPollLine).
+   */
+  kind: 'message' | 'notice' | 'reaction' | 'poll' | 'vote'
   /** Who spoke, with the role IN THE CHANNEL. */
   from: { id: AgentId | 'user' | 'tether'; name: string; role: ChannelRole | 'system' }
   body: string
@@ -92,6 +103,245 @@ export interface Line {
   event?: { type: LineEventType; who?: AgentId; by?: Who }
   /** Only on a reaction: the message it is on and the gesture (put or take away). `body` is ''. */
   react?: { seq: number; emoji: string; op: 'add' | 'remove' }
+  /** Only on a poll: written by the tether from the verb's arguments, never from a body. `body` is ''. */
+  poll?: PollSpec
+  /** Only on a vote: the poll's seq and the option's number (1-based). `body` is ''. */
+  vote?: PollVote
+  /** Only on a poll's close notice (`event.type: 'poll-close'`): the result. */
+  result?: PollResult
+}
+
+// ---- polls --------------------------------------------------------------------------------------
+
+/** `ok` (the default: 1 ok, 2 não ok) or a single choice among 2 to 6 options the author writes. */
+export type PollType = 'ok' | 'choice'
+/** The options of an `ok` poll, in order. */
+export const OK_OPTIONS: readonly string[] = ['ok', 'não ok']
+export const POLL_QUESTION_MAX = 300
+export const POLL_OPTIONS_MIN = 2
+export const POLL_OPTIONS_MAX = 6
+export const POLL_OPTION_MAX = 60
+/** A vote's reason: optional, one line. */
+export const POLL_REASON_MAX = 140
+export const POLL_TIMEOUT_MIN_MS = 60_000
+export const POLL_TIMEOUT_MAX_MS = 24 * 3_600_000
+export const POLL_TIMEOUT_DEFAULT_MS = 10 * 60_000
+/** Open polls one channel may have at once (`limit`). */
+export const POLLS_OPEN_PER_CHANNEL = 3
+/** Open polls one author may have in one channel at once (`limit`). */
+export const POLLS_OPEN_PER_AUTHOR = 1
+/** Polls one member may open per hour in one channel (`slow-down`). */
+export const POLL_OPENS_PER_HOUR = 5
+/** Times one called may change its vote on one poll (`slow-down`); the first vote is not a change. */
+export const POLL_VOTE_CHANGES = 5
+/** Closed polls whose result line the index points at. */
+export const POLLS_CLOSED_KEPT = 50
+
+export interface PollPerson { id: Who; name: string }
+
+/** What a poll line carries. */
+export interface PollSpec {
+  type: PollType
+  question: string
+  options: string[]
+  /** Who is called to vote: the agent members but the author by default; the person only when named. */
+  to: PollPerson[]
+  /** The deadline, an absolute time (ISO): a restart never resets it. */
+  closesAt: string
+}
+
+export interface PollVote { poll: number; option: number; reason?: string }
+
+/** Why a poll closed: every one still called voted, the deadline passed, its author (or the person) closed it, the channel closed. */
+export type PollClosedBy = 'all-voted' | 'timeout' | 'author' | 'channel-closed'
+/** Why one called has no vote: it did not answer, its process does not run, or it is no longer in the channel. */
+export type PollMissingWhy = 'no-answer' | 'stopped' | 'left'
+
+export interface PollTally { option: number; text: string; voters: Array<PollPerson & { reason?: string }> }
+
+export interface PollResult {
+  poll: number
+  by: PollClosedBy
+  /** Who closed it, when `by` is 'author' (the author or the person). */
+  closer?: PollPerson
+  /** The deadline passed while the tether was down: it closed as soon as the tether came back. */
+  away?: true
+  tally: PollTally[]
+  missing: Array<PollPerson & { why: PollMissingWhy }>
+}
+
+/** An open poll as the index keeps it. */
+export interface OpenPoll extends PollSpec {
+  seq: number
+  author: PollPerson
+  /** The current vote of each one who voted (the latest counts). */
+  votes: Record<Who, { option: number; reason?: string; at: string; name: string }>
+  /** How many times each one changed its vote. */
+  changes?: Record<Who, number>
+}
+
+/** A line of a poll (open, vote, close): never a line of the conversation, never delivered by its own in this version. */
+export function isPollLine(l: Line): boolean {
+  return l.kind === 'poll' || l.kind === 'vote' || (l.kind === 'notice' && l.event?.type === 'poll-close')
+}
+
+/** The open polls of a channel, oldest first. */
+export function openPolls(ch: Channel): OpenPoll[] {
+  return Object.values(ch.polls ?? {}).sort((a, b) => a.seq - b.seq)
+}
+
+/** One line of text: every run of whitespace (a line break included) one space, trimmed. */
+export function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A deadline as written: minutes as a number, or a text with a unit (`90s`, `10m`, `10min`, `1h`, `2h30m`; a bare number is
+ * minutes). The time in ms, or undefined when unreadable or out of 1 min..24 h.
+ */
+export function parsePollTimeout(value: unknown): number | undefined {
+  let ms: number | undefined
+  if (typeof value === 'number') ms = value * 60_000
+  else if (typeof value === 'string') {
+    const t = value.trim().toLowerCase().replace(/\s+/g, '')
+    if (/^\d+(?:\.\d+)?$/.test(t)) ms = Number(t) * 60_000
+    else {
+      const m = /^(?:(\d+)h)?(?:(\d+)(?:m|min))?(?:(\d+)s)?$/.exec(t)
+      if (m && t !== '') ms = (Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)) * 1000
+    }
+  }
+  if (ms === undefined || !Number.isFinite(ms) || ms < POLL_TIMEOUT_MIN_MS || ms > POLL_TIMEOUT_MAX_MS) return undefined
+  return Math.round(ms)
+}
+
+/** Lower case, no accents, one line: how an option is compared with what a voter wrote. */
+const foldText = (s: string): string => oneLine(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+/**
+ * The options of a new poll: none given is the `ok` poll; given, 2 to 6 distinct ones of up to 60 characters (one line each).
+ * The refusal otherwise: `bad-request` (count, empty, repeated) or `too-long`.
+ */
+export function pollOptions(options?: readonly string[]): { type: PollType; options: string[] } | 'bad-request' | 'too-long' {
+  if (options === undefined || options.length === 0) return { type: 'ok', options: [...OK_OPTIONS] }
+  const clean = options.map((o) => (typeof o === 'string' ? oneLine(o) : ''))
+  if (clean.length < POLL_OPTIONS_MIN || clean.length > POLL_OPTIONS_MAX || clean.some((o) => o === '')) return 'bad-request'
+  if (clean.some((o) => o.length > POLL_OPTION_MAX)) return 'too-long'
+  if (new Set(clean.map(foldText)).size !== clean.length) return 'bad-request'
+  return { type: 'choice', options: clean }
+}
+
+/** The option a voter means (1-based): its number, or its text (any case, accents or not). Undefined: `bad-option`. */
+export function parseVoteOption(options: readonly string[], vote: unknown): number | undefined {
+  if (typeof vote === 'number') return Number.isInteger(vote) && vote >= 1 && vote <= options.length ? vote : undefined
+  if (typeof vote !== 'string') return undefined
+  const t = vote.trim()
+  if (/^\d+$/.test(t)) return parseVoteOption(options, Number(t))
+  const i = options.findIndex((o) => foldText(o) === foldText(t))
+  return i >= 0 ? i + 1 : undefined
+}
+
+/** Whether `p` calls `who`: named in `to`, and still in the channel (the person always is). The author is never called. */
+export function isCalled(ch: Channel, p: OpenPoll, who: Who): boolean {
+  if (who === p.author.id || !p.to.some((t) => t.id === who)) return false
+  return who === USER || isMember(ch, who)
+}
+
+/** Those `p` still calls: who left the channel no longer counts. */
+export function stillCalled(ch: Channel, p: OpenPoll): PollPerson[] {
+  return p.to.filter((t) => isCalled(ch, p, t.id))
+}
+
+/** Every one still called voted (a poll whose called all left counts as voted too). */
+export function allVoted(ch: Channel, p: OpenPoll): boolean {
+  return stillCalled(ch, p).every((t) => Object.hasOwn(p.votes, t.id))
+}
+
+/** The open polls of the channel that call `who` and do not have its vote yet. */
+export function owedPolls(ch: Channel, who: Who): OpenPoll[] {
+  return openPolls(ch).filter((p) => isCalled(ch, p, who) && !Object.hasOwn(p.votes, who))
+}
+
+/**
+ * Why `who` may not open a poll in the channel now, or undefined when it may. The person opens in every open channel; an agent
+ * speaks (a member not muted). Who owes a vote in the channel votes first. `opensLastHour`: how many `who` opened there in the
+ * last hour.
+ */
+export function pollOpenRefusal(who: Who, ch: Channel, opensLastHour: number): 'closed' | 'not-member' | 'muted' | 'vote-first' | 'limit' | 'slow-down' | undefined {
+  const say = sayRefusal(who, ch)
+  if (say) return say
+  if (owedPolls(ch, who).length) return 'vote-first'
+  const open = openPolls(ch)
+  if (open.length >= POLLS_OPEN_PER_CHANNEL || open.filter((p) => p.author.id === who).length >= POLLS_OPEN_PER_AUTHOR) return 'limit'
+  if (opensLastHour >= POLL_OPENS_PER_HOUR) return 'slow-down'
+  return undefined
+}
+
+/** Who may close a poll before its time: its author, or the person. */
+export function mayClosePoll(who: Who, p: OpenPoll): boolean {
+  return isModerator(who) || p.author.id === who
+}
+
+/** The votes of `p` per option, in the options' order; each voter with its reason. */
+export function pollTally(p: Pick<OpenPoll, 'options' | 'votes'>): PollTally[] {
+  const out: PollTally[] = p.options.map((text, i) => ({ option: i + 1, text, voters: [] }))
+  for (const [id, v] of Object.entries(p.votes)) {
+    const cell = out[v.option - 1]
+    if (cell) cell.voters.push({ id, name: v.name, ...(v.reason ? { reason: v.reason } : {}) })
+  }
+  return out
+}
+
+/** `ok 3 · não ok 1`: every option and its count, zeros too. */
+export function tallyText(tally: readonly PollTally[]): string {
+  return tally.map((t) => `${t.text} ${t.voters.length}`).join(' · ')
+}
+
+/** `ok 3: nic, Guga · não ok 1: bancada ("a ata…")`: the options with votes, each with its voters and their reasons. */
+export function votersText(tally: readonly PollTally[]): string {
+  return tally.filter((t) => t.voters.length).map((t) => `${t.text} ${t.voters.length}: ${t.voters.map((v) => `${v.name}${v.reason ? ` (${JSON.stringify(v.reason)})` : ''}`).join(', ')}`).join(' · ')
+}
+
+export const MISSING_TEXT: Record<PollMissingWhy, string> = { 'no-answer': 'não respondeu', stopped: 'parado', left: 'saiu do canal' }
+
+/** `sem resposta 2: bancada (parado), nic (não respondeu)`, '' when nobody is missing. */
+export function missingText(missing: PollResult['missing']): string {
+  return missing.length ? `sem resposta ${missing.length}: ${missing.map((m) => `${m.name} (${MISSING_TEXT[m.why]})`).join(', ')}` : ''
+}
+
+/** Why it closed, in the words of the record: `todos votaram`, `o prazo venceu`, `encerrada por Guga`, `o canal foi encerrado`. */
+export function closedByText(r: Pick<PollResult, 'by' | 'closer' | 'away'>): string {
+  switch (r.by) {
+    case 'all-voted': return 'todos votaram'
+    case 'timeout': return r.away ? 'o prazo venceu enquanto o tether estava fora' : 'o prazo venceu'
+    case 'author': return `encerrada por ${r.closer?.name ?? 'o autor'}`
+    case 'channel-closed': return 'o canal foi encerrado'
+  }
+}
+
+/**
+ * The result of `p` closing now. `whyOf` says why one called has no vote (the caller knows who runs); who left the channel is
+ * `left` without asking.
+ */
+export function pollResult(ch: Channel, p: OpenPoll, how: Pick<PollResult, 'by' | 'closer' | 'away'>, whyOf: (id: Who) => PollMissingWhy): PollResult {
+  const missing = p.to.filter((t) => t.id !== p.author.id && !Object.hasOwn(p.votes, t.id))
+    .map((t) => ({ id: t.id, name: t.name, why: isCalled(ch, p, t.id) ? whyOf(t.id) : 'left' as const }))
+  return { poll: p.seq, by: how.by, ...(how.closer ? { closer: how.closer } : {}), ...(how.away ? { away: true as const } : {}), tally: pollTally(p), missing }
+}
+
+/** The close notice's body: `Enquete obra#57 fechou: todos votaram.` and the voters line, and who has no vote. */
+export function pollResultText(room: string, r: PollResult): string {
+  const rest = [votersText(r.tally) || 'nenhum voto', missingText(r.missing)].filter(Boolean).join(' · ')
+  return `Enquete ${room}#${r.poll} fechou: ${closedByText(r)}.\n${rest}`
+}
+
+/** The nearest deadline among the open polls of every channel (ms since the epoch), undefined when none is open. */
+export function nextPollDeadline(channels: Iterable<Channel>): number | undefined {
+  let at: number | undefined
+  for (const ch of channels) for (const p of Object.values(ch.polls ?? {})) {
+    const t = Date.parse(p.closesAt)
+    if (Number.isFinite(t) && (at === undefined || t < at)) at = t
+  }
+  return at
 }
 
 // ---- reactions ----------------------------------------------------------------------------------

@@ -6,11 +6,14 @@
 //
 // Memory is bounded by the number of channels, never by the number of lines: the index (small), the reverse index agent ->
 // channels, one `{ seq, needsNewline }` per channel that was touched, and the tail (the last TAIL_LINES lines) of at most
-// TAIL_CHANNELS channels, the least recently used one leaving when a 17th arrives. No timer lives here.
+// TAIL_CHANNELS channels, the least recently used one leaving when a 17th arrives. No timer lives here. The index also keeps
+// each channel's open polls with their current votes (at most POLLS_OPEN_PER_CHANNEL x members) and where the last
+// POLLS_CLOSED_KEPT results are: the lines of a poll are in the record like any other, the index is what is open now.
 import { randomInt } from 'node:crypto'
 import type { DaemonIo } from '../../../src/daemon/ext-api.ts'
 import {
-  endsOwnership, isRoomName, type AgentId, type Channel, type ChannelId, type ChannelOwner, type Line, type Member, type Who, USER, deskChannelId,
+  endsOwnership, isRoomName, POLLS_CLOSED_KEPT, type AgentId, type Channel, type ChannelId, type ChannelOwner, type Line, type Member, type OpenPoll, type Who,
+  USER, deskChannelId,
 } from '../rules.ts'
 
 export const INDEX_VERSION = 1
@@ -23,7 +26,7 @@ export const TAIL_CHANNELS = 16
 /** The default page of `history` and `since`. */
 export const PAGE = 200
 
-export type StoreError = 'unknown-channel' | 'name-taken' | 'bad-name' | 'exists' | 'not-member'
+export type StoreError = 'unknown-channel' | 'name-taken' | 'bad-name' | 'exists' | 'not-member' | 'unknown-poll'
 export type Failure = { ok: false; error: StoreError }
 export type Done<T> = ({ ok: true } & T) | Failure
 
@@ -87,6 +90,12 @@ export interface ChannelStore {
   markReactionsSeen(id: ChannelId, agent: AgentId, seq: number): void
   /** Writes the index when `markSeen` or `markReactionsSeen` left it dirty. */
   flush(): Promise<void>
+  /** A poll opened (its line already written): it goes into the channel's open polls. */
+  openPoll(id: ChannelId, poll: OpenPoll): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
+  /** The vote of `who` on the open poll `seq` (its line already written): it replaces the previous one; `change` counts a change. */
+  setVote(id: ChannelId, seq: number, who: Who, vote: OpenPoll['votes'][string], change: boolean): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
+  /** The open poll `seq` closed, its result at the line `line`: it leaves the open polls and joins the last closed ones. */
+  closePoll(id: ChannelId, seq: number, line: number): Promise<Done<{ channel: Channel; poll: OpenPoll }>>
 
   /** Appends one line (the next `seq`), after it is on disk it is in the tail. */
   append(id: ChannelId, line: NewLine): Promise<Line>
@@ -467,6 +476,37 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
 
     async flush() {
       if (dirty) await persist()
+    },
+
+    async openPoll(id, poll) {
+      const ch = need(id)
+      if (!ch) return failure('unknown-channel')
+      ch.polls = { ...(ch.polls ?? {}), [String(poll.seq)]: poll }
+      await persist()
+      return { ok: true, channel: ch, poll }
+    },
+
+    async setVote(id, seq, who, vote, change) {
+      const ch = need(id)
+      if (!ch) return failure('unknown-channel')
+      const poll = ch.polls?.[String(seq)]
+      if (!poll) return failure('unknown-poll')
+      poll.votes[who] = vote
+      if (change) poll.changes = { ...(poll.changes ?? {}), [who]: (poll.changes?.[who] ?? 0) + 1 }
+      await persist()
+      return { ok: true, channel: ch, poll }
+    },
+
+    async closePoll(id, seq, line) {
+      const ch = need(id)
+      if (!ch) return failure('unknown-channel')
+      const poll = ch.polls?.[String(seq)]
+      if (!poll) return failure('unknown-poll')
+      delete ch.polls![String(seq)]
+      if (Object.keys(ch.polls!).length === 0) delete ch.polls
+      ch.pollsClosed = [...(ch.pollsClosed ?? []), { poll: seq, line }].slice(-POLLS_CLOSED_KEPT)
+      await persist()
+      return { ok: true, channel: ch, poll }
     },
 
     append(id, input) {
