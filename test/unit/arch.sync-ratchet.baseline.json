@@ -21,6 +21,10 @@
     "extensions/browser/doctor.ts": {
       "max": 5,
       "reason": "the browser extension's checks for `tether doctor` only"
+    },
+    "src/doctor-hands.ts": {
+      "max": 7,
+      "reason": "the hands extension's checks for `tether doctor` only; tetherd imports it statically through extensions/hands/daemon.ts but never runs it"
     }
   },
   "vendor": {},

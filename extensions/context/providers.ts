@@ -10,6 +10,7 @@ import { codexHome, CodexRolloutReader, findCodexRollout, readCodexInventory, ty
 import { slotEventsPath } from '../../src/core/paths.ts'
 import { parseEvents } from '../../src/core/store-model.ts'
 import { SoulEventsReader, type SoulContext } from '../../src/context/soul.ts'
+import { HandsEventsReader, type HandsContext } from '../../src/context/hands.ts'
 import type { LiveView, MeasuredView } from './ipc.ts'
 
 export interface ReaderLike {
@@ -206,6 +207,59 @@ export function soulLiveView(c: SoulContext): LiveView {
 }
 
 export function soulMeasured(c: SoulContext): MeasuredView {
+  return {
+    categories: c.categories.map(k => ({ name: k.isDeferred ? `${k.name} (adiado)` : k.name, tokens: k.isDeferred ? 0 : k.tokens, percent: undefined, approx: false })),
+    maxTokens: c.maxTokens || undefined,
+    memoryFiles: c.memoryFiles.map(m => ({ path: m.path, kind: m.type, tokens: m.tokens })),
+    skills: c.skills.map(s => ({ name: s.name, source: s.source, tokens: s.tokens })),
+    agents: c.agents.map(a => ({ name: a.agentType, source: a.source, tokens: a.tokens })),
+    mcpTools: c.mcpTools.map(t => ({ server: t.serverName, name: t.name, tokens: t.tokens })),
+    at: c.at,
+  }
+}
+
+// ---------- hands ----------
+// Its own reader of the hands' events file (src/context/hands.ts), derived from the soul's and kept apart.
+
+export interface HandsProviderDeps {
+  /** tether's home (slot events live in <home>/slots). */
+  home: string
+}
+
+export function handsProvider(deps: HandsProviderDeps): ContextProvider {
+  const ctxOf = (reader: ReaderLike | undefined): HandsContext | undefined => (reader instanceof HandsEventsReader ? reader.context() : undefined)
+  return {
+    canMeasure: false,
+    session(slotId) {
+      const path = /^[\w-]+$/.test(slotId) ? slotEventsPath(deps.home, slotId) : undefined
+      return {
+        path,
+        live: reader => { const c = ctxOf(reader); return c ? handsLiveView(c) : undefined },
+        measured: reader => { const c = ctxOf(reader); return c ? handsMeasured(c) : undefined },
+      }
+    },
+    makeReader: p => new HandsEventsReader(p),
+    readInventory: async c => emptyInventory(c),
+  }
+}
+
+export function handsLiveView(c: HandsContext): LiveView {
+  return {
+    model: c.model || 'modelo desconhecido',
+    modelId: c.model,
+    effort: '',
+    usedPct: c.percentage,
+    windowSize: c.maxTokens || undefined,
+    usedTokens: c.totalTokens,
+    costUsd: undefined,
+    ...(c.credits !== undefined ? { credits: c.credits } : {}),
+    exceeds200k: false,
+    sessionId: c.sessionId,
+    at: c.at,
+  }
+}
+
+export function handsMeasured(c: HandsContext): MeasuredView {
   return {
     categories: c.categories.map(k => ({ name: k.isDeferred ? `${k.name} (adiado)` : k.name, tokens: k.isDeferred ? 0 : k.tokens, percent: undefined, approx: false })),
     maxTokens: c.maxTokens || undefined,

@@ -150,9 +150,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
 
     private showTarget(): void {
-      if (!target) { this.say('Foque o painel de um agente Claude, Codex ou Soul para ver o contexto dele.'); return }
+      if (!target) { this.say('Foque o painel de um agente Claude, Codex, Soul ou hands para ver o contexto dele.'); return }
       if (target.kind === 'unsupported') {
-        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude, Codex e Soul (este painel é ${target.agent}).`)
+        this.say(target.why === 'shell' ? 'Este painel é um terminal comum: não há contexto de agente para mostrar.' : `O contexto só é inspecionado para agentes Claude, Codex, Soul e hands (este painel é ${target.agent}).`)
         return
       }
       this.say(this.live || this.transcript ? undefined : 'Lendo o contexto do agente…')
@@ -160,7 +160,7 @@ export function activate(ui: TetherUi): IDisposable[] {
 
     private apply(r: SnapshotReply): void {
       if (!r.supported) {
-        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude, Codex e Soul.' : 'Não encontrei este agente para ler o contexto.')
+        this.say(r.reason === 'not-claude' ? 'O contexto só é inspecionado para agentes Claude, Codex, Soul e hands.' : 'Não encontrei este agente para ler o contexto.')
         return
       }
       const heldRev = this.transcript?.rev ?? ''
@@ -254,7 +254,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       if (this.measured) {
         cats = this.measured.categories
         max = this.measured.maxTokens ?? max
-        note = `medido pelo soul no último turno${this.measured.at ? ` (${hhmm(this.measured.at)})` : ''}`
+        note = `medido pelo ${target?.kind === 'agent' && target.agent === 'hands' ? 'hands' : 'soul'} no último turno${this.measured.at ? ` (${hhmm(this.measured.at)})` : ''}`
       } else if (m.state === 'done') {
         cats = m.report.categories
         max = m.report.maxTokens ?? max

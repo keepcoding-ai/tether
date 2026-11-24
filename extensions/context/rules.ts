@@ -240,12 +240,12 @@ export type Target =
  * supported; anything else (a note, a preview, the pad itself, nothing) keeps the current target.
  */
 /** Agent kinds that have a context provider (extensions/context/providers.ts). */
-export const CONTEXT_AGENTS: readonly string[] = ['claude', 'codex', 'soul']
+export const CONTEXT_AGENTS: readonly string[] = ['claude', 'codex', 'soul', 'hands']
 
 /** What the "Peso fixo" memory group is called for an agent kind. */
 /** The agent's name in the board's sentences. */
 export function agentLabel(agent: string | undefined): string {
-  return agent === 'codex' ? 'Codex' : agent === 'soul' ? 'Soul' : 'Claude'
+  return agent === 'codex' ? 'Codex' : agent === 'soul' ? 'Soul' : agent === 'hands' ? 'hands' : 'Claude'
 }
 
 /**
@@ -255,12 +255,12 @@ export function agentLabel(agent: string | undefined): string {
  */
 export function estimateNote(canMeasure: boolean, agent: string | undefined): string {
   if (canMeasure) return 'estimado do disco (só o peso fixo; use Medir para a composição real)'
-  if (agent === 'soul') return 'estimado do disco (só o peso fixo; aguardando a medição do soul no fim do turno)'
+  if (agent === 'soul' || agent === 'hands') return `estimado do disco (só o peso fixo; aguardando a medição do ${agent} no fim do turno)`
   return `estimado do disco (só o peso fixo; o ${agentLabel(agent)} não tem medição da composição)`
 }
 
 export function memoryTitle(agent: string | undefined): string {
-  return agent === 'codex' ? 'AGENTS.md da cadeia' : agent === 'soul' ? 'Memória medida' : 'CLAUDE.md da cadeia'
+  return agent === 'codex' ? 'AGENTS.md da cadeia' : agent === 'soul' || agent === 'hands' ? 'Memória medida' : 'CLAUDE.md da cadeia'
 }
 
 export function nextTarget(prev: Target, info: { id: string; type: string; cwd?: string; agent?: string } | undefined): Target {
