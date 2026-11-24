@@ -54,7 +54,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   delete env.TETHER_CLAUDE_ARGS
-  delete env.TETHER_USER_DIR // a real tether pane exports it: the app would read the real settings.json
   delete env.NODE_TEST_CONTEXT
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()

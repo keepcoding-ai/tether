@@ -59,9 +59,6 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
   delete env.TETHER_CLAUDE_ARGS
-  // The person's settings.json lives in TETHER_USER_DIR, which a real tether pane exports: without this the app reads the real
-  // settings (a hidden tab × among them) instead of the defaults of the private home.
-  delete env.TETHER_USER_DIR
   delete env.NODE_TEST_CONTEXT
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()

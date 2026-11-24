@@ -1,7 +1,17 @@
 // Shared bits of the app E2E tests: how the Electron main process and the daemon are killed, by identity only.
 import { spawnSync } from 'node:child_process'
-import type { ElectronApplication } from 'playwright-core'
+import { _electron, type ElectronApplication } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
+import { guardAppEnv } from './app-env.ts'
+
+// The single point of every test app launch: every app E2E imports this module (arch guard: app-env.guard.test.ts), and
+// playwright's `_electron` is one shared object, so its launch passes through `guardAppEnv` whoever calls it.
+const launchable = _electron as unknown as { launch: (o: { env?: Record<string, string> } & Record<string, unknown>) => Promise<ElectronApplication>; __guarded?: boolean }
+if (!launchable.__guarded) {
+  const original = launchable.launch.bind(_electron)
+  launchable.launch = o => original({ ...o, env: guardAppEnv(o.env ?? { ...process.env } as Record<string, string>) })
+  launchable.__guarded = true
+}
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 

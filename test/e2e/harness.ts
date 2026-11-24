@@ -191,7 +191,7 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 /** process.env minus every CLAUDE* variable (PRD §4.1, discovery 1), plus `extra`. */
 export function cleanEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^CLAUDE/i.test(k)) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^CLAUDE/i.test(k) && k !== 'TETHER_USER_DIR') env[k] = v
   return Object.assign(env, extra)
 }
 

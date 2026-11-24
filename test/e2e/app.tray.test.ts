@@ -19,6 +19,7 @@ import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { DaemonClient } from '../../src/daemon/client.ts'
 import { claim, killOwned, type Owned } from '../kill.ts'
+import { guardAppEnv } from './app-env.ts'
 import { killElectron } from './electron.ts'
 
 type Hooks = {
@@ -166,7 +167,7 @@ test('tray: close hides to the tray (app + daemon alive), Abrir restores, restar
     await tray.close(app)
     await waitUntil(async () => !(await tray.windowOpen(app!)), 5_000, 'the window to hide again')
     const next = app.waitForEvent('window', { timeout: 30_000 })
-    const second = spawn(electronPath, [mainPath], { env: appEnv(home), stdio: 'ignore', windowsHide: true })
+    const second = spawn(electronPath, [mainPath], { env: guardAppEnv(appEnv(home)), stdio: 'ignore', windowsHide: true })
     const secondExit = new Promise<number | null>(res => second.once('exit', code => res(code)))
     page = await ready(await next)
     assert.equal(await secondExit, 0, 'the second launch exited at once')

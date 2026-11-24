@@ -20,7 +20,7 @@ export const FAKE_SOUL_CMD = `"${process.execPath}" -e "setInterval(()=>{},1000)
 /** The environment without ELECTRON_* and CLAUDE*. */
 export function cleanEnv(): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE')) env[k] = v
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('ELECTRON_') && !k.toUpperCase().startsWith('CLAUDE') && k !== 'TETHER_USER_DIR') env[k] = v
   return env
 }
 

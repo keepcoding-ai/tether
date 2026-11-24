@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
+import { guardAppEnv } from './app-env.ts'
 import { killElectron } from './electron.ts'
 
 declare const window: { __tether: { panelIds(): string[]; text(id: string): string; connection(): { connected: boolean; pid?: number } | undefined } }
@@ -61,7 +62,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 
 /** Runs the app bare (no Playwright) and resolves when it exits, with what it wrote. */
 function runBare(home: string): Promise<{ code: number | null; stderr: string }> {
-  const child = spawn(electronPath, [mainPath], { env: appEnv(home), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+  const child = spawn(electronPath, [mainPath], { env: guardAppEnv(appEnv(home)), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   let stderr = ''
   child.stderr?.on('data', d => { stderr += d })
   child.stdout?.on('data', d => { stderr += d })

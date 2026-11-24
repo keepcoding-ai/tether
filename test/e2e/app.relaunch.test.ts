@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium, type Browser, type Page } from 'playwright-core'
 import { claim, findProcesses, identify, killOwned, type Owned } from '../kill.ts'
+import { guardAppEnv } from './app-env.ts'
 
 type Hooks = {
   panelIds(): string[]
@@ -59,7 +60,7 @@ function appEnv(home: string): Record<string, string> {
 
 /** Like the shortcut: the exe, the relative script path, cwd = repo. Detached: the test is not its parent for long. */
 function launchLikeShortcut(home: string): number {
-  const child = spawn(electronPath, ['app\\dist\\main.cjs', '--remote-debugging-port=0', token], { cwd: root, env: appEnv(home), detached: true, stdio: 'ignore', windowsHide: true })
+  const child = spawn(electronPath, ['app\\dist\\main.cjs', '--remote-debugging-port=0', token], { cwd: root, env: guardAppEnv(appEnv(home)), detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
   return child.pid!
 }
