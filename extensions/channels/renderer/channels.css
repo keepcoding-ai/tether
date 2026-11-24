@@ -123,6 +123,10 @@
 /* A mention in a speech: same look as an agent's name (weight and a faint wash), no link look. */
 .ch-mention { font-weight: 600; padding: 0 2px; margin: 0 -2px; border-radius: 3px; background: color-mix(in srgb, currentColor 10%, transparent); }
 .ch-mention[style*="--oh"] { color: hsl(var(--oh) var(--mark-s) var(--mark-fg-l)); }
+/* A "#channel" reference is the same look as a mention, but a button: hand cursor, focus ring, no underline. */
+.ch-chanref { appearance: none; border: 0; font: inherit; font-weight: 600; color: inherit; cursor: pointer; text-decoration: none; }
+.ch-chanref:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+.ch-chanref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-field:focus-visible, .ch-dsel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-say-error { font-size: 12px; color: var(--fg-dim); border-left: 3px solid var(--fg-dim); padding: 2px 8px; }
 .ch-say-error[hidden] { display: none; }

@@ -2,13 +2,18 @@
 // Shift+Enter breaks the line. The recipient is an address, not a lock (P8): everyone hears, `to` only marks who it speaks to.
 // The line comes back through the channel's `line` event; this file only asks `say` and keeps the text when the ask fails.
 import { glyph } from './glyphs.ts'
-import { addresseesOf, applyMention, filterMentionOptions, mentionToken, mentionTrigger, type MentionOption, type MentionTrigger } from './mentions.ts'
+import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HASH_TEXT, listTrigger, mentionToken, type ChannelChoice, type ListTrigger } from './mentions.ts'
 import { MENTION_TEXT } from './texts.ts'
 
 export interface ComposerOptions {
   /** Asks the daemon's `say`; rejects with the daemon's error. */
   send(text: string, to: string[]): Promise<void>
+  /** The open channels the "#" list offers, read when the list opens (the current one is marked). */
+  channels?(): readonly ChannelChoice[]
 }
+
+/** One row of whichever list is open: its text, the discreet mark and what goes after the mark when it is picked. */
+interface Row { label: string; mark: string; token: string; all: boolean }
 
 /** What a test reads of the box. */
 export interface ComposerSnapshot {
@@ -20,8 +25,8 @@ export interface ComposerSnapshot {
   /** What a screen reader says of the field (it says why it is off) and the live note that announces the switch. */
   label: string
   note: string
-  /** The "@" list: whether it is open, its rows (name and discreet mark) and the highlighted one. */
-  mention: { open: boolean; rows: Array<{ name: string; mark: string }>; active: number }
+  /** The "@" or "#" list: whether it is open, which mark opened it, its rows (name and discreet mark) and the highlighted one. */
+  mention: { open: boolean; mark: '@' | '#' | ''; rows: Array<{ name: string; mark: string }>; active: number }
 }
 
 /** The field's placeholders: the usual one, and the one while nobody is in the channel to hear. */
@@ -110,9 +115,9 @@ export function createComposer(opts: ComposerOptions): Composer {
 
   let names: readonly string[] = []
   let marks: ReadonlyMap<string, string> = new Map()
-  let options: MentionOption[] = []
+  let options: Row[] = []
   let active = 0
-  let trigger: MentionTrigger | undefined
+  let trigger: ListTrigger | undefined
   /** The `@` the person dismissed with Esc: the list stays shut for it until the text moves to another `@`. */
   let dismissedAt = -1
   let busy = false
@@ -185,7 +190,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   const choose = (i: number): void => {
     const o = options[i]
     if (!o || !trigger) return
-    const next = applyMention(field.value, trigger, field.selectionStart, mentionToken(o.name, names))
+    const next = applyPick(field.value, trigger, field.selectionStart, o.token, trigger.mark)
     field.value = next.text
     field.setSelectionRange(next.caret, next.caret)
     close()
@@ -194,24 +199,31 @@ export function createComposer(opts: ComposerOptions): Composer {
     field.focus()
   }
 
-  /** Opens, refreshes or closes the list for the `@` the caret is in. */
+  /** The rows the trigger asks for: the members for `@` ("todos" first), the open channels for `#`. */
+  const rowsFor = (t: ListTrigger): Row[] => t.mark === '@'
+    ? filterMentionOptions(t.term, names).map(o => ({
+      label: o.all ? MENTION_TEXT.everyone : o.name, mark: o.all ? '' : marks.get(o.name) ?? '', token: mentionToken(o.name, names), all: o.all,
+    }))
+    : filterChannelOptions(t.term, opts.channels?.() ?? []).map(c => ({ label: `#${c.name}`, mark: c.current ? HASH_TEXT.current : '', token: c.name, all: false }))
+
+  /** Opens, refreshes or closes the list for the `@` or `#` the caret is in. */
   const refresh = (): void => {
-    const t = enabled && field.selectionStart === field.selectionEnd ? mentionTrigger(field.value, field.selectionStart) : undefined
+    const t = enabled && field.selectionStart === field.selectionEnd ? listTrigger(field.value, field.selectionStart) : undefined
     if (!t) { dismissedAt = -1; close(); return }
     if (t.start === dismissedAt) { close(); return }
-    const found = filterMentionOptions(t.term, names)
+    const found = rowsFor(t)
     if (found.length === 0) { close(); return }
-    const same = trigger !== undefined && trigger.start === t.start && isOpen()
+    const same = trigger !== undefined && trigger.start === t.start && trigger.mark === t.mark && isOpen()
     trigger = t
     options = found
+    list.setAttribute('aria-label', t.mark === '@' ? MENTION_TEXT.listLabel : HASH_TEXT.listLabel)
     if (!same || active >= found.length) active = 0
     list.replaceChildren(...found.map((o, i) => {
       const li = el('li', `ch-mention-opt${o.all ? ' all' : ''}`)
       li.id = `${listId}-${i}`
       li.setAttribute('role', 'option')
-      li.append(el('span', 'ch-mention-name', o.all ? MENTION_TEXT.everyone : o.name))
-      const mark = o.all ? '' : marks.get(o.name) ?? ''
-      if (mark !== '') li.append(el('span', 'ch-mention-mark', mark))
+      li.append(el('span', 'ch-mention-name', o.label))
+      if (o.mark !== '') li.append(el('span', 'ch-mention-mark', o.mark))
       // mousedown would blur the field; the choice is taken on click.
       li.addEventListener('mousedown', ev => ev.preventDefault())
       li.addEventListener('click', () => choose(i))
@@ -263,6 +275,7 @@ export function createComposer(opts: ComposerOptions): Composer {
       enabled, placeholder: field.placeholder, label: field.getAttribute('aria-label') ?? '', note: note.textContent ?? '',
       mention: {
         open: isOpen(),
+        mark: isOpen() ? trigger?.mark ?? '' : '',
         rows: [...list.children].map(li => ({ name: li.querySelector('.ch-mention-name')?.textContent ?? '', mark: li.querySelector('.ch-mention-mark')?.textContent ?? '' })),
         active,
       },

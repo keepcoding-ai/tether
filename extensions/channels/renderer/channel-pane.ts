@@ -18,7 +18,8 @@ import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { isPeekModifier } from '../../../app/renderer/link-open.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
-import { mentionSpans } from './mentions.ts'
+import type { ChannelSummary } from '../daemon/requests.ts'
+import { channelSpans, HASH_TEXT, mentionSpans } from './mentions.ts'
 import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
@@ -113,7 +114,9 @@ export interface ChannelPanes {
   snapshot(channelId: string): PaneSnapshot | undefined
 }
 
-export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
+export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () => readonly ChannelSummary[] = () => []): ChannelPanes {
+  /** The channels a "#" can name: the open ones (a closed channel is plain text). */
+  const openChannels = (): ChannelSummary[] => channelList().filter(c => c.closed === undefined)
   const live = new Set<ChannelPane>()
   const kept = new Map<string, Kept>()
   const type = manifest.contributes!.paneTypes![0]!
@@ -185,7 +188,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private overlays: MutationObserver | undefined
     /** When the keyboard last opened a member's menu (the `contextmenu` event it may raise too is ignored for a moment). */
     private keyMenuAt = 0
-    private readonly composer = createComposer({ send: (text, to) => this.say(text, to) })
+    private readonly composer = createComposer({
+      send: (text, to) => this.say(text, to),
+      channels: () => openChannels().map(c => ({ name: c.name, current: c.id === this.channelId })),
+    })
 
     init(p: GroupPanelPartInitParameters): void {
       this.api = p.api
@@ -841,13 +847,31 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       return p
     }
 
-    /** Plain text into `p`, with each `@name` of a known member lightly highlighted (text nodes and spans only, never innerHTML). */
+    /**
+     * Plain text into `p`, with each `@name` of a known member lightly highlighted and each `#name` of an open channel a button that
+     * brings that channel's pane forward (text nodes, spans and buttons only, never innerHTML). A closed or unknown channel stays text.
+     */
     private plainSpeech(p: HTMLElement, text: string): void {
       const members = this.answer?.members ?? []
-      const spans = members.length === 0 ? [] : mentionSpans(text, members.map(m => m.name))
+      const channels = openChannels()
+      const spans: Array<{ start: number; end: number; name: string; channel?: ChannelSummary }> = [
+        ...(members.length === 0 ? [] : mentionSpans(text, members.map(m => m.name))),
+        ...channelSpans(text, channels.map(c => c.name)).map(s => ({ ...s, channel: channels.find(c => c.name === s.name)! })),
+      ].sort((x, y) => x.start - y.start)
       let at = 0
       for (const s of spans) {
         if (s.start > at) p.append(text.slice(at, s.start))
+        if (s.channel) {
+          const ch = s.channel
+          const b = el('button', 'ch-mention ch-chanref', text.slice(s.start, s.end))
+          b.type = 'button'
+          b.title = HASH_TEXT.open(ch.name)
+          b.dataset.channelRef = ch.id
+          b.addEventListener('click', () => open(ch.id, ch.name))
+          p.append(b)
+          at = s.end
+          continue
+        }
         const m = el('span', 'ch-mention', text.slice(s.start, s.end))
         const id = members.find(x => x.name === s.name)?.id
         if (id !== undefined) hueStyle(m, agentHue(id))

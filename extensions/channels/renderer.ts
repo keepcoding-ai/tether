@@ -15,7 +15,7 @@ export function activate(ui: TetherUi): Disposable[] {
   const directory = createDirectory(ui)
   // The marks hear the daemon's `line` before the panes do: a line seen the moment it comes never counts as unread.
   const marks = createMarks(ui, directory)
-  const panes = createChannelPanes(ui, marks)
+  const panes = createChannelPanes(ui, marks, directory.list)
   return [
     ...directory.disposables, ...marks.disposables, ...panes.disposables,
     ...createStatus(ui, marks, directory.list),
