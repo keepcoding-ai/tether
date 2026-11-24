@@ -15,7 +15,7 @@ import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
-import { PANE_TEXT, memberMenu } from './texts.ts'
+import { PANE_TEXT, channelMenu, memberMenu, type ChannelMenuId } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
   applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
@@ -438,7 +438,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       members.title = PANE_TEXT.members
       members.setAttribute('aria-label', PANE_TEXT.members)
       members.append(glyph('users'))
-      members.addEventListener('click', () => { this.membersTouched = true; this.membersOpen = !this.membersOpen; this.paintSide() })
+      members.addEventListener('click', () => this.toggleMembers())
       this.membersBtn = members
       const end = this.actionBtn('ch-act ch-end', PANE_TEXT.toEnd, 'arrow-line-down', () => this.toEnd())
       this.endBtn = end
@@ -486,9 +486,6 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (this.reopenBtn) { this.reopenBtn.hidden = s.primary !== 'reopen'; this.reopenBtn.classList.toggle('labeled', s.labeled) }
       if (this.endBtn) this.endBtn.hidden = !s.toEnd
     }
-
-    /** "Ir para o fim", for the tab menu (the bar drops it in the narrow composition). */
-    goEnd(): void { this.toEnd() }
 
     private paintHead(): void {
       this.paintBar()
@@ -565,7 +562,28 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     }
 
     rowsView(): Row[] { return this.rows() }
-    canJoin(): boolean { return this.answer !== undefined && !this.isClosed() }
+    /** The channel's one menu (the tab's and the bar's "⋯"): `channelMenu` is the only place that says which rows there are. */
+    menuRows(paneId: string): ContextMenuRow[] {
+      const answer = this.answer
+      // Not loaded yet: the core's floor (link, close) is all the menu has.
+      if (!answer) return []
+      const channel = this.channelId
+      const ask = (id: string) => (): void => { void ui.commands.run(id, { channel }) }
+      const run: Record<ChannelMenuId, () => void> = {
+        join: () => this.joinAgent(),
+        members: () => this.toggleMembers(),
+        toEnd: () => this.toEnd(),
+        mute: ask(CMD.mute), unmute: ask(CMD.unmute), remove: ask(CMD.remove), close: ask(CMD.close), reopen: ask(CMD.reopen),
+        link: () => ui.panes.copyLink(paneId),
+        move: () => ui.panes.move(paneId),
+        closePane: () => ui.panes.close(paneId),
+      }
+      return channelMenu(answer.channel, answer, { membersOpen: this.sideShown() }).map((e): ContextMenuRow =>
+        e === 'sep' || 'heading' in e ? e
+          : { icon: e.icon, label: e.label, run: run[e.id], ...(e.danger ? { danger: true } : {}), ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(e.disabled ? { disabled: true } : {}) })
+    }
+
+    private toggleMembers(): void { this.membersTouched = true; this.membersOpen = !this.membersOpen; this.paintSide() }
 
     private paintMsgs(): void {
       const m = this.msgs
@@ -852,16 +870,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       create: () => new ChannelPane(),
       createTab: () => new ChannelTab() as unknown as ITabRenderer,
       has: id => id.startsWith(CHANNEL_PANE_PREFIX) && paneOf(channelIdOfPane(id)) !== undefined,
-      // The minimum every tab has, plus joining an agent; "Encerrar canal…" is added by menus.ts (the tab menu hook).
-      tabMenu: (id, x, y) => ui.menus.context(x, y, [
-        ...(paneOf(channelIdOfPane(id))?.canJoin() ? [{ icon: 'user-plus' as const, label: PANE_TEXT.joinMenu, run: () => { void ui.commands.run(CMD.join, { channel: channelIdOfPane(id) }) } }] : []),
-        { icon: 'arrow-line-down' as const, label: PANE_TEXT.toEnd, run: () => paneOf(channelIdOfPane(id))?.goEnd() },
-        'sep',
-        { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
-        { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
-        'sep',
-        { icon: 'x', label: 'Fechar painel', run: () => ui.panes.close(id) },
-      ]),
+      // The channel's one menu, from `channelMenu` (texts.ts): the tab's right click and the bar's "⋯" both land here.
+      // The menu takes headings (the core's `fromExtMenu`); only the declared parameter type of `context` leaves them out.
+      tabMenu: (id, x, y) => ui.menus.context(x, y, (paneOf(channelIdOfPane(id))?.menuRows(id) ?? []) as ContextMenuEntry[]),
     }),
     ui.daemon.onEvent<LineEvent>('line', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onLine(ev) }),
     ui.daemon.onEvent<ChannelEvent>('channel', ev => { for (const p of live) if (p.channelId === ev.channel.id) p.onChannel() }),

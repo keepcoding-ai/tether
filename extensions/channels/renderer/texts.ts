@@ -6,7 +6,7 @@ import type { DialogSpec } from '../../../app/shared/dialog.ts'
 import type { PaneEmblem, PickItem } from '../../../app/renderer/ext-api.ts'
 import type { ChannelSummary, MemberInfo } from '../daemon/requests.ts'
 import { isRoomName } from '../rules.ts'
-import { membersCount, type EmblemReader } from './view-model.ts'
+import { membersCount, type EmblemReader, type MembersAnswer } from './view-model.ts'
 
 /** The picker's icon for a channel row, and the icons of the menus (names of app/renderer/icons.ts: the core's table). */
 export const ICON = {
@@ -262,6 +262,48 @@ export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
     { id: 'talk', icon: ICON.channel, label: PANE_TEXT.talkTo(m.name) },
     { id: 'reveal', icon: 'arrow-square-out', label: PANE_TEXT.reveal },
   ]
+}
+
+export type ChannelMenuId = 'join' | 'members' | 'toEnd' | 'mute' | 'unmute' | 'remove' | 'link' | 'move' | 'closePane' | 'close' | 'reopen'
+
+/** A row of the channel's menu: an act the pane runs (`id`), a line of information, or a separator. */
+export type ChannelMenuEntry =
+  | { heading: string }
+  | 'sep'
+  | { id: ChannelMenuId; icon: string; label: string; danger?: boolean; checked?: boolean; disabled?: boolean }
+
+/** What the pane knows that the daemon does not: whether the members column is open now. */
+export interface ChannelMenuView { membersOpen: boolean }
+
+/**
+ * The channel's one menu (plan 2.5), drawn for the tab (right click) and for the bar's "⋯": two lines of information, the gestures,
+ * the panel's own rows, and last "Encerrar canal…" (or "Reabrir canal"). Closed: the gestures that need an open channel go. The
+ * desk's channel follows the desk (C17): it has neither "Encerrar" nor "Reabrir", and its second line says why.
+ */
+export function channelMenu(c: ChannelSummary, answer: MembersAnswer | undefined, view: ChannelMenuView = { membersOpen: false }): ChannelMenuEntry[] {
+  const members = answer?.members ?? []
+  const count = answer ? members.length : c.members
+  const muted = members.filter(m => m.muted).length
+  const closed = c.closed !== undefined
+  const desk = c.desk !== undefined
+  const info = [`Dono: ${ownerName(c)}`, membersCount(count), ...(muted > 0 ? [muted === 1 ? '1 calado' : `${muted} calados`] : [])].join(' · ')
+  const kind = desk ? `canal da mesa · segue a mesa: encerra e reabre com o dono dela${closed ? ' · encerrado' : ''}` : closed ? 'canal avulso · encerrado' : 'canal avulso'
+  const nobody = count === 0
+  const rows: ChannelMenuEntry[] = [{ heading: info }, { heading: kind }]
+  if (!closed) rows.push({ id: 'join', icon: ICON.join, label: PANE_TEXT.joinMenu })
+  if (count > 0) rows.push({ id: 'members', icon: 'sidebar-simple', label: PANE_TEXT.members, checked: view.membersOpen })
+  rows.push({ id: 'toEnd', icon: 'arrow-line-down', label: PANE_TEXT.toEnd })
+  if (!closed) {
+    rows.push({ id: 'mute', icon: ICON.mute, label: 'Calar agente…', ...(nobody ? { disabled: true } : {}) })
+    if (muted > 0) rows.push({ id: 'unmute', icon: ICON.unmute, label: 'Devolver a voz…' })
+    rows.push({ id: 'remove', icon: ICON.remove, label: 'Tirar agente…', ...(nobody ? { disabled: true } : {}) })
+  }
+  rows.push('sep',
+    { id: 'link', icon: 'link', label: 'Copiar link do painel' },
+    { id: 'move', icon: 'arrow-square-out', label: 'Mover…' },
+    { id: 'closePane', icon: 'x', label: 'Fechar painel' })
+  if (!desk) rows.push('sep', closed ? { id: 'reopen', icon: ICON.reopen, label: MENU.reopen } : { id: 'close', icon: ICON.close, label: MENU.close, danger: true })
+  return rows
 }
 
 export const MENU = {

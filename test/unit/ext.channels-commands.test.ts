@@ -5,8 +5,9 @@ import assert from 'node:assert/strict'
 import { CMD, manifest } from '../../extensions/channels/manifest.ts'
 import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
+import type { MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import {
-  channelDetail, channelItem, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, removeDialog,
+  channelDetail, channelItem, channelMenu, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -147,6 +148,44 @@ test('memberMenu: member, muted, owner and desk member; the rows and their order
   const rm = rows.find(e => e !== 'sep' && 'id' in e && e.id === 'remove') as { danger?: boolean; label: string }
   assert.equal(rm.label, 'Tirar do canal')
   assert.equal(rm.danger, true)
+})
+
+test('channelMenu: open channel, with a muted member, desk channel and closed channel; rows and order', () => {
+  const ids = (m: ReturnType<typeof channelMenu>): string[] => m.map(e => (e === 'sep' ? '-' : 'heading' in e ? `# ${e.heading}` : e.id))
+  const member = (id: string, muted: boolean): MemberInfo => ({ id, name: id, muted, since: '', by: 'user', alive: true, path: 'inside' }) as MemberInfo
+  const ans = (c: ChannelSummary, ms: MemberInfo[]): MembersAnswer => ({ channel: c, members: ms, removed: [] })
+
+  // Open, loose, nobody muted: no "Devolver a voz…"; "Encerrar canal…" last.
+  const open = ans(CONF, [member('a', false), member('b', false)])
+  assert.deepEqual(ids(channelMenu(CONF, open)),
+    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', '-', 'link', 'move', 'closePane', '-', 'close'])
+  const close = channelMenu(CONF, open).at(-1) as { label: string; danger?: boolean }
+  assert.deepEqual([close.label, close.danger], ['Encerrar canal…', true])
+
+  // With a muted member: the info line counts it and "Devolver a voz…" enters after "Calar agente…".
+  const muted = ans(CONF, [member('a', false), member('b', true)])
+  const withMuted = channelMenu(CONF, muted, { membersOpen: true })
+  assert.equal((withMuted[0] as { heading: string }).heading, 'Dono: Você · 2 membros · 1 calado')
+  assert.deepEqual(ids(withMuted).slice(5, 8), ['mute', 'unmute', 'remove'])
+  assert.equal((withMuted.find(e => e !== 'sep' && 'id' in e && e.id === 'unmute') as { label: string }).label, 'Devolver a voz…')
+  assert.equal((withMuted.find(e => e !== 'sep' && 'id' in e && e.id === 'members') as { checked?: boolean }).checked, true)
+
+  // The desk's channel: no "Encerrar" and no "Reabrir"; the second line says it follows the desk.
+  const desk = channelMenu(OBRA, ans(OBRA, [member('a', false)]))
+  assert.equal((desk[0] as { heading: string }).heading, 'Dono: Atrium · 1 membro')
+  assert.match((desk[1] as { heading: string }).heading, /^canal da mesa · segue a mesa/)
+  assert.ok(!ids(desk).includes('close') && !ids(desk).includes('reopen'))
+  const deskClosed = channelMenu({ ...OBRA, closed: OLD.closed }, ans({ ...OBRA, closed: OLD.closed }, []))
+  assert.ok(!ids(deskClosed).includes('close') && !ids(deskClosed).includes('reopen'))
+
+  // Closed loose channel: the gestures go, reading stays, "Reabrir canal" takes the last place.
+  const closed = channelMenu(OLD, ans(OLD, [member('a', true)]))
+  assert.deepEqual(ids(closed), ['# Dono: Você · 1 membro · 1 calado', '# canal avulso · encerrado', 'members', 'toEnd', '-', 'link', 'move', 'closePane', '-', 'reopen'])
+
+  // Empty open channel: nothing to mute or take out (disabled), no "Membros" (no column).
+  const empty = channelMenu(CONF, ans(CONF, []))
+  assert.ok(!ids(empty).includes('members'))
+  assert.equal((empty.find(e => e !== 'sep' && 'id' in e && e.id === 'remove') as { disabled?: boolean }).disabled, true)
 })
 
 test('createRow: the typed text makes the row "Criar #nome"; the rule shows while it is not a name; nothing for blank text', () => {
