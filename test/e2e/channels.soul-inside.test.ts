@@ -183,7 +183,9 @@ test('S1: a real Soul launched with --channels tether hears the channel inside: 
     const client = rig.client
 
     // The person's own Soul pane (no owner: nobody holds it). The default profile `soul` (-g) and the bench's cheap settings.
-    const args = ['--model', 'cheap', '--effort', 'low', '-P', 'ana-teste', '--strategy', 'economy', '--yolo']
+    // `-g` is load-bearing: without it the soul-cli reads its provider pool from `<ser>/.soul-local`, which a bench being has empty,
+    // and every turn fails at the router with `strategy "…" does not offer text/reasoning` (the tether's `soul` profile carries it).
+    const args = ['-g', '--model', 'cheap', '--effort', 'low', '-P', 'ana-teste', '--strategy', 'economy', '--yolo']
     pane = (await client.request({ t: 'create', kind: 'soul', cwd: rig.ser, name: 'soul · bancada', args, start: true })).slot!.slotId
     await client.request({ t: 'attach', slotId: pane, cols: 120, rows: 40 })
     const st = await rig.waitFor('the Soul running', async () => { const s = await rig.state(pane); return s?.pid ? s : undefined }, 60_000)
