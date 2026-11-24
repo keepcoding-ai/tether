@@ -128,11 +128,17 @@ export function memberItems(members: readonly MemberInfo[], ownerId: string | un
 
 // ---------- the confirmations ----------
 
-export interface MemberText { channel: string; member: string; fromDesk: boolean }
+/** `isOwner`: the member is the channel's owner; `desk`: the channel is the desk's own (the owner is then the desk's). */
+export interface MemberText { channel: string; member: string; fromDesk: boolean; isOwner?: boolean; desk?: boolean }
 
-/** "Tirar": the consequence in words before the act. */
+/** "Tirar": the consequence in words before the act. Taking the owner out tells that he abdicates (C16, C20). */
 export function removeDialog(t: MemberText): DialogSpec {
   const message = ['Ele deixa de ouvir o canal e recebe um aviso da sala. A conversa continua com os outros.']
+  if (t.isOwner) {
+    message.push(t.desk
+      ? 'Ele é o dono da mesa. O canal segue com você até a mesa trocar de dono.'
+      : 'Ele é o dono deste canal. Ao sair deixa de ser dono, e o canal passa para você. Se for juntado de novo, volta como membro.')
+  }
   if (t.fromDesk) message.push('Ele é membro da mesa, mas pode sair do canal mesmo assim. Fica de fora até ser juntado de novo, ou até sair da mesa e voltar.')
   return {
     situation: 'channels.remove', tone: 'danger', icon: ICON.remove,
@@ -226,7 +232,37 @@ export const PANE_TEXT = {
   remove: 'Tirar do canal',
   /** Title of a member's action: "Calar Nome". */
   on: (verb: string, member: string): string => `${verb} ${member}`,
+  talkTo: (member: string): string => `Falar com ${member}`,
+  reveal: 'Ir para a guia do agente',
+  /** The "⋯" of a member's row. */
+  memberMore: (member: string): string => `Mais ações de ${member}`,
 } as const
+
+/** A row of the member's menu: an act the pane runs (`id`), a line of information, or a separator. */
+export type MemberMenuEntry =
+  | { heading: string }
+  | 'sep'
+  | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'reveal'; icon: string; label: string; danger?: boolean }
+
+export interface MemberMenuInput { name: string; owner: boolean; muted: boolean; fromDesk: boolean }
+
+/**
+ * The member's menu (plan 2.6): who it is, then mute or give the voice back, take out, talk to, go to the agent's pane.
+ * The owner has the same rows: taking him out is allowed and the dialog tells what follows.
+ */
+export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
+  const info = [m.name, m.owner ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.fromDesk ? ['da mesa'] : [])].join(' · ')
+  return [
+    { heading: info },
+    m.muted
+      ? { id: 'unmute', icon: ICON.unmute, label: PANE_TEXT.unmute }
+      : { id: 'mute', icon: ICON.mute, label: PANE_TEXT.mute },
+    { id: 'remove', icon: ICON.remove, label: PANE_TEXT.remove, danger: true },
+    'sep',
+    { id: 'talk', icon: ICON.channel, label: PANE_TEXT.talkTo(m.name) },
+    { id: 'reveal', icon: 'arrow-square-out', label: PANE_TEXT.reveal },
+  ]
+}
 
 export const MENU = {
   join: 'Juntar a um canal…',

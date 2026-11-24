@@ -100,6 +100,10 @@
 .ch-l1 .ch-emblem + .ch-macts { margin-left: 4px; }
 .ch-mrow:hover .ch-macts, .ch-mrow:focus-within .ch-macts { opacity: 1; }
 .ch-mact { height: 22px; min-width: 22px; }
+/* The "⋯" of a member's row is always there (touch and keyboard have no hover); Calar and Tirar come on hover and focus. */
+.ch-mmore { flex: none; margin-left: auto; }
+.ch-macts + .ch-mmore { margin-left: 0; }
+.ch-state[data-tone="wait"] { color: var(--warn); }
 .ch-mact svg.ph { width: 13px; height: 13px; }
 .ch-nobody { min-height: 0; padding-top: 16px; }
 .ch-ill { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--bg-3); color: var(--fg-dim); }

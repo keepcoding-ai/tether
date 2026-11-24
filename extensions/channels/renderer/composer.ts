@@ -36,6 +36,8 @@ export interface Composer {
   setAudience(n: number): void
   snapshot(): ComposerSnapshot
   focus(): void
+  /** Puts the member as the recipient ("para …") and focuses the field; a name nobody in the box answers to is ignored. */
+  address(name: string): void
 }
 
 export function createComposer(opts: ComposerOptions): Composer {
@@ -127,5 +129,10 @@ export function createComposer(opts: ComposerOptions): Composer {
       enabled, placeholder: field.placeholder,
     }),
     focus: () => field.focus(),
+    address(name) {
+      if (!enabled || !names.includes(name)) return
+      pick.value = name
+      field.focus()
+    },
   }
 }

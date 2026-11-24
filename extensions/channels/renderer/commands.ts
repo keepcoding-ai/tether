@@ -7,6 +7,7 @@ import type { ChannelSummary } from '../daemon/requests.ts'
 import { CMD } from '../manifest.ts'
 import {
   NAME_PICK, PICK, agentLabel, channelPick, closeDialog, createRow, failedDialog, findChannel, joinItems, memberItems, muteDialog, removeDialog,
+  type MemberText,
   type AgentChoice, type ChannelScope, type MemberGesture,
 } from './texts.ts'
 import type { MembersAnswer } from './view-model.ts'
@@ -182,11 +183,14 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   }
 
   /** The words of the confirmation: the member's name and whether it came by the desk. */
-  async function memberText(channel: ChannelSummary, agent: string): Promise<{ channel: string; member: string; fromDesk: boolean } | undefined> {
+  async function memberText(channel: ChannelSummary, agent: string): Promise<MemberText | undefined> {
     try {
       const a = await membersOf(channel.id)
       const m = a.members.find(x => x.id === agent)
-      return { channel: channel.name, member: m?.name ?? ui.agents.get(agent)?.name ?? agent, fromDesk: m?.by === 'desk' }
+      return {
+        channel: channel.name, member: m?.name ?? ui.agents.get(agent)?.name ?? agent, fromDesk: m?.by === 'desk',
+        isOwner: a.channel.owner.kind === 'agent' && a.channel.owner.id === agent, desk: a.channel.desk !== undefined,
+      }
     } catch (e) {
       await ui.dialogs.ask(failedDialog('Não foi possível ler o canal', codeOf(e))).catch(() => undefined)
       return undefined

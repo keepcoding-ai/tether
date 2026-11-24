@@ -7,7 +7,7 @@
 //     up to KEPT_MAX channels, and the newest page is asked again to fill the end.
 //   - The speaking box (composer.ts, U1b) sits in `.ch-composer-slot`; a closed channel has none. Orange is the U3's.
 import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } from 'dockview-core'
-import type { Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
+import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
@@ -15,11 +15,11 @@ import type { Line } from '../rules.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
-import { PANE_TEXT } from './texts.ts'
+import { PANE_TEXT, memberMenu } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
   applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
-  olderCursor, rowsOf, unreadLabel, type HistoryPage, type MembersAnswer, type Row, type Timeline,
+  olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
 /** Lines asked per page (the daemon's ceiling is 200). */
@@ -32,6 +32,8 @@ const MEMBERS_REFRESH_MS = 1000
 const TOP_SLACK_PX = 40
 /** Under this width the members fold away by default (the narrow composition). */
 const NARROW_PX = 560
+/** How long after "Tirar" an emptied list still moves the focus (the dialog may take its time). */
+const JOIN_FOCUS_MS = 60_000
 
 interface Kept { timeline: Timeline; scrollTop: number; stick: boolean }
 
@@ -53,7 +55,7 @@ export interface PaneSnapshot {
   closed: boolean
   rows: Array<{ kind: Row['kind']; text: string; name?: string; role?: string; crown?: boolean; mine?: boolean; to?: string[]; glyph?: string; continued?: boolean }>
   /** `emblem`: the name on the member's chip as drawn, empty when none. */
-  members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; emblem: string }>
+  members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; emblem: string; hint: string; acts: string[] }>
   muteBar: string
   scroll: { top: number; client: number; height: number; stick: boolean }
   unread: number
@@ -141,6 +143,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private membersBtn: HTMLButtonElement | undefined
     private joinBtn: HTMLButtonElement | undefined
     private reopenBtn: HTMLButtonElement | undefined
+    /** Until when an emptied list moves the focus to the accent (set by "Tirar"; 0 = not waiting). */
+    private joinFocusUntil = 0
     private endBtn: HTMLButtonElement | undefined
     /** Whether the empty state ("Ninguém no canal ainda.") was drawn last, to repaint the conversation when it flips. */
     private drewNoMembers = false
@@ -257,6 +261,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         this.paintMuteBar()
         this.paintFoot()
         if (this.noMembers() !== this.drewNoMembers) this.paintMsgs()
+        this.focusJoinIfEmptied()
       } catch { /* the next event asks again */ }
     }
 
@@ -450,6 +455,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (!this.api) return
       const r = opener.getBoundingClientRect()
       ui.panes.showTabMenu(this.api.id, r.left, r.bottom, opener)
+    }
+
+    /** After "Tirar" emptied the list the row that held the focus is gone: the focus goes to the accent "Juntar agente…". */
+    private focusJoinIfEmptied(): void {
+      if (this.joinFocusUntil === 0) return
+      if (Date.now() > this.joinFocusUntil) { this.joinFocusUntil = 0; return }
+      if (!this.noMembers()) return
+      this.joinFocusUntil = 0
+      const a = document.activeElement
+      // Only when the focus is lost or still in this pane: never take it from something the person went to.
+      if (a === null || a === document.body || this.element.contains(a)) this.joinBtn?.focus()
     }
 
     private isNarrow(): boolean { return this.element.classList.contains('narrow') }
@@ -655,6 +671,29 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       return e
     }
 
+    /** A gesture on a member (the commands ask the consequence in their dialog). Taking someone out may leave the list empty: the focus then goes to the accent. */
+    private memberAct(act: 'mute' | 'unmute' | 'remove', agent: string): void {
+      if (act === 'remove') this.joinFocusUntil = Date.now() + JOIN_FOCUS_MS
+      void ui.commands.run(CMD[act], { channel: this.channelId, agent })
+    }
+
+    /** The member's menu (plan 2.6) at page coordinates. */
+    private openMemberMenu(m: MemberRow, x: number, y: number): void {
+      const reachable = ui.panes.find(m.id) !== undefined
+      const run: Record<string, () => void> = {
+        mute: () => this.memberAct('mute', m.id),
+        unmute: () => this.memberAct('unmute', m.id),
+        remove: () => this.memberAct('remove', m.id),
+        talk: () => this.composer.address(m.name),
+        reveal: () => { if (ui.panes.find(m.id)) ui.panes.reveal(m.id) },
+      }
+      const rows: ContextMenuRow[] = memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }).map((e): ContextMenuRow =>
+        e === 'sep' || 'heading' in e ? e
+          : { icon: e.icon, label: e.label, run: run[e.id]!, ...(e.danger ? { danger: true } : {}), ...(e.id === 'reveal' && !reachable ? { disabled: true } : {}) })
+      // The menu takes headings (the core's `fromExtMenu`); only its declared parameter type leaves them out.
+      ui.menus.context(x, y, rows as ContextMenuEntry[])
+    }
+
     private paintMembers(): void {
       const side = this.side
       side.replaceChildren()
@@ -683,16 +722,27 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           l1.append(chip)
         }
         if (!this.isClosed()) {
+          // The owner's row has only the "⋯"; the others show Calar and Tirar on hover and focus, and the "⋯" always.
           // The command asks the consequence in its dialog (calar, tirar) before it acts.
-          const acts = el('span', 'ch-macts')
-          const toggle = m.muted
-            ? this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.unmute, m.name), 'speaker-high', () => { void ui.commands.run(CMD.unmute, { channel: this.channelId, agent: m.id }) })
-            : this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.mute, m.name), 'speaker-slash', () => { void ui.commands.run(CMD.mute, { channel: this.channelId, agent: m.id }) })
-          toggle.dataset.act = m.muted ? 'unmute' : 'mute'
-          const out = this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.remove, m.name), 'user-minus', () => { void ui.commands.run(CMD.remove, { channel: this.channelId, agent: m.id }) })
-          out.dataset.act = 'remove'
-          acts.append(toggle, out)
-          l1.append(acts)
+          if (!m.crown) {
+            const acts = el('span', 'ch-macts')
+            const toggle = m.muted
+              ? this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.unmute, m.name), 'speaker-high', () => this.memberAct('unmute', m.id))
+              : this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.mute, m.name), 'speaker-slash', () => this.memberAct('mute', m.id))
+            toggle.dataset.act = m.muted ? 'unmute' : 'mute'
+            const out = this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.remove, m.name), 'user-minus', () => this.memberAct('remove', m.id))
+            out.dataset.act = 'remove'
+            acts.append(toggle, out)
+            l1.append(acts)
+          }
+          const more = this.actionBtn('ch-act ch-mact ch-mmore', PANE_TEXT.memberMore(m.name), 'dots-three', () => {
+            const r = more.getBoundingClientRect()
+            this.openMemberMenu(m, r.left, r.bottom)
+          })
+          more.dataset.act = 'more'
+          more.setAttribute('aria-haspopup', 'menu')
+          l1.append(more)
+          row.addEventListener('contextmenu', ev => { ev.preventDefault(); this.openMemberMenu(m, ev.clientX, ev.clientY) })
         }
         const l2 = el('div', 'ch-l2')
         l2.append(el('span', 'ch-role', m.role))
@@ -703,6 +753,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         }
         const state = el('span', 'ch-state', m.state)
         state.dataset.tone = m.tone
+        if (m.hint !== undefined) state.title = m.hint
         l2.append(state)
         row.append(l1, l2)
         side.append(row)
@@ -729,7 +780,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           : r.kind === 'unseen' ? { kind: r.kind, text: r.label }
           : r.kind === 'notice' ? { kind: r.kind, text: r.text, glyph: r.glyph }
           : { kind: r.kind, text: r.body, name: r.name, role: r.role, crown: r.crown, mine: r.mine, to: r.to.map(t => t.name), continued: r.continued }),
-        members: this.answer ? memberRows(this.answer).map(x => ({ name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone, emblem: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-emblem`)?.getAttribute('aria-label') ?? '' })) : [],
+        members: this.answer ? memberRows(this.answer).map(x => ({
+          name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone, emblem: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-emblem`)?.getAttribute('aria-label') ?? '',
+          hint: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-state`)?.getAttribute('title') ?? '',
+          acts: [...this.side.querySelectorAll(`.ch-mrow[data-member="${x.id}"] [data-act]`)].map(b => (b as HTMLElement).dataset.act ?? ''),
+        })) : [],
         muteBar: this.answer ? muteBar(this.answer) : '',
         scroll: { top: m.scrollTop, client: m.clientHeight, height: m.scrollHeight, stick: this.stick },
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,

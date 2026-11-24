@@ -6,7 +6,7 @@ import { CMD, manifest } from '../../extensions/channels/manifest.ts'
 import { argOf } from '../../extensions/channels/renderer/commands.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import {
-  channelDetail, channelItem, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, muteDialog, removeDialog,
+  channelDetail, channelItem, channelPick, closeDialog, createRow, failedDialog, findChannel, inScope, joinItems, memberItems, memberMenu, muteDialog, removeDialog,
   type AgentChoice,
 } from '../../extensions/channels/renderer/texts.ts'
 
@@ -122,6 +122,31 @@ test('the confirmations say the consequence; remove, mute and close are declared
   assert.match(cl.message!, /os 4 membros recebem um aviso/)
   assert.match(closeDialog({ channel: 'x', members: 1 }).message!, /o 1 membro recebe/)
   assert.deepEqual(cl.choices.map(c => c.id), ['close'])
+})
+
+test('removeDialog: three variants of the consequence (member, owner of a common channel, owner of the desk)', () => {
+  const plain = removeDialog({ channel: 'obra', member: 'x', fromDesk: false, isOwner: false, desk: false }).message!
+  assert.doesNotMatch(plain, /dono/)
+  const own = removeDialog({ channel: 'obra', member: 'Atrium', fromDesk: false, isOwner: true, desk: false }).message!
+  assert.match(own, /Ele é o dono deste canal\. Ao sair deixa de ser dono, e o canal passa para você\. Se for juntado de novo, volta como membro\./)
+  const desk = removeDialog({ channel: 'obra', member: 'Atrium', fromDesk: true, isOwner: true, desk: true }).message!
+  assert.match(desk, /Ele é o dono da mesa\. O canal segue com você até a mesa trocar de dono\./)
+  assert.doesNotMatch(desk, /passa para você/)
+})
+
+test('memberMenu: member, muted, owner and desk member; the rows and their order', () => {
+  const ids = (m: ReturnType<typeof memberMenu>): string[] => m.map(e => (e === 'sep' ? '-' : 'heading' in e ? `# ${e.heading}` : e.id))
+  assert.deepEqual(ids(memberMenu({ name: 'claude · conferente', owner: false, muted: false, fromDesk: false })),
+    ['# claude · conferente · membro', 'mute', 'remove', '-', 'talk', 'reveal'])
+  assert.deepEqual(ids(memberMenu({ name: 'codex · conferência', owner: false, muted: true, fromDesk: false })),
+    ['# codex · conferência · membro · calado', 'unmute', 'remove', '-', 'talk', 'reveal'])
+  assert.equal((memberMenu({ name: 'Atrium', owner: true, muted: false, fromDesk: true })[0] as { heading: string }).heading, 'Atrium · dono · da mesa')
+  const rows = memberMenu({ name: 'soul · bancada', owner: false, muted: false, fromDesk: true })
+  const talk = rows.find(e => e !== 'sep' && 'id' in e && e.id === 'talk') as { label: string }
+  assert.equal(talk.label, 'Falar com soul · bancada')
+  const rm = rows.find(e => e !== 'sep' && 'id' in e && e.id === 'remove') as { danger?: boolean; label: string }
+  assert.equal(rm.label, 'Tirar do canal')
+  assert.equal(rm.danger, true)
 })
 
 test('createRow: the typed text makes the row "Criar #nome"; the rule shows while it is not a name; nothing for blank text', () => {

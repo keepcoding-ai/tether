@@ -32,7 +32,8 @@ type Snap = {
   actions: { primary: string; labeled: boolean; more: boolean; toEnd: boolean }
   empty: boolean
   column: { shown: boolean; button: boolean }
-  composer?: { enabled: boolean; placeholder: string }
+  composer?: { enabled: boolean; placeholder: string; picked: string }
+  members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; hint: string; acts: string[] }>
 }
 type Hooks = {
   panelIds(): string[]
@@ -79,7 +80,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
       delete env.NODE_TEST_CONTEXT
       env.ECHO_LOG = join(home, `echo-${input.slot.slotId}.log`)
       env.CHAN_LOG = join(home, `chan-${input.slot.slotId}.log`)
-      env.OPEN_STREAM = '1'
+      // "surdo" never opens the stream: the person's pane holds it, so the member is on the `wait` route (G3's "não ouve agora").
+      env.OPEN_STREAM = input.slot.name === 'surdo' ? '0' : '1'
       return { command: process.execPath, args: [AGENT], cwd: input.slot.cwd, env }
     },
     sessionExists: async () => 'unknown',
@@ -104,7 +106,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     const running = async (name: string): Promise<string> => {
       const id = (await doorApi.slots.create({ kind: 'claude', cwd: home, name, desk: 'desk-1' })).slotId
       await waitUntil(() => doorApi.slots.get(id)?.status === 'running' && doorApi.slots.readScreen(id).data.includes('READY'), 30_000, `${name} running`)
-      await waitUntil(() => doorApi.delivery.pathOf(id) === 'inside', 30_000, `${name} opened its stream`)
+      if (name !== 'surdo') await waitUntil(() => doorApi.delivery.pathOf(id) === 'inside', 30_000, `${name} opened its stream`)
       return id
     }
     const a = await running('conferente')
@@ -195,18 +197,39 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     // ---- 3. the member's row: mute (asks), unmute (at once), remove (asks) ----
     console.log('step 3')
     const row = pane(hz).locator(`.ch-mrow[data-member="${a}"]`)
+    // G3: the "⋯" is on the row all the time (no hover needed); Calar and Tirar come with the hover.
+    await page.mouse.move(2, 2)
+    assert.equal(await row.locator('.ch-mmore').isVisible(), true)
+    assert.equal(await row.locator('.ch-mmore').getAttribute('aria-haspopup'), 'menu')
+    assert.equal(await row.locator('.ch-macts').evaluate(e => getComputedStyle(e).opacity), '0')
+    assert.deepEqual((await view(hz))!.members.find(m => m.name === nameA)!.acts, ['mute', 'remove', 'more'])
     await row.hover()
-    const mute = row.locator('.ch-mact[data-act="mute"]')
-    assert.equal(await mute.getAttribute('aria-label'), `Calar ${nameA}`)
-    await mute.click()
+    assert.equal(await row.locator('.ch-macts').evaluate(e => getComputedStyle(e).opacity), '1')
+    await pane(hz).screenshot({ path: join(SHOTS, 'g3-linha.png') })
+    // The menu of the member from the "⋯": who it is, then the rows of plan 2.6; Calar goes through its dialog.
+    await row.locator('.ch-mmore').click()
+    await page.waitForSelector('#ctx-menu li')
+    const memberLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '')
+    assert.deepEqual(memberLabels, [`${nameA} · membro`, 'Calar', 'Tirar do canal', `Falar com ${nameA}`, 'Ir para a guia do agente'])
+    await page.screenshot({ path: join(SHOTS, 'g3-menu.png') })
+    await page.locator('#ctx-menu li', { hasText: /^Calar$/ }).click()
     await ask('channels.mute').waitFor()
     await ask('channels.mute').locator('button.choice[data-choice="mute"]').click()
     await waitUntil(() => members(hz)[a]?.muted !== undefined, 10_000, 'a muted')
     const unmute = row.locator('.ch-mact[data-act="unmute"]')
     await unmute.waitFor()
     assert.equal(await unmute.getAttribute('title'), `Devolver a voz ${nameA}`)
+    // The mute shows in the line of the conversation and in the chip of the row.
+    await pane(hz).locator('.ch-sys', { hasText: /calou|calad/i }).first().waitFor()
+    assert.equal((await view(hz))!.members.find(m => m.name === nameA)!.muted, true)
     await unmute.click()
     await waitUntil(() => members(hz)[a]?.muted === undefined, 10_000, 'a has the voice back')
+    // "Falar com" puts the member in the box ("para …") and focuses it; no request goes out.
+    await row.locator('.ch-mmore').click()
+    await page.locator('#ctx-menu li', { hasText: `Falar com ${nameA}` }).click()
+    assert.equal((await view(hz))!.composer?.picked, nameA)
+    assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'TEXTAREA')
+    await row.hover()
     await row.locator('.ch-mact[data-act="remove"]').click()
     await ask('channels.remove').waitFor()
     await ask('channels.remove').locator('button.choice[data-choice="remove"]').click()
@@ -214,6 +237,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).locator('.ch-nobody').waitFor()
     // Back to nobody: the box goes off again (the whole way back).
     await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.composer?.enabled === false, hz)
+    // The row that held the focus is gone: the focus is on the accent "Juntar agente…".
+    await page.waitForFunction(() => document.activeElement?.classList.contains('ch-join') === true)
 
     // The channel's tab menu has the gesture, and closing (from the menus hook).
     await page.locator('.ch-tab', { hasText: '#horizontes' }).first().click({ button: 'right' })
@@ -291,6 +316,34 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.waitForFunction(id => document.querySelector(`.ch-pane[data-channel="${id}"]`)?.classList.contains('narrow') === true, vz)
     assert.deepEqual((await view(vz))!.column, { shown: false, button: false })
     await pane(vz).screenshot({ path: join(SHOTS, 'g2-vazio-estreita.png') })
+
+    // ---- 8. the owner's row has only the "⋯"; a member that does not hear now is marked (G3) ----
+    console.log('step 8')
+    const s = await running('surdo')
+    const mesa2 = await ch.desk.open('desk-2', { name: 'oficina', title: 'oficina', owner: a, panes: [a, s] })
+    assert.ok(mesa2.ok)
+    const of = mesa2.channel.id
+    await run('channels.open', { channel: of })
+    await pane(of).locator(`.ch-mrow[data-member="${s}"]`).waitFor({ state: 'attached' })
+    await resize(1900, 760)
+    await page.waitForFunction(id => (document.querySelector(`.ch-pane[data-channel="${id}"]`)?.clientWidth ?? 0) >= 560, of)
+    await pane(of).locator(`.ch-mrow[data-member="${s}"]`).waitFor()
+    const v8 = (await view(of))!
+    const owner = v8.members.find(m => m.role === 'dono')!
+    assert.deepEqual(owner.acts, ['more'], 'the owner has only the "⋯"')
+    const deaf = v8.members.find(m => m.name.endsWith('surdo'))!
+    assert.equal(deaf.state, 'não ouve agora · falas em espera')
+    assert.equal(deaf.tone, 'wait')
+    assert.equal(deaf.hint, 'A guia deste agente está com você e ele não recebe falas por dentro. As falas ficam na fila até a guia ser dada a um agente.')
+    assert.equal(await pane(of).locator(`.ch-mrow[data-member="${s}"] .ch-state`).getAttribute('title'), deaf.hint)
+    // The owner's menu: the dialog of taking him out tells that he gives up the desk's channel.
+    await pane(of).locator(`.ch-mrow[data-member="${a}"] .ch-mmore`).click()
+    await page.locator('#ctx-menu li', { hasText: 'Tirar do canal' }).click()
+    await ask('channels.remove').waitFor()
+    assert.match(await ask('channels.remove').innerText(), /Ele é o dono da mesa\. O canal segue com você até a mesa trocar de dono\./)
+    await page.keyboard.press('Escape')
+    await ask('channels.remove').waitFor({ state: 'detached' })
+    await pane(of).screenshot({ path: join(SHOTS, 'g3-nao-ouve.png') })
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
