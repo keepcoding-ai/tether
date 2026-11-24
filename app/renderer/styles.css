@@ -304,7 +304,14 @@ button.primary:hover { background: var(--accent-hover); }
 #sessions-list .sx-free .busy .led { background: var(--ok); opacity: .7; }
 #sessions-list .kind { display: inline-flex; color: var(--warn); }
 #sessions-list .kind.shell { color: var(--fg-dim); }
-#sessions-list .sx-free .open { font-weight: 600; }
+#sessions-list .sx-free .open { font-weight: 500; }
+#sessions-list .sx-row.peekable { cursor: pointer; }
+#sessions-list .sx-row.peekable .acts button { cursor: pointer; }
+/* The split button ("Abrir" + ▾, "Reabrir" + ▾): one outline, the arrow stuck to the body. */
+#sessions-list .split { display: inline-flex; align-items: stretch; }
+#sessions-list .split > .open { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#sessions-list .split > .open-more { padding: 0 6px; border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+#sessions-list .split > .open-more .ph { width: 12px; height: 12px; }
 #sessions-list .sx-free .bulk, #sessions-list .sx-actions .bulk { width: 100%; justify-content: center; }
 /* Pausa: the glyph is the pause state. Blue = stopping, green = stopped, grey = queued. */
 #sessions-list .pg { display: inline-flex; flex: none; color: var(--fg-dim); opacity: .7; }
@@ -1009,6 +1016,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #ctx-menu li[aria-disabled="true"] { opacity: .5; cursor: default; }
 #ctx-menu li[aria-disabled="true"]:hover { background: none; }
 #ctx-menu li .ctx-check { margin-left: auto; color: var(--accent); }
+#ctx-menu li kbd { margin-left: auto; padding-left: 16px; font: 11px var(--ui); color: var(--fg-dim); }
 #ctx-menu li.danger { color: var(--err); }
 #ctx-menu li.danger .ph { color: var(--err); }
 #app-menu li[aria-disabled="true"] { opacity: .45; cursor: default; }

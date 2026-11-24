@@ -24,8 +24,9 @@ type Hooks = {
   slots(): SlotState[]
   applyState(slot: SlotState): void
   connection(): { connected: boolean; pid?: number } | undefined
+  peekState(): { open: boolean; slotId?: string; routed: boolean }
 }
-declare const window: { __tether: Hooks }
+declare const window: { __tether: Hooks; tether: { request(body: unknown): Promise<unknown> } }
 declare const document: { querySelectorAll(selector: string): { length: number }; getElementById(id: string): { hidden: boolean; textContent: string | null } | null; documentElement: { dataset: Record<string, string> }; activeElement: { id: string } | null }
 
 const require = createRequire(import.meta.url)
@@ -154,7 +155,7 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
     assert.equal(await page.locator('#sessions-list .sx-free .sx-row').count(), 1)
     assert.match((await row(page, a).locator('.cw').textContent())!, /^ocioso/)
     assert.equal(await row(page, a).locator('button.open').textContent(), 'Abrir')
-    assert.equal(await row(page, a).locator('button.stop').textContent(), 'Encerrar')
+    assert.equal(await row(page, a).locator('button.stop').getAttribute('aria-label'), 'Encerrar a sessão', 'Encerrar is an icon with a tip')
     assert.equal(await page.locator('#pause-start').isDisabled(), true, 'nobody is working: the pause button is off')
     assert.equal(await page.locator('#pause-start').textContent(), 'Ninguém em andamento agora')
 
@@ -203,8 +204,11 @@ test('sessões: sem guia, abrir, encerrar guarda a conversa, encerradas, esquece
     assert.equal(await row(page, b).evaluate(el => el.classList.contains('ended')), true)
     await row(page, b).hover()
     await row(page, b).locator('button.open').click()
-    await page.waitForFunction(id => window.__tether.panelIds().includes(id) && window.__tether.slots().find(s => s.slotId === id)?.status === 'running', b, { timeout: 20_000 })
-    await closePane(page, b, 'stop')
+    // "Reabrir" revives the session WITHOUT a tab: it runs, the peek card opens with it, no pane is born.
+    await page.waitForFunction(id => window.__tether.slots().find(s => s.slotId === id)?.status === 'running' && window.__tether.peekState().slotId === id, b, { timeout: 20_000 })
+    assert.equal((await page.evaluate(() => window.__tether.panelIds())).includes(b), false, 'reopening gives the session no tab')
+    await page.click('#peek .peek-close')
+    await page.evaluate(id => window.tether.request({ t: 'stop', slotId: id }), b)
     await exited(b)
     await openMenu(page)
     await row(page, b).locator('button.forget').click()

@@ -12,9 +12,15 @@
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { icon, KIND_ICON } from './icons.ts'
 import type { TerminalPanel } from './panel.ts'
-import { closeTip, peekFoot, peekHeader, peekLabel } from './peek-rules.ts'
+import { closeTip, peekFoot, peekHeader, peekLabel, peekMenuPlan } from './peek-rules.ts'
+import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
+import { OPEN_ELSEWHERE_LABEL } from './sessions-rules.ts'
 
-export interface PeekHost {
+export interface PeekHost extends PlaceHost {
+  /** The app's context menu at (x, y); `opener` gets the focus back when it closes. */
+  contextMenu(x: number, y: number, entries: MenuSpec[], opener?: HTMLElement): void
+  /** "Copiar link do painel" for the slot. */
+  copyLink(slotId: string): void
   slot(slotId: string): SlotState | undefined
   /** A TerminalPanel for the slot, initialised and registered where the slot's output is routed. */
   createPanel(slotId: string): TerminalPanel
@@ -39,6 +45,8 @@ export class PeekCard {
   private readonly state: HTMLElement
   private readonly foot: HTMLElement
   private readonly openBtn: HTMLButtonElement
+  private readonly moreBtn: HTMLButtonElement
+  private readonly menuBtn: HTMLButtonElement
   private readonly closeBtn: HTMLButtonElement
   private readonly host: PeekHost
   private current: { slotId: string; panel: TerminalPanel } | undefined
@@ -69,12 +77,29 @@ export class PeekCard {
     this.openBtn.append(icon('plus'), label)
     this.openBtn.setAttribute('aria-label', 'Abrir nesta mesa')
     this.openBtn.addEventListener('click', () => this.openHere())
+    // The split button: "Abrir nesta mesa" with the ▾ stuck to it, which lists the other desks.
+    this.moreBtn = el('button', 'peek-open-more primary')
+    this.moreBtn.type = 'button'
+    this.moreBtn.title = OPEN_ELSEWHERE_LABEL
+    this.moreBtn.setAttribute('aria-label', OPEN_ELSEWHERE_LABEL)
+    this.moreBtn.setAttribute('aria-haspopup', 'menu')
+    this.moreBtn.append(icon('caret-down'))
+    this.moreBtn.addEventListener('click', () => this.showPlaces())
+    const split = el('div', 'peek-split')
+    split.append(this.openBtn, this.moreBtn)
+    this.menuBtn = el('button', 'peek-menu ib')
+    this.menuBtn.type = 'button'
+    this.menuBtn.title = 'Mais ações'
+    this.menuBtn.setAttribute('aria-label', 'Mais ações')
+    this.menuBtn.setAttribute('aria-haspopup', 'menu')
+    this.menuBtn.append(icon('dots-three'))
+    this.menuBtn.addEventListener('click', () => this.showMenu())
     this.closeBtn = el('button', 'peek-close ib')
     this.closeBtn.type = 'button'
     this.closeBtn.setAttribute('aria-label', 'Fechar o cartão')
     this.closeBtn.append(icon('x'))
     this.closeBtn.addEventListener('click', () => this.close())
-    acts.append(this.openBtn, this.closeBtn)
+    acts.append(split, this.menuBtn, this.closeBtn)
     head.append(id, acts)
     this.body = el('div', 'peek-body')
     this.foot = el('footer', 'peek-foot')
@@ -150,6 +175,7 @@ export class PeekCard {
     const tip = closeTip(hint)
     if (this.closeBtn.title !== tip) this.closeBtn.title = tip
     this.openBtn.disabled = h.state === 'ended'
+    this.moreBtn.disabled = h.state === 'ended'
     const foot = peekFoot(s?.kind, hint, h.state === 'ended')
     if (this.foot.textContent !== foot) this.foot.textContent = foot
   }
@@ -160,6 +186,42 @@ export class PeekCard {
     // Closed (detached) before the tab is born: the tab's own attach comes after, so nothing cuts its output.
     this.close({ restoreFocus: false })
     this.host.openHere(slotId)
+  }
+
+  /** The ▾ list "Abrir em outra mesa": the card closes on a pick and the person stays where they are. */
+  private showPlaces(): void {
+    const slotId = this.current?.slotId
+    if (!slotId) return
+    const r = this.moreBtn.getBoundingClientRect()
+    // The card closes before the tab is born elsewhere (the tab's own attach comes after, so nothing cuts its output).
+    this.host.contextMenu(r.left, r.bottom + 2, [{ heading: OPEN_ELSEWHERE_LABEL }, ...placeEntries(this.host, slotId, () => this.close())], this.moreBtn)
+  }
+
+  /** The "⋯" menu (rules: peekMenuPlan). */
+  private showMenu(): void {
+    const slotId = this.current?.slotId
+    if (!slotId) return
+    const hint = this.host.closeHint()
+    const ended = this.host.slot(slotId)?.status === 'exited'
+    const icons = { 'open-here': 'plus', 'open-other': 'arrow-square-out', 'copy-link': 'link', close: 'x' } as const
+    const entries: MenuSpec[] = []
+    for (const item of peekMenuPlan(hint, ended)) {
+      if (item.sepBefore) entries.push('sep')
+      const run = (): void => {
+        if (item.action === 'open-here') this.openHere()
+        else if (item.action === 'copy-link') this.host.copyLink(slotId)
+        else if (item.action === 'close') this.close()
+      }
+      entries.push({
+        icon: icons[item.action],
+        label: item.label,
+        ...(item.disabled ? { disabled: true } : {}),
+        ...(item.trail ? { trail: item.trail } : {}),
+        ...(item.submenu ? { children: placeEntries(this.host, slotId, () => this.close()), run: () => {} } : { run }),
+      })
+    }
+    const r = this.menuBtn.getBoundingClientRect()
+    this.host.contextMenu(r.right, r.bottom + 2, entries, this.menuBtn)
   }
 
   private focusTerminal(): void {

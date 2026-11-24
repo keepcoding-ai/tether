@@ -94,6 +94,7 @@ import { agentPaneChanges, agentPaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
+import type { MenuSpec, PlaceHost } from './place-menu.ts'
 import { PEEK_CLOSE_COMMAND, peekEscAction, peekRoute } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
@@ -1564,6 +1565,66 @@ function peek(slotId: string): void {
 
 function closePeek(): void { peekCard?.close() }
 
+/** A menu a view described as data (place-menu.ts MenuSpec) as the context menu's rows. */
+function menuEntriesOf(specs: readonly MenuSpec[]): MenuEntry[] {
+  return specs.map((s): MenuEntry => {
+    if (s === 'sep') return SEP
+    if ('heading' in s) return { heading: s.heading }
+    const trail = s.trail ? Object.assign(document.createElement('kbd'), { textContent: s.trail }) : undefined
+    return {
+      icon: s.icon,
+      label: s.label,
+      run: s.run ?? (() => {}),
+      ...(s.danger ? { danger: true } : {}),
+      ...(s.checked !== undefined ? { checked: s.checked } : {}),
+      ...(s.disabled ? { disabled: true } : {}),
+      ...(s.tip ? { tip: s.tip } : {}),
+      ...(trail ? { trail } : {}),
+      ...(s.children ? { children: menuEntriesOf(s.children) } : {}),
+    }
+  })
+}
+
+/** What the sessions menu and the peek card need to put a tab-less session in a tab: the desks, and the three ways to do it. */
+function placeHost(): PlaceHost {
+  return {
+    desks: () => desks.desks,
+    currentDesk: () => desks.activeDeskId,
+    openOnDesk: openSlotOnDesk,
+    choosePlace: slotId => { openSlot(slotId); void openMove(slotId) },
+  }
+}
+
+/**
+ * "Abrir em outra mesa": the session gets a tab in `deskId` and the person stays where they are (no desk switch, no focus
+ * move). The current desk is "Abrir nesta mesa". An ended session is started, as opening always does.
+ */
+function openSlotOnDesk(slotId: string, deskId: string): void {
+  const s = slots.get(slotId)
+  if (!s) return
+  if (findPanel(slotId)) { revealPane(slotId); return }
+  if (deskId === desks.activeDeskId) { openSlot(slotId); return }
+  const target = desks.desk(deskId)
+  if (!target) return
+  target.addPanel(slotPanelOptions(s))
+  if (effectiveStatus(s) === 'exited') void startSlot(slotId)
+  scheduleSave()
+  refreshSessions()
+  renderStrip()
+}
+
+/**
+ * "Reabrir" in the sessions menu: the ended session lives again WITHOUT a tab (it joins "Sem guia") and the peek card opens
+ * with it. A session whose conversation the daemon cannot pick by itself (unconfirmed: the person must choose to resume or
+ * start over) gets the old way: a tab, where that choice is asked.
+ */
+async function reviveAndPeek(slotId: string): Promise<void> {
+  await startSlot(slotId)
+  const s = slots.get(slotId)
+  if (s && isLiveSlot(s)) { peek(slotId); return }
+  if (startErrors.get(slotId)?.code === 'unconfirmed') openSlot(slotId, false)
+}
+
 /** A TerminalPanel outside dockview: an always-active api whose parameters never change; registered where `data` is routed. */
 function createPeekPanel(slotId: string): TerminalPanel {
   const panel = new TerminalPanel(host)
@@ -1576,6 +1637,9 @@ function createPeekPanel(slotId: string): TerminalPanel {
 
 function peekHost(): PeekHost {
   return {
+    ...placeHost(),
+    contextMenu: (x, y, specs, opener) => showContextMenu(x, y, menuEntriesOf(specs), opener),
+    copyLink: copyPaneLink,
     slot: id => slots.get(id),
     createPanel: createPeekPanel,
     releasePanel: (panel, detach) => {
@@ -2474,6 +2538,10 @@ function setupSessionsMenu(): void {
     batch: () => pauseBatch,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
     openSlot,
+    ...placeHost(),
+    peekSlot: peek,
+    reviveAndPeek,
+    contextMenu: (x, y, specs, opener) => showContextMenu(x, y, menuEntriesOf(specs), opener),
     request: async body => { const r = await window.tether.request(body); return r.t === 'error' ? r.message : undefined },
     confirmBulkClose: async names => (await askDialog(bulkCloseSituation(names))).choice === 'close',
     confirmForgetAll: async count => (await askDialog(forgetEndedSituation(count))).choice === 'forget',

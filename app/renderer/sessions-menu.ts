@@ -10,9 +10,16 @@ import type { PauseBatch } from '../../src/daemon/pause.ts'
 import type { RequestBody } from '../shared/api.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { canResume, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
-import { bulkCloseAction, pauseAction, sessionRows, sessionsCounter, sessionsSummary, type SessionRow } from './sessions-rules.ts'
+import { bulkCloseAction, OPEN_ELSEWHERE_LABEL, pauseAction, rowMenuPlan, sessionRows, sessionsCounter, sessionsSummary, type RowGroup, type SessionRow } from './sessions-rules.ts'
+import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
 
-export interface SessionsMenuHost {
+export interface SessionsMenuHost extends PlaceHost {
+  /** Opens the peek card on the session (a live one without a tab). The menu closes first. */
+  peekSlot(slotId: string): void
+  /** Revives an ended session WITHOUT a tab (it goes to "Sem guia") and opens the peek card on it; resolves when the start answered. */
+  reviveAndPeek(slotId: string): Promise<void>
+  /** The app's context menu at (x, y); `opener` gets the focus back when it closes. */
+  contextMenu(x: number, y: number, entries: MenuSpec[], opener?: HTMLElement): void
   slots(): Iterable<SlotState>
   /** A pane shows the session. */
   hasTab(slotId: string): boolean
@@ -163,18 +170,23 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const cw = el('span', 'cw', r.memory ? `${r.text} · ${r.memory}` : r.text); cw.title = r.slot.cwd
     tx.append(tt, cw)
     const acts = el('div', 'acts')
-    const open = group === 'free'
-      ? button('open primary', 'Abrir', 'arrow-square-out', 'Abrir em uma guia (a sessão segue rodando)')
-      : button('open', 'Reabrir', 'arrow-clockwise', 'Reabrir em uma guia, retomando a conversa')
-    open.addEventListener('click', ev => { ev.stopPropagation(); close(); host.openSlot(r.slotId) })
-    acts.append(open)
     if (group === 'free') {
-      const stop = button('stop', 'Encerrar', 'power', 'Encerrar: o processo termina e a conversa fica guardada em Encerradas')
-      stop.setAttribute('aria-label', 'Encerrar a sessão')
+      // "Espiar" is the main act; "Abrir" (a tab on this desk, with the ▾ list of the other desks) is the named secondary one.
+      const peek = button('peek primary', 'Espiar', 'eye', 'Espiar: vê e usa a sessão num cartão, sem abrir guia')
+      peek.addEventListener('click', ev => { ev.stopPropagation(); peekRow(r.slotId) })
+      acts.append(peek, splitOpen(r.slotId, 'Abrir', 'arrow-square-out', 'Abrir nesta mesa'))
+      const stop = iconButton('ic stop', 'x', 'Encerrar a sessão')
+      stop.title = 'Encerrar: o processo termina e a conversa fica guardada em Encerradas'
       stop.disabled = busy.has(r.slotId)
       stop.addEventListener('click', ev => { ev.stopPropagation(); void stopSession(r.slotId) })
       acts.append(stop)
-    } else if (askingForget === r.slotId) {
+      // The whole row peeks (the buttons keep their own act).
+      row.addEventListener('click', ev => { if (!(ev.target as Element).closest('button')) peekRow(r.slotId) })
+      row.classList.add('peekable')
+    } else {
+      acts.append(splitOpen(r.slotId, 'Reabrir', 'arrow-clockwise', 'Reabrir: a sessão volta a viver em "Sem guia" e abre no cartão', 'revive'))
+    }
+    if (group === 'ended' && askingForget === r.slotId) {
       acts.replaceChildren()
       row.classList.add('asking')
       const q = el('span', 'sx-ask', 'Esquecer esta sessão?')
@@ -185,15 +197,77 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       no.addEventListener('click', ev => { ev.stopPropagation(); askingForget = undefined; refresh() })
       acts.append(q, yes, no)
       queueMicrotask(() => no.focus({ preventScroll: true }))
-    } else {
+    } else if (group === 'ended') {
       const forget = iconButton('ic forget', 'trash', 'Esquecer a sessão')
       forget.title = 'Esquecer: some da lista. Não dá para desfazer'
       forget.disabled = busy.has(r.slotId)
       forget.addEventListener('click', ev => { ev.stopPropagation(); askingForget = r.slotId; refresh() })
       acts.append(forget)
     }
+    row.addEventListener('contextmenu', ev => {
+      if (row.classList.contains('asking')) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      host.contextMenu(ev.clientX, ev.clientY, rowMenu(r.slotId, group))
+    })
     row.append(led, kind, tx, acts)
     return row
+  }
+
+  /** "Espiar": the menu closes and the card opens on the session. */
+  function peekRow(slotId: string): void { close(); host.peekSlot(slotId) }
+
+  /** "Reabrir" without a tab: the session lives again in "Sem guia" and the card opens with it. */
+  function reviveRow(slotId: string): void { close(); void host.reviveAndPeek(slotId) }
+
+  /** The list "Abrir em outra mesa" (the desks, a separator, "Escolher o lugar…"); the sessions menu closes on a pick. */
+  function placeList(slotId: string): MenuSpec[] { return placeEntries(host, slotId, close) }
+
+  /**
+   * The split button: the body acts on this desk ("Abrir") or revives ("Reabrir", `body: 'revive'`); the ▾ stuck to it opens
+   * the list of the other desks.
+   */
+  function splitOpen(slotId: string, label: string, iconName: IconName, tip: string, body: 'open' | 'revive' = 'open'): HTMLElement {
+    const wrap = el('span', 'split')
+    const main = button(body === 'open' ? 'open' : 'open revive', label, iconName, tip)
+    main.addEventListener('click', ev => { ev.stopPropagation(); if (body === 'revive') reviveRow(slotId); else { close(); host.openSlot(slotId) } })
+    const more = button('open-more', '', 'caret-down', body === 'open' ? OPEN_ELSEWHERE_LABEL : 'Reabrir em outra mesa')
+    more.setAttribute('aria-label', more.title)
+    more.setAttribute('aria-haspopup', 'menu')
+    more.addEventListener('click', ev => {
+      ev.stopPropagation()
+      const rect = more.getBoundingClientRect()
+      host.contextMenu(rect.left, rect.bottom + 2, [{ heading: more.title }, ...placeList(slotId)], more)
+    })
+    wrap.append(main, more)
+    return wrap
+  }
+
+  /** The right-click menu of a row (the plan is rules: sessions-rules.ts `rowMenuPlan`). */
+  function rowMenu(slotId: string, group: RowGroup): MenuSpec[] {
+    const run: Record<string, () => void> = {
+      peek: () => peekRow(slotId),
+      'open-here': () => { close(); host.openSlot(slotId) },
+      stop: () => { void stopSession(slotId) },
+      reopen: () => reviveRow(slotId),
+      'reopen-here': () => { close(); host.openSlot(slotId) },
+      forget: () => { askingForget = slotId; refresh() },
+    }
+    const icons: Record<string, IconName> = {
+      peek: 'eye', 'open-here': 'plus', 'open-other': 'arrow-square-out', stop: 'power',
+      reopen: 'arrow-clockwise', 'reopen-here': 'plus', 'reopen-other': 'arrow-square-out', forget: 'trash',
+    }
+    const out: MenuSpec[] = []
+    for (const item of rowMenuPlan(group)) {
+      if (item.sepBefore) out.push('sep')
+      out.push({
+        icon: icons[item.action]!,
+        label: item.label,
+        ...(item.danger ? { danger: true } : {}),
+        ...(item.submenu ? { children: placeList(slotId), run: () => {} } : { run: run[item.action]! }),
+      })
+    }
+    return out
   }
 
   function pauseRow(batch: PauseBatch, e: PauseBatch['entries'][number]): HTMLElement {
@@ -331,7 +405,8 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     if (askingForget && !(ev.target as Element).closest('.sx-row.asking')) { askingForget = undefined; refresh() }
   })
   list.addEventListener('keydown', ev => {
-    if (ev.key !== 'Escape') return
+    // An Esc that closed the app's context menu (opened from a row) is that menu's, not the panel's.
+    if (ev.key !== 'Escape' || ev.defaultPrevented) return
     ev.stopPropagation()
     if (askingForget) { askingForget = undefined; refresh(); return }
     close()
