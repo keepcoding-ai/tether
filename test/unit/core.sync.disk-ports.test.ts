@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import type { SlotMeta } from '../../src/core/event.ts'
 import type { Profile } from '../../src/core/profile.ts'
+import { defaultProfiles } from '../../src/core/profile-sync.ts'
 import { createDiskPorts, readLayoutFile, rewriteSettingsText, writeLayoutFile, type DaemonRequester } from '../../src/core/sync/disk-ports.ts'
 
 let root: string
@@ -23,6 +24,8 @@ function dirs(): { home: string; user: string } {
 
 const meta = (id: string, name?: string): SlotMeta => ({ v: 1, slotId: id, agent: 'shell', cwd: root, args: [], createdAt: '2026-11-23T10:00:00.000Z', ...(name ? { name } : {}) })
 const prof = (id: string, name = id): Profile => ({ id, name, agent: 'shell', args: [] })
+// The test profiles are all shells: every other motor reads back with its default profiles (merged in memory, per motor).
+const otherMotorDefaults = (): Profile[] => defaultProfiles().filter((p) => p.agent !== 'shell')
 
 describe('rewriteSettingsText', () => {
   test('edits only what differs and keeps comments, layout and what the codec does not own', () => {
@@ -90,7 +93,7 @@ describe('disk ports', () => {
       layout: { v: 4, desks: [], activeDesk: '' },
     })
     const w = await ports.read()
-    assert.deepEqual(w.profiles.map((p) => p.id), ['p1'])
+    assert.deepEqual(w.profiles.map((p) => p.id), ['p1', ...otherMotorDefaults().map((p) => p.id)])
     assert.deepEqual(Object.fromEntries(w.slots.map((s) => [s.slotId, s.name])), { old: 'Renomeado', keep: 'Nomeado', new1: 'Novo' })
     assert.deepEqual(w.settings, { theme: 'dark' })
     assert.match(readFileSync(join(user, 'settings.json'), 'utf8'), /\/\/ mine/)
@@ -132,6 +135,8 @@ describe('disk ports', () => {
       { t: 'profile-save', profile: prof('edit', 'Depois') },
       { t: 'profile-save', profile: prof('fresh') },
       { t: 'profile-delete', profileId: 'gone' },
+      // the read the plan is diffed against carries the other motors' defaults (in memory), which the incoming list does not have
+      ...otherMotorDefaults().map((p) => ({ t: 'profile-delete', profileId: p.id })),
       { t: 'rename-slot', slotId: 'old', name: 'N' },
       { t: 'rename-slot', slotId: 'new1', name: '' },
     ])
