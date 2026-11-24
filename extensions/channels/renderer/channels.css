@@ -88,6 +88,16 @@
 .ch-l1 .ch-oname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .ch-link:hover { text-decoration: underline; }
+.ch-act[hidden] { display: none; }
+.ch-sec { display: flex; align-items: center; justify-content: space-between; }
+.ch-sec-add { height: 20px; min-width: 22px; }
+.ch-sec-add svg.ph { width: 13px; height: 13px; }
+.ch-macts { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; opacity: 0; }
+.ch-l1 .ch-emblem + .ch-macts { margin-left: 4px; }
+.ch-mrow:hover .ch-macts, .ch-mrow:focus-within .ch-macts { opacity: 1; }
+.ch-mact { height: 22px; min-width: 22px; }
+.ch-mact svg.ph { width: 13px; height: 13px; }
+.ch-nobody { min-height: 0; padding-top: 16px; }
 .ch-l2 { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding-left: 23px; min-height: 20px; }
 .ch-state { font-size: 11px; color: var(--fg-dim); }
 .ch-state[data-tone="on"]::before, .ch-state[data-tone="wait"]::before, .ch-state[data-tone="off"]::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--fg-dim); }

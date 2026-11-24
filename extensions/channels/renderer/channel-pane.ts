@@ -12,9 +12,10 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent } from '../daemon/fanout.ts'
 import type { Line } from '../rules.ts'
-import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
+import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
+import { PANE_TEXT } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
   applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, forYouLabel, headerOf, idByName, isNearBottom, memberRows, mergeNewest, muteBar,
@@ -128,6 +129,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private readonly composerSlot = el('div', 'ch-composer-slot')
     private readonly side = el('div', 'ch-members')
     private membersBtn: HTMLButtonElement | undefined
+    private joinBtn: HTMLButtonElement | undefined
+    /** Whether the empty state ("Ninguém no canal ainda.") was drawn last, to repaint the conversation when it flips. */
+    private drewNoMembers = false
     private readonly composer = createComposer({ send: (text, to) => this.say(text, to) })
 
     init(p: GroupPanelPartInitParameters): void {
@@ -238,6 +242,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
         this.paintMembers()
         this.paintMuteBar()
         this.paintFoot()
+        if (this.noMembers() !== this.drewNoMembers) this.paintMsgs()
       } catch { /* the next event asks again */ }
     }
 
@@ -379,7 +384,27 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (this.api && this.api.title !== title) this.api.setTitle(title)
     }
 
+    /** Asks the commands to join an agent to this channel: they open straight on the agent picker. */
+    private joinAgent(): void { void ui.commands.run(CMD.join, { channel: this.channelId }) }
+
+    private isClosed(): boolean { return this.answer?.channel.closed !== undefined }
+
+    /** An open channel that is known to have nobody in it. */
+    private noMembers(): boolean { return this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
+
+    private actionBtn(className: string, label: string, icon: Parameters<typeof glyph>[0], run: () => void): HTMLButtonElement {
+      const b = el('button', className)
+      b.type = 'button'
+      b.title = label
+      b.setAttribute('aria-label', label)
+      b.append(glyph(icon))
+      b.addEventListener('click', ev => { ev.stopPropagation(); run() })
+      return b
+    }
+
     private buildBar(): void {
+      const join = this.actionBtn('ch-act ch-join', PANE_TEXT.join, 'user-plus', () => this.joinAgent())
+      this.joinBtn = join
       const members = el('button', 'ch-act on')
       members.type = 'button'
       members.title = 'Membros'
@@ -393,10 +418,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       end.setAttribute('aria-label', 'Ir para o fim')
       end.append(glyph('arrow-line-down'))
       end.addEventListener('click', () => this.toEnd())
-      this.bar.append(members, end)
+      this.bar.append(join, members, end)
     }
 
     private paintHead(): void {
+      // A closed channel takes no one.
+      if (this.joinBtn) this.joinBtn.hidden = this.isClosed()
       this.titleBox.replaceChildren()
       if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.api?.title ?? '')); return }
       const h = headerOf(this.answer)
@@ -465,6 +492,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     }
 
     rowsView(): Row[] { return this.rows() }
+    canJoin(): boolean { return this.answer !== undefined && !this.isClosed() }
 
     private paintMsgs(): void {
       const m = this.msgs
@@ -510,13 +538,21 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
       const rows = this.rows()
       this.separatorAt = marks.of(this.channelId).firstToMe
-      if (rows.length === 0) {
+      this.drewNoMembers = this.noMembers()
+      for (const r of rows) m.append(this.rowEl(r))
+      if (this.drewNoMembers) {
+        // Nobody is here: under the system lines, the way to bring someone in (it goes when a member comes).
+        const box = el('div', 'ch-empty ch-nobody')
+        box.append(el('p', 't', PANE_TEXT.noMembers))
+        const join = this.actionBtn('ch-btn ch-join-empty', PANE_TEXT.join, 'user-plus', () => this.joinAgent())
+        join.append(PANE_TEXT.join)
+        box.append(join)
+        m.append(box)
+      } else if (rows.length === 0) {
         const box = el('div', 'ch-empty')
         box.append(el('p', 't', 'Ninguém falou ainda'), el('p', '', 'O que for dito neste canal aparece aqui.'))
         m.append(box)
-        return
       }
-      for (const r of rows) m.append(this.rowEl(r))
     }
 
     private rowEl(r: Row): HTMLElement {
@@ -566,7 +602,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (!this.answer) return
       // The emblems are read at each redraw (no observer): a change shows when the list is drawn again.
       const rows = memberRows(this.answer, id => ui.panes.personEmblem(id))
-      side.append(el('div', 'ch-sec', `Membros · ${rows.length}`))
+      const sec = el('div', 'ch-sec')
+      sec.append(el('span', '', `Membros · ${rows.length}`))
+      if (!this.isClosed()) sec.append(this.actionBtn('ch-act ch-sec-add', PANE_TEXT.join, 'plus', () => this.joinAgent()))
+      side.append(sec)
       for (const m of rows) {
         const row = el('div', 'ch-mrow')
         row.dataset.member = m.id
@@ -584,6 +623,18 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
           chip.classList.add('ch-emblem')
           chip.title = m.emblem.name
           l1.append(chip)
+        }
+        if (!this.isClosed()) {
+          // The command asks the consequence in its dialog (calar, tirar) before it acts.
+          const acts = el('span', 'ch-macts')
+          const toggle = m.muted
+            ? this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.unmute, m.name), 'speaker-high', () => { void ui.commands.run(CMD.unmute, { channel: this.channelId, agent: m.id }) })
+            : this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.mute, m.name), 'speaker-slash', () => { void ui.commands.run(CMD.mute, { channel: this.channelId, agent: m.id }) })
+          toggle.dataset.act = m.muted ? 'unmute' : 'mute'
+          const out = this.actionBtn('ch-act ch-mact', PANE_TEXT.on(PANE_TEXT.remove, m.name), 'user-minus', () => { void ui.commands.run(CMD.remove, { channel: this.channelId, agent: m.id }) })
+          out.dataset.act = 'remove'
+          acts.append(toggle, out)
+          l1.append(acts)
         }
         const l2 = el('div', 'ch-l2')
         l2.append(el('span', 'ch-role', m.role))
@@ -685,8 +736,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       create: () => new ChannelPane(),
       createTab: () => new ChannelTab() as unknown as ITabRenderer,
       has: id => id.startsWith(CHANNEL_PANE_PREFIX) && paneOf(channelIdOfPane(id)) !== undefined,
-      // The minimum every tab has; the channel's own gestures (join, mute, close…) come with the commands (U2).
+      // The minimum every tab has, plus joining an agent; "Encerrar canal…" is added by menus.ts (the tab menu hook).
       tabMenu: (id, x, y) => ui.menus.context(x, y, [
+        ...(paneOf(channelIdOfPane(id))?.canJoin() ? [{ icon: 'user-plus' as const, label: PANE_TEXT.joinMenu, run: () => { void ui.commands.run(CMD.join, { channel: channelIdOfPane(id) }) } }, 'sep' as const] : []),
         { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(id) },
         { icon: 'arrow-square-out', label: 'Mover…', run: () => ui.panes.move(id) },
         'sep',

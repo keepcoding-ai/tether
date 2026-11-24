@@ -210,6 +210,18 @@ export function createRow(query: string): PickItem<string> | undefined {
 
 // ---------- the menus ----------
 
+/** The gestures drawn in the channel's own pane (header, members column, empty state, member rows). */
+export const PANE_TEXT = {
+  join: 'Juntar agente',
+  joinMenu: 'Juntar agente…',
+  noMembers: 'Ninguém no canal ainda.',
+  mute: 'Calar',
+  unmute: 'Devolver a voz',
+  remove: 'Tirar do canal',
+  /** Title of a member's action: "Calar Nome". */
+  on: (verb: string, member: string): string => `${verb} ${member}`,
+} as const
+
 export const MENU = {
   join: 'Juntar a um canal…',
   openDesk: (name: string): string => `Abrir o canal da mesa (#${name})`,
