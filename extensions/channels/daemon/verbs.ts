@@ -20,6 +20,7 @@ import { leaveVerb } from './verbs/leave.ts'
 import { listVerb } from './verbs/list.ts'
 import { membersVerb } from './verbs/members.ts'
 import { muteVerb } from './verbs/mute.ts'
+import { reactVerb } from './verbs/react.ts'
 import { readVerb } from './verbs/read.ts'
 import { removeVerb } from './verbs/remove.ts'
 import { reopenVerb } from './verbs/reopen.ts'
@@ -29,7 +30,7 @@ import { unmuteVerb } from './verbs/unmute.ts'
 /** The verbs: those of the contract's table 3.1, then `reopen` (C7). */
 export const CHANNEL_VERBS: readonly VerbDef[] = [
   listVerb, createVerb, membersVerb, readVerb, closeVerb, reopenVerb,
-  joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb,
+  joinVerb, leaveVerb, removeVerb, muteVerb, unmuteVerb, sayVerb, reactVerb,
 ]
 
 const TOOLS = ['say', 'list', 'read'].map((v) => `\`${claudeToolName(v)}\``).join(', ')

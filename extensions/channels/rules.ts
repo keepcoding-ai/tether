@@ -78,7 +78,8 @@ export interface Line {
   /** 1, 2, 3… per channel; the envelope's `ref` is `<name>#<seq>`. */
   seq: number
   at: string
-  kind: 'message' | 'notice'
+  /** A `reaction` is a light signal on a message (`react`): it takes a seq, is never delivered and opens no turn in anyone. */
+  kind: 'message' | 'notice' | 'reaction'
   /** Who spoke, with the role IN THE CHANNEL. */
   from: { id: AgentId | 'user' | 'tether'; name: string; role: ChannelRole | 'system' }
   body: string
@@ -87,6 +88,114 @@ export interface Line {
   replyTo?: number
   /** Only on a notice: the gesture, so the pane draws it without reading the text. */
   event?: { type: LineEventType; who?: AgentId; by?: Who }
+  /** Only on a reaction: the message it is on and the gesture (put or take away). `body` is ''. */
+  react?: { seq: number; emoji: string; op: 'add' | 'remove' }
+}
+
+// ---- reactions ----------------------------------------------------------------------------------
+
+/** A reaction reaches only a message among the last this-many lines of the channel; older ones answer `too-old`. */
+export const REACTION_WINDOW = 500
+/** Different emojis one member may have on one message. */
+export const REACTIONS_PER_MEMBER = 3
+/** Different emojis one message may carry (the 13th answers `limit`). */
+export const REACTIONS_PER_LINE = 12
+/** Reactions (puts and takes) one member may give per minute in one channel (`slow-down`). */
+export const REACTIONS_PER_MINUTE = 10
+
+/** The five agreed meanings: the name the agent writes, the emoji it stands for. */
+export const REACTION_SENSES: ReadonlyArray<{ name: string; emoji: string }> = [
+  { name: 'seen', emoji: '👀' },
+  { name: 'agree', emoji: '👍' },
+  { name: 'done', emoji: '✅' },
+  { name: 'disagree', emoji: '❌' },
+  { name: 'question', emoji: '❓' },
+]
+
+export interface Reaction {
+  emoji: string
+  /** The agreed meaning's name, when the emoji is one of the five. */
+  name?: string
+}
+
+/** Two spellings of one emoji (with or without the emoji-presentation selector) are the same reaction. */
+export function reactionKey(emoji: string): string {
+  return emoji.replace(/️/g, '')
+}
+
+const MOD = '(?:\\uFE0F|[\\u{1F3FB}-\\u{1F3FF}]|[\\u{E0020}-\\u{E007F}])*'
+const EMOJI_RE = new RegExp(`^(?:[#*0-9]\\uFE0F?\\u20E3|\\p{Regional_Indicator}{2}|\\p{Extended_Pictographic}${MOD}(?:\\u200D\\p{Extended_Pictographic}${MOD})*)$`, 'u')
+
+/**
+ * What an agent wrote as a reaction: the name of one of the five (any case) or ONE emoji (a grapheme: skin tone, flag, family
+ * and keycap count as one). Anything else, text included, is undefined (`bad-reaction`).
+ */
+export function parseReaction(text: unknown): Reaction | undefined {
+  if (typeof text !== 'string') return undefined
+  const t = text.trim()
+  if (t === '' || t.length > 40) return undefined
+  const named = REACTION_SENSES.find((s) => s.name === t.toLowerCase())
+  if (named) return { emoji: named.emoji, name: named.name }
+  const parts = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(t)]
+  if (parts.length !== 1 || !EMOJI_RE.test(t)) return undefined
+  const sense = REACTION_SENSES.find((s) => reactionKey(s.emoji) === reactionKey(t))
+  return sense ? { emoji: sense.emoji, name: sense.name } : { emoji: t }
+}
+
+/** Why `who` may not react in the channel, or undefined when it may. The person reacts in every open channel; a muted member only with the five. */
+export function reactRefusal(who: Who, ch: Channel, reaction?: Reaction): 'closed' | 'not-member' | 'muted' | undefined {
+  if (ch.closed) return 'closed'
+  if (isModerator(who)) return undefined
+  if (!isMember(ch, who)) return 'not-member'
+  if (reaction && reaction.name === undefined && isMuted(ch, who)) return 'muted'
+  return undefined
+}
+
+/** One emoji on one message and who gave it, in the order they came. */
+export interface ReactionTally {
+  emoji: string
+  name?: string
+  by: Array<{ id: Who; name: string }>
+}
+
+/**
+ * The reactions per message: the reaction lines of `lines` (ascending) summed in order. A repeated `add` and a `remove`
+ * without `add` change nothing; one reaction per member per emoji. Lines of other kinds are ignored.
+ */
+export function sumReactions(lines: readonly Line[]): Map<number, ReactionTally[]> {
+  const work = new Map<number, Map<string, { emoji: string; by: Map<Who, string> }>>()
+  for (const l of lines) {
+    if (l.kind !== 'reaction' || !l.react) continue
+    const key = reactionKey(l.react.emoji)
+    let per = work.get(l.react.seq)
+    if (!per) work.set(l.react.seq, (per = new Map()))
+    let cell = per.get(key)
+    if (l.react.op === 'add') {
+      if (!cell) per.set(key, (cell = { emoji: l.react.emoji, by: new Map() }))
+      if (!cell.by.has(l.from.id as Who)) cell.by.set(l.from.id as Who, l.from.name)
+    } else if (cell) {
+      cell.by.delete(l.from.id as Who)
+      if (cell.by.size === 0) per.delete(key)
+    }
+    if (per.size === 0) work.delete(l.react.seq)
+  }
+  const out = new Map<number, ReactionTally[]>()
+  for (const [seq, per] of work) {
+    out.set(seq, [...per.values()].map((c) => {
+      const sense = REACTION_SENSES.find((s) => reactionKey(s.emoji) === reactionKey(c.emoji))
+      return { emoji: c.emoji, ...(sense ? { name: sense.name } : {}), by: [...c.by].map(([id, name]) => ({ id, name })) }
+    }))
+  }
+  return out
+}
+
+/** `limit` when `who` putting `reaction` on a message that carries `tallies` would pass a cap, else undefined. */
+export function reactionLimit(tallies: readonly ReactionTally[], who: Who, reaction: Reaction): 'limit' | undefined {
+  const key = reactionKey(reaction.emoji)
+  const mine = tallies.filter((t) => t.by.some((b) => b.id === who)).length
+  if (mine >= REACTIONS_PER_MEMBER) return 'limit'
+  if (tallies.length >= REACTIONS_PER_LINE && !tallies.some((t) => reactionKey(t.emoji) === key)) return 'limit'
+  return undefined
 }
 
 /** The person is the moderator of every channel. */

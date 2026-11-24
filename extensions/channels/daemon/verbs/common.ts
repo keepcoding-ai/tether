@@ -160,6 +160,12 @@ const REFUSALS: Record<Refusal, string> = {
   'not-closed': 'o canal não está encerrado',
   'unknown-agent': 'não é um agente do tether',
   'bad-request': 'pedido inválido',
+  'unknown-line': 'não há essa linha no canal',
+  'not-a-message': 'só fala recebe reação (aviso do sistema e reação não)',
+  'too-old': 'só as últimas 500 linhas do canal recebem reação',
+  'bad-reaction': 'reação é um emoji só ou um destes nomes: seen, agree, done, disagree, question',
+  limit: 'a fala já tem reações demais (3 por membro, 12 diferentes no total)',
+  'slow-down': 'reações demais em pouco tempo; espere um minuto',
 }
 
 /** The fan-out's answer as the verb's: the success, or the refusal thrown with the verb's error code. */

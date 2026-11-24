@@ -117,8 +117,10 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const ch = channelOf(c, a)
       const before = int(a, 'before')
       const limit = Math.min(Math.max(int(a, 'limit') ?? PAGE, 1), PAGE)
-      const lines: Line[] = await c.store.history(ch.id, before, limit)
-      return { channel: summaryOf(ch), lines, more: lines.length > 0 && lines[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
+      const page: Line[] = await c.store.history(ch.id, before, limit)
+      // Reaction lines are not conversation: the pane that draws lines does not get them until it draws reactions.
+      const lines = page.filter((l) => l.kind !== 'reaction')
+      return { channel: summaryOf(ch), lines, more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
     }],
 
     ['say', async (c, a, ctx) => {

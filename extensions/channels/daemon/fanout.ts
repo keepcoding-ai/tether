@@ -25,8 +25,9 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../../app/sh
 import type { DeliveryMessage, DeliveryReceipt, TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { SlotState } from '../../../src/daemon/protocol.ts'
 import {
-  closeRefusal, deliveryRoleOf, deskChannelId, isDeskChannel, isMember, joinRefusal, joinsByDesk, mayModerate, reopenRefusal,
-  roleIn, sayRefusal, slugOf, USER, type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Who,
+  closeRefusal, deliveryRoleOf, deskChannelId, isDeskChannel, isMember, joinRefusal, joinsByDesk, mayModerate, parseReaction, reactionKey,
+  reactionLimit, reactRefusal, REACTION_WINDOW, REACTIONS_PER_MINUTE, reopenRefusal, roleIn, sayRefusal, slugOf, sumReactions, USER,
+  type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type Reaction, type Who,
 } from '../rules.ts'
 import type { ChannelStore, NewLine, StoreError } from './store.ts'
 import {
@@ -48,6 +49,7 @@ export type Refusal =
   | StoreError
   | 'closed' | 'not-member' | 'muted' | 'not-owner' | 'removed' | 'desk' | 'not-closed'
   | 'unknown-agent' | 'bad-request'
+  | 'unknown-line' | 'not-a-message' | 'too-old' | 'bad-reaction' | 'limit' | 'slow-down'
 
 export type Outcome<T> = ({ ok: true } & T) | { ok: false; error: Refusal }
 
@@ -59,12 +61,26 @@ export interface SayInput {
   replyTo?: number
 }
 
+export interface ReactInput {
+  /** The seq of the message reacted to. */
+  seq: number
+  /** One of the five names (`seen`, `agree`, `done`, `disagree`, `question`) or one emoji. */
+  reaction: string
+  remove?: boolean
+}
+
 export interface Channels {
   readonly store: ChannelStore
   /** A common channel. An agent creator joins as its member and owner; the person creates a channel she owns. */
   create(who: Who, input: { name: string; title?: string }): Promise<Outcome<{ channel: Channel; line: Line }>>
   /** A line from a member (role `member`, the owner too) or the moderator (`who: 'user'`). Delivered to every member but the speaker. */
   say(who: Who, id: ChannelId, input: SayInput): Promise<Outcome<{ line: Line; receipts: Record<AgentId, LineReceipt> }>>
+  /**
+   * A reaction (or its removal) on the message `seq`: a line of its own (`kind: 'reaction'`) in the record, the event `reaction`,
+   * and NOTHING else: no delivery, no notice, no turn, no change to "seen". `changed: false` (no line) when it was there already
+   * (put) or was not there (take away).
+   */
+  react(who: Who, id: ChannelId, input: ReactInput): Promise<Outcome<{ changed: boolean; reaction: Reaction; line?: Line }>>
   /** `agent` absent: `who` joins itself. `already: true` (and no line) when it was a member. */
   join(who: Who, id: ChannelId, agent?: AgentId): Promise<Outcome<{ channel: Channel; already: boolean; line?: Line }>>
   leave(agent: AgentId, id: ChannelId): Promise<Outcome<{ channel: Channel; line: Line }>>
@@ -120,8 +136,10 @@ export interface DeskGestures {
 
 /** Event `channel`: the channel after a structure change (create, join, leave, remove, mute, unmute, close, reopen, forget). */
 export interface ChannelEvent { channel: Channel }
-/** Event `line`: a line appended to a channel. */
+/** Event `line`: a line appended to a channel (never a reaction). */
 export interface LineEvent { channelId: ChannelId; room: string; line: Line }
+/** Event `reaction`: a reaction line appended (kind 'reaction'); a pane that draws `line` events never sees it as a line. */
+export interface ReactionEvent { channelId: ChannelId; room: string; line: Line }
 
 interface Waiting extends Tally {
   receipt: string
@@ -161,6 +179,8 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
   const byReceipt = new Map<string, string>()
   const missed = new Map<AgentId, Map<ChannelId, Tally>>()
   const turns = new Map<AgentId, TurnWatch>()
+  /** When each (member, channel) last reacted, the last minute only: the rate limit of `react`. */
+  const rates = new Map<string, number[]>()
 
   const lanes = new Map<ChannelId, Promise<unknown>>()
   /** One gesture at a time per channel: the pending check and its delivery never race another line of the same channel. */
@@ -528,6 +548,51 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
       })
     },
 
+    react(who, id, input) {
+      return lane(id, async () => {
+        const ch = store.get(id)
+        if (!ch) return fail('unknown-channel')
+        // Who may react comes first, so a stranger learns `not-member` and nothing about the line.
+        const first = reactRefusal(who, ch)
+        if (first) return fail(first)
+        const reaction = parseReaction(input.reaction)
+        if (!reaction) return fail('bad-reaction')
+        const muted = reactRefusal(who, ch, reaction)
+        if (muted) return fail(muted)
+        if (!Number.isInteger(input.seq) || input.seq < 1) return fail('unknown-line')
+        const last = await store.lastSeq(id)
+        if (input.seq > last) return fail('unknown-line')
+        if (input.seq <= last - REACTION_WINDOW) return fail('too-old')
+        // The message and every line after it: the reactions to it can only be among them (it is in the window).
+        const lines = await store.since(id, input.seq - 1, REACTION_WINDOW + 1)
+        const target = lines[0]
+        if (!target || target.seq !== input.seq) return fail('unknown-line')
+        if (target.kind !== 'message') return fail('not-a-message')
+        const tallies = sumReactions(lines).get(input.seq) ?? []
+        const key = reactionKey(reaction.emoji)
+        const mine = tallies.some((t) => reactionKey(t.emoji) === key && t.by.some((b) => b.id === who))
+        const op = input.remove === true ? 'remove' as const : 'add' as const
+        if ((op === 'add') === mine) return { ok: true as const, changed: false, reaction }
+        if (op === 'add') {
+          const capped = reactionLimit(tallies, who, reaction)
+          if (capped) return fail(capped)
+        }
+        const now = Date.now()
+        const rateKey = keyOf(who, id)
+        const recent = (rates.get(rateKey) ?? []).filter((t) => now - t < 60_000)
+        if (recent.length >= REACTIONS_PER_MINUTE) { rates.set(rateKey, recent); return fail('slow-down') }
+        recent.push(now)
+        rates.set(rateKey, recent)
+        // A line of its own and nothing more: no fan-out, no `line` event, no change to the channel's index.
+        const line = await store.append(id, {
+          kind: 'reaction', from: { id: who, name: nameOf(who), role: roleIn(who, ch)! }, body: '',
+          react: { seq: input.seq, emoji: reaction.emoji, op },
+        })
+        api.events.emit('reaction', { channelId: id, room: ch.name, line } satisfies ReactionEvent)
+        return { ok: true as const, changed: true, reaction, line }
+      })
+    },
+
     join(who, id, agent) {
       return lane(id, async () => {
         const ch = store.get(id)
@@ -651,6 +716,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
 
     async forgotten(agent, name) {
       turns.delete(agent)
+      for (const key of [...rates.keys()]) if (key.startsWith(`${agent} `)) rates.delete(key)
       forgetMissed(agent)
       for (const key of [...pending.keys()]) if (key.startsWith(`${agent} `)) untrack(key)
       const ids = store.channelsOf(agent).map((c) => c.id)
@@ -687,6 +753,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore): Channels 
       byReceipt.clear()
       missed.clear()
       turns.clear()
+      rates.clear()
     },
   }
   return channels

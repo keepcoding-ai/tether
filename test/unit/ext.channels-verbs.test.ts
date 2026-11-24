@@ -115,7 +115,7 @@ describe('channels verbs (H3a: list, create, members, read, close, reopen)', () 
     B = await running('fora-bravo')
     C = await running('fora-bravo')
     D = await running('fora-delta')
-    const names = ['list', 'create', 'members', 'read', 'close', 'reopen', 'join', 'leave', 'remove', 'mute', 'unmute', 'say']
+    const names = ['list', 'create', 'members', 'read', 'close', 'reopen', 'join', 'leave', 'remove', 'mute', 'unmute', 'say', 'react']
     assert.deepEqual(CHANNEL_VERBS.map((v) => v.name), names)
     for (const exit of ['mcp', 'cli'] as const) {
       assert.deepEqual(door.verbs.list(exit).filter((v) => v.verb.ns === 'channels').map((v) => v.verb.name), names, exit)
