@@ -2,7 +2,8 @@
 // agents (test/fixtures/channels/agent.cjs, no LLM), the real app on the same pipe, hidden window. Nothing touches the person's tether.
 //   1. an empty channel shows "Ninguém no canal ainda." with a "Juntar agente" button, and the header has the same gesture;
 //   2. the header button opens the agent picker of THIS channel; picking joins the agent and the empty state goes;
-//   3. the "+" of the members' column does the same; a closed channel has neither the buttons nor the empty state;
+//   3. the column has no "+"; the "⋯" opens the tab's menu; a closed channel has no join button nor empty state, a common one has
+//      "Reabrir canal" as its accent and a desk one has no accent;
 //   4. the member's row has "calar" / "devolver a voz" and "tirar do canal": both ask first (the commands' dialogs), unmute acts at once.
 // Run alone: node --test test/e2e/app.channels-pane-manage.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
@@ -29,7 +30,7 @@ import { killElectron } from './electron.ts'
 
 type Hooks = {
   panelIds(): string[]
-  ext: { channels: { run(id: string, arg?: unknown): void } }
+  ext: { channels: { run(id: string, arg?: unknown): void; view(id: string): { actions: { primary: string; labeled: boolean; more: boolean; toEnd: boolean } } | undefined } }
 }
 declare const window: { __tether: Hooks }
 
@@ -120,7 +121,9 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     const picker = page.locator('dialog.picker[open]')
     const ask = (situation: string) => page.locator(`dialog.ask[data-dialog="${situation}"]`)
     const members = (id: string) => ch.store.get(id)!.members
-    const pickTitle = (): Promise<string> => page.locator('dialog.picker .pk-title').innerText()
+    const view = (id: string) => page.evaluate(i => window.__tether.ext.channels.view(i), id)
+    const isNarrow = (id: string): Promise<boolean> => pane(id).evaluate(e => e.classList.contains('narrow'))
+    const pickTitle =(): Promise<string> => page.locator('dialog.picker .pk-title').innerText()
 
     // ---- 1. the empty channel ----
     console.log('step 1')
@@ -128,9 +131,12 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).waitFor()
     await pane(hz).locator('.ch-nobody').waitFor()
     assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Ninguém no canal ainda\./)
-    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('aria-label'), 'Juntar agente')
-    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('title'), 'Juntar agente')
-    assert.equal(await pane(hz).locator('.ch-sec-add').getAttribute('title'), 'Juntar agente')
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('aria-label'), 'Juntar agente…')
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('title'), 'Juntar agente…')
+    // The empty state says the words once, in the body: the accent of the bar is only an icon here, and the column has no "+".
+    assert.deepEqual((await view(hz))!.actions, { primary: 'join', labeled: false, more: true, toEnd: !(await isNarrow(hz)) })
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join .ch-lbl').isVisible(), false)
+    assert.equal(await pane(hz).locator('.ch-sec-add').count(), 0)
     await page.screenshot({ path: join(SHOTS, 'canal-vazio.png') })
 
     // ---- 2. the empty state's button opens the agent picker of this channel ----
@@ -151,12 +157,19 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).locator(`.ch-mrow[data-member="${a}"]`).waitFor()
     await page.screenshot({ path: join(SHOTS, 'canal-com-membro.png') })
 
-    // The "+" of the members' column.
-    await pane(hz).locator('.ch-sec-add').click()
-    await picker.waitFor()
-    assert.equal(await pickTitle(), 'Juntar a #horizontes')
+    // With a member the accent carries its text in the wide composition and only the icon in the narrow one; the column has no "+".
+    const narrow = await isNarrow(hz)
+    assert.deepEqual((await view(hz))!.actions, { primary: 'join', labeled: !narrow, more: true, toEnd: !narrow })
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join .ch-lbl').isVisible(), !narrow)
+    assert.equal(await pane(hz).locator('.ch-sec-add').count(), 0)
+
+    // The "⋯" opens the tab's menu: the same rows, with "Ir para o fim" (the narrow bar drops its own button).
+    await pane(hz).locator('.ch-bar .ch-more').click()
+    await page.waitForSelector('#ctx-menu li')
+    const moreLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
+    assert.ok(['Juntar agente…', 'Ir para o fim', 'Encerrar canal…'].every(l => moreLabels.includes(l)), `more menu: ${moreLabels.join(' | ')}`)
     await page.keyboard.press('Escape')
-    await picker.waitFor({ state: 'detached' })
+    await page.waitForSelector('#ctx-menu li', { state: 'detached' })
 
     // ---- 3. the member's row: mute (asks), unmute (at once), remove (asks) ----
     console.log('step 3')
@@ -198,6 +211,45 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     assert.equal(await pane(old.channel.id).locator('.ch-bar .ch-join').isHidden(), true)
     assert.equal(await pane(old.channel.id).locator('.ch-nobody').count(), 0)
     assert.equal(await pane(old.channel.id).locator('.ch-sec-add').count(), 0)
+    // A closed common channel has "Reabrir canal" as its accent, with text; the "⋯" stays.
+    assert.deepEqual((await view(old.channel.id))!.actions, { primary: 'reopen', labeled: true, more: true, toEnd: !(await isNarrow(old.channel.id)) })
+    assert.equal((await pane(old.channel.id).locator('.ch-bar .ch-reopen').innerText()).trim(), 'Reabrir canal')
+    // (No confirmation yet: the dialog of reopening is the G8's.) The click reopens it and the accent turns into "Juntar agente…".
+    await pane(old.channel.id).locator('.ch-bar .ch-reopen').click()
+    await waitUntil(() => ch.store.get(old.channel.id)!.closed === undefined, 10_000, 'old reopened')
+    await pane(old.channel.id).locator('.ch-closed').waitFor({ state: 'detached' })
+    assert.equal((await view(old.channel.id))!.actions.primary, 'join')
+
+    // ---- 5. a closed desk channel has no accent at all (it follows the desk), only the "⋯" ----
+    console.log('step 5')
+    const mesa = await ch.desk.open('desk-1', { name: 'obra', title: 'obra', owner: a, panes: [a] })
+    assert.ok(mesa.ok)
+    assert.ok((await ch.desk.close(mesa.channel.id, 'revoked')).ok)
+    await run('channels.open', { channel: mesa.channel.id })
+    await pane(mesa.channel.id).waitFor()
+    await pane(mesa.channel.id).locator('.ch-closed').waitFor()
+    assert.deepEqual((await view(mesa.channel.id))!.actions, { primary: 'none', labeled: false, more: true, toEnd: !(await isNarrow(mesa.channel.id)) })
+    assert.equal(await pane(mesa.channel.id).locator('.ch-bar .ch-join').isHidden(), true)
+    assert.equal(await pane(mesa.channel.id).locator('.ch-bar .ch-reopen').isHidden(), true)
+
+    // ---- 6. the wide and the narrow composition (the pictures of the slice) ----
+    console.log('step 6')
+    assert.ok((await ch.join(USER, hz, a)).ok)
+    const resize = async (w: number, h: number): Promise<void> => {
+      await app!.evaluate(({ BrowserWindow }, [ww, hh]) => { BrowserWindow.getAllWindows()[0]!.setSize(ww!, hh!) }, [w, h])
+    }
+    await run('channels.open', { channel: hz })
+    await pane(hz).locator(`.ch-mrow[data-member="${a}"]`).waitFor()
+    // The desk holds three columns (the channel and the two agents): the window sizes put the channel's own pane above 560 px and at ~520.
+    await resize(1900, 760)
+    await page.waitForFunction(id => (document.querySelector(`.ch-pane[data-channel="${id}"]`)?.clientWidth ?? 0) >= 560, hz)
+    assert.equal((await view(hz))!.actions.labeled, true)
+    await pane(hz).screenshot({ path: join(SHOTS, 'g1-larga.png') })
+    await resize(1650, 760)
+    await page.waitForFunction(id => document.querySelector(`.ch-pane[data-channel="${id}"]`)?.classList.contains('narrow') === true, hz)
+    assert.deepEqual((await view(hz))!.actions, { primary: 'join', labeled: false, more: true, toEnd: false })
+    assert.equal(await pane(hz).locator('.ch-bar .ch-end').isVisible(), false)
+    await pane(hz).screenshot({ path: join(SHOTS, 'g1-estreita.png') })
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
