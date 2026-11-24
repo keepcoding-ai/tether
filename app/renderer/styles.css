@@ -753,6 +753,7 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .kind .ph { width: 14px; height: 14px; }
 .tether-tab .text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tether-tab input.rename { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 140px; min-width: 0; outline: none; }
+#sessions-list input.sx-rename { font: inherit; font-weight: 600; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 4px; width: 100%; min-width: 0; outline: none; }
 .tether-tab .dot { display: inline-flex; flex: none; }
 .tether-tab .dot .ph { width: 7px; height: 7px; }
 /* Running is the normal state: no dot. The others keep theirs. */

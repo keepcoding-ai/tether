@@ -350,12 +350,12 @@ describe('memory and time texts', () => {
 })
 
 describe('the rows\' right-click menus and the desk list', () => {
-  test('"Sem guia": peek, open here, open elsewhere (a submenu), a separator, then stop', () => {
+  test('"Sem guia": peek, open here, open elsewhere (a submenu), rename, then stop', () => {
     const plan = rowMenuPlan('free')
-    assert.deepEqual(plan.map(i => i.label), ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Encerrar…'])
-    assert.deepEqual(plan.map(i => i.action), ['peek', 'open-here', 'open-other', 'stop'])
+    assert.deepEqual(plan.map(i => i.label), ['Espiar', 'Abrir nesta mesa', 'Abrir em outra mesa', 'Renomear…', 'Encerrar…'])
+    assert.deepEqual(plan.map(i => i.action), ['peek', 'open-here', 'open-other', 'rename', 'stop'])
     assert.deepEqual(plan.filter(i => i.submenu).map(i => i.action), ['open-other'])
-    assert.deepEqual(plan.filter(i => i.sepBefore).map(i => i.action), ['stop'])
+    assert.deepEqual(plan.filter(i => i.sepBefore).map(i => i.action), ['rename', 'stop'])
     assert.equal(plan.find(i => i.action === 'stop')?.danger, true)
   })
   test('"Encerradas": reopen, reopen here, reopen elsewhere (a submenu), a separator, then forget', () => {

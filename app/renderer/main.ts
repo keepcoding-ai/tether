@@ -2567,6 +2567,7 @@ function setupSessionsMenu(): void {
     hasTab: id => findPanel(id) !== undefined,
     batch: () => pauseBatch,
     titleOf: slotId => { const s = slots.get(slotId); return s ? panelTitle(s) : undefined },
+    rename: (slotId, name) => { void renameSlot(slotId, name) },
     openSlot,
     ...placeHost(),
     peekSlot: peek,

@@ -26,6 +26,8 @@ export interface SessionsMenuHost extends PlaceHost {
   batch(): PauseBatch | null
   /** The panel's title, or undefined when the app does not know the slot. */
   titleOf(slotId: string): string | undefined
+  /** Names the session (the same name its tab shows); empty goes back to the session's own title. */
+  rename(slotId: string, name: string): void
   /** Brings the user to the session (starts it again when it ended). The menu closes first. */
   openSlot(slotId: string): void
   /** Runs the request; resolves with the error message, if any. */
@@ -88,6 +90,8 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
   const busy = new Set<string>()
   /** The ended row whose trash was clicked: its actions are replaced by "Esquecer esta sessão? [Esquecer] [Não]" (forgetting cannot be undone). */
   let askingForget: string | undefined
+  /** The row whose name is being edited: the clock's re-render leaves it alone. */
+  let renaming: string | undefined
   /** A gentle one-off message in the pause section (e.g. the daemon refused). */
   let notice: string | undefined
   let bulking = false
@@ -110,7 +114,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     }
   }
 
-  function close(): void { askingForget = undefined; setOpen(false) }
+  function close(): void { askingForget = undefined; renaming = undefined; setOpen(false) }
 
   async function run(body: RequestBody): Promise<void> {
     const err = await host.request(body)
@@ -167,6 +171,10 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     const kind = el('span', `kind ${kindName}`); kind.append(icon(KIND_ICON[kindName] ?? 'terminal-window'))
     const tx = el('div', 'tx')
     const tt = el('span', 'tt', r.name)
+    if (group === 'free') {
+      tt.title = 'Duplo clique para renomear'
+      tt.addEventListener('dblclick', ev => { ev.stopPropagation(); startRename(r.slotId, tt) })
+    }
     const cw = el('span', 'cw', r.memory ? `${r.text} · ${r.memory}` : r.text); cw.title = r.slot.cwd
     tx.append(tt, cw)
     const acts = el('div', 'acts')
@@ -243,6 +251,40 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     return wrap
   }
 
+  /** Edits the row's name in place: Enter or leaving saves, Esc cancels, empty goes back to the session's title. */
+  function startRename(slotId: string, tt: HTMLElement): void {
+    if (renaming) return
+    const slot = [...host.slots()].find(s => s.slotId === slotId)
+    if (!slot) return
+    renaming = slotId
+    const input = document.createElement('input')
+    input.className = 'rename sx-rename'
+    input.type = 'text'
+    input.value = slot.name ?? ''
+    input.placeholder = slot.title ?? tt.textContent ?? ''
+    input.title = 'Enter salva, Esc cancela; vazio volta ao título da sessão'
+    input.setAttribute('aria-label', 'Nome da sessão')
+    let done = false
+    const finish = (save: boolean): void => {
+      if (done) return
+      done = true
+      renaming = undefined
+      const name = input.value.trim()
+      if (save && name !== (slot.name ?? '')) host.rename(slotId, name)
+      refresh()
+    }
+    for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick'] as const) input.addEventListener(type, ev => ev.stopPropagation())
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation()
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); finish(false) }
+    })
+    input.addEventListener('blur', () => finish(true))
+    tt.replaceWith(input)
+    input.focus()
+    input.select()
+  }
+
   /** The right-click menu of a row (the plan is rules: sessions-rules.ts `rowMenuPlan`). */
   function rowMenu(slotId: string, group: RowGroup): MenuSpec[] {
     const run: Record<string, () => void> = {
@@ -252,10 +294,11 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       reopen: () => reviveRow(slotId),
       'reopen-here': () => { close(); host.openSlot(slotId) },
       forget: () => { askingForget = slotId; refresh() },
+      rename: () => { const tt = list.querySelector<HTMLElement>(`.sx-row[data-slot="${CSS.escape(slotId)}"] .tt`); if (tt) startRename(slotId, tt) },
     }
     const icons: Record<string, IconName> = {
       peek: 'eye', 'open-here': 'plus', 'open-other': 'arrow-square-out', stop: 'power',
-      reopen: 'arrow-clockwise', 'reopen-here': 'plus', 'reopen-other': 'arrow-square-out', forget: 'trash',
+      reopen: 'arrow-clockwise', 'reopen-here': 'plus', 'reopen-other': 'arrow-square-out', forget: 'trash', rename: 'pencil-simple',
     }
     const out: MenuSpec[] = []
     for (const item of rowMenuPlan(group)) {
@@ -327,6 +370,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
   }
 
   function refresh(): void {
+    if (renaming) return
     const slots = [...host.slots()]
     const batch = hasBatch(host.batch()) ? host.batch() : null
     const summary = sessionsSummary(slots, host.hasTab, batch)
