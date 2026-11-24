@@ -199,8 +199,9 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     const moreLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
     // G4: the plan's rows in the plan's order (two lines of information first; nobody is muted yet, so no "Devolver a voz…").
     const MENU_ROWS = ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Copiar link do painel', 'Mover…', 'Fechar painel', 'Encerrar canal…']
-    // (The rows other extensions and the core add, "Dar esta guia a um agente…" and "Emblema…", are not the channel's.)
-    const own = moreLabels.filter(t => t !== '' && t !== 'Dar esta guia a um agente…' && t !== 'Emblema…')
+    // (The "Emblema…" row the core adds is not the channel's; a channel tab is never offered to an agent.)
+    assert.ok(!moreLabels.includes('Dar esta guia a um agente…'))
+    const own = moreLabels.filter(t => t !== '' && t !== 'Emblema…')
     assert.match(own[0]!, /^Dono: .+ · 1 membro$/)
     assert.equal(own[1], 'canal avulso')
     assert.deepEqual(own.slice(2), MENU_ROWS, `more menu: ${moreLabels.join(' | ')}`)
@@ -248,7 +249,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     // G4: with somebody muted the menu counts it and offers "Devolver a voz…" right after "Calar agente…".
     await pane(hz).locator('.ch-bar .ch-more').click()
     await page.waitForSelector('#ctx-menu li')
-    const mutedMenu = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '' && t !== 'Dar esta guia a um agente…')
+    const mutedMenu = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '')
     assert.match(mutedMenu[0]!, /^Dono: .+ · 1 membro · 1 calado$/)
     assert.deepEqual(mutedMenu.slice(2, 8), ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Devolver a voz…', 'Tirar agente…'])
     await page.screenshot({ path: join(SHOTS, 'g4-menu.png') })

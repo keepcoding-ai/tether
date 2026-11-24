@@ -165,7 +165,8 @@ function handSource(f: MenuFacts, paneId: string, eff: Effective): { at: 'pane' 
 
 export function paneMenu(f: MenuFacts, paneId: string): Row[] {
   const p = f.panes.find(x => x.id === paneId)
-  if (!p) return []
+  // Ownership is about terminal tabs (they have a slot); a note, preview, browser or channel tab is never given.
+  if (!p || p.type !== 'terminal') return []
   const rows: Row[] = []
   const own = ownerSection(f, paneId)
   const owner = own.length > 0
