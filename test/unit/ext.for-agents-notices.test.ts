@@ -287,6 +287,41 @@ describe('for-agents: the notice to the owner and the screen watch (X4)', () => 
     assert.equal(w.delivered.length, 3, 'the attention went away and came back')
   })
 
+  // The channels extension clears (`attention.seen`) the routed `done` of a turn a channel line opened; it never touches a
+  // `waiting`. Its listener and this one hear the same state, in either order: the stand-in below does what it does.
+  for (const order of ['channels first', 'notices first'] as const) {
+    test(`a done cleared by the channels' rule in the same state (${order}): no "terminou"; a waiting in that turn and a done left alone are told`, async () => {
+      const lineTurns = new Set<string>(['p1'])
+      const channels = (s: SlotState): void => { if (lineTurns.has(s.slotId) && s.attentionFor?.value === 'done') w.clear(s.slotId) }
+      if (order === 'channels first') {
+        for (const d of live) d.dispose()
+        live = [w.api.slots.onState(channels), w.api.slots.onState((s) => notices.stateChanged(s)), w.api.objects.onDidChange((e) => notices.objectChanged(e))]
+      } else {
+        live.push(w.api.slots.onState(channels))
+      }
+      // The line turn asks permission: the request reaches the owner.
+      w.screens.set('p1', SOUL_CARD)
+      w.raise('p1', 'waiting', { busySince: TURN_START, turn: 'busy' })
+      await settle()
+      assert.equal(w.delivered.length, 1)
+      assert.match(w.delivered[0]!.msg.body, /^pede permissão · guia p1/)
+      w.clear('p1') // the owner answered
+      // Its end: cleared by the channels' rule, nothing told.
+      w.screens.set('p1', IDLE)
+      w.raise('p1', 'done', { idleSince: TURN_END }, ['turn'])
+      await settle()
+      assert.equal(w.delivered.length, 1, 'the done of a line turn is not told')
+      assert.equal(w.states.get('p1')?.attentionFor, undefined)
+      // A turn the owner's `agents send` (or the person) opened brings no line: the done stays and "terminou" goes.
+      lineTurns.delete('p1')
+      w.set('p1', { turn: 'busy', busySince: '2026-11-21T10:01:00.000Z' })
+      w.raise('p1', 'done', { idleSince: '2026-11-21T10:01:09.000Z' }, ['turn'])
+      await settle()
+      assert.equal(w.delivered.length, 2)
+      assert.match(w.delivered[1]!.msg.body, /^terminou · guia p1/)
+    })
+  }
+
   test('a permission card: the card as on the screen, the options the engine has, how to answer', async () => {
     w.screens.set('p1', SOUL_CARD)
     w.raise('p1', 'waiting', { busySince: 'B1', turn: 'busy' })
