@@ -9,6 +9,7 @@ import {
   findProfile,
   isUnsafe,
   launchOf,
+  mergeMissingMotors,
   parseProfilesFile,
   ProfileError,
   ProfileStore,
@@ -76,7 +77,8 @@ describe('defaults and the file', () => {
     const home2 = homes.make()
     writeFileSync(profilesPath(home2), JSON.stringify({ v: 1, profiles: [{ id: 'ok', name: 'Ok', agent: 'claude', args: [] }, { id: 'bad', name: 'Bad' }, 'junk'] }))
     const r = readProfiles(home2)
-    assert.deepEqual(r.profiles.map((p) => p.id), ['ok'])
+    // claude has a profile in the file (so no claude default); every other motor enters with its defaults, after the file's
+    assert.deepEqual(r.profiles.map((p) => p.id), ['ok', ...defaultProfiles().filter((p) => p.agent !== 'claude').map((p) => p.id)])
     assert.match(r.problem ?? '', /2 perfil/)
     assert.equal(readdirSync(home2).filter((f) => f.includes('corrompido')).length, 0, 'no backup for a readable file')
   })
@@ -97,13 +99,79 @@ describe('defaults and the file', () => {
     const edited: Profile[] = [{ id: 'only', name: 'Only', agent: 'soul', args: [] }]
     // mtime resolution: make sure the signature differs (size does)
     writeProfiles(home, edited)
-    assert.deepEqual(await store.fresh(), edited)
+    // the other motors come in from the defaults (in memory); soul has a profile in the file, so no soul default
+    const others = defaultProfiles().filter((p) => p.agent !== 'soul')
+    assert.deepEqual(await store.fresh(), [...edited, ...others])
     const saved = store.save({ name: 'Novo', agent: 'claude', args: [] })
     assert.equal(saved.profile.id, 'novo')
-    assert.deepEqual(store.profiles().map((p) => p.id), ['only', 'novo'])
+    assert.deepEqual(store.profiles().map((p) => p.id), ['only', ...others.map((p) => p.id), 'novo'])
     store.delete('only')
-    assert.deepEqual(store.profiles().map((p) => p.id), ['novo'])
+    assert.deepEqual(store.profiles().map((p) => p.id), [...others.map((p) => p.id), 'novo'])
     await ex.close()
+  })
+})
+
+describe('defaults of a motor missing from the file (merged on read, per motor)', () => {
+  const env = { ProgramFiles: 'C:\nowhere-at-all', PATH: '' }
+  const defaults = defaultProfiles(env, 'win32')
+  const mk = (id: string, agent: Profile['agent'], extra: Partial<Profile> = {}): Profile => ({ id, name: id, agent, args: [], ...extra })
+  const ps = mk('powershell', 'shell', { default: true })
+
+  test("a file without hands: the hands default enters, after the file's profiles", () => {
+    const file = [mk('claude', 'claude'), mk('soul', 'soul'), mk('codex', 'codex'), ps]
+    const out = mergeMissingMotors(file, defaults)
+    assert.deepEqual(out.map((p) => p.id), ['claude', 'soul', 'codex', 'powershell', 'hands'])
+    assert.deepEqual(out.at(-1), defaults.find((p) => p.id === 'hands'))
+  })
+
+  test('a file with a hands profile of another id: the hands default does not enter', () => {
+    const file = [...defaults.filter((p) => p.agent !== 'hands'), mk('hands-lab', 'hands')]
+    assert.deepEqual(mergeMissingMotors(file, defaults), file)
+  })
+
+  test('claude-dev without claude: the claude defaults do not come back (merge is per motor, not per id)', () => {
+    const file = [mk('claude-dev', 'claude'), ...defaults.filter((p) => p.agent !== 'claude')]
+    const out = mergeMissingMotors(file, defaults)
+    assert.deepEqual(out, file)
+    assert.ok(!out.some((p) => p.id === 'claude'))
+  })
+
+  test('shells follow the same rule: any shell profile in the file means no shell default enters', () => {
+    const file = [...defaults.filter((p) => p.agent !== 'shell'), mk('my-zsh', 'shell')]
+    assert.deepEqual(mergeMissingMotors(file, defaults), file)
+    const noShell = defaults.filter((p) => p.agent !== 'shell')
+    assert.deepEqual(mergeMissingMotors(noShell, defaults).map((p) => p.id), [...noShell.map((p) => p.id), 'powershell'])
+  })
+
+  test("id clash with another motor's profile: the entering default gets a free id, the file's is untouched; its default flag is kept", () => {
+    const mine = mk('hands', 'claude', { default: true })
+    const taken = mk('hands-2', 'codex')
+    const out = mergeMissingMotors([mine, taken], [mk('hands', 'hands', { default: true })])
+    assert.deepEqual(out.map((p) => [p.id, p.agent]), [['hands', 'claude'], ['hands-2', 'codex'], ['hands-3', 'hands']])
+    assert.equal(out[0], mine)
+    assert.equal(out[2]!.default, true)
+  })
+
+  test('reading does not write: a file lacking motors is merged in memory and stays byte-identical on disk', () => {
+    const home = homes.make()
+    const onlyClaude: Profile[] = [mk('claude-dev', 'claude', { args: ['--dangerously-skip-permissions'] })]
+    writeProfiles(home, onlyClaude)
+    const before = readFileSync(profilesPath(home), 'utf8')
+    const r = readProfiles(home)
+    assert.equal(r.problem, undefined)
+    assert.deepEqual(r.profiles.map((p) => p.id), ['claude-dev', ...defaultProfiles().filter((p) => p.agent !== 'claude').map((p) => p.id)])
+    assert.ok(r.profiles.some((p) => p.agent === 'hands'), 'hands shows up for a home that predates it')
+    assert.equal(readFileSync(profilesPath(home), 'utf8'), before)
+    assert.deepEqual(readdirSync(home), ['profiles.json'])
+  })
+
+  test('editing writes the merged list: the entering defaults reach the disk only when the user saves', () => {
+    const home = homes.make()
+    writeProfiles(home, [mk('claude-dev', 'claude')])
+    const { profiles } = upsertProfile(readProfiles(home).profiles, { name: 'Outro', agent: 'claude', args: [] })
+    writeProfiles(home, profiles)
+    assert.ok(parseProfilesFile(readFileSync(profilesPath(home), 'utf8')).ok)
+    assert.ok(JSON.parse(readFileSync(profilesPath(home), 'utf8')).profiles.some((p: Profile) => p.agent === 'hands'))
   })
 })
 
