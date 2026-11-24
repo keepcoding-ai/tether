@@ -22,6 +22,7 @@ import circleFill from '@phosphor-icons/core/assets/fill/circle-fill.svg'
 import circle from '@phosphor-icons/core/assets/regular/circle.svg'
 import radioButtonFill from '@phosphor-icons/core/assets/fill/radio-button-fill.svg'
 import eyeClosed from '@phosphor-icons/core/assets/regular/eye-closed.svg'
+import leaf from '@phosphor-icons/core/assets/regular/leaf.svg'
 import circleHalf from '@phosphor-icons/core/assets/regular/circle-half.svg'
 import timerIcon from '@phosphor-icons/core/assets/regular/timer.svg'
 import clockCounterClockwise from '@phosphor-icons/core/assets/regular/clock-counter-clockwise.svg'
@@ -315,6 +316,7 @@ const SVG = {
   gauge,
   robot,
   'crown-simple': crownSimple,
+  leaf,
   'arrow-u-down-left': arrowUDownLeft,
   // The product's monogram (brand/assets/app/mask.json, 24x24 currentColor): the Bridge's status icon wears it.
   'brand': BRAND.icon,

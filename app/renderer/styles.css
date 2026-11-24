@@ -730,7 +730,7 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .status.running { color: var(--fg); }
 .status.running .ph { color: var(--ok); }
 .status.starting .ph, .status.queued .ph { color: var(--warn); }
-.status.exited .ph { color: var(--fg-dim); }
+.status.exited .ph, .status.suspended .ph { color: var(--fg-dim); }
 .status.unconfirmed .ph { color: var(--warn); }
 .status.error .ph { color: var(--err); }
 
@@ -753,6 +753,9 @@ body[data-builder="true"] .frame-dock :is(.dv-content-container, .dv-watermark-c
 .tether-tab .dot.exited { color: var(--fg-dim); }
 .tether-tab .dot.asleep { color: var(--fg-dim); }
 .tether-tab .dot.asleep .ph { width: 13px; height: 13px; }
+/* Suspended to save resources: a small, quiet leaf (the pane still counts as working). */
+.tether-tab .dot.suspended { color: var(--fg-dim); opacity: .8; }
+.tether-tab .dot.suspended .ph { width: 11px; height: 11px; }
 .tether-tab .dot.starting, .tether-tab .dot.queued, .tether-tab .dot.unconfirmed { color: var(--warn); }
 .tether-tab .dot.error { color: var(--err); }
 :is(.tether-tab, .br-web-tab, .pr-tab) .close { background: none; border: 0; padding: 2px; margin-left: auto; color: var(--fg-dim); line-height: 0; border-radius: 3px; display: inline-flex; flex: none; visibility: hidden; }
@@ -863,6 +866,12 @@ html.standalone dialog.ask header { -webkit-app-region: drag; }
 /* --- panel overlay (unconfirmed / error / exited / queued): a situation card inside the panel --- */
 .panel-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--veil); }
 .panel-overlay[hidden] { display: none; }
+
+/* --- suspended pane: the last screen stays in view, with a discreet sign in the corner (a click anywhere resumes) --- */
+.panel-suspended { position: absolute; top: 8px; right: 12px; z-index: 3; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 6px; font-size: 11px; color: var(--fg-dim); background: var(--bg-2); border: 1px solid var(--border); border-radius: 999px; opacity: .85; cursor: default; user-select: none; }
+.panel-suspended[hidden] { display: none; }
+.panel-suspended .ph { width: 12px; height: 12px; }
+.panel-suspended.resuming { color: var(--warn); }
 .panel-overlay .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; width: 460px; max-width: 100%; box-shadow: var(--shadow); }
 .panel-overlay .card header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .panel-overlay .badge { width: 32px; height: 32px; }

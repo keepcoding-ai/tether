@@ -86,6 +86,11 @@ export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
    * so its absence marks a file from before it (every asleep pane of a sleeping desk then counts).
    */
   deskSleptPanes?: string[]
+  /**
+   * Panes suspended to save resources (slot ids): idle agents the app stopped (app/renderer/suspend.ts). Not started when the
+   * app opens; any use of the pane resumes it. Separate from `asleepPanes`: a pane is in one or the other.
+   */
+  suspendedPanes?: string[]
 }
 
 export type Layout = LayoutV4

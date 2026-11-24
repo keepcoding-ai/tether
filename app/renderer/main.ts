@@ -105,6 +105,7 @@ import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
+import { DEFAULT_SUSPEND, normalizeSuspend, SUSPEND_SWEEP_MS, SuspendBook, sweepSuspend, type SuspendCandidate, type SuspendOutcome, type SuspendSettings } from './suspend.ts'
 import { watchOverlays } from './overlay-freeze.ts'
 
 const COMPONENT = TERMINAL_COMPONENT
@@ -325,6 +326,9 @@ const $ =<T extends HTMLElement>(id: string): T => {
 const host: PanelHost = {
   getSlot: id => slots.get(id),
   isAsleep: id => asleepPanes.has(id),
+  isSuspended: id => suspended.has(id) || suspended.isResuming(id),
+  takeInput: (id, data) => suspendInput(id, data),
+  onUse: id => suspendUse(id),
   attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id), slots.get(id)?.attentionHeld) }),
   onSealClick: id => activateSeals(id),
   getStartError: id => startErrors.get(id),
@@ -732,8 +736,9 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, ...rest } = file
-  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes] }
+  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, suspendedPanes: _suspended, ...rest } = file
+  const suspendedIds = suspended.toLayout()?.filter(id => slots.has(id))
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes], ...(suspendedIds?.length ? { suspendedPanes: suspendedIds } : {}) }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -1138,7 +1143,8 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void,
   const busy = states.filter(s => isLiveSlot(s) && s.turn === 'busy')
   if (ask && busy.length > 0 && (await askDialog(hibernateSituation(where, busy))).choice !== 'hibernate') return
   before?.()
-  for (const s of states) asleepPanes.add(s.slotId)
+  // A suspended pane that is hibernated is hibernated from now on: it waits for an explicit wake.
+  for (const s of states) { asleepPanes.add(s.slotId); suspended.hibernated(s.slotId) }
   scheduleSave()
   await Promise.all(states.filter(isLiveSlot).map(s => window.tether.request({ t: 'stop', slotId: s.slotId })))
   for (const s of states) { panels.get(s.slotId)?.render(); tabs.get(s.slotId)?.render() }
@@ -1196,7 +1202,7 @@ function loadDeskSlept(saved: string[] | undefined, keep: (id: string) => boolea
 /** "Hibernar guia": a live pane that is not restarting or stopping. */
 function hibernateMenuEntry(slotId: string): MenuEntry[] {
   const slot = slots.get(slotId)
-  if (!slot || !isLiveSlot(slot) || slot.restarting || slot.stopping) return []
+  if (!slot || !(isLiveSlot(slot) || suspended.has(slotId)) || slot.restarting || slot.stopping) return []
   return [{ icon: 'moon', label: 'Hibernar guia', run: () => { void hibernatePanes([slotId], `da guia "${panelTitle(slot)}"`) } }]
 }
 
@@ -1988,7 +1994,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
   renderSlot(slotId)
   const reply = await window.tether.request({ t: 'start', slotId, ...(choice ? { choice } : {}) })
   pendingStarts.delete(slotId)
-  if (reply.t === 'error') startErrors.set(slotId, { code: reply.code, message: reply.message })
+  if (reply.t === 'error') { startErrors.set(slotId, { code: reply.code, message: reply.message }); applySuspend(slotId, suspended.startFailed(slotId)) }
   else if (reply.slot) applyState(reply.slot)
   renderSlot(slotId)
 }
@@ -1997,6 +2003,7 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<voi
 function autoStartPanels(): void {
   for (const panel of allPanels()) {
     if (asleepPanes.has(panel.id)) continue // a hibernated pane stays asleep until it is woken
+    if (suspended.has(panel.id)) continue // a suspended pane comes up when it is used
     const slot = slots.get(panel.id)
     if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
   }
@@ -2047,6 +2054,7 @@ function applyState(slot: SlotState): void {
       if (woke || wasDeskSlept) scheduleSave()
     }
   }
+  applySuspend(slot.slotId, suspended.stateChanged(before, slot))
   const panel = findPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
@@ -2153,6 +2161,7 @@ async function restoreLayout(): Promise<void> {
   if (layout) {
     layoutFile = layout
     asleepPanes = new Set((layout.asleepPanes ?? []).filter(id => slots.has(id)))
+    suspended.load(layout.suspendedPanes, id => slots.has(id) && !asleepPanes.has(id))
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
@@ -2173,6 +2182,7 @@ async function restoreLayout(): Promise<void> {
   initEmblems(layoutFile.emblems, emblemHost)
   layoutRestored = true
   door.layoutRestored()
+  startSuspendSweep()
   scheduleKeyboardTab()
   recomputeProjects()
   // Panes that predate the hint get it now (saved with the next change the person makes).
@@ -2191,6 +2201,7 @@ function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
   geometry ??= window.tether.loadLayout().then(raw => {
     const result = migrateLayout(raw)
     if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
+    if (result && !layoutRestored) suspended.load(result.layout.suspendedPanes, id => !asleepPanes.has(id))
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     if (result && !layoutRestored) deskSleptPanes = loadDeskSlept(result.layout.deskSleptPanes, () => true)
     return result
@@ -2254,6 +2265,88 @@ async function onConnection(state: ConnectionState): Promise<void> {
 let asleepPanes = new Set<string>()
 /** Panes put to sleep by their desk's hibernation (layout `deskSleptPanes`): the ones waking the desk resumes. */
 let deskSleptPanes = new Set<string>()
+
+// ---------- panes suspended to save resources (app/renderer/suspend.ts) ----------
+
+/** Suspended panes (layout `suspendedPanes`): idle agents stopped by the sweep; any use resumes them. */
+const suspended = new SuspendBook()
+/** When the person last used each pane (key, paste, click, scroll, focus), ms epoch. */
+const paneUse = new Map<string, number>()
+const appStart = Date.now()
+let suspendSettings: SuspendSettings = DEFAULT_SUSPEND
+let suspendTimer: ReturnType<typeof setInterval> | undefined
+
+/** Does what the suspension asked: saves the layout, resumes the slot, writes the person's held input. */
+function applySuspend(slotId: string, o: SuspendOutcome): void {
+  if (o.changed) { scheduleSave(); renderSlot(slotId) }
+  if (o.resume) { renderSlot(slotId); void startSlot(slotId) }
+  if (o.flush) window.tether.notice({ t: 'input', slotId, data: o.flush })
+}
+
+/** The person's input to a pane: true when it is held (the pane is suspended or resuming) and goes once the agent is up. */
+function suspendInput(slotId: string, data: string): boolean {
+  paneUse.set(slotId, Date.now())
+  const o = suspended.userInput(slotId, data)
+  applySuspend(slotId, o)
+  return o.held
+}
+
+/** A click or a scroll in the pane's terminal: counts as use and resumes a suspended pane. */
+function suspendUse(slotId: string): void {
+  paneUse.set(slotId, Date.now())
+  applySuspend(slotId, suspended.use(slotId))
+}
+
+/** The panes that count as focused: the active desk's active pane and the pane that has the keyboard. */
+function focusedPaneIds(): Set<string> {
+  const ids = new Set<string>()
+  const active = focusablePanelId()
+  if (active) ids.add(active)
+  const keyboard = (document.activeElement as Element | null)?.closest?.('.panel')?.getAttribute('data-slot-id')
+  if (keyboard) ids.add(keyboard)
+  return ids
+}
+
+/** ONE sweep for every pane: suspends the idle agents nobody uses (never a timer per pane: dozens of agents must scale). */
+async function sweepIdlePanes(): Promise<void> {
+  if (!layoutRestored || !suspendSettings.enabled) return
+  const now = Date.now()
+  const focused = focusedPaneIds()
+  for (const id of focused) paneUse.set(id, now) // time with the focus is time in use
+  const candidates: SuspendCandidate[] = []
+  for (const panel of allPanels()) {
+    const slot = slots.get(panel.id)
+    if (!slot) continue
+    candidates.push({ slot, lastUse: paneUse.get(panel.id), focused: focused.has(panel.id), asleep: asleepPanes.has(panel.id), suspended: suspended.has(panel.id) })
+  }
+  const ids = sweepSuspend(candidates, suspendSettings, now, appStart)
+  if (ids.length === 0) return
+  for (const id of ids) suspended.suspend(id)
+  // The map says "suspended" before the processes stop: whatever needs a pane from now on resumes it.
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
+  await window.tether.saveLayout(layoutJSON())
+  door.layoutSaved()
+  await Promise.all(ids.map(id => window.tether.request({ t: 'stop', slotId: id })))
+  for (const id of ids) renderSlot(id)
+  refreshSessions()
+}
+
+async function readSuspendSettings(): Promise<void> {
+  try {
+    const list = await window.tether.settingsList()
+    suspendSettings = normalizeSuspend(key => list.entries.find(e => e.key === key)?.value)
+  } catch (e) {
+    console.warn(`configurações de suspensão ilegíveis: ${(e as Error).message}`)
+  }
+}
+
+/** Reads the settings, follows their changes and starts the single sweep (once). */
+function startSuspendSweep(): void {
+  if (suspendTimer) return
+  void readSuspendSettings()
+  window.tether.onSettingsChanged(keys => { if (keys.some(k => k === 'performance' || k.startsWith('performance.suspend'))) void readSuspendSettings() })
+  suspendTimer = setInterval(() => { void sweepIdlePanes() }, SUSPEND_SWEEP_MS)
+}
 
 let pauseBatch: PauseBatch | null = null
 /** The background processes (tether proc): the core keeps the list, the processes extension draws it (TetherUi.procs). */
@@ -3388,7 +3481,7 @@ const commandHost: CommandHost = {
     showContextMenu(Math.round(innerWidth / 2) - 120, 80, [{ heading: 'Guias hibernadas' }, ...items])
   },
   toggleUnread: id => { const s = slots.get(id); if (s) void setUnread(id, !s.attentionHeld) },
-  hibernatePane: id => { const s = slots.get(id); if (s && isLiveSlot(s)) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
+  hibernatePane: id => { const s = slots.get(id); if (s && (isLiveSlot(s) || suspended.has(id))) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
   copyFolder: id => { const f = liveTypeOf(paneTypes, id)?.folderOf?.(id); if (f) window.tether.writeClipboard(f); else if (slots.has(id)) copyFolder(id) },
