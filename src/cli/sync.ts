@@ -33,6 +33,8 @@ export interface SyncConfig {
   provider: 'git'
   url: string
   machine: string
+  /** Set by a first `connect` until its first run succeeds: a failure before that leaves no link behind. */
+  pending?: true
 }
 
 export interface SyncLast {
@@ -87,7 +89,7 @@ function writeJsonAtomic(file: string, value: unknown): void {
 export function readSyncConfig(home: string): SyncConfig | undefined {
   const doc = readJson(configPath(home))
   if (!isObject(doc) || doc.provider !== 'git' || typeof doc.url !== 'string' || !doc.url || typeof doc.machine !== 'string' || !doc.machine) return undefined
-  return { provider: 'git', url: doc.url, machine: doc.machine }
+  return { provider: 'git', url: doc.url, machine: doc.machine, ...(doc.pending === true ? { pending: true as const } : {}) }
 }
 
 export function readSyncLast(home: string): SyncLast | undefined {
@@ -220,7 +222,7 @@ export async function cmdSync(argv: string[], io: SyncIo): Promise<number> {
         return 1
       }
       const machine = a.options.machine?.trim() ? machineLabel(a.options.machine) : existing?.machine ?? machineLabel()
-      if (!existing) writeJsonAtomic(configPath(home), { provider: 'git', url, machine } satisfies SyncConfig)
+      if (!existing) writeJsonAtomic(configPath(home), { provider: 'git', url, machine, pending: true } satisfies SyncConfig)
       return await runNow(io, home, json, fromApp)
     }
     case 'now':
@@ -260,20 +262,30 @@ async function runNow(io: SyncIo, home: string, json: boolean, fromApp: boolean)
   const daemon = await io.connect()
   const now = io.now ?? Date.now
   try {
+    const provider = providerFor(io, home, cfg)
     const engine = createSyncEngine({
       dir: storageRoots(io.env).sync,
       home,
-      provider: providerFor(io, home, cfg),
+      provider,
       ports: createDiskPorts({ home, userDir: userDir(io.env), daemon }),
       ...(io.homedir ? { opts: { homedir: io.homedir } } : {}),
     })
     let last: SyncLast
     try {
-      // The folder is a repo once connected; the first run (or a folder that vanished) goes through connect.
-      const report = existsSync(join(storageRoots(io.env).sync, '.git')) ? await engine.sync() : await engine.connect()
+      // Connected = a repo with an origin; the first run, a vanished folder or a released origin go through connect.
+      const linked = existsSync(join(storageRoots(io.env).sync, '.git')) && (await provider.status()).connected
+      const report = linked ? await engine.sync() : await engine.connect()
       last = { at: new Date(now()).toISOString(), ok: true, report }
+      if (cfg.pending) writeJsonAtomic(configPath(home), { provider: 'git', url: cfg.url, machine: cfg.machine } satisfies SyncConfig)
     } catch (e) {
-      last = { at: new Date(now()).toISOString(), ok: false, error: describeSyncError(e), report: null }
+      const error = describeSyncError(e)
+      if (cfg.pending) {
+        // A first connection that failed leaves no link: drop origin (the files stay) and sync.json.
+        try { await engine.disconnect() } catch { /* nothing to unlink */ }
+        rmSync(configPath(home), { force: true })
+        error.message = `${error.message.replace(/[.\s]+$/, "")}. Nada ficou conectado.`
+      }
+      last = { at: new Date(now()).toISOString(), ok: false, error, report: null }
     }
     writeJsonAtomic(lastPath(home), last)
     return show(io, home, last, json)
