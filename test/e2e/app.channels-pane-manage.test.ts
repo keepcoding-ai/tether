@@ -190,7 +190,19 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).locator('.ch-bar .ch-more').click()
     await page.waitForSelector('#ctx-menu li')
     const moreLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
-    assert.ok(['Juntar agente…', 'Ir para o fim', 'Encerrar canal…'].every(l => moreLabels.includes(l)), `more menu: ${moreLabels.join(' | ')}`)
+    // G4: the plan's rows in the plan's order (two lines of information first; nobody is muted yet, so no "Devolver a voz…").
+    const MENU_ROWS = ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Copiar link do painel', 'Mover…', 'Fechar painel', 'Encerrar canal…']
+    // (The rows other extensions and the core add, "Dar esta guia a um agente…" and "Emblema…", are not the channel's.)
+    const own = moreLabels.filter(t => t !== '' && t !== 'Dar esta guia a um agente…' && t !== 'Emblema…')
+    assert.match(own[0]!, /^Dono: .+ · 1 membro$/)
+    assert.equal(own[1], 'canal avulso')
+    assert.deepEqual(own.slice(2), MENU_ROWS, `more menu: ${moreLabels.join(' | ')}`)
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#ctx-menu li', { state: 'detached' })
+    // The tab's right click draws the very same rows (one place builds both).
+    await page.locator('.ch-tab', { hasText: '#horizontes' }).first().click({ button: 'right' })
+    await page.waitForSelector('#ctx-menu li')
+    assert.deepEqual((await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()), moreLabels)
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
 
@@ -222,6 +234,15 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     // The mute shows in the line of the conversation and in the chip of the row.
     await pane(hz).locator('.ch-sys', { hasText: /calou|calad/i }).first().waitFor()
     assert.equal((await view(hz))!.members.find(m => m.name === nameA)!.muted, true)
+    // G4: with somebody muted the menu counts it and offers "Devolver a voz…" right after "Calar agente…".
+    await pane(hz).locator('.ch-bar .ch-more').click()
+    await page.waitForSelector('#ctx-menu li')
+    const mutedMenu = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '' && t !== 'Dar esta guia a um agente…')
+    assert.match(mutedMenu[0]!, /^Dono: .+ · 1 membro · 1 calado$/)
+    assert.deepEqual(mutedMenu.slice(2, 8), ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Devolver a voz…', 'Tirar agente…'])
+    await page.screenshot({ path: join(SHOTS, 'g4-menu.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#ctx-menu li', { state: 'detached' })
     await unmute.click()
     await waitUntil(() => members(hz)[a]?.muted === undefined, 10_000, 'a has the voice back')
     // "Falar com" puts the member in the box ("para …") and focuses it; no request goes out.
