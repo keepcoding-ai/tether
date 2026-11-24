@@ -26,6 +26,7 @@ import { agentChoices, agentRegistry } from '../agents/registry.ts'
 import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
+import { cmdSync } from './sync.ts'
 import { cmdVerb, helpWithVerbs } from './verb.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
@@ -142,6 +143,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'daemon': return await cmdDaemon(rest)
       case 'pause': return await cmdPause(rest, { out, err, env: process.env })
       case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
+      case 'sync': return await cmdSync(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
         // Not a built-in: a verb an extension contributed (`tether <ns> <verbo>`); the built-ins above always win.
