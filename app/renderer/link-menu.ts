@@ -7,6 +7,23 @@ type LinkMenuHandler = (x: number, y: number, target: LinkTarget, origin: LinkOr
 
 let handler: LinkMenuHandler | undefined
 
+/** One row of a link's menu as a surface that draws its own menu (the note editor's) takes it: the label, the key hint, what it does. */
+export type LinkMenuAct = 'sep' | { label: string; hint?: string; run(): void }
+type LinkMenuRowsProvider = (target: LinkTarget, origin: LinkOrigin) => LinkMenuAct[]
+
+let rowsProvider: LinkMenuRowsProvider | undefined
+
+/** The core registers how the rows of a link's menu are built (once, at startup; the same rows its own menu shows). */
+export function setLinkMenuRowsProvider(fn: LinkMenuRowsProvider): void {
+  rowsProvider = fn
+}
+
+/** The rows of a link's menu, for a surface that merges them into a menu of its own; empty when the link has none. */
+export function linkMenuRows(target: LinkTarget, origin: LinkOrigin = {}): LinkMenuAct[] {
+  if (target.kind === 'ignore' || target.kind === 'anchor') return []
+  return rowsProvider ? rowsProvider(target, origin) : []
+}
+
 /** The core registers how the menu is shown (once, at startup). */
 export function setLinkMenuHandler(fn: LinkMenuHandler): void {
   handler = fn

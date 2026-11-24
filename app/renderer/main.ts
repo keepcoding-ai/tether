@@ -79,8 +79,8 @@ import { generateSettingsSchema } from '../shared/settings-schema.ts'
 import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
-import { setLinkMenuHandler, showLinkMenu } from './link-menu.ts'
-import { linkCopyText, linkMenuPlan, paneOfLink, peekKey } from './link-menu-rules.ts'
+import { type LinkMenuAct, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu } from './link-menu.ts'
+import { type LinkMenuAction, linkCopyText, linkMenuPlan, paneOfLink, peekKey } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
@@ -3527,13 +3527,21 @@ function linkMenuEntries(target: LinkTarget, origin: LinkOrigin): MenuEntry[] {
   return plan.map((line): MenuEntry => {
     if (line === 'sep') return SEP
     const trail = line.hint ? Object.assign(document.createElement('kbd'), { textContent: line.hint }) : undefined
-    const run = (): void => {
-      if (line.action === 'copy') { const text = linkCopyText(target); if (text !== undefined) window.tether.writeClipboard(text); return }
-      openLink(target, { ...origin, ...(line.action === 'follow-side' ? { side: true } : {}), ...(line.action === 'peek' ? { peek: true } : {}) })
-    }
-    return { icon: line.icon as IconName, label: line.label, run, ...(trail ? { trail } : {}) }
+    return { icon: line.icon as IconName, label: line.label, run: () => runLinkRow(line.action, target, origin), ...(trail ? { trail } : {}) }
   })
 }
+
+function runLinkRow(action: LinkMenuAction, target: LinkTarget, origin: LinkOrigin): void {
+  if (action === 'copy') { const text = linkCopyText(target); if (text !== undefined) window.tether.writeClipboard(text); return }
+  openLink(target, { ...origin, ...(action === 'follow-side' ? { side: true } : {}), ...(action === 'peek' ? { peek: true } : {}) })
+}
+
+/** The same rows for a surface with a menu of its own (the note editor's Monaco menu): link-menu.ts linkMenuRows. */
+setLinkMenuRowsProvider((target, origin) => {
+  const pane = paneOfLink(target)
+  return linkMenuPlan(target, { peekable: pane !== undefined && slots.has(pane), mac: IS_MAC }).map((line): LinkMenuAct =>
+    line === 'sep' ? 'sep' : { label: line.label, ...(line.hint ? { hint: line.hint } : {}), run: () => runLinkRow(line.action, target, origin) })
+})
 
 function showLinkMenuAt(x: number, y: number, target: LinkTarget, origin: LinkOrigin): void {
   const entries = linkMenuEntries(target, origin)

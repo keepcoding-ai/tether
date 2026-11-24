@@ -7,8 +7,10 @@
 //   - one link opener for everything Monaco follows (these paths, tether:// and the http(s) URLs Monaco's own detection finds), so
 //     nothing goes through Monaco's default `window.open`: it all lands on openLink, like the terminal and the preview.
 // Monaco already follows a link only with Ctrl (Cmd) + click and underlines it on hover.
-import { detectUrlLinks, isExternalUrl, linkTargetOfUrl, parsePositionFragment, positionFragment } from '../shared/links.ts'
+import { Action, Separator } from 'monaco-editor/base/common/actions.js'
+import { detectUrlLinks, isExternalUrl, type LinkTarget, linkTargetOfUrl, parsePositionFragment, positionFragment } from '../shared/links.ts'
 import { detectLinks, getLinkSuffix, type LinkOs } from '../shared/vscode-terminal-link-parsing.ts'
+import { type LinkMenuAct, linkMenuRows } from './link-menu.ts'
 import { openLink } from './link-open.ts'
 import { monaco } from './monaco.ts'
 
@@ -62,15 +64,67 @@ export function installMonacoLinks(): void {
 
   monaco.editor.registerLinkOpener({
     open(resource) {
-      if (resource.scheme === 'file') {
-        const position = parsePositionFragment(resource.fragment)
-        openLink({ kind: 'file', path: resource.fsPath, isDirectory: resource.query === DIR_QUERY, ...(position ? { position } : {}) })
-      } else {
-        const url = resource.toString(true)
-        if (isExternalUrl(url)) openLink({ kind: 'external', url })
-        else if (linkTargetOfUrl(url).kind === 'tether') openLink({ kind: 'tether', url })
-      }
+      const target = targetOfResource(resource)
+      if (target) openLink(target)
       return true // handled (or refused): never Monaco's window.open
     },
   })
+}
+
+/** What a link of the editor (a path, a tether:// link, an http(s) URL) is for the app; undefined for what is not followed. The one rule of Ctrl+click and of the menu. */
+function targetOfResource(resource: monaco.Uri): LinkTarget | undefined {
+  if (resource.scheme === 'file') {
+    const position = parsePositionFragment(resource.fragment)
+    return { kind: 'file', path: resource.fsPath, isDirectory: resource.query === DIR_QUERY, ...(position ? { position } : {}) }
+  }
+  const url = resource.toString(true)
+  if (isExternalUrl(url)) return { kind: 'external', url }
+  if (linkTargetOfUrl(url).kind === 'tether') return { kind: 'tether', url }
+  return undefined
+}
+
+/**
+ * Right click on a link in the note editor: the rows of the link's menu (link-menu.ts, the same as every surface, with the key
+ * hints) go on top of the menu Monaco already shows, apart by a separator; off a link the menu is Monaco's own. Monaco has no
+ * hook for it, so the editor's context-menu contribution is wrapped: `_doShowContextMenu` gets the actions and `_keybindingFor`
+ * the hint of a row. When Monaco's internals are not what this expects, the editor keeps its own menu.
+ */
+export function installNoteLinkMenu(editor: monaco.editor.IStandaloneCodeEditor, baseDir: () => string): void {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const menu = editor.getContribution('editor.contrib.contextmenu') as any
+  const detector = editor.getContribution('editor.linkDetector') as any
+  if (!menu || !detector || typeof menu._doShowContextMenu !== 'function' || typeof menu._keybindingFor !== 'function' || typeof detector.getLinkOccurrence !== 'function') {
+    console.warn('links: the note editor menu cannot take link rows')
+    return
+  }
+  const show = menu._doShowContextMenu.bind(menu) as (actions: unknown[], event: unknown) => void
+  const keybindingFor = menu._keybindingFor.bind(menu) as (action: { id: string }) => unknown
+  const hints = new Map<string, string>()
+  menu._keybindingFor = (action: { id: string }) => {
+    const hint = hints.get(action.id)
+    return hint ? { getLabel: () => hint } : keybindingFor(action)
+  }
+  menu._doShowContextMenu = (actions: unknown[], event: { posx?: number; posy?: number; browserEvent?: MouseEvent } | null) => {
+    hints.clear()
+    const rows = event ? linkRowsAt(event, baseDir()) : []
+    if (rows.length === 0) return show(actions, event)
+    const mine = rows.map((row, i) => {
+      if (row === 'sep') return new Separator()
+      const id = `tether.link.${i}`
+      if (row.hint) hints.set(id, row.hint)
+      return new Action(id, row.label, undefined, true, () => { row.run() })
+    })
+    show([...mine, new Separator(), ...actions], event)
+  }
+
+  function linkRowsAt(event: { posx?: number; posy?: number; browserEvent?: MouseEvent }, dir: string): LinkMenuAct[] {
+    const x = event.browserEvent?.clientX ?? event.posx
+    const y = event.browserEvent?.clientY ?? event.posy
+    if (x === undefined || y === undefined) return []
+    const hit = editor.getTargetAtClientPoint(x, y)
+    const url = hit?.position ? detector.getLinkOccurrence(hit.position)?.link?.url as monaco.Uri | string | undefined : undefined
+    if (url === undefined) return []
+    const target = targetOfResource(typeof url === 'string' ? monaco.Uri.parse(url) : url)
+    return target ? linkMenuRows(target, { baseDir: dir }) : []
+  }
 }

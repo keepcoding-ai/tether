@@ -12,6 +12,7 @@ import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, 
 import type { Command } from './commands.ts'
 import { createTabHeader } from './tab-header.ts'
 import { setIcon } from './icons.ts'
+import { installNoteLinkMenu } from './monaco-links.ts'
 import { defineTheme, type Editor, monaco, THEME_NAME, type ViewState } from './monaco.ts'
 import { chordFromLabel, EDITOR_GROUP, editorCommandId } from './note-rules.ts'
 import { terminalFontOptions, type TerminalAppearance } from '../shared/terminal-theme.ts'
@@ -223,6 +224,8 @@ export class NotePanel implements IContentRenderer {
     if (this.model.getLanguageId() === 'json') {
       editor.updateOptions({ quickSuggestions: { strings: true, other: true, comments: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
     }
+    // Right click on a link: the link's rows on top of the editor's menu (monaco-links.ts).
+    installNoteLinkMenu(editor, () => this.path.replace(/[\\/][^\\/]*$/, ''))
     // A wheel turn is the person taking over the scroll: the saved view stops being re-applied.
     this.editorHost.addEventListener('wheel', () => { this.pendingView = undefined }, { passive: true })
     // VS Code's Alt+Z, which Monaco alone does not ship.
