@@ -2604,6 +2604,8 @@ class DaemonImpl implements Daemon {
     if (!ronda || this.closing || this.slotMap.get(slot.meta.slotId) !== slot) return
     if (!slot.rondaDue && Date.now() < Date.parse(ronda.nextAt)) { this.armRonda(slot); return }
     const blocker = this.rondaBlocker(slot)
+    // A pane the app suspended to save resources is resumed for its ronda; the nudge goes once the agent is up and listening.
+    if (blocker === 'not-running') this.door.resumeSuspended?.(slot.meta.slotId, 'ronda')
     if (blocker !== undefined || !this.rondaChannel.send(slot.meta.slotId, buildChannelText(ronda))) {
       if (!slot.rondaDue) { slot.rondaDue = true; this.log(`slot ${slot.meta.slotId}: ronda due, waiting (${blocker ?? 'no-channel'})`); this.broadcastState(slot) }
       this.armRonda(slot)
