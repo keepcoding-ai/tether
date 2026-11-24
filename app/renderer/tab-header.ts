@@ -2,6 +2,7 @@
 // `.kind` icon · `.text` title (ellipsis) · `.ext-emblems` (extensions' emblems) · emblems · status dot · `.close` ×, the same height and spacing, and the same
 // pointer rules (the × does not start a dockview drag; right-click opens the pane menu; double-click is the caller's).
 import { icon } from './icons.ts'
+import { isPeekClick } from './link-menu-rules.ts'
 
 export interface TabHeaderOptions {
   /** Extra classes after `tether-tab` (e.g. 'note', 'empty', 'br-web-tab'). */
@@ -22,6 +23,11 @@ export interface TabHeaderOptions {
   onMenu?: (ev: MouseEvent) => void
   /** Double-click on the tab (rename). */
   onDblClick?: () => void
+  /**
+   * Alt+click on the tab (see `isPeekClick`): peeks at the pane without activating the tab. The pointerdown is marked as handled so
+   * dockview does not activate the tab; the peek itself runs on the click, so a drag that began on the tab never peeks.
+   */
+  onPeek?: () => void
 }
 
 export interface TabHeader {
@@ -58,5 +64,11 @@ export function createTabHeader(o: TabHeaderOptions): TabHeader {
   }
   if (o.onMenu) { const m = o.onMenu; element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); m(ev) }) }
   if (o.onDblClick) { const d = o.onDblClick; element.addEventListener('dblclick', ev => { ev.preventDefault(); ev.stopPropagation(); d() }) }
+  if (o.onPeek) {
+    const peek = o.onPeek
+    // Dockview activates a tab on pointerdown unless the event is already defaultPrevented when it bubbles up to the dv tab.
+    element.addEventListener('pointerdown', ev => { if (isPeekClick(ev)) ev.preventDefault() })
+    element.addEventListener('click', ev => { if (isPeekClick(ev)) { ev.preventDefault(); ev.stopPropagation(); peek() } })
+  }
   return { element, kind, text, extEmblems, close }
 }

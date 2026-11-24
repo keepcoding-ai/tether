@@ -2,7 +2,7 @@
 // copy text.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { linkCopyText, linkMenuPlan, paneOfLink, type LinkMenuLine } from '../../app/renderer/link-menu-rules.ts'
+import { isPeekClick, linkCopyText, linkMenuPlan, paneOfLink, type LinkMenuLine } from '../../app/renderer/link-menu-rules.ts'
 
 const labels = (plan: LinkMenuLine[]): string[] => plan.map(l => (l === 'sep' ? '-' : l.hint ? `${l.label} [${l.hint}]` : l.label))
 const facts = { peekable: true, mac: false }
@@ -45,5 +45,18 @@ describe('what the menu reads of a link', () => {
     assert.equal(linkCopyText({ kind: 'external', url: 'http://x.y/z' }), 'http://x.y/z')
     assert.equal(linkCopyText({ kind: 'file', path: 'C:/a/b.ts', position: { line: 3 } }), 'C:/a/b.ts')
     assert.equal(linkCopyText({ kind: 'anchor', id: 'x' }), undefined)
+  })
+})
+
+describe('Alt+click on a tab', () => {
+  const ev = (o: Partial<{ button: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }>) =>
+    ({ button: 0, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...o })
+  test('Alt alone with the main button peeks; any other combination is another gesture', () => {
+    assert.equal(isPeekClick(ev({ altKey: true })), true)
+    assert.equal(isPeekClick(ev({})), false)
+    assert.equal(isPeekClick(ev({ altKey: true, ctrlKey: true })), false)
+    assert.equal(isPeekClick(ev({ altKey: true, metaKey: true })), false)
+    assert.equal(isPeekClick(ev({ altKey: true, shiftKey: true })), false)
+    assert.equal(isPeekClick(ev({ altKey: true, button: 2 })), false)
   })
 })

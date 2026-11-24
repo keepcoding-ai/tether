@@ -79,7 +79,7 @@ import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
 import { setLinkMenuHandler, showLinkMenu } from './link-menu.ts'
-import { linkCopyText, linkMenuPlan, paneOfLink } from './link-menu-rules.ts'
+import { linkCopyText, linkMenuPlan, paneOfLink, peekKey } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
@@ -373,6 +373,7 @@ const host: PanelHost = {
   fontsReady: () => appearanceReady,
   queuePosition: id => queue.position(id),
   lentTip: id => peekCard?.lentSlot === id ? lentNotice('').tip : undefined,
+  onPeek: id => peek(id),
 }
 
 // ---------- font size ----------
@@ -3110,6 +3111,8 @@ function showTabMenuOf(slotId: string, x: number, y: number, opener?: HTMLElemen
 
 /** Labels shared by the core's menus and the pins read off menus drawn by pane types (which declare no pins). */
 const MOVE_LABEL = 'Mover…'
+/** The tab menu's row of a slot pane: peek at it (Alt+click). */
+const PEEK_LABEL = 'Espiar'
 const CLOSE_PANEL_LABEL = 'Fechar painel…'
 /** The pins of the actions every pane menu has, for the menus pane types draw themselves. */
 const COMMON_PINS: Readonly<Record<string, MenuPin>> = { [MOVE_LABEL]: 'icon', [LINK_LABEL]: 'icon', [CLOSE_PANEL_LABEL]: 'primary', [CLOSE_LABEL]: 'primary' }
@@ -3223,6 +3226,8 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     { icon: 'copy', label: 'Copiar pasta', standalone: true, run: () => copyFolder(slotId) },
     { icon: 'folder-open', label: 'Abrir pasta no Explorer', standalone: true, run: () => openFolder(slotId) },
     SEP,
+    // The same gesture as Alt+click on the tab (the hint names it): every key has a menu row. With the navigation row "Mover…".
+    { icon: 'eye', label: PEEK_LABEL, trail: Object.assign(document.createElement('kbd'), { textContent: peekKey(IS_MAC) }), run: () => peek(slotId) },
     { icon: 'arrow-square-out', label: MOVE_LABEL, pin: 'icon', run: () => { void openMove(slotId) } },
     SEP,
     ...fromExtensions,

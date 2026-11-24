@@ -267,6 +267,8 @@ export interface PanelHost {
   queuePosition(slotId: string): number | undefined
   /** The pane's terminal is lent to the peek card: its tab shows a discreet eye; the text is the eye's tooltip. */
   lentTip?(slotId: string): string | undefined
+  /** Alt+click on the pane's tab: peek at it without activating the tab. */
+  onPeek?(slotId: string): void
 }
 
 /** The hint the layout keeps in a pane's params (main.ts addPanel/updateHint), when there is one. */
@@ -996,6 +998,7 @@ export class SlotTab implements ITabRenderer {
       close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
       onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
       onDblClick: () => this.startRename(),
+      onPeek: () => { if (this.api) this.host.onPeek?.(this.api.id) },
     })
     this.element = h.element; this.kind = h.kind; this.text = h.text
   }

@@ -21,6 +21,14 @@ export const followKey = (mac: boolean): string => (mac ? 'Cmd+clique' : 'Ctrl+c
 /** The peek modifier as the person reads it. */
 export const peekKey = (mac: boolean): string => (mac ? 'Opção+clique' : 'Alt+clique')
 
+/**
+ * Alt (Option on macOS) alone with the main button: Ctrl, Cmd or Shift with it are other gestures (Ctrl+click follows, dockview's
+ * Shift+drag on a tab floats a group). Used by a tab's header for "Espiar".
+ */
+export function isPeekClick(ev: { button: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
+  return ev.button === 0 && ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey
+}
+
 /** The id of the pane a tether://tab link names; undefined for any other target. */
 export function paneOfLink(target: LinkTarget): string | undefined {
   if (target.kind !== 'tether') return undefined
