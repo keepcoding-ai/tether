@@ -305,8 +305,6 @@ button.primary:hover { background: var(--accent-hover); }
 #sessions-list .kind { display: inline-flex; color: var(--warn); }
 #sessions-list .kind.shell { color: var(--fg-dim); }
 #sessions-list .sx-free .open { font-weight: 500; }
-#sessions-list .sx-row.peekable { cursor: pointer; }
-#sessions-list .sx-row.peekable .acts button { cursor: pointer; }
 /* The split button ("Abrir" + ▾, "Reabrir" + ▾): one outline, the arrow stuck to the body. */
 #sessions-list .split { display: inline-flex; align-items: stretch; }
 #sessions-list .split > .open { border-top-right-radius: 0; border-bottom-right-radius: 0; }

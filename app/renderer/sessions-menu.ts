@@ -188,9 +188,6 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       stop.disabled = busy.has(r.slotId)
       stop.addEventListener('click', ev => { ev.stopPropagation(); void stopSession(r.slotId) })
       acts.append(stop)
-      // The whole row peeks (the buttons keep their own act).
-      row.addEventListener('click', ev => { if (!(ev.target as Element).closest('button')) peekRow(r.slotId) })
-      row.classList.add('peekable')
     } else {
       acts.append(splitOpen(r.slotId, 'Reabrir', 'arrow-clockwise', 'Reabrir: a sessão volta a viver em "Sem guia" e abre no cartão', 'revive'))
     }
@@ -211,6 +208,16 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       forget.disabled = busy.has(r.slotId)
       forget.addEventListener('click', ev => { ev.stopPropagation(); askingForget = r.slotId; refresh() })
       acts.append(forget)
+    }
+    // Every act of the row, pinned or not, under the "…" at its end.
+    if (!row.classList.contains('asking')) {
+      const more = iconButton('ic more', 'dots-three', 'Mais ações')
+      more.addEventListener('click', ev => {
+        ev.stopPropagation()
+        const rect = more.getBoundingClientRect()
+        host.contextMenu(rect.left, rect.bottom + 2, rowMenu(r.slotId, group), more)
+      })
+      acts.append(more)
     }
     row.addEventListener('contextmenu', ev => {
       if (row.classList.contains('asking')) return
