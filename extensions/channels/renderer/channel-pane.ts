@@ -124,6 +124,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     while (kept.size > KEPT_MAX) kept.delete(kept.keys().next().value as string)
   }
   const paneOf = (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId)
+  /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
+  const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
   const moderatorName = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
 
   class ChannelPane implements IContentRenderer {
@@ -670,7 +672,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       }
       if (!this.answer) return
       this.composer.setMembers(this.answer.members.map(m => m.name))
-      this.composer.setMarks(new Map(memberRows(this.answer).flatMap((m): Array<[string, string]> =>
+      this.composer.setMarks(new Map(memberRows(this.answer, undefined, noDesk).flatMap((m): Array<[string, string]> =>
         m.muted ? [[m.name, MENTION_TEXT.muted]] : m.tone === 'wait' ? [[m.name, MENTION_TEXT.deaf]] : [])))
       this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
@@ -866,10 +868,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       if (id === undefined || url === undefined) return el('span', cls, text)
       const b = el('button', `${cls} ch-agent`, text)
       b.type = 'button'
-      b.title = PANE_TEXT.nameTip
+      b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
       b.dataset.agent = id
       const target = linkTargetOfUrl(url)
-      b.addEventListener('click', ev => { if (isPeekModifier(ev)) ui.panes.peek(id); else ui.links.follow(target) })
+      // An agent with no pane has no tab to go to (the link would ask to reopen a closed tab): the click opens the peek card.
+      b.addEventListener('click', ev => { if (isPeekModifier(ev) || noDesk(id)) ui.panes.peek(id); else ui.links.follow(target) })
       if (!rowMenu) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
       return b
     }
@@ -931,7 +934,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
     private openMemberMenu(m: MemberRow, x: number, y: number, act = 'more'): void {
       this.markReturn(m.id, act)
       this.side.querySelector(`.ch-mrow[data-member="${CSS.escape(m.id)}"] .ch-mmore`)?.setAttribute('aria-expanded', 'true')
-      this.showAgentMenu(m.id, memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }), x, y, m)
+      this.showAgentMenu(m.id, memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk, noDesk: m.noDesk }), x, y, m)
     }
 
     /**
@@ -939,13 +942,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
      * to its pane on top, then the member's rows. Who is no longer a member (or any name of a closed channel) has only the way and the link.
      */
     private openNameMenu(id: string, name: string, x: number, y: number): void {
-      const m = this.isClosed() || !this.answer ? undefined : memberRows(this.answer).find(r => r.id === id)
-      this.showAgentMenu(id, m ? memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk }) : agentNameMenu(name), x, y, m)
+      const m = this.isClosed() || !this.answer ? undefined : memberRows(this.answer, undefined, noDesk).find(r => r.id === id)
+      this.showAgentMenu(id, m ? memberMenu({ name: m.name, owner: m.crown, muted: m.muted, fromDesk: m.fromDesk, noDesk: m.noDesk }) : agentNameMenu(name, noDesk(id)), x, y, m)
     }
 
     private showAgentMenu(id: string, entries: MemberMenuEntry[], x: number, y: number, m?: MemberRow): void {
       const run: Record<string, () => void> = {
-        go: () => ui.links.follow(linkTargetOfUrl(agentLinkOf(id) ?? '')),
+        go: () => (noDesk(id) ? ui.panes.peek(id) : ui.links.follow(linkTargetOfUrl(agentLinkOf(id) ?? ''))),
         peek: () => ui.panes.peek(id),
         copy: () => ui.panes.copyLink(id),
         ...(m ? {
@@ -971,7 +974,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks): ChannelPanes {
       side.replaceChildren()
       if (!this.answer) return
       // The emblems are read at each redraw (no observer): a change shows when the list is drawn again.
-      const rows = memberRows(this.answer, id => ui.panes.personEmblem(id))
+      const rows = memberRows(this.answer, id => ui.panes.personEmblem(id), noDesk)
       const sec = el('div', 'ch-sec')
       sec.append(el('span', '', `Membros · ${rows.length}`))
       // The list proper: the heading above it is not one of its items.

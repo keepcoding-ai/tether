@@ -96,7 +96,11 @@ function emblemField(id: string, emblemOf: EmblemReader | undefined): { emblem?:
 }
 
 /** The agent panes the person can add: alive, not in the channel, not removed from the question (they come back by a join). */
-export interface AgentChoice { slotId: string; kind: string; name: string; deskId?: string; deskTitle?: string; alive: boolean }
+export interface AgentChoice {
+  slotId: string; kind: string; name: string; deskId?: string; deskTitle?: string; alive: boolean
+  /** `false`: a live agent no pane shows (it runs outside any desk, drawer or pad). */
+  placed?: false
+}
 
 export function agentLabel(a: Pick<AgentChoice, 'kind' | 'name'>): string {
   return `${a.kind} · ${a.name}`
@@ -110,12 +114,13 @@ export interface JoinContext {
   desks?: readonly { id: string; asleep: boolean }[]
 }
 
-export const JOIN_GROUP = { drawer: 'Gaveta e blocos', stopped: 'Parados' } as const
-export const JOIN_MARK = { removed: 'tirado deste canal', stopped: 'parado', asleep: 'mesa dormindo' } as const
+export const JOIN_GROUP = { drawer: 'Gaveta e blocos', noDesk: 'Sem mesa', stopped: 'Parados' } as const
+export const JOIN_MARK = { removed: 'tirado deste canal', stopped: 'parado', asleep: 'mesa dormindo', noDesk: 'sem mesa' } as const
 
 /**
  * The join's list (G5): every agent pane outside the channel. Groups in order: the active desk ("Nesta mesa · nome"), the
- * other desks ("Mesa · nome", in the queue's order), "Gaveta e blocos" (panes with no desk), and last "Parados": a stopped
+ * other desks ("Mesa · nome", in the queue's order), "Gaveta e blocos" (panes with no desk), "Sem mesa" (live agents no pane
+ * shows, marked "sem mesa"), and last "Parados": a stopped
  * agent or one of a sleeping desk, still joinable (it reads what it missed when it wakes). A row says only what is worth
  * saying: "tirado deste canal", "parado", "mesa dormindo".
  */
@@ -127,6 +132,7 @@ export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<st
   const seen: string[] = []
   for (const a of out) if (a.deskId !== undefined && a.deskId !== deskId && !seen.includes(a.deskId)) seen.push(a.deskId)
   const rank = (a: AgentChoice): number => {
+    if (a.placed === false) return Number.MAX_SAFE_INTEGER + 1
     if (a.deskId === undefined) return Number.MAX_SAFE_INTEGER
     if (a.deskId === deskId) return -1
     const q = ctx.desks?.findIndex(d => d.id === a.deskId) ?? -1
@@ -134,11 +140,13 @@ export function joinItems(agents: readonly AgentChoice[], inside: ReadonlySet<st
   }
   const groupOf = (a: AgentChoice): string => {
     if (stopped(a)) return JOIN_GROUP.stopped
+    if (a.placed === false) return JOIN_GROUP.noDesk
     if (a.deskId === undefined) return JOIN_GROUP.drawer
     return `${a.deskId === deskId ? 'Nesta mesa' : 'Mesa'} · ${a.deskTitle ?? a.deskId}`
   }
   const marks = (a: AgentChoice): string[] => [
     ...(ctx.removed?.has(a.slotId) ? [JOIN_MARK.removed] : []),
+    ...(a.placed === false && a.alive ? [JOIN_MARK.noDesk] : []),
     ...(!a.alive ? [JOIN_MARK.stopped] : []), ...(asleepDesk(a) ? [JOIN_MARK.asleep] : []),
   ]
   const row = (a: AgentChoice): PickItem<string> => {
@@ -315,9 +323,14 @@ export const PANE_TEXT = {
   goHint: 'Clique',
   peekHint: 'Alt+clique',
   nameTip: 'Clique: ir para a guia · Alt+clique ou botão direito: espiar',
+  /** An agent with no pane has no tab to go to: the click peeks. */
+  nameTipNoDesk: 'Sem mesa. Clique ou botão direito: espiar',
   /** The "⋯" of a member's row. */
   memberMore: (member: string): string => `Mais ações de ${member}`,
 } as const
+
+/** What ties an agent to open channels, for the Sessões menu ("membro de 2 canais"). */
+export const memberOfText = (n: number): string => (n === 1 ? 'membro de 1 canal' : `membro de ${n} canais`)
 
 /** A row of the member's menu: an act the pane runs (`id`), a line of information, or a separator. */
 export type MemberMenuEntry =
@@ -325,20 +338,23 @@ export type MemberMenuEntry =
   | 'sep'
   | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'go' | 'peek' | 'copy'; icon: string; label: string; hint?: string; danger?: boolean }
 
-const goRows = (): MemberMenuEntry[] => [
-  { id: 'go', icon: 'arrow-square-out', label: PANE_TEXT.goTab, hint: PANE_TEXT.goHint },
-  { id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.peekHint },
-]
+const goRows = (noDesk = false): MemberMenuEntry[] => noDesk
+  ? [{ id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.goHint }]
+  : [
+    { id: 'go', icon: 'arrow-square-out', label: PANE_TEXT.goTab, hint: PANE_TEXT.goHint },
+    { id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.peekHint },
+  ]
 
 /**
  * The menu of the name of an agent that is no longer a member of the channel (the author of an old speech): only the way to its
  * pane and the link.
  */
-export function agentNameMenu(name: string): MemberMenuEntry[] {
-  return [{ heading: name }, ...goRows(), 'sep', { id: 'copy', icon: 'copy', label: PANE_TEXT.copyLink }]
+export function agentNameMenu(name: string, noDesk = false): MemberMenuEntry[] {
+  return [{ heading: name }, ...goRows(noDesk), 'sep', { id: 'copy', icon: 'copy', label: PANE_TEXT.copyLink }]
 }
 
-export interface MemberMenuInput { name: string; owner: boolean; muted: boolean; fromDesk: boolean }
+/** `noDesk`: the agent has no pane (a live session outside any desk): the way to it is the peek card alone. */
+export interface MemberMenuInput { name: string; owner: boolean; muted: boolean; fromDesk: boolean; noDesk?: boolean }
 
 /**
  * The member's menu (plan 2.6), also the menu of the agent's name wherever it shows: who it is, the way to its pane (go, peek), then
@@ -348,7 +364,7 @@ export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
   const info = [m.name, m.owner ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.fromDesk ? ['da mesa'] : [])].join(' · ')
   return [
     { heading: info },
-    ...goRows(),
+    ...goRows(m.noDesk === true),
     'sep',
     { id: 'talk', icon: ICON.channel, label: PANE_TEXT.talkTo(m.name) },
     m.muted

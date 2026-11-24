@@ -6,7 +6,7 @@ import type { Line } from '../../extensions/channels/rules.ts'
 import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemon/requests.ts'
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
-  agentLinkOf, applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel,
+  agentLinkOf, applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel, NO_DESK_WAIT_HINT, WAIT_HINT,
   type MembersAnswer, type SayRow,
 } from '../../extensions/channels/renderer/view-model.ts'
 
@@ -130,6 +130,15 @@ test('members: the owner first, the state of each, muted marked', () => {
   assert.equal(rows[0]!.hint, undefined, 'only the route that does not hear carries a hint')
   const away = memberRows(answer({ members: [member('b2', 'x', { path: 'away', alive: false }), member('t', 'term', { path: 'terminal' })] }))
   assert.deepEqual(away.map(r => [r.state, r.tone]), [['parado', 'off'], ['ouve pelo terminal', 'on']])
+})
+
+test('members: a waiting member with no pane gets the no-desk hint; one that hears inside has none', () => {
+  const rows = memberRows(answer({ members: [member('l1', 'solto', { path: 'wait' }), member('l2', 'dentro', { path: 'inside' }), member('d1', 'guia', { path: 'wait' })] }), undefined, id => id.startsWith('l'))
+  assert.deepEqual(rows.map(r => r.noDesk), [true, true, false])
+  assert.equal(rows[0]!.hint, NO_DESK_WAIT_HINT)
+  assert.equal(NO_DESK_WAIT_HINT, 'Este agente está sem mesa e não ouve por dentro: as falas ficam em espera e chegam juntas quando ele puder ouvir.')
+  assert.equal(rows[1]!.hint, undefined)
+  assert.equal(rows[2]!.hint, WAIT_HINT, 'a member with a pane keeps the old hint')
 })
 
 test('members: the emblem the reader gives rides on the row; a member without one has no field', () => {

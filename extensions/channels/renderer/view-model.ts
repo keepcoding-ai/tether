@@ -237,10 +237,17 @@ export interface MemberRow {
   fromDesk: boolean
   /** The emblem the person put on this member's tab, when it wears one. */
   emblem?: PaneEmblem
+  /** A live agent no pane shows: there is no tab to go to, only the peek card. */
+  noDesk: boolean
 }
 
 /** Why a member on the `wait` route does not hear now (the row's tooltip). */
 export const WAIT_HINT = 'A guia deste agente está com você e ele não recebe falas por dentro. As falas ficam na fila até a guia ser dada a um agente.'
+/**
+ * The same, for a member with no pane. `wait` means no stream inside and no agent holding a live pane: the lines queue and reach it
+ * together in one notice once it can hear. (A member that hears inside shows no hint.)
+ */
+export const NO_DESK_WAIT_HINT = 'Este agente está sem mesa e não ouve por dentro: as falas ficam em espera e chegam juntas quando ele puder ouvir.'
 
 const ROUTE_TEXT: Record<MemberInfo['path'], { state: string; tone: MemberRow['tone']; hint?: string }> = {
   inside: { state: 'ouvindo', tone: 'on' },
@@ -252,16 +259,21 @@ const ROUTE_TEXT: Record<MemberInfo['path'], { state: string; tone: MemberRow['t
 /** Reads the emblem the person put on the tab of the pane with this id (the agent's slot id): `ui.panes.personEmblem`. */
 export type EmblemReader = (id: string) => PaneEmblem | undefined
 
+/** Whether the agent with this id is a live session no pane shows (`ui.agents.get(id)?.placed === false`). */
+export type NoDeskReader = (id: string) => boolean
+
 /** The owner first, then the others in the order the daemon gave. `emblemOf` adds the emblem of each member that wears one. */
-export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader): MemberRow[] {
+export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader, noDeskOf?: NoDeskReader): MemberRow[] {
   const ownerId = answer.channel.owner.kind === 'agent' ? answer.channel.owner.id : undefined
   const rows = answer.members.map((m): MemberRow => {
     const route = ROUTE_TEXT[m.path]
     const emblem = emblemOf?.(m.id)
+    const noDesk = noDeskOf?.(m.id) === true
+    const hint = m.path === 'wait' && noDesk ? NO_DESK_WAIT_HINT : route.hint
     return {
       id: m.id, name: m.name, hue: agentHue(m.id), role: m.id === ownerId ? 'dono' : 'membro', crown: m.id === ownerId,
-      muted: m.muted, route: m.path, state: route.state, tone: route.tone, ...(route.hint !== undefined ? { hint: route.hint } : {}),
-      fromDesk: m.by === 'desk', ...(emblem ? { emblem } : {}),
+      muted: m.muted, route: m.path, state: route.state, tone: route.tone, ...(hint !== undefined ? { hint } : {}),
+      fromDesk: m.by === 'desk', ...(emblem ? { emblem } : {}), noDesk,
     }
   })
   return [...rows.filter(r => r.crown), ...rows.filter(r => !r.crown)]

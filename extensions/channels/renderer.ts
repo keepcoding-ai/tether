@@ -4,6 +4,7 @@
 import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
 import { createChannelPanes } from './renderer/channel-pane.ts'
 import { createCommands, createDirectory } from './renderer/commands.ts'
+import { holds } from './renderer/holds.ts'
 import { createMarks } from './renderer/marks.ts'
 import { createMenus } from './renderer/menus.ts'
 import { createStatus } from './renderer/status.ts'
@@ -20,5 +21,6 @@ export function activate(ui: TetherUi): Disposable[] {
     ...createStatus(ui, marks, directory.list),
     ...createCommands(ui, { open: panes.open, directory }),
     ...createMenus(ui, directory, panes.open),
+    ...holds(ui, directory.memberIds),
   ]
 }

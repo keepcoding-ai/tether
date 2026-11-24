@@ -40,6 +40,8 @@ export interface Directory {
   list(): readonly ChannelSummary[]
   /** Asks the daemon again. */
   refresh(): Promise<readonly ChannelSummary[]>
+  /** The member ids of each open channel, as of the last refresh (what the Sessões menu's hold reads). */
+  memberIds(): ReadonlyMap<string, readonly string[]>
   disposables: Disposable[]
 }
 
@@ -47,11 +49,21 @@ const REFRESH_DELAY_MS = 200
 
 export function createDirectory(ui: TetherUi): Directory {
   let held: readonly ChannelSummary[] = []
+  let ids: ReadonlyMap<string, readonly string[]> = new Map()
   let timer: ReturnType<typeof setTimeout> | undefined
   const refresh = async (): Promise<readonly ChannelSummary[]> => {
     const r = await ui.daemon.request<{ channels: ChannelSummary[] }>('list', { closed: true })
     held = r.channels
+    await readMembers(held)
     return held
+  }
+  // One `members` read per open channel with members, per refresh (a refresh follows a channel change, never a line).
+  const readMembers = async (list: readonly ChannelSummary[]): Promise<void> => {
+    const open = list.filter(c => c.closed === undefined && c.members > 0)
+    const reads = await Promise.all(open.map(async (c): Promise<[string, readonly string[]] | undefined> => {
+      try { return [c.id, (await ui.daemon.request<MembersAnswer>('members', { channel: c.id })).members.map(m => m.id)] } catch { return undefined }
+    }))
+    ids = new Map(reads.filter((x): x is [string, readonly string[]] => x !== undefined))
   }
   const soon = (): void => {
     if (timer) return
@@ -61,6 +73,7 @@ export function createDirectory(ui: TetherUi): Directory {
   return {
     list: () => held,
     refresh,
+    memberIds: () => ids,
     disposables: [
       ui.daemon.onEvent('channel', soon),
       { dispose: () => { if (timer) { clearTimeout(timer); timer = undefined } } },
@@ -89,7 +102,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
   const membersOf = (channel: string): Promise<MembersAnswer> => ui.daemon.request<MembersAnswer>('members', { channel })
 
   const agents = (): AgentChoice[] => ui.agents.list().map(a => ({
-    slotId: a.slotId, kind: a.kind, name: a.name, alive: a.alive,
+    slotId: a.slotId, kind: a.kind, name: a.name, alive: a.alive, ...(a.placed === false ? { placed: false as const } : {}),
     ...(a.deskId !== undefined ? { deskId: a.deskId } : {}), ...(a.deskTitle !== undefined ? { deskTitle: a.deskTitle } : {}),
   }))
   /** An agent the person named: the slot id, or the name its tab shows. */
