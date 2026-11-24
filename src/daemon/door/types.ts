@@ -211,6 +211,11 @@ export interface DoorDelivery {
   pathOf(slotId: string): 'inside' | 'terminal' | 'wait'
   /** The route a slot has, ignoring the interlock (busy, draft, settle): `pathOf` is the instant, `routeOf` is the road. */
   routeOf(slotId: string): 'inside' | 'terminal' | 'wait'
+  /**
+   * The slot's client has the tether's MCP tools now: its MCP session is open (a client that has the tools but does not wake on a
+   * channel message, like Codex, counts). False for a client with no MCP, and for a session that is closed at this instant.
+   */
+  hasTools(slotId: string): boolean
 }
 
 // ---- 5. rerouted attention -------------------------------------------------------------------

@@ -182,6 +182,7 @@ describe('agent door delivery (D6)', () => {
     await waitUntil(() => readLines<Record<string, any>>(chanLog(id)).some((l) => l.open === 200), 30_000, 'the fake codex opened its stream')
     assert.equal(door.mcp.connected(id), true)
     assert.equal(door.mcp.wakes(id), false)
+    assert.equal(delivery.hasTools(id), true, 'it does not wake, but the tools are in its hands')
     assert.equal(delivery.pathOf(id), 'wait', 'connected but not held: no inside')
     const r = await delivery.deliver(id, msg('pelo terminal'))
     assert.equal(r.state, 'queued')
@@ -195,6 +196,7 @@ describe('agent door delivery (D6)', () => {
   test('no stream and no held: queued, on disk, and the PTY gets no byte; held and idle: types header+body, then Enter in a separate write', async () => {
     const id = await running('fora')
     const before = chunks(id).length
+    assert.equal(delivery.hasTools(id), false, 'no stream, no tools')
     const r = await delivery.deliver(id, msg('primeira'))
     assert.equal(r.state, 'queued')
     assert.equal(delivery.pathOf(id), 'wait')

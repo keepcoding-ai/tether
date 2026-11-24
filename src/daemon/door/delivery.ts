@@ -193,6 +193,7 @@ export class DeliveryService {
       },
       pathOf: (slotId) => this.pathOf(slotId),
       routeOf: (slotId) => this.routeOf(slotId),
+      hasTools: (slotId) => this.hasTools(slotId),
       useTypist: (agent, typist) => {
         const entry = { typist }
         this.typists.set(agent, entry)
@@ -241,6 +242,11 @@ export class DeliveryService {
     if (!port) return 'wait'
     if (this.opts.mcp.wakes(slotId)) return 'inside'
     return this.holdsTerminal(port, slotId) ? 'terminal' : 'wait'
+  }
+
+  /** The slot has an open MCP session, so the tether's tools are in its hands (`connected`, not `wakes`: Codex has tools and does not wake). */
+  hasTools(slotId: string): boolean {
+    return this.opts.mcp.connected(slotId)
   }
 
   /** Stops the silence timer and the stream subscription (tests, teardown). */
