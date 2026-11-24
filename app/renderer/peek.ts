@@ -38,6 +38,8 @@ export interface PeekHost extends PlaceHost {
   onLendChange(slotId: string, lent: boolean): void
   /** The chord that closes the card, as the person reads it ("" when unbound). */
   closeHint(): string
+  /** The chord that toggles the drawer, which closes the card while it is open ("" when unbound). */
+  toggleHint(): string
   /** The card opened or closed: the window behind goes inert / comes back. Called before the focus moves. */
   onOpenChange(open: boolean): void
   /** Where the keyboard goes when the element that had it before the card is gone. */
@@ -82,12 +84,12 @@ export class PeekCard {
     this.state.setAttribute('aria-live', 'polite')
     id.append(this.kind, this.title, this.state)
     const acts = el('div', 'peek-acts')
-    this.openBtn = el('button', 'peek-open primary')
+    this.openBtn = el('button', 'peek-open')
     this.openBtn.type = 'button'
     this.openLabel = el('span', 'label')
     this.openBtn.addEventListener('click', () => { if (this.current?.lent) this.goToTab(); else this.openHere() })
     // The split button: "Abrir nesta mesa" with the ▾ stuck to it, which lists the other desks.
-    this.moreBtn = el('button', 'peek-open-more primary')
+    this.moreBtn = el('button', 'peek-open-more')
     this.moreBtn.type = 'button'
     this.moreBtn.title = OPEN_ELSEWHERE_LABEL
     this.moreBtn.setAttribute('aria-label', OPEN_ELSEWHERE_LABEL)
@@ -104,10 +106,11 @@ export class PeekCard {
     this.menuBtn.setAttribute('aria-haspopup', 'menu')
     this.menuBtn.append(icon('dots-three'))
     this.menuBtn.addEventListener('click', () => this.showMenu())
-    this.closeBtn = el('button', 'peek-close ib')
+    // The card's main action: "Fechar", the accent button at the right end (it keeps its colour as an icon in a narrow window).
+    this.closeBtn = el('button', 'peek-close primary')
     this.closeBtn.type = 'button'
     this.closeBtn.setAttribute('aria-label', 'Fechar o cartão')
-    this.closeBtn.append(icon('x'))
+    this.closeBtn.append(icon('x'), Object.assign(el('span', 'label'), { textContent: 'Fechar' }))
     this.closeBtn.addEventListener('click', () => this.close())
     acts.append(split, this.menuBtn, this.closeBtn)
     head.append(id, acts)
@@ -198,13 +201,14 @@ export class PeekCard {
     if (this.state.textContent !== h.text) { this.state.replaceChildren(Object.assign(document.createElement('span'), { className: 'dot' }), document.createTextNode(h.text)) }
     this.card.setAttribute('aria-label', peekLabel(h.title))
     this.card.dataset.lent = String(cur.lent)
-    const hint = this.host.closeHint()
-    const tip = closeTip(hint)
+    // The drawer's key closes the card too (main.ts toggleDrawer): both chords as the person has them bound.
+    const hints = [this.host.toggleHint(), this.host.closeHint()].filter(h => h !== '')
+    const tip = closeTip(hints)
     if (this.closeBtn.title !== tip) this.closeBtn.title = tip
     this.paintOpenButton(cur.lent)
     this.openBtn.disabled = !cur.lent && h.state === 'ended'
     this.moreBtn.disabled = h.state === 'ended'
-    const foot = peekFoot(s?.kind, hint, h.state === 'ended')
+    const foot = peekFoot(s?.kind, hints, h.state === 'ended')
     if (this.foot.textContent !== foot) this.foot.textContent = foot
   }
 

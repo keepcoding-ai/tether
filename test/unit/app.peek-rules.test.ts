@@ -55,7 +55,7 @@ describe('a slot with a tab in the card', () => {
     assert.deepEqual(peekOpenButton(true), { action: 'go-tab', label: 'Ir para a guia', title: 'Ir para a guia: fecha o cartão, devolve o terminal à guia e mostra a guia', icon: 'arrow-square-out', primary: false, split: false })
     const own = peekOpenButton(false)
     assert.equal(own.label, 'Abrir nesta mesa')
-    assert.equal(own.primary, true)
+    assert.equal(own.primary, false, 'the card\'s main action is "Fechar": opening is secondary')
     assert.equal(own.split, true)
   })
   test('the "⋯" has "Ir para a guia" in place of the two ways of opening', () => {
@@ -98,26 +98,29 @@ describe('texts', () => {
     assert.equal(peekHeader({ slotId: 's', cwd: 'C:/x', status: 'running', attention: 'waiting' }, now).text, 'pede atenção')
     assert.equal(peekHeader({ slotId: 's', cwd: 'C:/x', status: 'exited' }, now).state, 'ended')
   })
-  test('the ✕ tip carries the key; the label names the slot', () => {
-    assert.equal(closeTip('Ctrl+Shift+O'), 'Fechar (Ctrl+Shift+O)')
-    assert.equal(closeTip(''), 'Fechar')
+  test('the "Fechar" tip carries both keys (as bound); the label names the slot', () => {
+    assert.equal(closeTip(['Ctrl+`', 'Ctrl+Shift+O']), 'Fechar (Ctrl+` ou Ctrl+Shift+O)')
+    assert.equal(closeTip(['Ctrl+Shift+O']), 'Fechar (Ctrl+Shift+O)')
+    assert.equal(closeTip([]), 'Fechar')
     assert.equal(peekLabel('conferente'), 'Espiando conferente')
   })
   test("the foot: how to close, and for an agent that Esc stays with the agent; one short line", () => {
-    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', false), 'Feche pelo ✕, pela margem ou por Ctrl+Shift+O. O Esc fica com o agente.')
-    assert.equal(peekFoot('claude', '', false), 'Feche pelo ✕ ou pela margem. O Esc fica com o agente.')
-    assert.equal(peekFoot('shell', 'Ctrl+Shift+O', false), 'Feche pelo ✕, pela margem ou por Ctrl+Shift+O. O Esc fica com o terminal.')
-    assert.equal(peekFoot('claude', 'Ctrl+Shift+O', true), 'Sessão encerrada. Feche pelo ✕, pela margem ou por Ctrl+Shift+O.')
+    const both = ['Ctrl+`', 'Ctrl+Shift+O']
+    assert.equal(peekFoot('claude', both, false), 'Feche pelo botão, pela margem ou por Ctrl+` ou Ctrl+Shift+O. O Esc fica com o agente.')
+    assert.equal(peekFoot('claude', [], false), 'Feche pelo botão ou pela margem. O Esc fica com o agente.')
+    assert.equal(peekFoot('shell', ['Ctrl+Shift+O'], false), 'Feche pelo botão, pela margem ou por Ctrl+Shift+O. O Esc fica com o terminal.')
+    assert.equal(peekFoot('claude', both, true), 'Sessão encerrada. Feche pelo botão, pela margem ou por Ctrl+` ou Ctrl+Shift+O.')
     for (const kind of ['claude', 'soul', 'codex', 'shell'] as const) {
-      const text = peekFoot(kind, 'Ctrl+Shift+O', false)
-      assert.ok(text.length <= 80, kind)
+      const text = peekFoot(kind, both, false)
+      assert.ok(text.length <= 95, kind)
       assert.doesNotMatch(text, /duas vezes/)
     }
   })
-  test('with the card open only the palette and the card\'s own close keep their chords', () => {
+  test('with the card open only the palette, the card\'s own close and the drawer\'s toggle (which closes the card) keep their chords', () => {
     assert.equal(peekKeeps(PEEK_CLOSE_COMMAND), true)
     assert.equal(peekKeeps('palette.show'), true)
-    for (const c of ['pane.next-tab', 'desk.next', 'desk.go.2', 'drawer.toggle', 'pane.close', 'palette.quick-open', 'app.quit-all']) assert.equal(peekKeeps(c), false, c)
+    assert.equal(peekKeeps('drawer.toggle'), true)
+    for (const c of ['pane.next-tab', 'desk.next', 'desk.go.2', 'pane.close', 'palette.quick-open', 'app.quit-all']) assert.equal(peekKeeps(c), false, c)
   })
 })
 

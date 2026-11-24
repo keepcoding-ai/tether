@@ -1690,6 +1690,7 @@ function peekHost(): PeekHost {
     goToTab: slotId => revealPane(slotId),
     onLendChange: slotId => { tabs.get(slotId)?.render() },
     closeHint: () => shortcutHint(PEEK_CLOSE_COMMAND),
+    toggleHint: () => shortcutHint('drawer.toggle'),
     onOpenChange: open => {
       if (open) {
         // Menus of the toolbar belong to the window behind: they close, they do not float over the card.
@@ -3742,7 +3743,8 @@ const commandHost: CommandHost = {
   toggleBuilder: () => { if (isBuilder()) leaveBuilder(); else setBuilder(true) },
   deskActions: () => { if (desks.isSystem(desks.activeDeskId)) return; const r = document.querySelector('#desk-switch .seg.on')?.getBoundingClientRect(); showDeskMenu(desks.activeDeskId, r?.left ?? 200, (r?.bottom ?? 40) + 4) },
   closeDesk: () => { if (!desks.isSystem(desks.activeDeskId)) void closeDesk(desks.activeDeskId) },
-  toggleDrawer: () => setDrawerOpen(!drawer.isOpen),
+  // With the card open the key closes the card and nothing else: the drawer under it stays as it is (a second press toggles it).
+  toggleDrawer: () => { if (peekCard?.isOpen) peekCard.close(); else setDrawerOpen(!drawer.isOpen) },
   quickShell: () => { void quickShell() },
   closePeek,
   pickPeek,

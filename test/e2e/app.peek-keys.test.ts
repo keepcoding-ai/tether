@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -32,6 +33,8 @@ type Hooks = {
   createDesk(side: 'before' | 'after', relativeTo?: string): string
   switchDesk(id: string): void
   palette(): { open: boolean; shown: string[]; input: string }
+  drawer(): { open: boolean }
+  openDrawer(): void
 }
 declare const window: { __tether: Hooks }
 type El = { id: string; closest(s: string): unknown; getAttribute(n: string): string | null }
@@ -42,6 +45,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
+const shots = process.env.PEEK_SHOTS_DIR ?? 'C:/atrium/.tmp/tether-agents/onda-3/espiar'
 const pipe = `\\\\.\\pipe\\tether-pkeys-${process.pid}`
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
@@ -165,6 +169,24 @@ test('cartão de espiar pelo teclado: comandos, chords quietas, foco preso, foco
     await page.keyboard.press('Control+Shift+O')
     await waitClosed(page)
 
+    // ---- 2b. the drawer's key closes the card (and only the card) ----
+    console.log('step 2b')
+    await page.evaluate(id => window.__tether.peek(id), b)
+    await waitPeek(page, b)
+    await page.keyboard.press('Control+Backquote')
+    await waitClosed(page)
+    assert.equal((await page.evaluate(() => window.__tether.drawer())).open, false, 'no drawer behind: the key closes the card and opens nothing')
+    await page.evaluate(() => window.__tether.openDrawer())
+    await page.waitForFunction(() => window.__tether.drawer().open)
+    await page.evaluate(id => window.__tether.peek(id), b)
+    await waitPeek(page, b)
+    await page.keyboard.press('Control+Backquote')
+    await waitClosed(page)
+    assert.equal((await page.evaluate(() => window.__tether.drawer())).open, true, 'the drawer under the card stays open')
+    await page.keyboard.press('Control+Backquote')
+    await page.waitForFunction(() => !window.__tether.drawer().open)
+    await page.locator(`.panel[data-slot-id="${keep}"] .xterm`).click()
+
     // ---- 3. dialog, names, live region, Tab stays inside ----
     console.log('step 3')
     await page.evaluate(id => window.__tether.peek(id), b)
@@ -176,6 +198,17 @@ test('cartão de espiar pelo teclado: comandos, chords quietas, foco preso, foco
     assert.match((await card.getAttribute('aria-label'))!, /^Espiando .+/)
     for (const sel of ['.peek-close', '.peek-open-more', '.peek-menu']) assert.ok(((await page.locator(`#peek ${sel}`).getAttribute('aria-label')) ?? '').length > 0, `${sel} has a name`)
     assert.equal(await page.locator('#peek .peek-state').getAttribute('aria-live'), 'polite')
+    // the top: "Fechar" is the accent button at the right end, the ways of opening are neutral
+    assert.equal((await page.locator('#peek .peek-close').textContent())!.trim(), 'Fechar')
+    assert.match((await page.locator('#peek .peek-close').getAttribute('class'))!, /primary/)
+    assert.doesNotMatch((await page.locator('#peek .peek-open').getAttribute('class'))!, /primary/)
+    assert.match((await page.locator('#peek .peek-close').getAttribute('title'))!, /^Fechar \(Ctrl\+` ou Ctrl\+Shift\+O\)$/)
+    assert.match((await page.locator('#peek .peek-foot').textContent())!, /^Feche pelo botão, pela margem ou por Ctrl` ou Ctrl\+Shift\+O\. O Esc fica com o terminal\.$/)
+    const closeBox = (await page.locator('#peek .peek-close').boundingBox())!
+    const menuBox = (await page.locator('#peek .peek-menu').boundingBox())!
+    assert.ok(menuBox.x < closeBox.x, '"⋯" sits left of "Fechar"')
+    await mkdir(shots, { recursive: true })
+    await page.screenshot({ path: join(shots, 'e4-cartao-topo.png') })
     await page.focus('#peek .peek-open')
     for (let i = 0; i < 6; i++) {
       await page.keyboard.press('Tab')

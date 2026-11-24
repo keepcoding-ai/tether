@@ -29,7 +29,9 @@
 button.peek-open { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font-size: 12.5px; }
 button.peek-open .ph { width: 14px; height: 14px; }
 button.peek-open:disabled { opacity: .5; cursor: default; }
-.peek-close .ph, .peek-menu .ph { width: 16px; height: 16px; }
+button.peek-close { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 600; }
+.peek-close .ph { width: 14px; height: 14px; }
+.peek-menu .ph { width: 16px; height: 16px; }
 /* The split button: "Abrir nesta mesa" with the ▾ stuck to it ("Abrir em outra mesa"). */
 .peek-split { display: inline-flex; align-items: stretch; }
 .peek-split:not(.alone) > button.peek-open { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -60,6 +62,6 @@ button.peek-open:disabled { opacity: .5; cursor: default; }
 @media (max-width: 560px), (max-height: 420px) {
   .peek-card { inset: 6px; }
   .peek-head { flex-wrap: wrap; row-gap: 2px; }
-  button.peek-open { width: 30px; padding: 0; justify-content: center; }
-  button.peek-open .label { display: none; }
+  button.peek-open, button.peek-close { width: 30px; padding: 0; justify-content: center; }
+  button.peek-open .label, button.peek-close .label { display: none; }
 }

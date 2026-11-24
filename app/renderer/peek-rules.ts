@@ -80,9 +80,9 @@ export function peekHeader(slot: SessionSlot & Pick<SlotState, 'name' | 'title' 
   return { title: slotTitle(slot), state: row.state, text: row.text }
 }
 
-/** The ✕'s tooltip: "Fechar (Ctrl+Shift+O)", or plain "Fechar" when the person unbound the key. */
-export function closeTip(hint: string): string {
-  return hint ? `Fechar (${hint})` : 'Fechar'
+/** The "Fechar" button's tooltip: "Fechar (Ctrl+` ou Ctrl+Shift+O)", or plain "Fechar" when the person unbound both keys. */
+export function closeTip(hints: readonly string[]): string {
+  return hints.length ? `Fechar (${hints.join(' ou ')})` : 'Fechar'
 }
 
 export type PeekMenuAction = 'open-here' | 'open-other' | 'go-tab' | 'copy-link' | 'close'
@@ -118,7 +118,7 @@ export function peekMenuPlan(hint: string, ended: boolean, hasTab = false): Peek
 
 export const GO_TAB_LABEL = 'Ir para a guia'
 
-/** The card's main button: "Abrir nesta mesa" (primary, split with ▾ "Abrir em outra mesa") without a tab; "Ir para a guia" (secondary, alone) with one. */
+/** The card's opening button, secondary (the main action is "Fechar"): "Abrir nesta mesa" (split with ▾ "Abrir em outra mesa") without a tab; "Ir para a guia" (alone) with one. */
 export interface PeekOpenButton {
   action: 'open-here' | 'go-tab'
   label: string
@@ -132,7 +132,7 @@ export interface PeekOpenButton {
 export function peekOpenButton(hasTab: boolean): PeekOpenButton {
   return hasTab
     ? { action: 'go-tab', label: GO_TAB_LABEL, title: 'Ir para a guia: fecha o cartão, devolve o terminal à guia e mostra a guia', icon: 'arrow-square-out', primary: false, split: false }
-    : { action: 'open-here', label: 'Abrir nesta mesa', title: 'Abrir nesta mesa: o agente ganha uma guia na mesa em que você está', icon: 'plus', primary: true, split: true }
+    : { action: 'open-here', label: 'Abrir nesta mesa', title: 'Abrir nesta mesa: o agente ganha uma guia na mesa em que você está', icon: 'plus', primary: false, split: true }
 }
 
 /** What the tab says while its terminal is lent to the card (screen 6 of the preview). No buttons: the card covers them. */
@@ -160,8 +160,8 @@ export function peekLabel(title: string): string {
  * The line at the card's foot, short enough for one line in a narrow window: how to close it and, for an agent, that Esc
  * stays with the agent (said on the screen itself, since Esc does not close here).
  */
-export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolean): string {
-  const way = hint ? `pelo ✕, pela margem ou por ${hint}` : 'pelo ✕ ou pela margem'
+export function peekFoot(kind: SlotKind | undefined, hints: readonly string[], ended: boolean): string {
+  const way = hints.length ? `pelo botão, pela margem ou por ${hints.join(' ou ')}` : 'pelo botão ou pela margem'
   if (ended) return `Sessão encerrada. Feche ${way}.`
   return `Feche ${way}. ${kind === 'shell' ? 'O Esc fica com o terminal.' : 'O Esc fica com o agente.'}`
 }
@@ -169,11 +169,12 @@ export function peekFoot(kind: SlotKind | undefined, hint: string, ended: boolea
 // ---------- keys while the card is open ----------
 
 /**
- * The app commands whose chords keep working while the card is open: the palette (and through it, every command) and the
- * card's own close. Everything else of the app's table is quiet, as with a dialog up; the card's terminal keeps its own keys
+ * The app commands whose chords keep working while the card is open: the palette (and through it, every command), the
+ * card's own close and the drawer's toggle, which closes the card (only the card: the drawer under it stays as it was).
+ * Everything else of the app's table is quiet, as with a dialog up; the card's terminal keeps its own keys
  * (copy and paste are the panel's, not the table's) and hands the rest to the program.
  */
-export const PEEK_KEEPS: readonly string[] = [PEEK_CLOSE_COMMAND, 'palette.show']
+export const PEEK_KEEPS: readonly string[] = [PEEK_CLOSE_COMMAND, 'palette.show', 'drawer.toggle']
 
 /** Whether a command's chord still fires with the card open. */
 export function peekKeeps(command: string): boolean {
