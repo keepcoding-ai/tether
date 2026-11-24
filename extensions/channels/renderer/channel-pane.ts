@@ -254,6 +254,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         const first = marks.of(this.channelId).firstToMe
         if (first !== this.separatorAt) this.paintMsgs()
       }))
+      // The emblem the person put on a member's tab shows at the right of its row: redraw the list when one changes.
+      this.subs.push(ui.panes.onDidChangeMarks(paneId => {
+        if (this.disposed || !this.answer) return
+        if (paneId === undefined || this.answer.members.some(m => m.id === paneId)) this.paintMembers()
+      }))
       this.paint()
       void this.load()
       marks.paneChanged(this.channelId)
@@ -975,6 +980,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         go: () => (noDesk(id) ? ui.panes.peek(id) : ui.links.follow(linkTargetOfUrl(agentLinkOf(id) ?? ''))),
         peek: () => ui.panes.peek(id),
         copy: () => ui.panes.copyLink(id),
+        emblem: () => ui.panes.emblemMenu(id, x, y),
         ...(m ? {
           mute: () => this.memberAct('mute', id),
           unmute: () => this.memberAct('unmute', id),

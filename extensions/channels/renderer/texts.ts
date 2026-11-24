@@ -320,6 +320,8 @@ export const PANE_TEXT = {
   goTab: 'Ir para a guia',
   peekTab: 'Espiar',
   copyLink: 'Copiar link',
+  /** The tab menu's own row, opening the same emblem popover. */
+  emblem: 'Emblema…',
   goHint: 'Clique',
   peekHint: 'Alt+clique',
   nameTip: 'Clique: ir para a guia · Alt+clique ou botão direito: espiar',
@@ -336,13 +338,15 @@ export const memberOfText = (n: number): string => (n === 1 ? 'membro de 1 canal
 export type MemberMenuEntry =
   | { heading: string }
   | 'sep'
-  | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'go' | 'peek' | 'copy'; icon: string; label: string; hint?: string; danger?: boolean }
+  | { id: 'mute' | 'unmute' | 'remove' | 'talk' | 'go' | 'peek' | 'emblem' | 'copy'; icon: string; label: string; hint?: string; danger?: boolean }
 
 const goRows = (noDesk = false): MemberMenuEntry[] => noDesk
   ? [{ id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.goHint }]
   : [
     { id: 'go', icon: 'arrow-square-out', label: PANE_TEXT.goTab, hint: PANE_TEXT.goHint },
     { id: 'peek', icon: 'eye', label: PANE_TEXT.peekTab, hint: PANE_TEXT.peekHint },
+    // The emblem is the tab's (same row as the tab menu's): an agent with no tab has none to manage.
+    { id: 'emblem', icon: 'tag', label: PANE_TEXT.emblem },
   ]
 
 /**

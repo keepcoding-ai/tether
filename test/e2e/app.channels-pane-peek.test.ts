@@ -161,7 +161,7 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     await authorA.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
     assert.deepEqual(await menuRows(), [
-      `${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', `Falar com ${nameA}`, 'Calar', 'Tirar do canal',
+      `${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', `Falar com ${nameA}`, 'Calar', 'Tirar do canal',
     ])
     await page.screenshot({ path: join(SHOTS, 'e3-menu-nome.png') })
     await page.keyboard.press('Escape')
@@ -169,7 +169,7 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     // The member's row opens the very same menu from its name.
     await pane(hz).locator(`.ch-mrow[data-member="${a}"] button.ch-agent`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
-    assert.deepEqual((await menuRows()).slice(0, 3), [`${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique'])
+    assert.deepEqual((await menuRows()).slice(0, 4), [`${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…'])
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
 
@@ -200,8 +200,29 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     const oldB = pane(hz).locator('.ch-msg:not(.mod) .ch-who button.ch-agent', { hasText: nameB }).first()
     await oldB.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
-    assert.deepEqual(await menuRows(), [nameB, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Copiar link'])
+    assert.deepEqual(await menuRows(), [nameB, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', 'Copiar link'])
     await page.keyboard.press('Escape')
+
+    // ---- 6. "Emblema…" in the name's menu is the tab's own popover: the pick shows on the tab and on the member's row ----
+    console.log('step 6')
+    const rowChip = pane(hz).locator(`.ch-mrow[data-member="${a}"] .ch-emblem`)
+    assert.equal(await rowChip.count(), 0, 'no emblem yet')
+    await authorA.click({ button: 'right' })
+    await page.waitForSelector('#ctx-menu li')
+    await page.locator('#ctx-menu li[role^=menuitem]', { hasText: 'Emblema…' }).click()
+    await page.waitForSelector('#ctx-menu.emb-menu')
+    await page.screenshot({ path: join(SHOTS, 'emblema-menu-canal.png') })
+    await page.locator('#ctx-menu.emb-menu li[role=menuitemradio]', { hasText: 'Cliente' }).click()
+    await page.waitForSelector(`.tether-tab[data-slot="${a}"] .emb-chip:not([hidden])`)
+    await rowChip.waitFor()
+    assert.equal(await rowChip.getAttribute('aria-label'), 'Cliente', 'the member\'s row shows the emblem at once')
+    // The same popover, from the "⋯" of the row: back to "Nenhum" clears the row.
+    await pane(hz).locator(`.ch-mrow[data-member="${a}"]`).hover()
+    await pane(hz).locator(`.ch-mrow[data-member="${a}"] .ch-mmore`).click()
+    await page.locator('#ctx-menu li[role^=menuitem]', { hasText: 'Emblema…' }).click()
+    assert.equal(await page.locator('#ctx-menu.emb-menu li[aria-checked="true"]').innerText(), 'Cliente')
+    await page.locator('#ctx-menu.emb-menu li[role=menuitemradio]', { hasText: 'Nenhum' }).click()
+    await rowChip.waitFor({ state: 'detached' })
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
