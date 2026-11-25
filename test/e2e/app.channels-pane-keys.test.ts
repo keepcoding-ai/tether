@@ -193,7 +193,8 @@ test('channel pane: the whole management by keyboard, with the attributes of the
     assert.equal(v0.composer?.enabled, false)
     assert.equal(v0.composer?.label, 'Mensagem para o canal, desligada: ninguém ouve ainda')
     assert.equal(v0.composer?.note, 'A caixa de fala está desligada: ninguém ouve ainda. Junte um agente para falar.')
-    assert.equal(await pane(hz).locator('.ch-composer-slot [role="status"]').count(), 1)
+    // The slot also holds the poll form's own (hidden) warning region; the box's note is the one that announces the switch.
+    assert.equal(await pane(hz).locator('.ch-composer-slot .ch-sr[role="status"]').count(), 1)
     assert.equal(await pane(hz).locator('.ch-composer-slot .ch-send').getAttribute('title'), 'Ninguém ouve ainda')
 
     // ---- 2. juntar, by keys ----
