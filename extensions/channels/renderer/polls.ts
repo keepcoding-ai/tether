@@ -72,6 +72,8 @@ export interface CardContext {
   members?: ReadonlySet<string>
   /** A pending vote of the person, shown at once while the daemon has not answered. */
   pending?: number
+  /** Why a called member does not hear now, when the tether knows (the open card's "faltam"): asleep desk, stopped, with the person. */
+  whyOf?: (id: string) => PollMissingWhy | undefined
 }
 
 /** "fecha em 6 min", "fecha em 0:48" in the last minute, "fecha em 1 h 5 min". `soon`: under a minute. */
@@ -183,7 +185,10 @@ export function cardOf(line: Line, state: PollState | undefined, ctx: CardContex
   let called: number
   if (isOpen) {
     const owing = spec.to.filter((t) => stillHere(t.id) && !Object.hasOwn(open.votes, t.id))
-    missing = owing.map((t) => ({ id: t.id, name: nameOf(t.id, t.name), you: t.id === USER }))
+    missing = owing.map((t) => {
+      const why = t.id === USER ? undefined : ctx.whyOf?.(t.id)
+      return { id: t.id, name: nameOf(t.id, t.name), you: t.id === USER, ...(why ? { why: MISSING_TEXT[why] } : {}) }
+    })
     called = voted + owing.length
   } else if (result) {
     missing = result.missing.map((m) => ({ id: m.id, name: nameOf(m.id, m.name), you: m.id === USER, why: MISSING_TEXT[m.why as PollMissingWhy] }))
@@ -207,11 +212,24 @@ export function cardOf(line: Line, state: PollState | undefined, ctx: CardContex
   }
 }
 
-/** The card as one sentence for a screen reader: author, question, how many voted and the clock. */
+/**
+ * The card's accessible name: author, question, state, the tally, who is missing (with the reason when the tether knows), the clock
+ * and the person's own vote. Said whole when the card takes the focus; the live region only says what changed.
+ */
 export function cardAria(c: PollCard): string {
-  const base = `Enquete de ${c.author}: ${c.question} ${c.progressText}.`
-  return c.state === 'open' ? `${base} ${c.clock}.` : `${base} Fechada: ${c.clock}.`
+  const parts = [`Enquete de ${c.author}: ${c.question}`, c.state === 'open' ? 'Aberta.' : 'Fechada.']
+  if (c.unknown) return `${parts.join(' ')} O resultado não está mais à mão.`
+  parts.push(`${c.progressText}.`)
+  parts.push(`Placar: ${c.options.map(o => `${o.text} ${o.count}`).join(', ')}.`)
+  if (c.missing.length > 0) parts.push(`${c.state === 'open' ? 'Faltam' : 'Sem resposta'}: ${c.missing.map(m => `${m.you ? 'você' : m.name}${m.why ? ` (${m.why})` : ''}`).join(', ')}.`)
+  parts.push(`${c.clock}.`)
+  if (c.mineOption !== undefined) parts.push(`Seu voto: ${c.options.find(o => o.n === c.mineOption)?.text ?? c.mineOption}.`)
+  else if (c.waitsYou) parts.push('Espera o seu voto. Teclas 1 a ' + c.options.length + ' votam, M abre o motivo.')
+  return parts.join(' ')
 }
+
+/** One short sentence for the live region when someone else votes: "bancada votou não ok." */
+export const voteAnnounce = (who: string, option: string): string => `${who} votou ${option}.`
 
 /** What the person is asked before closing a poll early. */
 export function closePollDialog(c: Pick<PollCard, 'question' | 'missing'>): DialogSpec {

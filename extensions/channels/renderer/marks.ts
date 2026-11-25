@@ -8,7 +8,7 @@
 // Memory: one small map per channel, at most MAX_HELD entries; reconciled once from the newest page of each open channel.
 import type { AttentionHandle, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
-import type { ChannelSummary } from '../daemon/requests.ts'
+import type { ChannelSummary, PollOwed } from '../daemon/requests.ts'
 import { ASK_EMOJIS, reactionKey, type Ask, type Line } from '../rules.ts'
 import { channelPaneId } from '../manifest.ts'
 import { DEFAULT_MODERATOR_NAME, type HistoryPage } from './view-model.ts'
@@ -46,15 +46,32 @@ export interface ChannelMarks {
   seen: number
 }
 
-interface Held { seen: number; lines: Map<number, Heard>; asks: Map<number, Ask>; dismissed: Set<number> }
+interface Held { seen: number; lines: Map<number, Heard>; asks: Map<number, Ask>; dismissed: Set<number>; owed: Map<number, PollOwed> }
 
 export class MarkBoard {
   private readonly held = new Map<string, Held>()
 
   private entry(channelId: string): Held {
     let h = this.held.get(channelId)
-    if (!h) { h = { seen: 0, lines: new Map(), asks: new Map(), dismissed: new Set() }; this.held.set(channelId, h) }
+    if (!h) { h = { seen: 0, lines: new Map(), asks: new Map(), dismissed: new Set(), owed: new Map() }; this.held.set(channelId, h) }
     return h
+  }
+
+  /**
+   * The open polls that wait for her vote, as the daemon counts them now (the whole set replaces the held one: a vote or a close
+   * takes the poll out). No "seen" mark clears them: only voting or the close does (a poll she looked at still waits).
+   */
+  setOwed(channelId: string, owed: readonly PollOwed[]): boolean {
+    const h = this.entry(channelId)
+    const next = new Map(owed.slice(-MAX_HELD).map(p => [p.seq, p] as const))
+    const same = next.size === h.owed.size && [...next.keys()].every(s => h.owed.has(s))
+    h.owed = next
+    return !same
+  }
+
+  owedOf(channelId: string): PollOwed[] {
+    const h = this.held.get(channelId)
+    return h ? [...h.owed.values()].sort((a, b) => a.seq - b.seq) : []
   }
 
   /**
@@ -146,6 +163,8 @@ export interface Marks {
   of(channelId: string): ChannelMarks
   /** The ❓/❌ reactions of agents on her speeches that she has not seen: they light the same seal as a line for her. */
   asksOf(channelId: string): Ask[]
+  /** The open polls that call her and wait for her vote: they light the same seal (orange) and go when she votes or the poll closes. */
+  owedOf(channelId: string): PollOwed[]
   /** Open channels with something unseen, and the sums (what the popover and the icon say). */
   totals(): Totals
   /** The pane shows the end of the conversation to the person (active, visible, window in front): up to `seq` is seen. */
@@ -202,12 +221,14 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     const open = ui.panes.find(paneId) !== undefined
     const m = board.of(channelId)
     const asks = board.asksOf(channelId)
+    const owed = board.owedOf(channelId)
     // The quiet ring on the tab is the tab's own (channel-pane.ts ChannelTab): the core's emblems fill only its own tab headers.
     const handle = seals.get(channelId)
-    if (open && m.toMe + asks.length > 0) {
+    if (open && m.toMe + asks.length + owed.length > 0) {
       const parts = [
         ...(m.toMe > 0 ? [m.toMe === 1 ? 'uma fala para você' : `${m.toMe} falas para você`] : []),
         ...(asks.length > 0 ? [asks.length === 1 ? '1 reação pede você' : `${asks.length} reações pedem você`] : []),
+        ...(owed.length > 0 ? [owed.length === 1 ? '1 enquete espera o seu voto' : `${owed.length} enquetes esperam o seu voto`] : []),
       ]
       const message = `#${nameOf(channelId)}: ${parts.join(' e ')}`
       if (handle) handle.update({ message })
@@ -225,8 +246,12 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
   /** The reactions that ask her, as the daemon counts them (one read of the channel's tail); it also answers what was seen. */
   const refreshAsks = async (channelId: string): Promise<void> => {
     try {
-      const r = await ui.daemon.request<{ asks: Ask[] }>('asks', { channel: channelId })
-      if (!disposed && board.setAsks(channelId, r.asks)) schedule(channelId)
+      const r = await ui.daemon.request<{ asks: Ask[]; polls?: PollOwed[] }>('asks', { channel: channelId })
+      if (disposed) return
+      // Both sets are replaced (no short circuit).
+      const asksChanged = board.setAsks(channelId, r.asks)
+      const owedChanged = board.setOwed(channelId, r.polls ?? [])
+      if (asksChanged || owedChanged) schedule(channelId)
     } catch { /* the next reaction or sync asks again */ }
   }
 
@@ -278,11 +303,14 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     if (!known.has(ev.channelId)) syncSoon()
   }
 
-  /** A poll opened: it is a new speech like any other (the votes and the close change nothing here). */
+  /**
+   * A poll opened: it is a new speech like any other. Any poll event (the opening, a vote, the close) may change whether a poll
+   * waits for her vote, so the daemon is asked again (one small read of the channel's index and tail).
+   */
   const onPoll = (ev: PollEvent): void => {
-    if (ev.line.kind !== 'poll') return
-    if (board.hear(ev.channelId, ev.line, moderator())) schedule(ev.channelId)
+    if (ev.line.kind === 'poll' && board.hear(ev.channelId, ev.line, moderator())) schedule(ev.channelId)
     if (!known.has(ev.channelId)) syncSoon()
+    else void refreshAsks(ev.channelId)
   }
 
   /** A ❓ or ❌ put or taken back by an agent: the daemon says whether it is on a speech of hers (every other reaction asks nothing). */
@@ -308,17 +336,18 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
       if (c.closed) continue
       const m = board.of(c.id)
       unread += m.unread
-      toMe += m.toMe + board.asksOf(c.id).length
+      toMe += m.toMe + board.asksOf(c.id).length + board.owedOf(c.id).length
     }
     return { unread, toMe }
   }
 
-  ui.test.expose('marks', (channelId: string): ChannelMarks & { seal: boolean; asks: Ask[] } => ({ ...board.of(channelId), asks: board.asksOf(channelId), seal: seals.has(channelId) }))
+  ui.test.expose('marks', (channelId: string): ChannelMarks & { seal: boolean; asks: Ask[]; owed: PollOwed[] } => ({ ...board.of(channelId), asks: board.asksOf(channelId), owed: board.owedOf(channelId), seal: seals.has(channelId) }))
 
   return {
     disposables,
     of: channelId => board.of(channelId),
     asksOf: channelId => board.asksOf(channelId),
+    owedOf: channelId => board.owedOf(channelId),
     totals,
     viewed: (channelId, seq) => {
       if (seq <= 0) return

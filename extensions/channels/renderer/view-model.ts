@@ -409,6 +409,10 @@ export const unreadLabel = (n: number): string => (n === 1 ? '1 fala nova' : `${
 /** The bar for the lines addressed to the person (the only orange of the channels, P1). */
 /** The bar and the tab's tooltip for reactions of agents that ask the person (❓ doubt, ❌ disagree) on her speeches. */
 export const asksLabel = (n: number): string => (n === 1 ? '1 reação pede você' : `${n} reações pedem você`)
+/** Open polls that call the person and wait for her vote. */
+export const owedLabel = (n: number): string => (n === 1 ? '1 enquete espera o seu voto' : `${n} enquetes esperam o seu voto`)
+/** The bar and the tab's tooltip for what asks her besides a line: reactions and polls in one text (each part only when there is one). */
+export const waitsLabel = (asks: number, owed: number): string => [asks > 0 ? asksLabel(asks) : '', owed > 0 ? owedLabel(owed) : ''].filter(Boolean).join(' · ')
 export const forYouLabel =(n: number): string => (n === 1 ? '1 nova para você' : `${n} novas para você`)
 
 // ---------- the top bar icon (U3) ----------

@@ -301,7 +301,19 @@ export function createPollForm(opts: PollFormOptions): PollForm {
 
   root.addEventListener('keydown', ev => {
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); hide(); return }
-    if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.target instanceof HTMLInputElement) { ev.preventDefault(); void submit() }
+    if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.target instanceof HTMLInputElement) { ev.preventDefault(); void submit(); return }
+    // The two segmented choices (kind, deadline) are radio groups: the arrows move to the neighbour and pick it, as a radio group does.
+    const t = ev.target
+    if (t instanceof HTMLButtonElement && t.getAttribute('role') === 'radio' && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      const dir = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' ? -1 : 0
+      const group = [...(t.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])]
+      if (dir !== 0 && group.length > 1) {
+        ev.preventDefault()
+        const next = group[(group.indexOf(t) + dir + group.length) % group.length]
+        next?.focus()
+        next?.click()
+      }
+    }
   })
   q.addEventListener('input', () => { draft = { ...draft, question: q.value }; paintErrors(); paintFoot() })
   cancel.addEventListener('click', () => { draft = emptyDraft(); hide() })

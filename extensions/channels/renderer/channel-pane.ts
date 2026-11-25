@@ -13,9 +13,9 @@ import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
-import { reactionKey, USER, type Line } from '../rules.ts'
+import { reactionKey, USER, type Line, type PollMissingWhy } from '../rules.ts'
 import {
-  applyPoll, cardAria, cardOf, closePollDialog, isNoOption, POLL_REASON_MAX, pollRefusalText, countdown,
+  applyPoll, cardAria, cardOf, closePollDialog, isNoOption, POLL_REASON_MAX, pollRefusalText, countdown, voteAnnounce,
   type PollCard, type PollOpenView, type PollState,
 } from './polls.ts'
 import { ICON } from './texts.ts'
@@ -35,8 +35,8 @@ import { channelSpans, HASH_TEXT, mentionSpans } from './mentions.ts'
 import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
 import {
-  agentLinkOf, asksLabel, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
-  MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
+  agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
+  MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, waitsLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
 /** Lines asked per page (the daemon's ceiling is 200). */
@@ -97,6 +97,11 @@ export interface PaneSnapshot {
   /** The cards of the polls held, as the pane builds them now. `pollInput`: the reason's field of each card (open for which option, the text). */
   polls: PollCard[]
   pollInput: Array<{ seq: number; reasonFor?: number; text: string }>
+  /** What a screen reader gets of each card: the row's role and accessible name, as they are on the page now. `focus`: the card that holds the focus (0 = none). */
+  pollNames: Array<{ seq: number; role: string; label: string }>
+  pollFocus: number
+  /** How many polls wait for her vote (from the marks). */
+  owed: number
   members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; emblem: string; hint: string; acts: string[] }>
   muteBar: string
   scroll: { top: number; client: number; height: number; stick: boolean }
@@ -626,10 +631,14 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (!hit) return
       this.paintPoll(hit.seq)
       this.syncPollTimer()
-      // Said aloud only when it closes (not each vote, not each minute).
-      if (live && hit.what === 'close') {
+      // Said aloud in one sentence: who voted in what, and when it closes (not each minute). Her own vote was said by `votePoll`.
+      if (!live) return
+      if (hit.what === 'close') {
         const c = this.cardFor(hit.seq)
-        if (c) this.announce(`Enquete de ${c.author} fechou: ${c.clock}.`)
+        if (c) this.announce(`Enquete de ${c.author} fechou: ${c.clock}. ${c.progressText}.`)
+      } else if (hit.what === 'vote' && l.kind === 'vote' && l.vote && l.from.id !== USER) {
+        const text = this.cardFor(hit.seq)?.options.find(o => o.n === l.vote!.option)?.text
+        if (text !== undefined) this.announce(voteAnnounce(l.from.name, text))
       }
     }
 
@@ -653,7 +662,21 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         now: Date.now(), readOnly: this.isClosed(),
         ...(this.answer ? { members: new Set(this.answer.members.map(m => m.id)) } : {}),
         ...(pending !== undefined ? { pending } : {}),
+        whyOf: id => this.deafWhy(id),
       })
+    }
+
+    /** Why a member does not hear now, as far as `members` says (a sleeping desk, a stopped process, the guia with the person). */
+    private deafWhy(id: string): PollMissingWhy | undefined {
+      const m = this.answer?.members.find(x => x.id === id)
+      if (!m) return undefined
+      return m.path === 'away' ? (m.asleep ? 'asleep' : 'stopped') : m.path === 'wait' ? 'with-user' : undefined
+    }
+
+    /** The card's row is a group named by the whole card (the card inside it carries no name of its own: nothing is read twice). */
+    private nameRow(row: HTMLElement, card: PollCard): void {
+      row.setAttribute('role', 'group')
+      row.setAttribute('aria-label', cardAria(card))
     }
 
     private hasOpenPoll(): boolean {
@@ -676,7 +699,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       for (const clock of this.msgs.querySelectorAll<HTMLElement>('.ch-poll[data-state="open"] .ch-pclock')) {
         const cd = countdown(Number(clock.dataset.closes), now)
         const t = clock.querySelector('.t')
-        if (t && t.textContent !== cd.text) t.textContent = cd.text
+        if (t && t.textContent !== cd.text) {
+          t.textContent = cd.text
+          // The name read when the card takes the focus follows the clock (it changes once a minute, a second a time in the last one).
+          const row = clock.closest<HTMLElement>('.ch-prow')
+          const card = row ? this.cardFor(Number(row.dataset.seq)) : undefined
+          if (row && card) this.nameRow(row, card)
+        }
         clock.classList.toggle('soon', cd.soon)
       }
     }
@@ -693,9 +722,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const caret = held instanceof HTMLInputElement ? [held.selectionStart, held.selectionEnd] as const : undefined
       const next = this.pollCardEl(card)
       old.replaceWith(next)
-      if (key !== undefined) {
-        const again = next.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)
-        again?.focus({ preventScroll: true })
+      this.nameRow(row, card)
+      if (held) {
+        const again = key !== undefined ? next.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`) : null
+        // What held the focus is gone (the reason's field after sending or Esc, an option of a card that closed): the card takes it.
+        if (!again) { row.focus({ preventScroll: true }); return }
+        again.focus({ preventScroll: true })
         if (again instanceof HTMLInputElement && caret?.[0] != null) again.setSelectionRange(caret[0], caret[1] ?? caret[0])
       }
     }
@@ -779,13 +811,28 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const c = this.cardFor(seq)
       if (!c?.canClose) return
       const a = await ui.dialogs.ask(closePollDialog(c)).catch(() => undefined)
-      if (a?.choice !== 'close' || this.disposed) return
+      // The dialog gave the focus back to nothing (or to the page): the card takes it, unless the person went somewhere else.
+      const back = (): void => {
+        setTimeout(() => {
+          const f = document.activeElement
+          if (!this.disposed && (f === null || f === document.body)) this.focusPoll(seq)
+        }, 60)
+      }
+      if (a?.choice !== 'close' || this.disposed) { back(); return }
       try {
         const r = await this.ask<{ result: PollState['result']; closedAt: string }>('poll-close', { poll: seq })
         if (r.result && !this.pollStates.get(seq)?.result) { this.pollStates.set(seq, { seq, result: r.result, closedAt: r.closedAt }); this.paintPoll(seq); this.syncPollTimer() }
       } catch (e) {
         this.toast(pollRefusalText((e as { code?: string }).code))
       }
+      back()
+    }
+
+    /** The card's row takes the keyboard focus (nothing scrolls unless it is out of view). */
+    private focusPoll(seq: number): void {
+      const row = this.msgs.querySelector<HTMLElement>(`.ch-prow[data-seq="${seq}"]`)
+      row?.focus({ preventScroll: true })
+      row?.scrollIntoView({ block: 'nearest' })
     }
 
     /** The menu of a card (right click, "⋯"): the votes with their numbers, the reason, close, and copy. Read only keeps copy. */
@@ -794,7 +841,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const line = this.timeline.lines.find(l => l.seq === seq)
       if (!c || !line) return
       const ref = `${this.answer?.channel.name ?? this.channelId}#${seq}`
-      const rows: ContextMenuRow[] = [{ heading: `Enquete de ${c.author} · ${c.state === 'open' ? c.clock : c.clock}` }]
+      // After the menu closes the focus goes back to the card it was opened from (like a speech's menu).
+      this.menuReturn = { seq, until: Date.now() + JOIN_FOCUS_MS }
+      const rows: ContextMenuRow[] = [{ heading: `Enquete de ${c.author} · ${c.clock}` }]
       if (c.canVote) {
         for (const o of c.options) rows.push({ icon: '', label: `Votar "${o.text}"`, hint: String(o.n), checked: c.mineOption === o.n, run: () => this.chooseOption(seq, o.n) })
         rows.push({ icon: '', label: 'Votar com motivo…', hint: 'M', run: () => this.openReason(seq) })
@@ -815,8 +864,6 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const box = el('div', `ch-poll${closed ? ' done' : ''}`)
       box.dataset.seq = String(c.seq)
       box.dataset.state = c.state
-      box.setAttribute('role', 'group')
-      box.setAttribute('aria-label', cardAria(c))
       const ph = el('div', 'ch-ph')
       const tag = el('span', `ch-ptag${closed ? ' done' : ''}`)
       tag.append(glyph(closed ? 'check' : 'checks'), closed ? 'fechada' : 'enquete')
@@ -830,10 +877,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.openPollMenu(c.seq, b.left, b.bottom)
       })
       more.setAttribute('aria-haspopup', 'menu')
+      more.dataset.key = 'more'
       ph.append(clock, more)
       box.append(ph, el('p', 'q', c.question))
       if (c.unknown) { box.append(el('div', 'ch-pmiss', 'Esta enquete fechou há muito tempo: o resultado não está mais à mão.')); return box }
       const list = el('div', 'ch-popts')
+      list.setAttribute('role', 'group')
+      list.setAttribute('aria-label', c.canVote ? 'Opções: teclas 1 a ' + c.options.length + ' votam' : 'Opções')
       for (const o of c.options) {
         const row = c.canVote ? el('button', 'ch-opt') : el('div', 'ch-opt ro')
         if (row instanceof HTMLButtonElement) {
@@ -965,7 +1015,18 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
      */
     private onBar(): void {
       if (this.barText().ask) {
-        // To the speech the oldest ask is on, marked for a moment; once it is on screen the ask is seen (checkSeen) and the bar goes.
+        // A poll that waits for her vote comes first: its card is brought into view, marked for a moment and takes the focus; the
+        // bar stays until she votes (or it closes). Otherwise to the speech the oldest ask is on; once it is on screen the ask is seen.
+        const owed = marks.owedOf(this.channelId)[0]
+        const card = owed ? this.msgs.querySelector<HTMLElement>(`.ch-prow[data-seq="${owed.seq}"]`) : null
+        if (card) {
+          card.scrollIntoView({ block: 'center' })
+          card.classList.add('ch-flash')
+          setTimeout(() => card.classList.remove('ch-flash'), 1800)
+          card.focus({ preventScroll: true })
+          this.onScroll()
+          return
+        }
         const ask = marks.asksOf(this.channelId)[0]
         const row = ask ? this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${ask.on}"]`) : null
         if (row) {
@@ -1215,8 +1276,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const m = marks.of(this.channelId)
       if (!this.stick && m.toMe > 0) return { text: forYouLabel(m.toMe), me: true }
       // A ❓/❌ of an agent on her speech asks her even at the end of the conversation (the speech may be far above).
+      // A poll that waits for her vote asks her too, and says so in the same bar ("1 reação pede você · 1 enquete espera o seu voto").
       const asks = marks.asksOf(this.channelId).length
-      if (asks > 0) return { text: asksLabel(asks), me: true, ask: true }
+      const owed = marks.owedOf(this.channelId).length
+      if (asks + owed > 0) return { text: waitsLabel(asks, owed), me: true, ask: true }
       if (this.stick) return { text: '', me: false }
       return { text: this.unread > 0 ? unreadLabel(this.unread) : '', me: false }
     }
@@ -1338,6 +1401,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       })
       this.contentRo.disconnect()
       for (const child of Array.from(this.msgs.children)) this.contentRo.observe(child)
+      // The conversation's own height too: the poll form (or a long draft) grows above the box and takes room from it.
+      this.contentRo.observe(this.msgs)
     }
 
     private fillMsgs(m: HTMLElement): void {
@@ -1449,7 +1514,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       who.append(em, this.agentName(r.authorId, 'ch-author', r.name), el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role), el('time', '', r.time))
       e.append(who)
       const card = this.cardFor(r.seq)
-      if (card) e.append(this.pollCardEl(card))
+      if (card) { e.append(this.pollCardEl(card)); this.nameRow(e, card) }
       return e
     }
 
@@ -1687,7 +1752,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (Date.now() > r.until) return
       const a = document.activeElement
       if (a !== null && a !== document.body && !a.closest('#ctx-menu')) return
-      const msg = this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${r.seq}"]`)
+      const msg = this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${r.seq}"], .ch-prow[data-seq="${r.seq}"]`)
       const pill = r.key !== undefined ? msg?.querySelector<HTMLElement>(`.ch-pill[data-key="${CSS.escape(r.key)}"]`) : undefined
       ;(pill ?? msg)?.focus({ preventScroll: true })
     }
@@ -1708,11 +1773,15 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       } catch { return [] }
     }
 
+    /** The speeches only (what a reaction may go on). */
     private sayLines(): HTMLElement[] { return [...this.msgs.querySelectorAll<HTMLElement>(':scope > .ch-msg')] }
 
-    /** Moves the focus to the neighbour speech (or, from the log itself, to the one at the foot of what is seen). */
+    /** The stops of the arrows: the speeches and the polls' cards, in the order of the conversation. */
+    private walkLines(): HTMLElement[] { return [...this.msgs.querySelectorAll<HTMLElement>(':scope > .ch-msg, :scope > .ch-prow')] }
+
+    /** Moves the focus to the neighbour speech or card (or, from the log itself, to the one at the foot of what is seen). */
     private walk(from: HTMLElement | null, dir: 1 | -1): void {
-      const all = this.sayLines()
+      const all = this.walkLines()
       if (all.length === 0) return
       let to: HTMLElement | undefined
       if (from) {
@@ -1742,6 +1811,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.openPollMenu(Number(prow.dataset.seq), r.left + 16, r.top + 28)
         return
       }
+      if (prow) { this.onPollKey(ev, t, prow); return }
       const msg = t.closest<HTMLElement>('.ch-msg')
       const onMsg = t === msg
       // The menu key and Shift+F10: the menu of the speech, or of the pill that holds the focus. Its own `contextmenu` event is ignored (keyMenuAt).
@@ -1770,6 +1840,26 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (ev.key.length === 1 && n >= 1 && n <= FIVE.length) { ev.preventDefault(); this.reactTo(seq, FIVE[n - 1]!.emoji); return }
       // `R` is the pane's own until the person binds the picker's command to a key of hers (then the key table's dispatcher runs it).
       if (ev.key.toLowerCase() === REACT_DEFAULT_KEY && this.boundKeys().length === 0) { ev.preventDefault(); this.openPicker(seq) }
+    }
+
+    /**
+     * The keys of a poll's card. On the card: Up/Down walk to the neighbour, `1` to `n` vote (the same option again keeps the vote;
+     * the "não ok" opens its reason), `M` opens the reason's field, the menu key opens the card's menu (onMsgKey). From anything inside
+     * the card (an option, "⋯", the reason's field) Esc gives the focus back to the card.
+     */
+    private onPollKey(ev: KeyboardEvent, t: HTMLElement, prow: HTMLElement): void {
+      if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+      const seq = Number(prow.dataset.seq)
+      if (t !== prow) {
+        if (ev.key === 'Escape') { ev.preventDefault(); prow.focus({ preventScroll: true }) }
+        return
+      }
+      if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && !ev.shiftKey) { ev.preventDefault(); this.walk(prow, ev.key === 'ArrowDown' ? 1 : -1); return }
+      const c = this.cardFor(seq)
+      if (!c?.canVote || ev.key.length !== 1) return
+      const n = Number(ev.key)
+      if (n >= 1 && n <= c.options.length) { ev.preventDefault(); this.chooseOption(seq, n); return }
+      if (ev.key.toLowerCase() === 'm') { ev.preventDefault(); this.openReason(seq) }
     }
 
     /** The speech the palette's commands mean: the one that holds the focus (or held it last); the newest speech when none did. */
@@ -2245,6 +2335,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           : { kind: r.kind, text: r.body, name: r.name, role: r.role, crown: r.crown, mine: r.mine, to: r.to.map(t => t.name), continued: r.continued }),
         polls: this.timeline.lines.filter(l => l.kind === 'poll').flatMap(l => { const c = this.cardFor(l.seq); return c ? [c] : [] }),
         pollInput: [...this.pollInput].map(([seq, i]) => ({ seq, ...(i.reasonFor !== undefined ? { reasonFor: i.reasonFor } : {}), text: i.text })),
+        pollNames: [...this.msgs.querySelectorAll<HTMLElement>(':scope > .ch-prow')].map(r => ({ seq: Number(r.dataset.seq), role: r.getAttribute('role') ?? '', label: r.getAttribute('aria-label') ?? '' })),
+        pollFocus: document.activeElement instanceof HTMLElement && this.msgs.contains(document.activeElement) ? Number(document.activeElement.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? 0) : 0,
+        owed: marks.owedOf(this.channelId).length,
         members: this.answer ? memberRows(this.answer).map(x => ({
           name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone, emblem: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-emblem`)?.getAttribute('aria-label') ?? '',
           hint: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-state`)?.getAttribute('title') ?? '',
@@ -2292,12 +2385,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const plain = Math.max(0, m.unread - m.toMe)
       // The orange counter: how many lines are for her and how many reactions ask her (the plain lines stay the quiet ring, no number).
       const asks = marks.asksOf(channelId).length
-      const n = m.toMe + asks
+      const owed = marks.owedOf(channelId).length
+      const n = m.toMe + asks + owed
       this.ring.hidden = plain === 0
       this.ring.title = plain > 0 ? unreadLabel(plain) : ''
       this.dot.hidden = n === 0
       this.dot.textContent = n > 0 ? String(n > 99 ? '99+' : n) : ''
-      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : asks > 0 ? asksLabel(asks) : ''
+      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : waitsLabel(asks, owed)
       this.element.dataset.mark = n > 0 ? 'me' : plain > 0 ? 'plain' : ''
     }
     init(p: GroupPanelPartInitParameters): void {

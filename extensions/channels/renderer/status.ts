@@ -19,8 +19,8 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 const closePopover = (): void => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) }
 
 export function createStatus(ui: TetherUi, marks: Marks, list: () => readonly ChannelSummary[]): Disposable[] {
-  /** What is for her in a channel: the lines addressed to her and the reactions that ask her. */
-  const marksOf = (id: string): { unread: number; toMe: number } => { const m = marks.of(id); return { unread: m.unread, toMe: m.toMe + marks.asksOf(id).length } }
+  /** What is for her in a channel: the lines addressed to her, the reactions that ask her and the polls that wait for her vote. */
+  const marksOf = (id: string): { unread: number; toMe: number } => { const m = marks.of(id); return { unread: m.unread, toMe: m.toMe + marks.asksOf(id).length + marks.owedOf(id).length } }
   const render = (pop: HTMLElement): void => {
     pop.replaceChildren()
     pop.classList.add('ch-pop')

@@ -9,14 +9,15 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
+import { isCalled, personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { PAGE } from './store.ts'
 
 /** How long `seen` waits before it writes the index: a pane that scrolls sends many. */
 export const SEEN_DELAY_MS = 1500
 
-export type RequestsApi = Pick<TetherDaemon, 'requests' | 'slots' | 'delivery'>
+/** `desks` (optional) tells a sleeping desk from a stopped process, for the card's "quem falta". */
+export type RequestsApi = Pick<TetherDaemon, 'requests' | 'slots' | 'delivery'> & Partial<Pick<TetherDaemon, 'desks'>>
 
 /** The channel as the pane lists it. */
 export interface ChannelSummary {
@@ -41,7 +42,12 @@ export interface MemberInfo {
   by: string
   alive: boolean
   path: 'inside' | 'terminal' | 'wait' | 'away'
+  /** Not running because its desk (or its pane) sleeps: the card says "mesa dormindo" instead of "parado". */
+  asleep?: true
 }
+
+/** An open poll that calls the person and has no vote of hers: what lights the seal of the channel's tab. */
+export interface PollOwed { seq: number; closesAt: string }
 
 export function summaryOf(ch: Channel): ChannelSummary {
   return {
@@ -163,7 +169,9 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const members: MemberInfo[] = Object.entries(ch.members).map(([id, m]) => {
         const slot = api.slots.get(id)
         const alive = slot !== undefined && slotIsLive(slot)
-        return { id, name: c.nameOf(id), muted: m.muted !== undefined, since: m.since, by: m.by, alive, path: alive ? api.delivery.routeOf(id) : 'away' }
+        const d = alive ? undefined : api.desks?.deskOf(id)
+        const asleep = d !== undefined && (d.asleep === true || d.panes.some((p) => p.id === id && p.asleep === true))
+        return { id, name: c.nameOf(id), muted: m.muted !== undefined, since: m.since, by: m.by, alive, path: alive ? api.delivery.routeOf(id) : 'away', ...(asleep ? { asleep: true as const } : {}) }
       })
       return { channel: summaryOf(ch), members, removed: ch.removed ?? [] }
     }],
@@ -294,7 +302,10 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const ch = channelOf(c, a)
       const last = await c.store.lastSeq(ch.id)
       const tail = await c.store.since(ch.id, Math.max(0, last - REACTION_WINDOW), REACTION_WINDOW)
-      return { asks: personAsks(tail).filter((k) => k.seq > ch.seenByUser) }
+      // The open polls that call her and wait for her vote (the index holds only the open ones): no "seen" mark clears them, only her vote or the close.
+      const polls: PollOwed[] = ch.closed ? [] : Object.values(ch.polls ?? {})
+        .filter((p) => isCalled(ch, p, USER) && !Object.hasOwn(p.votes, USER)).map((p) => ({ seq: p.seq, closesAt: p.closesAt }))
+      return { asks: personAsks(tail).filter((k) => k.seq > ch.seenByUser), polls }
     }],
 
     // The person saw up to `seq`: raised in memory now, written once after a delay (one timer for every channel).

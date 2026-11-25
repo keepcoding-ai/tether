@@ -242,7 +242,8 @@ test('channel pane: the poll card (history, live votes, her vote with reason, re
     assert.equal(await card(p1).locator('.ch-opt.win').count(), 1)
     assert.equal(await card(p1).locator('.ch-pmore').count(), 1, 'the menu stays (copy)')
     const m3 = await marks()
-    assert.deepEqual([m3.unread, m3.toMe, m3.seal], [m1.unread, m1.toMe, m1.seal], 'the close does not count as news')
+    // The seal of m1 was lit because the poll waited for her vote (E5); she voted in step 3, so it is out now. Unread and toMe: no news.
+    assert.deepEqual([m3.unread, m3.toMe, m3.seal], [m1.unread, m1.toMe, false], 'the close does not count as news')
     assert.equal((await view())!.last, p1, 'the close is no line either')
     await page.screenshot({ path: join(SHOTS, 'larga-resultado-todos-votaram.png') })
 

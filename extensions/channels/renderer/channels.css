@@ -379,3 +379,22 @@ button.ch-opt:hover { background: var(--bg-hover); }
 .ch-pane.narrow .ch-pf-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .ch-pane.narrow .ch-pf-lbl { padding-top: 0; }
 .ch-pane.narrow .ch-pf-warn, .ch-pane.narrow .ch-pf-err { margin-left: 0; }
+
+/* Poll by keyboard and in a narrow pane (E5): the card the bar leads to is marked like a speech; nothing scrolls sideways at 360 px. */
+.ch-prow.ch-flash { animation: ch-flash 1.8s ease-out; }
+@media (prefers-reduced-motion: reduce) { .ch-prow.ch-flash { animation: none; background: color-mix(in srgb, var(--x-alert) 22%, transparent); } }
+/* The bar's text may be long ("1 reação pede você · 1 enquete espera o seu voto"): it takes the room it needs (not half the pane) and wraps in two lines when the pane is narrow. */
+.ch-newbar { width: max-content; max-width: calc(100% - 16px); }
+.ch-pane.narrow .ch-newbar { height: auto; min-height: 26px; padding: 4px 12px; line-height: 1.25; text-align: left; }
+.ch-pane.narrow .ch-pf-foot { flex-wrap: wrap; }
+.ch-pane.narrow .ch-pf-foottext { flex: 1 1 100%; }
+.ch-pane.narrow .ch-pf-body, .ch-pane.narrow .ch-pf-seg, .ch-pane.narrow .ch-pf-opts { max-width: 100%; }
+.ch-pane.narrow .ch-pf-body { align-items: stretch; }
+.ch-pane.narrow .ch-pf-seg { align-self: flex-start; }
+.ch-pane.narrow .ch-pf-other { max-width: 100%; }
+.ch-pane.narrow .ch-pf-chip { height: 28px; }
+.ch-pane.narrow .ch-pf-kind, .ch-pane.narrow .ch-pf-dl { padding: 6px 10px; }
+.ch-pane.narrow .ch-prow { padding-right: 6px; }
+.ch-pane.narrow .ch-ph { flex-wrap: wrap; }
+.ch-pane.narrow .ch-reason { flex-wrap: wrap; }
+.ch-pane.narrow .ch-pr-in { min-width: 0; flex: 1 1 100%; }
