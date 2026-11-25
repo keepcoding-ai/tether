@@ -265,7 +265,7 @@ describe('her local-network question', () => {
       assert.deepEqual({ ...asked[0], id: '' }, { id: '', agent: 'Você', destination: 'localhost:5000', person: true })
       const spec = localNetworkDialog(asked[0]!)
       assert.equal(spec.title, 'Abrir localhost:5000 na sua guia?')
-      assert.ok(!/agente/.test(spec.title) && !/o agente/.test(spec.message), 'no word of an agent asking')
+      assert.ok(!/agente/.test(spec.title) && !/o agente/.test(spec.message ?? ''),'no word of an agent asking')
       assert.deepEqual(spec.choices.map(c => c.id), ['once', 'always', 'deny'])
       assert.equal(spec.escChoice, 'deny')
       gate.answer(asked[0]!.id, 'always')
