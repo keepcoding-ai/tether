@@ -44,7 +44,7 @@ export const CARD_POLL_MS = 250
 /** With the turn's start unknown (the daemon began in the middle of it), an answer written this long before its end still counts. */
 export const ANSWER_SKEW_MS = 10_000
 
-const SYSTEM_FROM = { name: 'tether', id: 'tether', role: 'system' } as const
+export const SYSTEM_FROM = { name: 'tether', id: 'tether', role: 'system' } as const
 
 // ---- the texts (contract 4.3) -------------------------------------------------------------------
 

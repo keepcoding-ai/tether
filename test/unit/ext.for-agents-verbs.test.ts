@@ -452,6 +452,14 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     const r = await call(A, 'command', { guia: p1, name: 'compact' })
     assert.deepEqual([data(r).sent, data(r).proven], [true, true])
     await waitUntil(() => screenOf(p1).includes('IN:"/compact"'), 10_000, '/compact typed')
+    // With `return` the commanded pane is queued, not typed on the spot; it goes when the pane is idle.
+    const rr = await call(A, 'command', { guia: p1, name: 'status', return: true })
+    assert.deepEqual([data(rr).deferred, data(rr).return, data(rr).sent], [true, true, undefined])
+    // /compact left a turn open in the fake agent: the queued command waits for it, and goes once it is closed.
+    assert.equal(screenOf(p1).includes('IN:"/status"'), false, 'not typed on the spot')
+    await drainInto(p1, 'the turn of /compact to end')
+    await waitUntil(() => screenOf(p1).includes('IN:"/status"'), 20_000, '/status typed after the queue')
+    await drainInto(p1, 'the turn of /status to end')
     assert.equal(codeOf(await call(A, 'command', { guia: p1, name: 'busy' })), 'busy')
     assert.equal(codeOf(await call(A, 'command', { name: 'compact' })), 'not-commanded', 'no pane "de si"')
 

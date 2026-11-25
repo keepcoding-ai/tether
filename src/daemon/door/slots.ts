@@ -101,6 +101,7 @@ export class SlotsService {
       },
       userFree: (slotId) => this.presence()?.isFree(slotId) ?? true,
       userTypedAt: (slotId) => this.presence()?.typedAt?.(slotId),
+      paintedAt: (slotId) => this.port()?.paintedAt(slotId),
       awake: (slotId, why) => {
         const waker = this.waker()
         return waker ? waker.awake(slotId, why) : Promise.resolve(this.port()?.stateOf(slotId))
