@@ -148,7 +148,7 @@ test('app terminal links: Ctrl+click opens the printed path (opening folder, tab
     'open/docs/note.md': '# a nota da pasta de abertura\n',
     'open/docs/more.md': '# mais\n',
     'open/docs/sub/keep.txt': 'x\n',
-    'open/img/logo.png': 'PNG\0\0binary',
+    'open/img/logo.zip': 'PK\0\0binary',
     'open/bin/tool.exe': 'MZ\0\0binary',
     'other/only-here.md': '# so aqui\n',
     'other/docs/note.md': '# a nota da OUTRA pasta\n',
@@ -243,10 +243,10 @@ test('app terminal links: Ctrl+click opens the printed path (opening folder, tab
     for (let i = 0; i < 20 && (await opened()).length < 1; i++) await sleep(100)
     assert.deepEqual((await opened()).map(p => p.toLowerCase()), [join(open, 'docs', 'sub').toLowerCase()])
     await focusPane(page, shell!)
-    const png = await print(page, shell!, 'im', 'g/logo.png')
+    const png = await print(page, shell!, 'im', 'g/logo.zip')
     await ctrlClick(page, await pointOf(page, shell!, png))
     for (let i = 0; i < 20 && (await opened()).length < 2; i++) await sleep(100)
-    assert.equal((await opened())[1]?.toLowerCase(), join(open, 'img', 'logo.png').toLowerCase())
+    assert.equal((await opened())[1]?.toLowerCase(), join(open, 'img', 'logo.zip').toLowerCase())
     assert.equal((await notes(page)).length, 3, 'a binary opens no note')
     await focusPane(page, shell!)
     const exe = await print(page, shell!, 'bi', 'n/tool.exe')
