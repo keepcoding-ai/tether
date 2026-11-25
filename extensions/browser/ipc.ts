@@ -3,6 +3,7 @@ import type { ClosedTab } from './closed-rules.ts'
 import type { ControlView } from './control.ts'
 import type { DownloadEntry, UploadAsk } from './files-rules.ts'
 import type { LocalNetworkAsk } from './local-network-rules.ts'
+import type { PageDialogAsk, PageKey } from './page-rules.ts'
 import type { ActionKind, MainAgentView } from './pad-rules.ts'
 import type { SavedTab, TabInfo } from './tab-rules.ts'
 import type { TabBlocked } from './tabs.ts'
@@ -77,6 +78,10 @@ export interface BrowserChannels {
     /** E13: the upload questions still waiting, and the person's answer ('allow'; anything else refuses). */
     uploadOpen: () => UploadAsk[]
     uploadAnswer: (id: string, choice: string) => void
+    /** F3: the dialogs of the pages she holds still waiting for her (the renderer asks when it starts). */
+    pageDialogOpen: () => PageDialogAsk[]
+    /** F3: her answer in the pane's band (OK: accept true; a prompt's text); ignored unless she still holds the tab. */
+    pageDialogAnswer: (id: string, accept: boolean, text?: string) => void
   }
   events: {
     /** A tab was created or changed (title, address, loading). */
@@ -102,6 +107,12 @@ export interface BrowserChannels {
     uploadAsk: (ask: UploadAsk) => void
     /** E13: an upload question no longer needs an answer (its tab closed or left the agent). */
     uploadCancelled: (id: string) => void
+    /** F3: a page she holds opened a JavaScript dialog: the band of its pane shows it (never the agents' question queue). */
+    pageDialog: (ask: PageDialogAsk) => void
+    /** F3: that dialog is gone (the page closed it, the tab left her or closed). */
+    pageDialogClosed: (id: string) => void
+    /** F3: Ctrl+T or Ctrl+L typed in a page she holds (the keyboard is back on the interface). */
+    pageKey: (tabId: string, key: PageKey) => void
   }
 }
 
@@ -113,6 +124,7 @@ export const BROWSER_INVOKES = [
   'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
   'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'go',
+  'pageDialogOpen', 'pageDialogAnswer',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
 type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>
 const whole: [Missing] extends [never] ? true : Missing = true

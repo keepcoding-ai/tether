@@ -94,6 +94,8 @@ export interface Surface {
   raise(): void
   /** The transparent view over the shown surface that takes the person's input: on keeps keyboard focus on the interface; off hides it and focuses the page. */
   setInputShield(on: boolean): Promise<void>
+  /** The keyboard back on the app's interface (a shortcut typed in the page that the interface answers); a no-op once destroyed. */
+  focusInterface(): void
   onShieldInput(listener: (input: SurfaceShieldInput) => void): IDisposable
   /** The current image of the page (works hidden, shown and parked). */
   capture(): Promise<NativeImage>

@@ -58,6 +58,7 @@ import { DESK_ID, NEW_TAB_COMMAND_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WE
 import { BAD_ADDRESS, EDIT_ADDRESS, EDIT_ADDRESS_HINT, NEW_TAB, PAD_MINE, PERSON_NAME, PERSON_TITLE } from './rules.ts'
 import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPEN, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, isPersonOwned, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
+import { PAGE_DIALOG_CANCEL, PAGE_DIALOG_FIELD, PAGE_DIALOG_OK, type PageDialogAsk, pageDialogHead } from './page-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
 export { manifest }
@@ -117,6 +118,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   })
   /** Who has each tab (main's views, kept as they come). */
   const controls = new Map<string, ControlView>()
+  /** F3: the open JavaScript dialog of each page she holds, by tab: shown in its pane's band, never in the agents' question queue. */
+  const pageDialogs = new Map<string, PageDialogAsk>()
   let persistentLogins = true
 
   /**
@@ -630,6 +633,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly dockRo = new ResizeObserver(() => this.placeTip())
     private turnAsk = ''
     private noteEl: HTMLTextAreaElement | undefined
+    /**
+     * F3: the page's JavaScript dialog while she holds the tab, a band of its own between the bar and the page (the page is a
+     * native view: nothing draws over it). Built once per dialog, so what she types in a prompt survives repaints.
+     */
+    private readonly jsEl = el('section', 'br-web-jsdlg')
+    private jsAsk = ''
+    private jsInput: HTMLInputElement | undefined
     /** The request whose card the person collapsed (a new request opens expanded). */
     private collapsedAsk: string | undefined
     private actedAt = 0
@@ -733,7 +743,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.turnEl.dataset.role = 'turn'
       this.dockEl.hidden = true
       this.dockEl.append(this.turnEl)
-      this.element.append(this.bar, this.notesEl, this.dockEl, this.page, this.popEl)
+      this.jsEl.hidden = true
+      this.jsEl.dataset.role = 'page-dialog'
+      this.jsEl.setAttribute('role', 'alertdialog')
+      this.element.append(this.bar, this.notesEl, this.dockEl, this.jsEl, this.page, this.popEl)
       // The pill moves when the bar reflows (pane resized, narrow layout, phrase changed): the arrow follows it.
       this.dockRo.observe(this.bar)
       this.dockRo.observe(this.ownerEl)
@@ -894,6 +907,75 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.actionBar.refresh()
       this.paintNotices(view.notices)
       this.paintTurn(view.ask)
+      this.paintPageDialog()
+    }
+
+    /** F3: the band of the page's dialog (OK, Cancelar, a prompt's field); Enter answers OK, Esc cancels. */
+    paintPageDialog(): void {
+      const tabId = this.tabId()
+      const ask = tabId ? pageDialogs.get(tabId) : undefined
+      this.jsEl.hidden = !ask
+      if (!ask) {
+        if (this.jsAsk) { this.jsAsk = ''; this.jsInput = undefined; this.jsEl.replaceChildren() }
+        return
+      }
+      if (this.jsAsk === ask.id) return
+      this.jsAsk = ask.id
+      this.jsInput = undefined
+      this.jsEl.dataset.kind = ask.kind
+      const answer = (accept: boolean): void => {
+        const text = this.jsInput?.value
+        if (pageDialogs.get(ask.tabId)?.id === ask.id) pageDialogs.delete(ask.tabId)
+        this.paintPageDialog()
+        void ipc.invoke('pageDialogAnswer', ask.id, accept, text).catch(() => {})
+      }
+      const body = el('div', 'br-web-jsdlg-body')
+      body.append(el('strong', 'br-web-jsdlg-head', pageDialogHead(ask.origin)), el('p', 'br-web-jsdlg-msg', ask.message))
+      if (ask.kind === 'prompt') {
+        const input = el('input', 'br-web-jsdlg-input')
+        input.type = 'text'
+        input.spellcheck = false
+        input.autocomplete = 'off'
+        input.value = ask.defaultText ?? ''
+        input.setAttribute('aria-label', PAGE_DIALOG_FIELD)
+        this.jsInput = input
+        body.append(input)
+      }
+      const foot = el('div', 'br-web-jsdlg-foot')
+      const button = (accept: boolean, label: string): HTMLButtonElement => {
+        const b = el('button', `br-web-jsdlg-btn${accept ? ' br-web-jsdlg-ok' : ''}`, label)
+        b.type = 'button'
+        b.dataset.action = accept ? 'ok' : 'cancel'
+        b.addEventListener('click', () => answer(accept))
+        return b
+      }
+      const ok = button(true, PAGE_DIALOG_OK)
+      foot.append(...(ask.kind === 'alert' ? [] : [button(false, PAGE_DIALOG_CANCEL)]), ok)
+      this.jsEl.onkeydown = ev => {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); answer(ask.kind === 'alert') }
+        else if (ev.key === 'Enter' && ev.target === this.jsInput) { ev.preventDefault(); answer(true) }
+      }
+      this.jsEl.replaceChildren(body, foot)
+      // The keyboard goes to the band only when her pane is the active one (nothing is taken from where she is typing).
+      if (activeWebPane === this.paneId) (this.jsInput ?? ok).focus()
+    }
+
+    /** What the band shows now (test hook). */
+    pageDialog(): { kind: string; head: string; message: string; value: string | null; buttons: string[] } | null {
+      if (this.jsEl.hidden || !this.jsAsk) return null
+      return {
+        kind: this.jsEl.dataset.kind ?? '', head: this.jsEl.querySelector('.br-web-jsdlg-head')?.textContent ?? '',
+        message: this.jsEl.querySelector('.br-web-jsdlg-msg')?.textContent ?? '', value: this.jsInput ? this.jsInput.value : null,
+        buttons: [...this.jsEl.querySelectorAll<HTMLButtonElement>('.br-web-jsdlg-btn')].map(b => b.textContent ?? ''),
+      }
+    }
+
+    /** Answers the band the way she would: types the prompt's text, then clicks OK or Cancelar (test hook). */
+    answerPageDialog(accept: boolean, text?: string): boolean {
+      if (this.jsEl.hidden) return false
+      if (text !== undefined && this.jsInput) this.jsInput.value = text
+      this.jsEl.querySelector<HTMLButtonElement>(`.br-web-jsdlg-btn[data-action="${accept ? 'ok' : 'cancel'}"]`)?.click()
+      return true
     }
 
     /** The pill: the owner's colour and name, and what goes on, in one phrase; a click goes to the agent (or toggles the card). */
@@ -1351,6 +1433,19 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
   void ipc.invoke('localNetworkOpen').then(list => { for (const a of list) enqueue(a) }).catch(() => {})
   void ipc.invoke('uploadOpen').then(list => { for (const a of list) enqueueUpload(a) }).catch(() => {})
+  // F3: her pages' dialogs, each in its pane's band (a queue of their own, apart from the agents' questions above).
+  const onPageDialog = (ask: PageDialogAsk): void => {
+    pageDialogs.set(ask.tabId, ask)
+    panels.get(paneIdOf(ask.tabId))?.paintPageDialog()
+  }
+  const onPageDialogClosed = (id: string): void => {
+    for (const [tabId, a] of pageDialogs) {
+      if (a.id !== id) continue
+      pageDialogs.delete(tabId)
+      panels.get(paneIdOf(tabId))?.paintPageDialog()
+    }
+  }
+  void ipc.invoke('pageDialogOpen').then(list => { for (const a of list) onPageDialog(a) }).catch(() => {})
   void ipc.invoke('downloads').then(list => { downloadsList = list; refreshPad() }).catch(() => {})
   void ipc.invoke('closedList').then(list => { closedList = list; refreshPad() }).catch(() => {})
 
@@ -1419,6 +1514,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
   }
   ui.test.expose('browserReveal', (id: string) => { ui.panes.reveal(id) })
+  /** F3: the band of a tab's page dialog as she sees it, and her answer to it. */
+  ui.test.expose('browserPageDialog', (tabId: string) => panels.get(paneIdOf(tabId))?.pageDialog() ?? null)
+  ui.test.expose('browserPageDialogAnswer', (tabId: string, accept: boolean, text?: string) => panels.get(paneIdOf(tabId))?.answerPageDialog(accept, text) ?? false)
   /**
    * Clicks a control of a tab's pane the way the person would: 'bar' (the bar's highlighted action), 'notice' (the first notice's
    * action), 'done' / 'decline' / 'toggle' (the card), 'owner', 'info', or a history button.
@@ -1533,6 +1631,13 @@ export function activate(ui: TetherUi): IDisposable[] {
     ipc.on('localNetworkCancelled', withdraw),
     ipc.on('uploadAsk', enqueueUpload),
     ipc.on('uploadCancelled', withdraw),
+    ipc.on('pageDialog', onPageDialog),
+    ipc.on('pageDialogClosed', onPageDialogClosed),
+    // Ctrl+T / Ctrl+L typed in a page she holds: main kept them from the page and put the keyboard back on the interface.
+    ipc.on('pageKey', (tabId, key) => {
+      if (key === 'new-tab') { void newTab(); return }
+      panels.get(paneIdOf(tabId))?.startEdit()
+    }),
     ipc.on('downloads', list => { downloadsList = list; refreshPad() }),
     ipc.on('closedHistory', list => { closedList = list; refreshPad() }),
     ipc.on('closed', tabId => {

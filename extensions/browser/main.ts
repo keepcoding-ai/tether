@@ -9,7 +9,7 @@
 // an upload asks the person in the tether's dialog (upload-consent.ts), with the page's picture, and the gate holds the attach to it.
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, type NativeImage, shell, type WebContents } from 'electron'
+import { app, dialog, type NativeImage, shell, type WebContents } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ControlHub, type ControlView } from './control.ts'
@@ -30,6 +30,7 @@ import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import { isId, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
+import { PersonPage } from './person-page.ts'
 
 import { activateRemote, wantsBrowserProcess } from './process-host.ts'
 
@@ -176,13 +177,32 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     if (have) have.update(message)
     else notices.set(v.tabId, main.notices.raise({ ...(info?.ownerSlotId ? { slotId: info.ownerSlotId } : {}), message }))
   }
+  // F3: the page in her hands (dialogs, the file chooser, Ctrl+T/Ctrl+L) while she holds the tab. Test builds may stand in a
+  // list of paths for the system's chooser (no window opens in a test).
+  let chooserStub: string[] | undefined
+  let chooserCalls = 0
+  const personPage = new PersonPage({
+    surface: tabId => registry.surface(tabId),
+    control: tabId => control.control(tabId),
+    ask: a => ipc.send('pageDialog', a),
+    cancelled: id => ipc.send('pageDialogClosed', id),
+    key: (tabId, key) => ipc.send('pageKey', tabId, key),
+    chooseFiles: async properties => {
+      chooserCalls++
+      if (testing && chooserStub) return [...chooserStub]
+      const r = await dialog.showOpenDialog({ properties })
+      return r.canceled ? [] : r.filePaths
+    },
+    log,
+  })
   const controlSubs: IDisposable[] = [
     registry.watch({
-      added: info => { control.added(info.tabId, registry.opener(info.tabId), info.ownerSlotId); shieldOf(info.tabId) },
-      closed: tabId => { uploads.cancelTab(tabId, 'guia fechada'); control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
+      added: info => { control.added(info.tabId, registry.opener(info.tabId), info.ownerSlotId); shieldOf(info.tabId); personPage.added(info.tabId) },
+      closed: tabId => { personPage.closed(tabId); uploads.cancelTab(tabId, 'guia fechada'); control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
     }),
     control.onChange(v => {
       if (v.control !== 'agent') uploads.cancelTab(v.tabId, v.control === 'paused' ? 'guia pausada' : 'a pessoa assumiu')
+      personPage.controlChanged(v.tabId, v.control)
       shieldOf(v.tabId); syncNotice(v); ipc.send('control', v)
     }),
     downloads.onEvent(e => {
@@ -306,6 +326,8 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     }),
     ipc.handle('uploadOpen', () => uploads.open()),
     ipc.handle('uploadAnswer', (id, choice) => { if (typeof id === 'string') uploads.answer(id, choice) }),
+    ipc.handle('pageDialogOpen', () => personPage.open()),
+    ipc.handle('pageDialogAnswer', (id, accept, text) => personPage.answer(id, accept, text)),
     ipc.handle('take', tabId => { if (typeof tabId === 'string' && registry.get(tabId)) control.take(tabId) }),
     ipc.handle('giveBack', async (tabId, note) => { if (typeof tabId === 'string' && registry.get(tabId)) await control.giveBack(tabId, note) }),
     ipc.handle('decline', async (tabId, note) => { if (typeof tabId === 'string' && registry.get(tabId)) await control.decline(tabId, note) }),
@@ -335,7 +357,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ...controlSubs,
     ...DEBUG_KEYS.map(k => main.settings.onChange(k, () => { void debugWriter.sync() })),
     main.settings.onChange('closedHistory', () => { void closedReady.then(h => ipc.send('closedHistory', h.list())) }),
-    { dispose: () => { gateDisposed = true; gate?.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
+    { dispose: () => { gateDisposed = true; gate?.dispose(); personPage.dispose(); uploads.dispose(); downloads.dispose(); control.dispose(); localGate.dispose(); registry.dispose(); made?.dispose() } },
   ]
   if (typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__) {
     const g = globalThis as { __browserTabs?: unknown }
@@ -377,6 +399,20 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       shownInFolder,
       openUploads: () => uploads.open().map(a => ({ ...a, image: a.image ? a.image.slice(0, 32) : undefined })),
       shield: (tabId: string) => registry.surface(tabId)?.state().shield,
+      /** F3: the paths the tether's chooser answers instead of the system's (null: the system's again), and how often it opened. */
+      setChooser: (paths: string[] | null) => { chooserStub = paths ?? undefined },
+      chooserCalls: () => chooserCalls,
+      /** F3: the dialogs her bands show, and the page's background throttling. */
+      pageDialogs: () => personPage.open(),
+      throttling: (tabId: string) => registry.webContents(tabId)?.getBackgroundThrottling(),
+      /** F3: a Ctrl+<key> typed with the keyboard in the tab's page (the page has the focus). */
+      ctrlKey: (tabId: string, key: string) => {
+        const wc = registry.webContents(tabId)
+        if (!wc) return
+        wc.focus()
+        wc.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: ['control'] })
+        wc.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: ['control'] })
+      },
       /** The person's typing on the tab's page (what reaches the page when she holds it). */
       type: (tabId: string, text: string) => {
         const wc = registry.webContents(tabId)

@@ -50,6 +50,9 @@ export function questionTabOf(mine: readonly { tabId: string }[], named: { tabId
 /** The key of an agent's profile in the grants file. */
 export const profileKeyOf = (profileId: string | undefined): string => profileId ?? ''
 
+/** The key of the person's own "always" answers (her tabs): no profile id starts with `#`, so no agent ever shares them. */
+export const PERSON_GRANT_KEY = '#person'
+
 /** The "always" answers: per profile key, the destinations (host:port) its agents open without asking. */
 export interface LocalNetworkGrants { profiles: Record<string, string[]> }
 
@@ -98,10 +101,13 @@ export interface LocalNetworkAsk {
   /** The agent's profile name; undefined for an agent without a profile. */
   profile?: string
   destination: string
+  /** Asked for the person, on a tab of her own (a page she is on led there: a link, her history): `agent` is PERSON_NAME. */
+  person?: true
 }
 
 /** The question (design §4.1, tone of §12a): deny is the default and Esc; the two grants say how far they reach. */
 export function localNetworkDialog(ask: LocalNetworkAsk): DialogSpec {
+  if (ask.person) return personLocalNetworkDialog(ask)
   const who = ask.profile === undefined ? 'os agentes sem perfil' : `os agentes do perfil ${ask.profile}`
   return {
     situation: LOCAL_NETWORK_SITUATION,
@@ -114,6 +120,28 @@ export function localNetworkDialog(ask: LocalNetworkAsk): DialogSpec {
       { id: 'once', icon: 'globe-simple', label: 'Só desta vez', consequence: `${ask.agent} abre ${ask.destination} agora; na próxima vez o Tether pergunta de novo.`, tone: 'neutral' },
       { id: 'always', icon: 'globe-simple', label: 'Sempre para este perfil', consequence: `De agora em diante ${who} abrem ${ask.destination} sem perguntar.`, tone: 'neutral' },
       { id: 'deny', icon: 'shield-warning', label: 'Não permitir', consequence: `A página não abre e ${ask.agent} recebe a recusa.`, tone: 'safe' },
+    ],
+    defaultChoice: 'deny',
+    escChoice: 'deny',
+  }
+}
+
+/**
+ * The same question on her own tab: the page she is on leads to a local address (a link can be the page's trap, so her click is
+ * not the consent). Her "always" covers her tabs only, never an agent's.
+ */
+function personLocalNetworkDialog(ask: LocalNetworkAsk): DialogSpec {
+  return {
+    situation: LOCAL_NETWORK_SITUATION,
+    tone: 'warn',
+    icon: 'shield-warning',
+    title: `Abrir ${ask.destination} na sua guia?`,
+    message: 'É um endereço deste computador ou da sua rede. Uma página pode levar você a ele de propósito: permita só se você esperava abrir este endereço.',
+    context: { icon: 'globe-simple', name: ask.destination, lines: ['Sua guia'] },
+    choices: [
+      { id: 'once', icon: 'globe-simple', label: 'Só desta vez', consequence: `A sua guia abre ${ask.destination} agora; na próxima vez o Tether pergunta de novo.`, tone: 'neutral' },
+      { id: 'always', icon: 'globe-simple', label: 'Sempre nas suas guias', consequence: `De agora em diante as suas guias abrem ${ask.destination} sem perguntar. Guias de agente continuam perguntando.`, tone: 'neutral' },
+      { id: 'deny', icon: 'shield-warning', label: 'Não permitir', consequence: 'A página não abre.', tone: 'safe' },
     ],
     defaultChoice: 'deny',
     escChoice: 'deny',

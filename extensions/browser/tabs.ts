@@ -18,7 +18,8 @@
 //     Electron API, so a tab refuses to open on an Electron major it was not proven on), HTTP authentication is cancelled, no
 //     client certificate is chosen, `beforeunload` is accepted, the native file chooser is intercepted on the core's own
 //     debugger session (an upload goes through the tether's consent, E13), `window.print` does nothing. The tab's first load
-//     waits until the chooser and print are held; failing that, the tab is not created.
+//     waits until the chooser and print are held; failing that, the tab is not created. While the person holds the tab, the
+//     tether answers dialogs and the chooser itself over the same root session (person-page.ts), still with no native box.
 //   - E7c (H3): a page opens at most POPUPS_PER_WINDOW popups per POPUP_WINDOW_MS and an owner has at most TABS_PER_OWNER tabs;
 //     past either, the popup is refused, one log line per burst, and the tab carries the count (its seal).
 // When an agent exits its tabs stay (the "encerrado" chip is the interface's); nothing here destroys them.
@@ -27,12 +28,14 @@ import type { Event as ElectronEvent, WebContents } from 'electron'
 import type { Surface, TetherMain } from '../../app/main/ext-api.ts'
 import { type IDisposable, toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { AgentInfo } from '../../app/main/agents.ts'
-import type { LocalNetworkGate } from './local-network.ts'
+import type { LocalNetworkGate, LocalNetworkRequest } from './local-network.ts'
 import type { BlockedRequest } from './net-filter.ts'
 import type { TabSession } from './session.ts'
 import { scrubLogLine } from './log-scrub.ts'
+import { throttlesInBackground } from './page-rules.ts'
+import { PERSON_NAME } from './rules.ts'
 import {
-  cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
+  cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isPersonOwned, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
   storableUrl, type Tab, type TabCrash, type TabInfo, TABS_PER_OWNER, typedUrl,
 } from './tab-rules.ts'
 import type { GoOutcome } from './ipc.ts'
@@ -156,9 +159,7 @@ export class TabRegistry {
     if (wc.isDestroyed()) return false
     const ses = await this.session
     if (ses.net.isLocal(url)) {
-      const info = this.local.agent(ownerSlotId)
-      const agent = { name: info?.name ?? 'o agente', ...(info?.profile ? { profile: info.profile } : {}) }
-      const ok = await this.local.gate.request({ tabId, url, agent })
+      const ok = await this.local.gate.request({ tabId, url, agent: this.asker(ownerSlotId) })
       if (!ok || wc.isDestroyed() || this.entries.get(tabId) !== e) return false
     }
     return ses.net.allowOnce(wc.id, url)
@@ -174,9 +175,14 @@ export class TabRegistry {
     if (this.disposed || !isWebUrl(url)) return false
     const ses = await this.session
     if (!ses.net.isLocal(url)) return true
+    return this.local.gate.request({ tabId: questionKey, url, agent: this.asker(ownerSlotId) })
+  }
+
+  /** Who a local-network question is asked for: the owner agent (its name and profile), or the person on her own tab. */
+  private asker(ownerSlotId: string): LocalNetworkRequest['agent'] {
+    if (isPersonOwned(ownerSlotId)) return { name: PERSON_NAME, person: true }
     const info = this.local.agent(ownerSlotId)
-    const agent = { name: info?.name ?? 'o agente', ...(info?.profile ? { profile: info.profile } : {}) }
-    return this.local.gate.request({ tabId: questionKey, url, agent })
+    return { name: info?.name ?? 'o agente', ...(info?.profile ? { profile: info.profile } : {}) }
   }
 
   /** Withdraws (refuses) the questions filed under `questionKey`. */
@@ -302,7 +308,8 @@ export class TabRegistry {
 
   private async open(tabId: string, owner: string, url: string, title: string | undefined, ticket: FirstTicket): Promise<TabInfo> {
     const ses = await this.session
-    const surface = await this.main.surfaces.create({ pageSize: { ...PAGE_SIZE }, webPreferences: { partition: ses.partition, backgroundThrottling: false } })
+    // Her own tab slows down out of view like any browser's; an agent's never does (the agent works on it unseen).
+    const surface = await this.main.surfaces.create({ pageSize: { ...PAGE_SIZE }, webPreferences: { partition: ses.partition, backgroundThrottling: throttlesInBackground(owner) } })
     const tab = makeTab({ tabId, ownerSlotId: owner, surfaceId: surface.id, url, title, createdAt: Date.now() })
     if (!tab || this.disposed) { surface.destroy(); throw new Error('guia: não criada') }
     try {

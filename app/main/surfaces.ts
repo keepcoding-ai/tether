@@ -255,6 +255,7 @@ export class SurfaceManager {
         if (on) { if (r.visibility === 'shown' && !r.win.destroyed()) r.win.focusInterface() }
         else if (r.visibility === 'shown') r.view.webContents.focus()
       }),
+      focusInterface: () => { if (!r.destroyed && !r.win.destroyed()) r.win.focusInterface() },
       onShieldInput: l => r.shieldInput.add(l),
       capture: () => run(() => this.capture(r)),
       whileDrawing: fn => this.whileDrawing(r, fn),

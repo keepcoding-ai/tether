@@ -12,13 +12,14 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   choiceOf, decideLocalNetwork, destinationOf, grantsOf, LOCAL_NETWORK_FILE, type LocalNetworkAsk, type LocalNetworkGrants,
-  profileKeyOf, settingOf, withGrant,
+  PERSON_GRANT_KEY, profileKeyOf, settingOf, withGrant,
 } from './local-network-rules.ts'
 
 export interface LocalNetworkRequest {
   tabId: string
   url: string
-  agent: { name: string; profile?: { id: string; name: string } }
+  /** Who asks: an agent (its profile), or the person on her own tab (`person`: her answers are kept apart from the agents'). */
+  agent: { name: string; profile?: { id: string; name: string }; person?: boolean }
 }
 
 export interface LocalNetworkGateOptions {
@@ -52,14 +53,15 @@ export class LocalNetworkGate {
     if (this.disposed) return Promise.resolve(false)
     const destination = destinationOf(req.url)
     if (destination === null) return Promise.resolve(false)
-    const profileKey = profileKeyOf(req.agent.profile?.id)
+    const profileKey = req.agent.person ? PERSON_GRANT_KEY : profileKeyOf(req.agent.profile?.id)
     const verdict = decideLocalNetwork(settingOf(this.opts.setting()), this.load(), profileKey, destination)
     if (verdict !== 'ask') {
       this.opts.log(`rede local: ${verdict === 'allow' ? 'permitida' : 'recusada'} sem perguntar (guia ${req.tabId})`)
       return Promise.resolve(verdict === 'allow')
     }
     for (const p of this.pending.values()) if (p.tabId === req.tabId && p.ask.destination === destination) return p.promise
-    const ask: LocalNetworkAsk = { id: randomUUID(), agent: req.agent.name, destination, ...(req.agent.profile ? { profile: req.agent.profile.name } : {}) }
+    const ask: LocalNetworkAsk = req.agent.person ? { id: randomUUID(), agent: req.agent.name, destination, person: true }
+      : { id: randomUUID(), agent: req.agent.name, destination, ...(req.agent.profile ? { profile: req.agent.profile.name } : {}) }
     let resolve!: (ok: boolean) => void
     const promise = new Promise<boolean>(r => { resolve = r })
     this.pending.set(ask.id, { ask, tabId: req.tabId, profileKey, resolve, promise })
@@ -75,7 +77,7 @@ export class LocalNetworkGate {
     this.pending.delete(id)
     const choice = choiceOf(raw)
     if (choice === 'always') this.save(withGrant(this.load(), p.profileKey, p.ask.destination))
-    this.opts.log(`rede local: a pessoa ${choice === 'deny' ? 'recusou' : choice === 'once' ? 'permitiu uma vez' : 'permitiu sempre para o perfil'} (guia ${p.tabId})`)
+    this.opts.log(`rede local: a pessoa ${choice === 'deny' ? 'recusou' : choice === 'once' ? 'permitiu uma vez' : p.ask.person ? 'permitiu sempre nas guias dela' : 'permitiu sempre para o perfil'} (guia ${p.tabId})`)
     p.resolve(choice !== 'deny')
   }
 
