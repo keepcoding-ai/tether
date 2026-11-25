@@ -5,7 +5,8 @@
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import { tabUrl } from '../../../app/shared/tether-url.ts'
 import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
-import type { Line, LineEventType } from '../rules.ts'
+import { kindOf, KIND_LABEL, sizeLabel, type FileKind } from '../attachments.ts'
+import type { Line, LineEventType, LineFile } from '../rules.ts'
 import type { ChannelSummary, MemberInfo, MessageReactions, PollState } from '../daemon/requests.ts'
 
 /** The answer of the `history` request. `polls`: the state of each poll line of the page (open, or its result). */
@@ -99,6 +100,14 @@ const ROLE_TEXT: Record<'owner' | 'member' | 'moderator', SpeakerRole> = { owner
 
 export interface Addressee { name: string; hue?: number; you: boolean }
 
+/** A file of a speech as the conversation draws it: its kind decides a thumbnail (image) or a card; `label` is "PDF · 2,3 MB". */
+export interface ViewFile { name: string; path: string; size: number; kind: FileKind; label: string }
+
+export function viewFile(f: LineFile): ViewFile {
+  const kind = kindOf(f.name)
+  return { name: f.name, path: f.path, size: f.size, kind, label: `${KIND_LABEL[kind]} · ${sizeLabel(f.size)}` }
+}
+
 export interface SayRow {
   kind: 'say'
   seq: number
@@ -116,8 +125,8 @@ export interface SayRow {
   to: Addressee[]
   body: string
   replyTo?: number
-  /** The names of the speech's files (A1 draws them as text; the cards come with A2). */
-  files?: string[]
+  /** The speech's files, in order: images are thumbnails, the others cards (the pane draws them). */
+  files?: ViewFile[]
   /** The id of the author ('user' for the person). */
   authorId: string
   /** The same author, to the same people, right after: no header. */
@@ -244,7 +253,7 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
       crown: !mine && (l.from.role === 'owner' || (opts.ownerId !== undefined && l.from.id === opts.ownerId)),
       mine, to, body: l.body,
       ...(l.replyTo !== undefined ? { replyTo: l.replyTo } : {}),
-      ...(l.files?.length ? { files: l.files.map(f => f.name) } : {}),
+      ...(l.files?.length ? { files: l.files.map(viewFile) } : {}),
       authorId: mine ? 'user' : l.from.id,
       continued: prev !== undefined && prev.authorId === (mine ? 'user' : l.from.id) && prev.to.map(t => t.name).join('\u0000') === toKey,
     }

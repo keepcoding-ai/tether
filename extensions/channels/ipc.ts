@@ -20,6 +20,18 @@ export interface AttachInfo {
 
 /** The longest side of a chip's thumbnail. */
 export const THUMB_PX = 88
+/** The longest side of a thumbnail in the conversation. */
+export const VIEW_THUMB_PX = 320
+/** The most paths one `look` asks about. */
+export const LOOK_MAX = 12
+
+/** What main saw of a file a speech carries: gone from the channel's folder, or a small thumbnail of an image. */
+export interface FileLook {
+  path: string
+  missing: boolean
+  /** A data: URL of at most VIEW_THUMB_PX on its longest side, for an image main could read. */
+  thumb?: string
+}
 /** The most paths one `inspect` looks at. */
 export const INSPECT_MAX = 64
 
@@ -33,5 +45,7 @@ export interface ChannelsIpc {
     stageImage(name: string): AttachInfo | undefined
     /** Deletes staged prints (only inside the staging folder). */
     discard(paths: string[]): void
+    /** Looks at the files of speeches (only inside a channel's files folder): gone or not, and a thumbnail of an image. */
+    look(paths: string[]): FileLook[]
   }
 }

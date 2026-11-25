@@ -25,6 +25,7 @@ import {
 } from './reactions.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
+import { createFileViews } from './files.ts'
 import type { AttachDeps } from './attach-box.ts'
 import type { FileSource } from '../attachments.ts'
 import type { ChannelsIpc } from '../ipc.ts'
@@ -194,6 +195,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     discard: paths => { void filesIpc.invoke('discard', paths).catch(() => undefined) },
     pathOf: file => window.tether.pathForFile(file),
   }
+  // The files of the speeches in the conversation (A2): a click opens like any file link, the right button is the file link's menu.
+  const fileViews = createFileViews({
+    look: paths => filesIpc.invoke('look', paths),
+    open: path => ui.links.follow({ kind: 'file', path }),
+    menu: (x, y, path) => { ui.links.showMenu(x, y, { kind: 'file', path }) },
+  })
 
   class ChannelPane implements IContentRenderer {
     readonly element = el('div', 'ch-pane')
@@ -1497,12 +1504,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         e.append(who)
       } else e.title = r.time
       if (r.body.trim() !== '' || !r.files?.length) e.append(this.speech(r.body))
-      // The speech's files, by name (A1); their thumbnails and cards come with A2.
-      if (r.files?.length) {
-        const f = el('p', 'ch-msg-files')
-        f.append(glyph('paperclip'), el('span', '', r.files.join(' · ')))
-        e.append(f)
-      }
+      // The speech's files: thumbnails for the images, cards for the rest (A2).
+      if (r.files?.length) e.append(fileViews.block(r.files))
       // The speech is a stop of its own for the arrows (the log stays the one Tab stop) and reads as a whole: author, time, text, reactions.
       e.tabIndex = -1
       e.setAttribute('role', 'article')

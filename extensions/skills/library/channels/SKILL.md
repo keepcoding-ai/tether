@@ -38,7 +38,7 @@ Sem as ferramentas `channels_*`, tudo passa pela CLI do tether, em qualquer shel
 
 | Comando | O que faz |
 |---|---|
-| `node "$TETHER_CLI" channels say <canal> "<texto>" [--to A] [--to usuário] [--reply N]` | Fala no canal. Todos os membros ouvem; `--to` só marca a quem me dirijo; `--reply` é o número da linha que respondo. |
+| `node "$TETHER_CLI" channels say <canal> "<texto>" [--to A] [--to usuário] [--reply N] [--files caminho]` | Fala no canal. Todos os membros ouvem; `--to` só marca a quem me dirijo; `--reply` é o número da linha que respondo; `--files` anexa arquivos (até 10, 20 MB cada; sem pastas nem segredos). Os anexos que chegam a mim vêm na linha `anexos:`, um caminho por linha. |
 | `node "$TETHER_CLI" channels read <canal> [--since N] [--limit N]` | Lê o que perdi: as últimas linhas, ou as posteriores a `--since`. |
 | `node "$TETHER_CLI" channels list` | Mostra meus canais; rodo-o depois de compactar. |
 | `node "$TETHER_CLI" channels members <canal>` | Mostra quem está no canal. |

@@ -423,7 +423,30 @@ button.ch-opt:hover { background: var(--bg-hover); }
 .ch-ferr.warn { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 7%, transparent); }
 .ch-roomnote { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--fg-dim); }
 .ch-roomnote svg.ph { width: 13px; height: 13px; flex: none; }
-.ch-msg-files { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--fg-dim); overflow-wrap: anywhere; }
-.ch-msg-files svg.ph { width: 13px; height: 13px; flex: none; }
+/* The files of a speech in the conversation (A2): thumbnails in a grid, then the cards. */
+.ch-msg-files { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; min-width: 0; }
+.ch-shots, .ch-atts { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; min-width: 0; }
+.ch-shot, .ch-fcard { font: inherit; color: inherit; text-align: left; cursor: pointer; border: 1px solid var(--border); background: var(--bg-2); }
+.ch-shot { position: relative; display: flex; flex-direction: column; width: 176px; max-width: 100%; padding: 0; border-radius: 8px; overflow: hidden; background: var(--bg-3); cursor: zoom-in; }
+.ch-shot-th { display: grid; place-items: center; width: 100%; min-height: 72px; max-height: 176px; background: var(--bg-3); color: var(--fg-dim); }
+.ch-shot-th img { display: block; width: 100%; height: auto; max-height: 176px; object-fit: contain; }
+.ch-shot-th svg.ph { width: 26px; height: 26px; }
+.ch-shot-cp { display: flex; justify-content: space-between; gap: 6px; padding: 3px 8px; font-size: 11px; color: var(--fg-dim); background: var(--bg-2); border-top: 1px solid var(--border); }
+.ch-shot-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ch-shot-cp > span:last-child { flex: none; }
+.ch-fcard { display: flex; align-items: center; gap: 9px; width: 236px; max-width: 100%; padding: 6px 10px 6px 8px; border-radius: 8px; }
+.ch-fcard:hover, .ch-shot:hover { background: var(--bg-3); }
+.ch-fcard-fi { display: grid; place-items: center; width: 32px; height: 38px; flex: none; border-radius: 5px; background: var(--bg-3); border: 1px solid var(--border); color: var(--fg-dim); }
+.ch-fcard-fi svg.ph { width: 18px; height: 18px; }
+.ch-fcard.ch-fk-pdf .ch-fcard-fi { color: var(--err); }
+.ch-fcard.ch-fk-code .ch-fcard-fi { color: var(--accent); }
+.ch-fcard-nm { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.ch-fcard-nm b { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-fcard-nm small { color: var(--fg-dim); font-size: 11px; }
+.ch-fcard.gone { opacity: .7; cursor: default; }
+.ch-fcard.gone .ch-fcard-fi { color: var(--fg-dim); }
+.ch-fcard.gone:hover { background: var(--bg-2); }
+.ch-shot:focus-visible, .ch-fcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-pane.narrow .ch-fchips { flex-direction: column; flex-wrap: nowrap; }
 .ch-pane.narrow .ch-fchip { width: 100%; }
+.ch-pane.narrow .ch-fcard { width: 100%; }

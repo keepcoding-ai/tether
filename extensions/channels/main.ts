@@ -9,22 +9,22 @@ import { clipboard, dialog, nativeImage } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ATTACH_MAX_BYTES, kindOf, safeFileName } from './attachments.ts'
-import { INSPECT_MAX, THUMB_PX, type AttachInfo, type ChannelsIpc } from './ipc.ts'
+import { INSPECT_MAX, LOOK_MAX, THUMB_PX, VIEW_THUMB_PX, type AttachInfo, type ChannelsIpc, type FileLook } from './ipc.ts'
 
 export { manifest } from './manifest.ts'
 
 /** A small data: URL of an image file, or undefined (not an image, too large to bother, or the system cannot read it). */
-async function thumbOf(path: string, name: string, size: number): Promise<string | undefined> {
+async function thumbOf(path: string, name: string, size: number, px = THUMB_PX): Promise<string | undefined> {
   if (kindOf(name) !== 'image' || size > ATTACH_MAX_BYTES) return undefined
   try {
-    const img = await nativeImage.createThumbnailFromPath(path, { width: THUMB_PX, height: THUMB_PX })
+    const img = await nativeImage.createThumbnailFromPath(path, { width: px, height: px })
     if (!img.isEmpty()) return img.toDataURL()
   } catch { /* not every system makes thumbnails: the file is read below */ }
   try {
     const img = nativeImage.createFromPath(path)
     if (img.isEmpty()) return undefined
     const { width, height } = img.getSize()
-    return (width >= height ? img.resize({ width: Math.min(THUMB_PX, width) }) : img.resize({ height: Math.min(THUMB_PX, height) })).toDataURL()
+    return (width >= height ? img.resize({ width: Math.min(px, width) }) : img.resize({ height: Math.min(px, height) })).toDataURL()
   } catch {
     return undefined
   }
@@ -42,11 +42,29 @@ async function inspectOne(path: string, name?: string): Promise<AttachInfo> {
   }
 }
 
-const isPathList = (v: unknown): v is string[] => Array.isArray(v) && v.every((p) => typeof p === 'string' && p !== '' && isAbsolute(p))
+async function lookOne(path: string): Promise<FileLook> {
+  try {
+    const s = await stat(path)
+    if (!s.isFile()) return { path, missing: true }
+    const thumb = await thumbOf(path, basename(path), s.size, VIEW_THUMB_PX)
+    return { path, missing: false, ...(thumb ? { thumb } : {}) }
+  } catch {
+    return { path, missing: true }
+  }
+}
+
+const isPathList =(v: unknown): v is string[] => Array.isArray(v) && v.every((p) => typeof p === 'string' && p !== '' && isAbsolute(p))
 
 export function activate(main: TetherMain): IDisposable[] {
   const staging = resolve(main.home, 'channels', '.staging')
   const inStaging = (p: string): boolean => resolve(p).toLowerCase().startsWith(`${staging.toLowerCase()}${sep}`)
+  const channelsRoot = resolve(main.home, 'channels').toLowerCase()
+  const inChannelFiles = (p: string): boolean => {
+    const rel = resolve(p).toLowerCase()
+    if (!rel.startsWith(`${channelsRoot}${sep}`)) return false
+    const parts = rel.slice(channelsRoot.length + 1).split(sep)
+    return parts.length === 3 && parts[0] !== '.staging' && parts[1] === 'files'
+  }
   // What a previous run left (a print pasted and never sent): gone at start.
   void rm(staging, { recursive: true, force: true }).catch(() => undefined)
   const ipc = main.ipc<ChannelsIpc>()
@@ -78,7 +96,12 @@ export function activate(main: TetherMain): IDisposable[] {
       const thumb = (width >= height ? img.resize({ width: Math.min(THUMB_PX, width) }) : img.resize({ height: Math.min(THUMB_PX, height) })).toDataURL()
       return { path, name: shown, size: png.length, isDirectory: false, missing: false, thumb, staged: true as const }
     }),
-    ipc.handle('discard', async (paths) => {
+    // Only a channel's own folder of files is looked at: <home>/channels/<id>/files/<name>.
+    ipc.handle('look', async (paths) => {
+      if (!isPathList(paths)) return []
+      return Promise.all(paths.slice(0, LOOK_MAX).map((p) => (inChannelFiles(p) ? lookOne(p) : { path: p, missing: true })))
+    }),
+    ipc.handle('discard',async (paths) => {
       if (!isPathList(paths)) return
       await Promise.all(paths.filter(inStaging).map((p) => rm(p, { force: true }).catch(() => undefined)))
     }),

@@ -124,6 +124,9 @@ export function kindOf(name: string): FileKind {
 }
 export const KIND_LABEL: Record<FileKind, string> = { image: 'Imagem', pdf: 'PDF', code: 'Código', other: 'Arquivo' }
 
+/** What a card says of a file that is no longer in the channel's folder. */
+export const GONE_TEXT = 'Arquivo não está mais na pasta'
+
 /** A size in words: `12 bytes`, `412 KB`, `2,3 MB`, `148 MB`. */
 export function sizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} bytes`
