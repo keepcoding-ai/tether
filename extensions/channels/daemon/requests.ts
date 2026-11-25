@@ -9,7 +9,7 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { isPollLine, personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type ReactionTally } from '../rules.ts'
+import { personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { PAGE } from './store.ts'
 
@@ -54,13 +54,29 @@ export function summaryOf(ch: Channel): ChannelSummary {
 /** The reactions of one message as the pane draws them: who gave which emoji, in the order they came. */
 export interface MessageReactions { seq: number; tallies: ReactionTally[] }
 
+/** An open poll as the pane gets it: the votes now, never the receipts of the deliveries. */
+export type PollOpenView = Omit<OpenPoll, 'asked' | 'changes'>
+
+/**
+ * What the pane draws of one poll line: the poll still open (`open`), or its result (`result`, with the close line's time), or
+ * neither when it closed long ago (the index keeps the last POLLS_CLOSED_KEPT results): then the card only says it closed.
+ */
+export interface PollState { seq: number; open?: PollOpenView; result?: PollResult; closedAt?: string }
+
+export const openView = (p: OpenPoll): PollOpenView => {
+  const { asked: _asked, changes: _changes, ...rest } = p
+  return rest
+}
+
+/** A line the pane never draws as a row of the conversation: a reaction, a vote and a poll's close (the card shows them). */
+const apart = (l: Line): boolean => l.kind === 'reaction' || l.kind === 'vote' || (l.kind === 'notice' && l.event?.type === 'poll-close')
+
 /**
  * The sum of the reactions of the messages of a page. A reaction to a message sits within REACTION_WINDOW lines after it, so the page
  * and that much past its end are read (the same bound as `channels read`: never the whole channel, a file or two).
  */
-async function reactionsOf(c: Channels, id: ChannelId, page: readonly Line[], lines: readonly Line[]): Promise<MessageReactions[]> {
+function reactionsOf(page: readonly Line[], after: readonly Line[], lines: readonly Line[]): MessageReactions[] {
   if (!lines.some((l) => l.kind === 'message')) return []
-  const after = await c.store.since(id, page[page.length - 1]!.seq, REACTION_WINDOW)
   const sums = sumReactions([...page, ...after])
   const out: MessageReactions[] = []
   for (const l of lines) {
@@ -70,7 +86,27 @@ async function reactionsOf(c: Channels, id: ChannelId, page: readonly Line[], li
   return out
 }
 
-const refuse = (code: string, message: string): DoorError => new DoorError(code as ErrorCode, message)
+/**
+ * The state of each poll among `lines`: the index for an open one; for a closed one its result line, found among the page and what
+ * follows it, or where the index says the last closed ones are (one line read each, never a scan).
+ */
+async function pollsOf(c: Channels, ch: Channel, lines: readonly Line[], near: readonly Line[]): Promise<PollState[]> {
+  const results = new Map<number, Line>()
+  for (const l of near) if (l.kind === 'notice' && l.event?.type === 'poll-close' && l.result) results.set(l.result.poll, l)
+  const out: PollState[] = []
+  for (const l of lines) {
+    if (l.kind !== 'poll') continue
+    const open = ch.polls?.[String(l.seq)]
+    if (open) { out.push({ seq: l.seq, open: openView(open) }); continue }
+    let closed = results.get(l.seq)
+    const at = closed ? undefined : ch.pollsClosed?.find((p) => p.poll === l.seq)?.line
+    if (at !== undefined) closed = (await c.store.since(ch.id, at - 1, 1)).find((x) => x.seq === at)
+    out.push({ seq: l.seq, ...(closed?.result ? { result: closed.result, closedAt: closed.at } : {}) })
+  }
+  return out
+}
+
+const refuse =(code: string, message: string): DoorError => new DoorError(code as ErrorCode, message)
 
 const asRecord = (args: unknown): Record<string, unknown> => {
   if (args === undefined || args === null) return {}
@@ -138,9 +174,38 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const limit = Math.min(Math.max(int(a, 'limit') ?? PAGE, 1), PAGE)
       const page: Line[] = await c.store.history(ch.id, before, limit)
       // Reaction lines are not conversation: the pane gets the messages and, apart, the sum of the reactions of each of them.
-      // The lines of a poll (open, vote, close) neither: the pane does not draw polls yet.
-      const lines = page.filter((l) => l.kind !== 'reaction' && !isPollLine(l))
-      return { channel: summaryOf(ch), lines, reactions: await reactionsOf(c, ch.id, page, lines), more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id) }
+      // A poll is: its opening line stays, with its state apart (`polls`); the votes and the close are no row (the card shows them).
+      const lines = page.filter((l) => !apart(l))
+      const wants = lines.some((l) => l.kind === 'message' || l.kind === 'poll')
+      const after = wants ? await c.store.since(ch.id, page[page.length - 1]!.seq, REACTION_WINDOW) : []
+      return {
+        channel: summaryOf(ch), lines, reactions: reactionsOf(page, after, lines), polls: await pollsOf(c, ch, lines, [...page, ...after]),
+        more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id),
+      }
+    }],
+
+    // The person votes (she must be called): the same rules as an agent's `vote`; a vote or a change takes the poll in the answer.
+    ['vote', async (c, a, ctx) => {
+      moderator(ctx)
+      const ch = channelOf(c, a)
+      const poll = int(a, 'poll')
+      if (poll === undefined) throw refuse('bad-request', 'o argumento poll é um inteiro')
+      const vote = typeof a.vote === 'number' ? a.vote : text(a, 'vote')
+      const reason = typeof a.reason === 'string' && a.reason !== '' ? a.reason : undefined
+      if (a.reason !== undefined && typeof a.reason !== 'string') throw refuse('bad-request', 'o argumento reason é um texto')
+      const r = done(await c.vote(USER, ch.id, { poll, vote, ...(reason !== undefined ? { reason } : {}) }))
+      // A vote that closed the poll (the last one): the result goes with the answer, the card turns at once.
+      return { changed: r.changed, option: r.option, poll: openView(r.poll), ...(r.closed ? { result: r.closed.result, closedAt: r.closed.line.at } : {}) }
+    }],
+
+    // The person closes a poll before its time (she may close any): the result is the answer.
+    ['poll-close', async (c, a, ctx) => {
+      moderator(ctx)
+      const ch = channelOf(c, a)
+      const poll = int(a, 'poll')
+      if (poll === undefined) throw refuse('bad-request', 'o argumento poll é um inteiro')
+      const r = done(await c.pollClose(USER, ch.id, poll))
+      return { result: r.result, closedAt: r.line.at }
     }],
 
     // The person reacts (as the moderator): the same rules as an agent's `react`, every refusal comes back as the request's error code.

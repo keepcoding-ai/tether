@@ -12,8 +12,13 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
 import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
-import type { ChannelEvent, LineEvent, ReactionEvent } from '../daemon/fanout.ts'
+import type { ChannelEvent, LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line } from '../rules.ts'
+import {
+  applyPoll, cardAria, cardOf, closePollDialog, isNoOption, POLL_REASON_MAX, pollRefusalText, countdown,
+  type PollCard, type PollOpenView, type PollState,
+} from './polls.ts'
+import { ICON } from './texts.ts'
 import {
   announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, seesNextText, splitPills, whoText,
   type Pending, type Pill, type Tallies,
@@ -58,7 +63,16 @@ const RECENTS_KEY = 'tether.channels.recentReactions'
 export const REACT_COMMAND = 'channels.react'
 const REACT_DEFAULT_KEY = 'r'
 
-interface Kept { timeline: Timeline; tallies: Tallies; scrollTop: number; stick: boolean; floor: number | undefined }
+interface Kept { timeline: Timeline; tallies: Tallies; polls: Map<number, PollState>; scrollTop: number; stick: boolean; floor: number | undefined }
+
+/** What the person is doing on one poll's card, apart from the poll itself (it survives a repaint). */
+interface PollInput {
+  /** The reason's field is open: for the option voted (1-based), or 0 while she still has to pick one. */
+  reasonFor?: number
+  text: string
+  /** The vote not answered yet. */
+  pending?: number
+}
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -78,6 +92,9 @@ export interface PaneSnapshot {
   closed: boolean
   rows: Array<{ kind: Row['kind']; text: string; name?: string; role?: string; crown?: boolean; mine?: boolean; to?: string[]; glyph?: string; continued?: boolean }>
   /** `emblem`: the name on the member's chip as drawn, empty when none. */
+  /** The cards of the polls held, as the pane builds them now. `pollInput`: the reason's field of each card (open for which option, the text). */
+  polls: PollCard[]
+  pollInput: Array<{ seq: number; reasonFor?: number; text: string }>
   members: Array<{ name: string; role: string; muted: boolean; state: string; tone: string; emblem: string; hint: string; acts: string[] }>
   muteBar: string
   scroll: { top: number; client: number; height: number; stick: boolean }
@@ -202,6 +219,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     /** `seq`s of reactions heard live above the timeline's last line: they take a number and are no hole in the conversation. */
     private readonly quiet = new Set<number>()
     private earlyReactions: Line[] = []
+    /** The state of each poll held (open, with its votes, or its result): apart from the timeline, like the reactions. */
+    private pollStates = new Map<number, PollState>()
+    private readonly pollInput = new Map<number, PollInput>()
+    private earlyPolls: PollEvent[] = []
+    /** The countdowns of the open polls: one timer for the pane, only while a poll is open. */
+    private pollTimer: ReturnType<typeof setInterval> | undefined
     /** The hover bar: one for the pane, moved onto the message under the mouse. */
     private readonly hb = el('div', 'ch-hb')
     private readonly toastEl = el('div', 'ch-toast')
@@ -254,7 +277,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.channelId = String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(p.api.id))
       this.element.dataset.channel = this.channelId
       const k = kept.get(this.channelId)
-      if (k) { this.timeline = k.timeline; this.tallies = new Map(k.tallies); this.floor = k.floor; this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
+      if (k) { this.timeline = k.timeline; this.tallies = new Map(k.tallies); this.pollStates = new Map(k.polls); this.floor = k.floor; this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
       else this.pendingScroll = 'end'
       try { this.recents = readRecents(localStorage.getItem(RECENTS_KEY)) } catch { this.recents = [] }
       live.add(this)
@@ -280,6 +303,15 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.msgs.addEventListener('mouseleave', () => { if (!this.hb.contains(document.activeElement)) this.hb.remove() })
       // A right click on a speech: the same reactions as the bar, and copy (the pills and the links have their own menus).
       this.msgs.addEventListener('contextmenu', ev => {
+        // A poll's card: its own menu (vote, close, copy). The reason's field keeps the browser's menu (paste).
+        const pr = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-prow') : null
+        if (pr) {
+          if (ev.target instanceof HTMLInputElement) return
+          ev.preventDefault()
+          if (performance.now() - this.keyMenuAt < 400) return
+          this.openPollMenu(Number(pr.dataset.seq), ev.clientX, ev.clientY)
+          return
+        }
         const m = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-msg') : null
         if (!m) return
         ev.preventDefault()
@@ -362,6 +394,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       document.removeEventListener('visibilitychange', this.onWatch)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       if (this.toastTimer) clearTimeout(this.toastTimer)
+      this.stopPollTimer()
       this.closePicker(false)
       this.ro?.disconnect()
       this.contentRo?.disconnect()
@@ -370,7 +403,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
       // (The scroll is read from the last scroll event: by now the element has left the page and says 0.)
-      if (this.loaded) keep(this.channelId, { timeline: this.timeline, tallies: this.tallies, scrollTop: this.lastTop, stick: this.stick, floor: this.floor })
+      if (this.loaded) keep(this.channelId, { timeline: this.timeline, tallies: this.tallies, polls: this.pollStates, scrollTop: this.lastTop, stick: this.stick, floor: this.floor })
       marks.paneChanged(this.channelId)
     }
 
@@ -409,6 +442,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.timeline = this.timeline.lines.length > 0 ? mergeNewest(this.timeline, page) : applyPage(this.timeline, page, false)
         this.noteFloor(heldFirst, page.last)
         this.absorb(page)
+        this.absorbPolls(page)
         this.answer = members
         this.error = ''
         this.loaded = true
@@ -423,6 +457,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         const earlyReactions = this.earlyReactions
         this.earlyReactions = []
         for (const l of earlyReactions) this.applyReactionLine(l, false)
+        // The polls heard meanwhile: only what is newer than the page (its own states already hold the rest).
+        const earlyPolls = this.earlyPolls
+        this.earlyPolls = []
+        for (const ev of earlyPolls) if (ev.line.seq > page.last) this.heardPoll(ev, false)
       } catch (e) {
         if (this.disposed) return
         const code = (e as { code?: string }).code
@@ -447,6 +485,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.paintMuteBar()
         this.paintFoot()
         if (this.noMembers() !== this.drewNoMembers || this.isClosed() !== this.drewClosed) this.paintMsgs()
+        else this.paintPolls()
         this.focusJoinIfEmptied()
       } catch { /* the next event asks again */ }
     }
@@ -484,6 +523,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           this.floor = Math.max(1, before - PAGE_SIZE)
           this.timeline = applyPage(this.timeline, page, true)
           this.absorb(page)
+          this.absorbPolls(page)
           if (page.lines.length > 0 || !page.more) break
         }
         this.paintMsgs()
@@ -557,6 +597,314 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)) } catch { /* storage unavailable: the recents stay for this pane */ }
     }
 
+    // ---------- polls ----------
+
+    /**
+     * A `poll` event. The opening is a new line of the conversation (counted as news, like a speech); a vote and the close take a
+     * number and are no line (like a reaction): they only change their card, never the "novas" count or a repaint of the rest.
+     */
+    onPoll(ev: PollEvent): void {
+      if (!this.loaded) { if (this.earlyPolls.length < EARLY_REACTIONS_MAX) this.earlyPolls.push(ev); return }
+      this.heardPoll(ev, true)
+    }
+
+    private heardPoll(ev: PollEvent, live: boolean): void {
+      const l = ev.line
+      const hit = applyPoll(this.pollStates, ev)
+      if (l.kind === 'poll') {
+        this.onLine({ channelId: ev.channelId, room: ev.room, line: l })
+        this.syncPollTimer()
+        return
+      }
+      if (l.seq > this.timeline.last && this.quiet.size < 1000) this.quiet.add(l.seq)
+      if (!hit) return
+      this.paintPoll(hit.seq)
+      this.syncPollTimer()
+      // Said aloud only when it closes (not each vote, not each minute).
+      if (live && hit.what === 'close') {
+        const c = this.cardFor(hit.seq)
+        if (c) this.announce(`Enquete de ${c.author} fechou: ${c.clock}.`)
+      }
+    }
+
+    /** The states a page brings replace the held ones of its poll lines. */
+    private absorbPolls(page: Pick<HistoryPage, 'lines' | 'polls'>): void {
+      const by = new Map((page.polls ?? []).map(p => [p.seq, p] as const))
+      for (const l of page.lines) {
+        if (l.kind !== 'poll') continue
+        const s = by.get(l.seq)
+        if (s) this.pollStates.set(l.seq, s)
+        else this.pollStates.delete(l.seq)
+      }
+      this.syncPollTimer()
+    }
+
+    private cardFor(seq: number): PollCard | undefined {
+      const line = this.timeline.lines.find(l => l.seq === seq)
+      if (!line) return undefined
+      const pending = this.pollInput.get(seq)?.pending
+      return cardOf(line, this.pollStates.get(seq), {
+        now: Date.now(), readOnly: this.isClosed(),
+        ...(this.answer ? { members: new Set(this.answer.members.map(m => m.id)) } : {}),
+        ...(pending !== undefined ? { pending } : {}),
+      })
+    }
+
+    private hasOpenPoll(): boolean {
+      for (const s of this.pollStates.values()) if (s.open !== undefined && s.result === undefined) return true
+      return false
+    }
+
+    /** One timer for the pane, only while a poll is open; it changes the text of the clocks, never repaints a card. */
+    private syncPollTimer(): void {
+      if (this.disposed || !this.hasOpenPoll()) { this.stopPollTimer(); return }
+      this.pollTimer ??= setInterval(() => this.tickPolls(), 1000)
+    }
+
+    private stopPollTimer(): void {
+      if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = undefined }
+    }
+
+    private tickPolls(): void {
+      const now = Date.now()
+      for (const clock of this.msgs.querySelectorAll<HTMLElement>('.ch-poll[data-state="open"] .ch-pclock')) {
+        const cd = countdown(Number(clock.dataset.closes), now)
+        const t = clock.querySelector('.t')
+        if (t && t.textContent !== cd.text) t.textContent = cd.text
+        clock.classList.toggle('soon', cd.soon)
+      }
+    }
+
+    /** Repaints one card in place: no other row is touched; the field being typed in and its caret are kept. */
+    private paintPoll(seq: number): void {
+      const row = this.msgs.querySelector<HTMLElement>(`.ch-prow[data-seq="${seq}"]`)
+      const old = row?.querySelector<HTMLElement>(':scope > .ch-poll')
+      const card = this.cardFor(seq)
+      if (!row || !old || !card) return
+      const a = document.activeElement
+      const held = a instanceof HTMLElement && old.contains(a) ? a : undefined
+      const key = held?.dataset.key
+      const caret = held instanceof HTMLInputElement ? [held.selectionStart, held.selectionEnd] as const : undefined
+      const next = this.pollCardEl(card)
+      old.replaceWith(next)
+      if (key !== undefined) {
+        const again = next.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)
+        again?.focus({ preventScroll: true })
+        if (again instanceof HTMLInputElement && caret?.[0] != null) again.setSelectionRange(caret[0], caret[1] ?? caret[0])
+      }
+    }
+
+    private paintPolls(): void {
+      for (const row of this.msgs.querySelectorAll<HTMLElement>('.ch-prow')) this.paintPoll(Number(row.dataset.seq))
+    }
+
+    private inputOf(seq: number): PollInput {
+      let i = this.pollInput.get(seq)
+      if (!i) this.pollInput.set(seq, (i = { text: '' }))
+      return i
+    }
+
+    /** The person picks an option: it votes at once; the "não ok" asks its reason (highlighted, optional); a reason typed goes with it. */
+    private chooseOption(seq: number, n: number): void {
+      const c = this.cardFor(seq)
+      if (!c?.canVote) return
+      const input = this.inputOf(seq)
+      const typed = input.reasonFor !== undefined ? input.text.trim() : ''
+      if (c.mineOption === n && typed === '' && !isNoOption(c.kind, n)) return
+      void this.votePoll(seq, n, typed === '' ? undefined : typed)
+      if (isNoOption(c.kind, n) && typed === '') { input.reasonFor = n; input.text = '' } else { delete input.reasonFor; input.text = '' }
+      this.paintPoll(seq)
+      if (input.reasonFor !== undefined) this.msgs.querySelector<HTMLInputElement>(`.ch-prow[data-seq="${seq}"] .ch-pr-in`)?.focus({ preventScroll: true })
+    }
+
+    /** Opens the reason's field (menu "Votar com motivo…"): on her vote, or waiting for her to pick an option. */
+    private openReason(seq: number): void {
+      const c = this.cardFor(seq)
+      if (!c?.canVote) return
+      const input = this.inputOf(seq)
+      input.reasonFor = c.mineOption ?? 0
+      input.text = c.mineReason ?? ''
+      this.paintPoll(seq)
+      this.msgs.querySelector<HTMLInputElement>(`.ch-prow[data-seq="${seq}"] .ch-pr-in`)?.focus({ preventScroll: true })
+    }
+
+    private async votePoll(seq: number, option: number, reason?: string): Promise<void> {
+      if (this.isClosed() || this.disposed) return
+      const input = this.inputOf(seq)
+      input.pending = option
+      this.paintPoll(seq)
+      try {
+        const r = await this.ask<{ poll: PollOpenView; result?: PollState['result']; closedAt?: string }>('vote', { poll: seq, vote: option, ...(reason !== undefined ? { reason } : {}) })
+        // The answer may come before the event: the card already shows it (the event repeats it, which changes nothing).
+        const held = this.pollStates.get(seq)
+        if (!held?.result) this.pollStates.set(seq, r.result ? { seq, result: r.result, ...(r.closedAt ? { closedAt: r.closedAt } : {}) } : { seq, open: r.poll })
+        const c = this.cardFor(seq)
+        const text = c?.options.find(o => o.n === option)?.text
+        if (text !== undefined) this.announce(`Você votou em ${text}.`)
+      } catch (e) {
+        this.toast(pollRefusalText((e as { code?: string }).code))
+      } finally {
+        delete input.pending
+        if (!this.disposed) { this.paintPoll(seq); this.syncPollTimer() }
+      }
+    }
+
+    /** Sends the reason typed on the vote she already has (or on the option the field waits for). */
+    private sendReason(seq: number): void {
+      const c = this.cardFor(seq)
+      const input = this.inputOf(seq)
+      const n = input.reasonFor || c?.mineOption
+      if (!c?.canVote || n === undefined || n === 0) { this.toast('Escolha uma opção para votar com o motivo.'); return }
+      const text = input.text.trim()
+      delete input.reasonFor
+      input.text = ''
+      void this.votePoll(seq, n, text === '' ? undefined : text)
+    }
+
+    private closeReason(seq: number): void {
+      const input = this.inputOf(seq)
+      delete input.reasonFor
+      input.text = ''
+      this.paintPoll(seq)
+    }
+
+    /** Closes a poll before its time (its author, or the person): she is asked first. */
+    private async closePoll(seq: number): Promise<void> {
+      const c = this.cardFor(seq)
+      if (!c?.canClose) return
+      const a = await ui.dialogs.ask(closePollDialog(c)).catch(() => undefined)
+      if (a?.choice !== 'close' || this.disposed) return
+      try {
+        const r = await this.ask<{ result: PollState['result']; closedAt: string }>('poll-close', { poll: seq })
+        if (r.result && !this.pollStates.get(seq)?.result) { this.pollStates.set(seq, { seq, result: r.result, closedAt: r.closedAt }); this.paintPoll(seq); this.syncPollTimer() }
+      } catch (e) {
+        this.toast(pollRefusalText((e as { code?: string }).code))
+      }
+    }
+
+    /** The menu of a card (right click, "⋯"): the votes with their numbers, the reason, close, and copy. Read only keeps copy. */
+    private openPollMenu(seq: number, x: number, y: number): void {
+      const c = this.cardFor(seq)
+      const line = this.timeline.lines.find(l => l.seq === seq)
+      if (!c || !line) return
+      const ref = `${this.answer?.channel.name ?? this.channelId}#${seq}`
+      const rows: ContextMenuRow[] = [{ heading: `Enquete de ${c.author} · ${c.state === 'open' ? c.clock : c.clock}` }]
+      if (c.canVote) {
+        for (const o of c.options) rows.push({ icon: '', label: `Votar "${o.text}"`, hint: String(o.n), checked: c.mineOption === o.n, run: () => this.chooseOption(seq, o.n) })
+        rows.push({ icon: '', label: 'Votar com motivo…', hint: 'M', run: () => this.openReason(seq) })
+      }
+      if (c.canClose) {
+        rows.push('sep')
+        rows.push({ icon: ICON.close, label: 'Encerrar agora…', hint: c.mineAuthor ? 'autora ou você' : 'você', danger: true, run: () => { void this.closePoll(seq) } })
+      }
+      rows.push('sep')
+      rows.push({ icon: 'clipboard-text', label: 'Copiar pergunta', run: () => this.copy(c.question) })
+      rows.push({ icon: 'clipboard-text', label: 'Copiar referência', hint: ref, run: () => this.copy(ref) })
+      ui.menus.context(x, y, rows as ContextMenuEntry[])
+    }
+
+    /** The card: question, options with bar and count, who voted for what, who is missing, the clock; read only when it cannot be voted. */
+    private pollCardEl(c: PollCard): HTMLElement {
+      const closed = c.state === 'closed'
+      const box = el('div', `ch-poll${closed ? ' done' : ''}`)
+      box.dataset.seq = String(c.seq)
+      box.dataset.state = c.state
+      box.setAttribute('role', 'group')
+      box.setAttribute('aria-label', cardAria(c))
+      const ph = el('div', 'ch-ph')
+      const tag = el('span', `ch-ptag${closed ? ' done' : ''}`)
+      tag.append(glyph(closed ? 'check' : 'checks'), closed ? 'fechada' : 'enquete')
+      ph.append(tag, el('span', 'ch-pkind', c.kindLabel))
+      if (c.waitsYou) ph.append(el('span', 'ch-pwaits', 'espera seu voto'))
+      const clock = el('span', `ch-pclock${c.soon ? ' soon' : ''}`)
+      clock.dataset.closes = String(c.closesAt)
+      clock.append(glyph(closed ? 'lock' : 'clock'), el('span', 't', c.clock))
+      const more = this.actionBtn('ch-pmore', 'Mais ações da enquete', 'dots-three', () => {
+        const b = more.getBoundingClientRect()
+        this.openPollMenu(c.seq, b.left, b.bottom)
+      })
+      more.setAttribute('aria-haspopup', 'menu')
+      ph.append(clock, more)
+      box.append(ph, el('p', 'q', c.question))
+      if (c.unknown) { box.append(el('div', 'ch-pmiss', 'Esta enquete fechou há muito tempo: o resultado não está mais à mão.')); return box }
+      const list = el('div', 'ch-popts')
+      for (const o of c.options) {
+        const row = c.canVote ? el('button', 'ch-opt') : el('div', 'ch-opt ro')
+        if (row instanceof HTMLButtonElement) {
+          row.type = 'button'
+          row.setAttribute('aria-pressed', String(o.mine))
+          row.addEventListener('click', ev => { ev.stopPropagation(); this.chooseOption(c.seq, o.n) })
+        }
+        if (o.mine) row.classList.add('mine')
+        if (o.winner) row.classList.add('win')
+        row.dataset.n = String(o.n)
+        row.dataset.key = `opt${o.n}`
+        const bar = el('span', 'bar')
+        bar.style.width = `${o.pct}%`
+        const faces = el('span', 'faces')
+        for (const v of o.voters) {
+          const f = el('span', `ch-face${v.mine ? ' me' : ''}`, (v.name.trim()[0] ?? '?').toUpperCase())
+          if (!v.mine) hueStyle(f, agentHue(v.id))
+          f.title = v.reason ? `${v.name}: "${v.reason}"` : v.name
+          faces.append(f)
+        }
+        row.append(bar, el('kbd', 'k', String(o.n)), el('span', 'lab', o.text), faces, el('span', 'n', String(o.count)))
+        row.setAttribute('aria-label', `${o.text}: ${o.count} ${o.count === 1 ? 'voto' : 'votos'}${o.voters.length ? ` (${o.voters.map(v => v.name).join(', ')})` : ''}${o.mine ? '. Seu voto.' : ''}`)
+        list.append(row)
+      }
+      box.append(list)
+      // Open voting: who voted for what and why, in words (the faces are only the count's company; narrow hides them).
+      const whys = c.options.flatMap(o => o.voters.filter(v => v.reason).map(v => ({ o, v })))
+      for (const { o, v } of whys) box.append(el('div', 'ch-why', `${v.name} (${o.text}): "${v.reason}"`))
+      const input = this.pollInput.get(c.seq)
+      if (c.canVote && input?.reasonFor !== undefined) box.append(this.reasonEl(c, input))
+      const prog = el('div', 'ch-prog')
+      const track = el('span', 'track')
+      const fill = el('i', '')
+      fill.style.width = `${c.progress}%`
+      if (closed) fill.classList.add(c.tie ? 'tie' : 'full')
+      track.append(fill)
+      prog.append(el('span', 'ch-ptext', c.progressText), track)
+      box.append(prog)
+      if (c.missing.length > 0) {
+        const miss = el('div', 'ch-pmiss')
+        miss.append(closed ? 'Sem resposta: ' : 'Faltam: ')
+        c.missing.forEach((m, i) => {
+          if (i > 0) miss.append(' · ')
+          miss.append(el('b', '', m.you ? 'Você' : m.name))
+          if (m.why) miss.append(` (${m.you ? 'não respondeu' : m.why})`)
+        })
+        box.append(miss)
+      }
+      return box
+    }
+
+    /** The reason's field: one line, up to 140 characters; under the "não ok" it asks with emphasis and may stay empty. */
+    private reasonEl(c: PollCard, input: PollInput): HTMLElement {
+      const no = input.reasonFor !== undefined && isNoOption(c.kind, input.reasonFor)
+      const box = el('div', `ch-reason${no ? ' ask' : ''}`)
+      const field = el('input', 'ch-pr-in')
+      field.type = 'text'
+      field.maxLength = POLL_REASON_MAX
+      field.value = input.text
+      field.dataset.key = 'reason'
+      field.placeholder = no ? 'Por que não? (opcional, mas ajuda quem perguntou)' : input.reasonFor === 0 ? 'Escreva o motivo e escolha uma opção' : 'Motivo (opcional)'
+      field.setAttribute('aria-label', 'Motivo do voto, opcional, até 140 caracteres')
+      const count = el('small', 'ch-pr-n', `${input.text.length} / ${POLL_REASON_MAX}`)
+      field.addEventListener('input', () => { input.text = field.value; count.textContent = `${field.value.length} / ${POLL_REASON_MAX}` })
+      field.addEventListener('keydown', ev => {
+        ev.stopPropagation()
+        if (ev.key === 'Enter') { ev.preventDefault(); this.sendReason(c.seq) }
+        else if (ev.key === 'Escape') { ev.preventDefault(); this.closeReason(c.seq) }
+      })
+      const send = el('button', 'ch-btn primary', 'Enviar')
+      send.type = 'button'
+      send.dataset.key = 'send'
+      send.addEventListener('click', ev => { ev.stopPropagation(); this.sendReason(c.seq) })
+      box.append(field, count, send)
+      return box
+    }
+
     /** The sums a page of the history brings replace the held ones of its messages. */
     private absorb(page: Pick<HistoryPage, 'lines' | 'reactions'>): void {
       const sums = new Map((page.reactions ?? []).map(r => [r.seq, r.tallies] as const))
@@ -578,6 +926,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.timeline = mergeNewest(this.timeline, page)
         this.noteFloor(heldFirst, page.last)
         this.absorb(page)
+        this.absorbPolls(page)
         this.quiet.clear()
         if (!this.stick) this.unread += this.timeline.lines.filter(l => l.seq > before).length
         this.paintMsgs()
@@ -1035,6 +1384,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         e.append(glyph(NOTICE_ICON[r.glyph]), el('span', 'ch-sys-text', r.text), el('time', '', r.time))
         return e
       }
+      if (r.kind === 'poll') return this.pollRowEl(r)
       const e = el('div', `ch-msg${r.mine ? ' mod' : ''}${r.continued ? ' continued' : ''}${r.to.some(t => t.you) ? ' to-me' : ''}`)
       e.dataset.seq = String(r.seq)
       hueStyle(e, r.hue)
@@ -1074,6 +1424,22 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const rx = this.rxEl(r.seq)
       if (rx) e.append(rx)
       this.nameMsg(e, r.seq)
+      return e
+    }
+
+    /** A poll's row: the author's header like a speech's (no "para"), then the card. It takes no reaction (only a speech does). */
+    private pollRowEl(r: Extract<Row, { kind: 'poll' }>): HTMLElement {
+      const e = el('div', 'ch-prow')
+      e.dataset.seq = String(r.seq)
+      hueStyle(e, r.hue)
+      e.tabIndex = -1
+      const who = el('div', 'ch-who')
+      const em = el('span', `ch-em${r.crown ? ' crown' : ''}${r.mine ? ' me' : ''}`)
+      em.append(glyph(r.mine ? 'user' : r.crown ? 'crown-simple' : 'robot'))
+      who.append(em, this.agentName(r.authorId, 'ch-author', r.name), el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role), el('time', '', r.time))
+      e.append(who)
+      const card = this.cardFor(r.seq)
+      if (card) e.append(this.pollCardEl(card))
       return e
     }
 
@@ -1358,6 +1724,14 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (ev.defaultPrevented || this.picker) return
       const t = ev.target instanceof HTMLElement ? ev.target : null
       if (!t) return
+      const prow = t.closest<HTMLElement>('.ch-prow')
+      if (prow && !(t instanceof HTMLInputElement) && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
+        ev.preventDefault()
+        this.keyMenuAt = performance.now()
+        const r = prow.getBoundingClientRect()
+        this.openPollMenu(Number(prow.dataset.seq), r.left + 16, r.top + 28)
+        return
+      }
       const msg = t.closest<HTMLElement>('.ch-msg')
       const onMsg = t === msg
       // The menu key and Shift+F10: the menu of the speech, or of the pill that holds the focus. Its own `contextmenu` event is ignored (keyMenuAt).
@@ -1857,7 +2231,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         rows: this.rows().map(r => r.kind === 'day' ? { kind: r.kind, text: r.label }
           : r.kind === 'unseen' ? { kind: r.kind, text: r.label }
           : r.kind === 'notice' ? { kind: r.kind, text: r.text, glyph: r.glyph }
+          : r.kind === 'poll' ? { kind: r.kind, text: r.question, name: r.name, role: r.role, crown: r.crown, mine: r.mine }
           : { kind: r.kind, text: r.body, name: r.name, role: r.role, crown: r.crown, mine: r.mine, to: r.to.map(t => t.name), continued: r.continued }),
+        polls: this.timeline.lines.filter(l => l.kind === 'poll').flatMap(l => { const c = this.cardFor(l.seq); return c ? [c] : [] }),
+        pollInput: [...this.pollInput].map(([seq, i]) => ({ seq, ...(i.reasonFor !== undefined ? { reasonFor: i.reasonFor } : {}), text: i.text })),
         members: this.answer ? memberRows(this.answer).map(x => ({
           name: x.name, role: x.role, muted: x.muted, state: x.state, tone: x.tone, emblem: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-emblem`)?.getAttribute('aria-label') ?? '',
           hint: this.side.querySelector(`.ch-mrow[data-member="${x.id}"] .ch-state`)?.getAttribute('title') ?? '',
@@ -1969,6 +2346,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     ui.daemon.onEvent<LineEvent>('line', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onLine(ev) }),
     ui.daemon.onEvent<ChannelEvent>('channel', ev => { for (const p of live) if (p.channelId === ev.channel.id) p.onChannel() }),
     ui.daemon.onEvent<ReactionEvent>('reaction', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onReaction(ev) }),
+    ui.daemon.onEvent<PollEvent>('poll', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onPoll(ev) }),
   ]
 
   // Test hooks: text and flags of a pane, plus the minimum to drive it (open, scroll, ask the daemon as the app does).

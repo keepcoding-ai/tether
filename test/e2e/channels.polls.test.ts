@@ -290,10 +290,10 @@ test('channels polls: open, vote by CLI and MCP, close by all, by author, by dea
   const res3 = await rig.waitFor('B, the author, got the result', () => (rig.results(B, 'horizontes', S3).length ? rig.results(B, 'horizontes', S3) : undefined))
   assert.equal(res3[0]!.closedBy, 'timeout')
 
-  // The pane that draws the conversation gets no line of a poll; what reached each agent is the polls' requests and results
-  // and nothing else (2 requests and 1 result for A's polls... counted per agent), never typed.
+  // The pane that draws the conversation gets the opening of each poll but no vote and no close; what reached each agent is the
+  // polls' requests and results and nothing else (2 requests and 1 result for A's polls... counted per agent), never typed.
   const hist = await rig.ask('history', { channel: CH })
-  assert.ok((hist.lines as Array<{ kind: string; event?: { type: string } }>).every((l) => (l.kind === 'message' || l.kind === 'notice') && l.event?.type !== 'poll-close'))
+  assert.ok((hist.lines as Array<{ kind: string; event?: { type: string } }>).every((l) => (l.kind === 'message' || l.kind === 'notice' || l.kind === 'poll') && l.event?.type !== 'poll-close'))
   await sleep(SETTLE_MS)
   // A: the request of S3 and the result of S1. B: the requests of S1 and S2 and the result of S3. C: the requests of S1, S2, S3.
   assert.deepEqual({ A: rig.notes(A).length - before.A, B: rig.notes(B).length - before.B, C: rig.notes(C).length - before.C }, { A: 2, B: 3, C: 3 })

@@ -6,10 +6,10 @@ import { agentHue } from '../../../app/shared/agent-color.ts'
 import { tabUrl } from '../../../app/shared/tether-url.ts'
 import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import type { Line, LineEventType } from '../rules.ts'
-import type { ChannelSummary, MemberInfo, MessageReactions } from '../daemon/requests.ts'
+import type { ChannelSummary, MemberInfo, MessageReactions, PollState } from '../daemon/requests.ts'
 
-/** The answer of the `history` request. */
-export interface HistoryPage { channel: ChannelSummary; lines: Line[]; reactions?: MessageReactions[]; more: boolean; last: number }
+/** The answer of the `history` request. `polls`: the state of each poll line of the page (open, or its result). */
+export interface HistoryPage { channel: ChannelSummary; lines: Line[]; reactions?: MessageReactions[]; polls?: PollState[]; more: boolean; last: number }
 /** The answer of the `members` request. */
 export interface MembersAnswer { channel: ChannelSummary; members: MemberInfo[]; removed: string[] }
 
@@ -126,7 +126,21 @@ export interface NoticeRow { kind: 'notice'; seq: number; at: string; time: stri
 export interface DayRow { kind: 'day'; key: string; label: string }
 /** "novas para você · 14:05": drawn right before the first unseen line addressed to the person (the orange line of the conversation). */
 export interface UnseenRow { kind: 'unseen'; seq: number; label: string }
-export type Row = SayRow | NoticeRow | DayRow | UnseenRow
+/** A poll in the conversation: who opened it (drawn like a speech's header) and the question; the card is drawn from its state. */
+export interface PollRow {
+  kind: 'poll'
+  seq: number
+  at: string
+  time: string
+  name: string
+  hue?: number
+  role: SpeakerRole
+  crown: boolean
+  mine: boolean
+  authorId: string
+  question: string
+}
+export type Row = SayRow | PollRow | NoticeRow | DayRow | UnseenRow
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
@@ -203,6 +217,16 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
       prev = undefined
     }
     const mine = l.from.id === 'user' || l.from.role === 'moderator'
+    if (l.kind === 'poll' && l.poll) {
+      rows.push({
+        kind: 'poll', seq: l.seq, at: l.at, time: timeOf(l.at), name: mine ? 'Você' : l.from.name, ...(mine ? {} : { hue: agentHue(l.from.id) }),
+        role: ROLE_TEXT[mine ? 'moderator' : l.from.role === 'owner' ? 'owner' : 'member'],
+        crown: !mine && (l.from.role === 'owner' || (opts.ownerId !== undefined && l.from.id === opts.ownerId)),
+        mine, authorId: mine ? 'user' : l.from.id, question: l.poll.question,
+      })
+      prev = undefined
+      continue
+    }
     const to: Addressee[] = (l.to ?? []).map(n => {
       if (n === moderator) return { name: 'você', you: true }
       const id = opts.idByName?.get(n)

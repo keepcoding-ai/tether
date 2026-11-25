@@ -7,7 +7,7 @@
 // `MarkBoard` is pure (no DOM, no daemon); `createMarks` wires it to the daemon's `line` events and to the app's seal and emblem.
 // Memory: one small map per channel, at most MAX_HELD entries; reconciled once from the newest page of each open channel.
 import type { AttentionHandle, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
-import type { LineEvent, ReactionEvent } from '../daemon/fanout.ts'
+import type { LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
 import { ASK_EMOJIS, reactionKey, type Ask, type Line } from '../rules.ts'
 import { channelPaneId } from '../manifest.ts'
@@ -28,7 +28,8 @@ const norm = (s: string): string => s.trim().toLowerCase()
 
 /** What a line is to the person: undefined (not counted), a line for everyone, or one addressed to her. */
 export function classify(line: Line, moderator: string): Heard | undefined {
-  if (line.kind !== 'message') return undefined
+  // The opening of a poll is a new speech; its votes and its close are no line of the conversation (never reach here).
+  if (line.kind !== 'message' && line.kind !== 'poll') return undefined
   if (line.from.id === 'user' || line.from.role === 'moderator') return undefined
   const me = norm(moderator)
   return (line.to ?? []).some(n => norm(n) === me) ? 'toMe' : 'plain'
@@ -277,6 +278,13 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     if (!known.has(ev.channelId)) syncSoon()
   }
 
+  /** A poll opened: it is a new speech like any other (the votes and the close change nothing here). */
+  const onPoll = (ev: PollEvent): void => {
+    if (ev.line.kind !== 'poll') return
+    if (board.hear(ev.channelId, ev.line, moderator())) schedule(ev.channelId)
+    if (!known.has(ev.channelId)) syncSoon()
+  }
+
   /** A ❓ or ❌ put or taken back by an agent: the daemon says whether it is on a speech of hers (every other reaction asks nothing). */
   const onReaction = (ev: ReactionEvent): void => {
     const r = ev.line.react
@@ -287,6 +295,7 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
   const disposables: Disposable[] = [
     ui.daemon.onEvent<LineEvent>('line', onLine),
     ui.daemon.onEvent<ReactionEvent>('reaction', onReaction),
+    ui.daemon.onEvent<PollEvent>('poll', onPoll),
     ui.daemon.onEvent('channel', syncSoon),
     { dispose: () => { disposed = true; if (syncTimer) clearTimeout(syncTimer); for (const h of seals.values()) h.resolve(); seals.clear(); listeners.clear() } },
   ]

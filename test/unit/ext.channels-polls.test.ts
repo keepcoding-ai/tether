@@ -258,17 +258,19 @@ describe('polls: the fan-out, the clock and the verbs over the real store', () =
     assert.equal(rows.some((x) => /: $/.test(x)), false, 'no empty speech')
   })
 
-  test('the pane\'s history (the moderator\'s request) gets no line of a poll: no empty speech, no new speech on the screen of today', async () => {
+  test('the pane\'s history (the moderator\'s request) gets the opening of a poll (with its state apart), never a vote or a close', async () => {
     const handlers = new Map<string, (args: unknown, ctx: unknown) => Promise<unknown>>()
     const none = { dispose: () => {} }
     const reqApi = { requests: { handle: (name: string, fn: (args: unknown, ctx: unknown) => Promise<unknown>) => { handlers.set(name, fn); return none } }, slots: api.slots, delivery: api.delivery }
     const own = registerChannelRequests(reqApi as unknown as Parameters<typeof registerChannelRequests>[0], Promise.resolve(ch))
     try {
-      const page = await handlers.get('history')!({ channel: obra }, { client: 'app' }) as { lines: Line[]; last: number }
+      const page = await handlers.get('history')!({ channel: obra }, { client: 'app' }) as { lines: Line[]; last: number; polls: Array<{ seq: number }> }
       const all = await ch.store.history(obra)
       assert.ok(all.some(isPollLine), 'the record has poll lines')
-      assert.equal(page.lines.some(isPollLine), false)
-      assert.equal(page.lines.some((l) => l.kind !== 'message' && l.kind !== 'notice'), false)
+      assert.ok(page.lines.some((l) => l.kind === 'poll'), 'the opening of a poll is a line of the conversation')
+      assert.equal(page.lines.some((l) => l.kind === 'vote' || l.event?.type === 'poll-close'), false)
+      assert.deepEqual(page.polls.map((p) => p.seq), page.lines.filter((l) => l.kind === 'poll').map((l) => l.seq), 'each opening comes with its state')
+      assert.equal(page.lines.some((l) => l.kind !== 'message' && l.kind !== 'notice' && l.kind !== 'poll'), false)
       assert.equal(page.last, all.at(-1)!.seq)
     } finally { for (const d of own) d.dispose() }
   })
