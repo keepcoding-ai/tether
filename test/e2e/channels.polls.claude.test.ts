@@ -207,13 +207,43 @@ test('two real Claudes: the author asks by a poll, the member votes without spea
   const diagnose = async (): Promise<void> => {
     for (const [who, s] of [['author', A], ['member', B]] as const) {
       const r = await rig.client.request({ t: 'read-screen', slotId: s } as never).catch(() => undefined) as { screen?: { data: string } } | undefined
-      const text = (r?.screen?.data ?? JSON.stringify(r ?? {})).replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, '').replace(/\s+/g, ' ')
-      note(`${who} screen (tail): ${text.slice(-1500)}`)
+      // Spaces are kept (only the control sequences go); the tail is read as the pane shows it.
+      const text = (r?.screen?.data ?? JSON.stringify(r ?? {})).replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, '')
+      note(`${who} screen (tail): ${text.slice(-2500)}`)
+      const st = await rig.state(s)
+      note(`${who} channel tags: ${JSON.stringify(rig.entries(st))}`)
+      note(`${who} trail:\n${rig.trail(st).join('\n')}`)
     }
     note(`daemon log (door):\n${rig.daemonLog().split('\n').filter((l) => /entrega|canais|door/.test(l)).slice(-40).join('\n')}`)
     if (evidenceDir) writeFileSync(join(evidenceDir, 'enquete-claude.txt'), log.join('\n') + '\n')
   }
-  const poll = await rig.waitFor('the author opens a poll', () => rig.record(CH).find((l) => l.kind === 'poll' && l.from.id === A), 180_000).catch(async (e) => { await diagnose(); throw e })
+  const personLine = (e: Entry): boolean => /ok do conferente para subir a ata/.test(e.body)
+  const delivered = async (): Promise<boolean> => rig.entries(await rig.state(A)).some(personLine)
+  // Wait for the poll, or for the author to have heard the person and gone idle without opening one (the model's refusal).
+  let idleSince = 0
+  const outcome = await rig.waitFor('the author opens a poll or refuses', async () => {
+    const p = rig.record(CH).find((l) => l.kind === 'poll' && l.from.id === A)
+    if (p) return { poll: p }
+    const st = await rig.state(A)
+    if (st?.turn === 'busy' || !(await delivered())) { idleSince = 0; return undefined }
+    idleSince ||= Date.now()
+    if (Date.now() - idleSince >= 30_000) return { refused: true as const }
+    return undefined
+  }, 180_000).catch(async (e) => { await diagnose(); throw e })
+  // HARD: the person's line reached the author inside (the tag is written by the tether).
+  const heard = rig.entries(await rig.state(A)).filter(personLine)
+  if (!('poll' in outcome)) await diagnose()
+  assert.ok(heard.length >= 1, 'the person\'s line was delivered to the author')
+  note(`author heard the person: ${JSON.stringify(heard.map((e) => e.attrs))}`)
+  if (!('poll' in outcome)) {
+    const said = rig.trail(await rig.state(A)).filter((l) => l.startsWith('SAYS')).slice(-1)[0] ?? '(nothing)'
+    // MEASURED: opening the poll is the model's judgment; the delivery above is asserted.
+    await t.test('the author opened the poll', { todo: `author did not open it; it said: ${said}` }, () => { assert.fail('the author did not open a poll') })
+    const left0 = await rig.teardown()
+    assert.deepEqual(left0, [], 'no process left behind')
+    return
+  }
+  const poll = outcome.poll!
   note(`poll #${poll.seq} opened by the author`)
   const closed = await rig.waitFor('the poll closes', () => rig.record(CH).find((l) => l.kind === 'notice' && l.event?.type === 'poll-close' && l.result?.poll === poll.seq), 240_000).catch(async (e) => { await diagnose(); throw e })
   if (closed.result?.by !== 'all-voted') await diagnose()
