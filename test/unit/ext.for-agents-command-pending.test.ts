@@ -43,6 +43,7 @@ describe('PendingCommands with return', () => {
   let fc: ReturnType<typeof fakeClock>
   let pending: PendingCommands
   let gateOk = true
+  let quietOk = true
 
   const fake: Conductor = {
     id: 'rtfake',
@@ -58,7 +59,7 @@ describe('PendingCommands with return', () => {
   }
 
   beforeEach(() => {
-    events.length = 0; delivered.length = 0; failCommand = false; gateOk = true
+    events.length = 0; delivered.length = 0; failCommand = false; gateOk = true; quietOk = true
     slot = { slotId: PANE, kind: 'shell', status: 'running', turn: 'idle' }
     painted = T0
     reg = conductorRegistry.register(fake)
@@ -73,7 +74,7 @@ describe('PendingCommands with return', () => {
           userTypedAt: () => undefined,
         },
         desks: { map: () => undefined },
-        delivery: { deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); return { id: 'r1', state: 'delivered' } } },
+        delivery: { quiet: () => quietOk, deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); return { id: 'r1', state: 'delivered' } } },
         agents: { get: () => undefined },
         io: {}, home: '', log: () => {},
       },
@@ -146,6 +147,46 @@ describe('PendingCommands with return', () => {
     assert.deepEqual(events, ['type:compact'])
     assert.deepEqual(delivered, [])
     assert.equal(fc.timers(), 0)
+  })
+
+  for (const ret of [true, false]) {
+    test(`a delivery in course on the pane holds the command (return ${ret}); quiet again, it is typed alone`, async () => {
+      delete (slot as { turn?: string }).turn
+      quietOk = false
+      pending.add(PANE, OWNER, 'context', undefined, ret)
+      await pending.flush()
+      await pending.flush()
+      assert.deepEqual(events, [], 'not typed over the notice')
+      quietOk = true
+      await pending.flush()
+      assert.deepEqual((events as string[]).filter((e) => e.startsWith('type:')), ['type:context'])
+      assert.equal(pending.count(PANE), 0)
+    })
+  }
+
+  test('given up with return: the owner hears that it did not run, and why', async () => {
+    delete (slot as { turn?: string }).turn
+    quietOk = false
+    pending.add(PANE, OWNER, 'context', undefined, true)
+    await pending.flush()
+    await fc.advance(5 * 60_000 + 1)
+    await pending.flush()
+    assert.deepEqual(events, [])
+    assert.equal(pending.count(PANE), 0)
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0]!.owner, OWNER)
+    assert.equal(delivered[0]!.msg.kind, 'notice')
+    assert.match(delivered[0]!.msg.body, /comando \/context: não rodou; a guia não ficou livre em 5 min/)
+    assert.match(delivered[0]!.msg.body, /avisos do tether/)
+  })
+
+  test('given up without return: dropped with nothing delivered', async () => {
+    quietOk = false
+    pending.add(PANE, OWNER, 'context', undefined)
+    await fc.advance(5 * 60_000 + 1)
+    await pending.flush()
+    assert.equal(pending.count(PANE), 0)
+    assert.deepEqual(delivered, [])
   })
 
   test('dispose ends the live watches', async () => {
