@@ -78,8 +78,8 @@
   border-left: 3px solid hsl(var(--oh, 0) var(--mark-solid-s) var(--mark-solid-l)); border-radius: 3px 8px 8px 3px; }
 .ch-msg.continued { margin-top: -6px; }
 .ch-msg.mod { border-left-color: var(--fg-dim); background: var(--bg-2); }
-.ch-msg p { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ch-msg p a.ch-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.ch-msg > p { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ch-msg a.ch-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 .ch-who { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
 .ch-who time { margin-left: auto; font-size: 11px; color: var(--fg-dim); }
 .ch-author { font-weight: 600; }
