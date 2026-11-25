@@ -170,7 +170,8 @@ test('browser pad: list by agent, filter, taken on top, moved tab, pause, reopen
     assert.equal(await endedBtns.first().isVisible(), true, 'the close button of the ended row is visible, not hidden')
     const clipped = await win.locator(`${PAD} [data-ended="true"] .br-pad-row .action-bar`).evaluateAll(bs => bs.filter(b => b.scrollWidth > b.clientWidth + 1).length)
     assert.equal(clipped, 0, 'the ended row bar shows both buttons, nothing clipped')
-    assert.deepEqual(await header(), [{ pin: 'primary', label: 'Pausar todas as guias' }], 'there is something to brake: the header pins "Pausar todas as guias"')
+    // The "+" (a tab of the person's own) is always pinned, as an icon (the bar draws the primary first).
+    assert.deepEqual(await header(), [{ pin: 'primary', label: 'Pausar todas as guias' }, { pin: 'icon', label: 'Nova guia' }], 'there is something to brake: the header pins "Pausar todas as guias"')
     assert.equal(await win.locator(`${PAD} .pad-head [data-label="Pausar todas as guias"]`).getAttribute('data-pin'), 'primary')
     assert.deepEqual(v.buttonsInContent, [], 'no loose button in the content')
     assert.equal(await win.locator(`${PAD} .br-pad >> text="Sair de todas as contas"`).count(), 0, '"Sair de todas as contas" is not in the content')
