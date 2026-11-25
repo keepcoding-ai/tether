@@ -47,15 +47,16 @@ import {
 } from './files-rules.ts'
 import type { DialogSpec } from '../../app/shared/dialog.ts'
 import {
-  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, buildPad, CLOSED_SECTION_KEY, groupHead, hostOf, isEnded, type LastAction, logoutDialog, type MainAgentView, oldestAsking,
+  ACTION_FRESH_MS as PAD_ACTION_FRESH_MS, type ActionKind, brakeableIds, buildPad, CLOSED_SECTION_KEY, withPersonAgent, groupHead, hostOf, isEnded, type LastAction, logoutDialog, type MainAgentView, oldestAsking,
   PAD_ACTIVE, PAD_CLOSE_ALL_ENDED, PAD_ENDED, PAD_NONE_OF_AGENT, PAD_WITH_YOU, type PadAgentInfo, padBadge, type PadGroup, type PadGroupMenuId, padGroupMenu,
   padMenu, type PadMenuId, type PadModel, padOnlyAgent, padSections, type PadSectionId, padSeeAgent, type PadTab, type PadViewState, padViewStateOf, padWhere,
   pillBadgeCount, resolveAgent, rowStateText, shortAddress, toggleCollapsed,
 } from './pad-rules.ts'
 import { type ClosedTab, closedByText, closedGroups, PAD_CLEAR_CLOSED, PAD_CLOSED, PAD_REOPEN } from './closed-rules.ts'
-import { DESK_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
+import { DESK_ID, NEW_TAB_COMMAND_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
+import { BAD_ADDRESS, EDIT_ADDRESS, EDIT_ADDRESS_HINT, NEW_TAB, PAD_MINE, PERSON_NAME, PERSON_TITLE } from './rules.ts'
 import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPEN, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
-import { insertIndex, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
+import { insertIndex, isPersonOwned, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
 
 export { manifest }
@@ -73,8 +74,9 @@ function dressChip(chip: HTMLElement, slotId: string | undefined, agent: { name:
   const c = ownerChip(agent)
   chip.textContent = slotId ? c.text : ''
   chip.dataset.ended = c.ended ? 'true' : 'false'
+  chip.dataset.person = isPersonOwned(slotId) ? 'true' : 'false'
   chip.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
-  chip.title = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : ''
+  chip.title = isPersonOwned(slotId) ? PERSON_TITLE : agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : ''
 }
 /**
  * The owner on the tab strip: a compact emblem (the owner's initial on its hue, the size of the terminal tabs' emblems), with
@@ -88,7 +90,8 @@ function dressTabOwner(badge: HTMLElement, slotId: string | undefined, agent: { 
   badge.hidden = !label
   badge.textContent = label ? (agent ? shortName(agent.name) : label).trim().charAt(0).toUpperCase() : ''
   badge.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
-  const tip = agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : label
+  badge.dataset.person = isPersonOwned(slotId) ? 'true' : 'false'
+  const tip = isPersonOwned(slotId) ? PERSON_TITLE : agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : label
   badge.title = tip
   if (tip) badge.setAttribute('aria-label', tip); else badge.removeAttribute('aria-label')
 }
@@ -106,10 +109,11 @@ export function activate(ui: TetherUi): IDisposable[] {
   const slots = new Map<string, MainAgentView>()
   let slotsKnown = false
   /** The agent as the interface tells it: the pane's name, main's word on whether it lives. */
-  const agentOf = (slotId: string): PadAgentInfo | undefined => {
+  /** The person's own tabs answer "Você", alive (never ended: no slot stands behind them). */
+  const agentOf = withPersonAgent((slotId: string): PadAgentInfo | undefined => {
     const pane = ui.agents.get(slotId)
     return resolveAgent(pane ? { name: pane.name, alive: pane.alive } : undefined, slots.get(slotId), slotsKnown)
-  }
+  })
   /** Who has each tab (main's views, kept as they come). */
   const controls = new Map<string, ControlView>()
   let persistentLogins = true
@@ -173,6 +177,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     return {
       holder: v?.holder ?? 'agent', paused: v?.paused ?? false, loaded: !!p?.loaded(), agentAlive: owner ? agentOf(owner)?.alive ?? false : false,
       asking: v?.holder === 'user' && !!v.ask, expired: v?.holder === 'user' && !v.ask && !!v.askExpired,
+      ...(isPersonOwned(owner) || v?.why === 'own' ? { own: true } : {}),
     }
   }
   const ownerName = (tabId: string): string => agentName(panels.get(paneIdOf(tabId))?.saved?.ownerSlotId)
@@ -215,7 +220,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     return [
       ...acts.filter(a => a.id !== 'close').map(entry),
       'sep',
-      ...(owner && agentOf(owner) ? [{ icon: 'globe-simple', label: padSeeAgent(agentName(owner)), run: () => seeAgent(owner) }] : []),
+      ...(owner && !isPersonOwned(owner) && agentOf(owner) ? [{ icon: 'globe-simple', label: padSeeAgent(agentName(owner)), run: () => seeAgent(owner) }] : []),
       { icon: 'link', label: 'Copiar link do painel', run: () => ui.panes.copyLink(paneId) },
       ...(url ? [{ icon: 'copy', label: 'Copiar endereço', run: () => ui.shell.writeClipboard(url) }] : []),
       'sep',
@@ -237,7 +242,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     const tabs = padTabs()
     const run = (id: PadMenuId): void => {
       if (id === 'show-all') { padFilter = undefined; refreshPad() }
-      else if (id === 'pause-all') void ipc.invoke('pauseTabs', tabs.filter(t => t.control !== 'paused' && !isEnded(agentInfo(t.ownerSlotId))).map(t => t.tabId))
+      else if (id === 'pause-all') void ipc.invoke('pauseTabs', brakeableIds(tabs, agentInfo))
       else if (id === 'resume-all') void ipc.invoke('resumeTabs', tabs.filter(t => t.control === 'paused').map(t => t.tabId))
       else void confirmLogout()
     }
@@ -245,6 +250,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       icon: i.icon, label: i.label, run: () => run(i.id),
       ...(i.pin ? { pin: i.pin } : {}), ...(i.disabled ? { disabled: true } : {}), ...(i.danger ? { danger: true } : {}),
     })
+    // "+": a tab of the person's own, pinned on the panel's header.
+    entries.unshift({ icon: 'plus', label: NEW_TAB, pin: 'icon', run: () => { void newTab() } })
     // The empty state no longer carries these buttons: they live here.
     entries.push(
       'sep',
@@ -380,6 +387,13 @@ export function activate(ui: TetherUi): IDisposable[] {
       box.append(head, ...(folded.collapsed ? [] : g.tabs.map(t => row(t, section))))
       return box
     }
+    // Her own tabs first: what she opened herself, no agent behind.
+    if (sections.mine.length > 0) {
+      const sec = el('section', 'br-pad-section')
+      sec.dataset.section = 'mine'
+      sec.append(title(`${PAD_MINE} (${sections.mine.length})`), ...sections.mine.map(t => row(t, 'mine')))
+      list.append(sec)
+    }
     if (sections.withPerson.length > 0) {
       const sec = el('section', 'br-pad-section')
       sec.dataset.section = 'user'
@@ -440,7 +454,7 @@ export function activate(ui: TetherUi): IDisposable[] {
   }
   // ---- "Fechadas": the closed history by agent, each with "Reabrir", and "Limpar histórico" ----
   let closedList: ClosedTab[] = []
-  const closedOwnerName = (slotId: string, kept: string): string => shortName(ui.agents.get(slotId)?.name || slots.get(slotId)?.name || kept || 'Agente')
+  const closedOwnerName = (slotId: string, kept: string): string => isPersonOwned(slotId) ? PERSON_NAME : shortName(ui.agents.get(slotId)?.name || slots.get(slotId)?.name || kept || 'Agente')
   const reopenClosed = async (id: string): Promise<void> => {
     const info = await ipc.invoke('reopenClosed', id).catch(() => null)
     if (!info) return
@@ -591,6 +605,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly addrEl = el('div', 'br-web-addr')
     private readonly infoBtn = el('button', 'br-web-info')
     private readonly urlEl = el('span', 'br-web-url')
+    /** The address the person types (shown in place of `urlEl` while she edits; only on a tab she holds). */
+    private readonly urlInput = el('input', 'br-web-url-input')
     private readonly stateEl = el('span', 'br-web-state')
     private readonly spinner = el('span', 'br-web-spin')
     private readonly actionBar: ActionBar
@@ -657,7 +673,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.ownerEl.addEventListener('click', () => {
         if (this.turnAsk) { this.toggleTurn(); return }
         const o = this.saved?.ownerSlotId
-        if (o) ui.agents.focus(o)
+        // Her own tab's pill leads nowhere: there is no agent.
+        if (o && !isPersonOwned(o)) ui.agents.focus(o)
       })
       this.infoBtn.type = 'button'
       this.infoBtn.dataset.role = 'info'
@@ -669,9 +686,25 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.infoBtn.addEventListener('click', ev => { ev.stopPropagation(); this.togglePop() })
       this.urlEl.dataset.role = 'address'
       this.urlEl.setAttribute('aria-label', READ_ONLY_ADDRESS)
+      // While she holds the tab the address is hers to type: a click (or Enter on it, or Ctrl+L) opens the field.
+      this.urlEl.addEventListener('click', () => { if (this.editable()) this.startEdit() })
+      this.urlEl.addEventListener('keydown', ev => { if (ev.key === 'Enter' && this.editable()) { ev.preventDefault(); this.startEdit() } })
+      this.urlInput.type = 'text'
+      this.urlInput.hidden = true
+      this.urlInput.spellcheck = false
+      this.urlInput.autocomplete = 'off'
+      this.urlInput.dataset.role = 'address-input'
+      this.urlInput.setAttribute('aria-label', EDIT_ADDRESS)
+      this.urlInput.placeholder = EDIT_ADDRESS_HINT
+      this.urlInput.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); void this.submitAddress() }
+        else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); this.endEdit() }
+      })
+      this.urlInput.addEventListener('input', () => { delete this.urlInput.dataset.invalid; this.urlInput.title = '' })
+      this.urlInput.addEventListener('blur', () => { if (!this.submitting) this.endEdit() })
       this.spinner.dataset.role = 'loading'
       this.spinner.hidden = true
-      this.addrEl.append(this.infoBtn, this.urlEl, this.stateEl, this.spinner)
+      this.addrEl.append(this.infoBtn, this.urlEl, this.urlInput, this.stateEl, this.spinner)
       this.actionBar = createActionBar({
         label: 'Ações da guia', align: 'end', moreClass: 'br-web-more',
         entries: () => this.barEntries(),
@@ -736,11 +769,59 @@ export function activate(ui: TetherUi): IDisposable[] {
         popupsRefused: this.info?.popupsRefused ?? 0,
         ...(this.collapsedAsk ? { collapsedAsk: this.collapsedAsk } : {}),
         acting: this.activity() === 'agent',
+        ...(this.own() ? { own: true } : {}),
       })
     }
 
     /** The person's note on the open request's card ('' when none). */
     askNote(): string { return this.noteEl?.value ?? '' }
+
+    /** The person's own tab (owner PERSON_OWNER). */
+    own(): boolean { return isPersonOwned(this.saved?.ownerSlotId) }
+
+    /** She may type an address: her own tab, or an agent's she holds, once main has it. */
+    editable(): boolean { return !!this.info && (this.own() || this.view().nav) }
+
+    private submitting = false
+
+    /** Opens the address field with the current address selected (empty on the blank page). */
+    startEdit(): void {
+      if (!this.editable()) return
+      const url = this.info?.url ?? ''
+      if (this.urlInput.hidden) this.urlInput.value = url === 'about:blank' ? '' : url
+      delete this.urlInput.dataset.invalid
+      this.urlInput.title = ''
+      this.urlInput.hidden = false
+      this.urlEl.hidden = true
+      this.urlInput.focus()
+      this.urlInput.select()
+    }
+
+    /** Closes the field: the bar shows the tab's real address again (Esc, blur, or the address went). */
+    endEdit(): void {
+      if (this.urlInput.hidden) return
+      this.urlInput.hidden = true
+      this.urlEl.hidden = false
+      delete this.urlInput.dataset.invalid
+    }
+
+    /** Enter: main checks the address and navigates; a refused one keeps the field open, marked. */
+    private async submitAddress(): Promise<void> {
+      const tabId = this.tabId()
+      if (!tabId || this.submitting) return
+      this.submitting = true
+      const outcome = await ipc.invoke('go', tabId, this.urlInput.value).catch(() => 'no-tab' as const)
+      this.submitting = false
+      if (outcome === 'ok') { this.endEdit(); return }
+      this.urlInput.dataset.invalid = 'true'
+      this.urlInput.title = outcome === 'bad-url' ? BAD_ADDRESS : ''
+      this.urlInput.focus()
+    }
+
+    /** The address as the field reads it now (test hook). */
+    addressField(): { editing: boolean; value: string; invalid: boolean; editable: boolean } {
+      return { editing: !this.urlInput.hidden, value: this.urlInput.value, invalid: this.urlInput.dataset.invalid === 'true', editable: this.editable() }
+    }
 
     init(p: GroupPanelPartInitParameters): void {
       this.paneId = p.api.id
@@ -798,12 +879,17 @@ export function activate(ui: TetherUi): IDisposable[] {
       const tabId = this.tabId()
       const v = tabId ? controls.get(tabId) : undefined
       // A tab not loaded yet can be paused (E12): its state waits in main and applies when it loads.
-      const control = this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : undefined
+      const control = this.own() ? 'user' : this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : undefined
       const view = this.view()
       this.element.dataset.control = control ?? ''
       this.element.dataset.attn = view.ask ? 'true' : 'false'
       this.paintOwner(view)
       this.paintNav(view.nav)
+      const editable = this.editable()
+      this.urlEl.dataset.editable = String(editable)
+      this.urlEl.tabIndex = editable ? 0 : -1
+      this.urlEl.setAttribute('aria-label', editable ? EDIT_ADDRESS : READ_ONLY_ADDRESS)
+      if (!editable) this.endEdit()
       this.actionBar.refresh()
       this.paintNotices(view.notices)
       this.paintTurn(view.ask)
@@ -818,9 +904,10 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.ownerEl.dataset.tone = view.owner.tone
       this.ownerEl.dataset.chip = slotId ? c.text : ''
       this.ownerEl.dataset.ended = c.ended ? 'true' : 'false'
+      this.ownerEl.dataset.person = this.own() ? 'true' : 'false'
       this.ownerEl.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
       const toggle = view.owner.toggle
-      this.ownerEl.title = toggle ? toggle.title : agent ? `Ver o agente: ${agent.name}` : ''
+      this.ownerEl.title = toggle ? toggle.title : this.own() ? PERSON_TITLE : agent ? `Ver o agente: ${agent.name}` : ''
       if (toggle) this.ownerEl.setAttribute('aria-expanded', String(!view.ask?.collapsed)); else this.ownerEl.removeAttribute('aria-expanded')
       this.ownerText.textContent = view.owner.text
       this.ownerShort.textContent = view.owner.short
@@ -982,7 +1069,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const v = controls.get(s.tabId)
       return {
         tabId: s.tabId, ownerSlotId: s.ownerSlotId, title: this.info?.title || s.title, url: this.info?.url ?? s.url ?? '',
-        control: this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : 'agent', asking: !!v?.ask, expired: !!v?.askExpired && v.holder === 'user',
+        control: isPersonOwned(s.ownerSlotId) ? 'user' : this.info ? (v?.control ?? 'agent') : v?.paused ? 'paused' : 'agent', asking: !!v?.ask, expired: !!v?.askExpired && v.holder === 'user',
         ...(ui.panes.describe(this.paneId)?.place !== undefined ? { place: ui.panes.describe(this.paneId)!.place! } : {}),
       }
     }
@@ -1098,7 +1185,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.element.dataset.activity = a
       this.dot.title = a === 'loading' ? LOADING : a === 'agent' ? 'O agente está agindo' : ''
       const title = panel?.padTab()?.title || this.titleEl.textContent || 'Guia'
-      this.element.title = [title, panel?.padTab()?.url ?? '', owner ? `Agente: ${agentName(owner)}` : ''].filter(Boolean).join('\n')
+      this.element.title = [title, panel?.padTab()?.url ?? '', isPersonOwned(owner) ? PERSON_TITLE : owner ? `Agente: ${agentName(owner)}` : ''].filter(Boolean).join('\n')
     }
     dispose(): void { this.sub?.dispose(); tabs.delete(this) }
   }
@@ -1116,6 +1203,35 @@ export function activate(ui: TetherUi): IDisposable[] {
       id: paneId, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: info.title || 'Guia', params: { ...savedOf(info) },
     }, where)
   }
+
+  /**
+   * A tab of the person's own (the palette's "Navegador: nova guia", the pad's "+", Ctrl+T in the Browser desk): main opens it,
+   * the tab event draws its pane, and here it comes to the front with the address field in focus.
+   */
+  const newTab = async (url?: string): Promise<string | undefined> => {
+    const info = await ipc.invoke('openForPerson', url).catch(() => null)
+    if (!info) return undefined
+    const paneId = paneIdOf(info.tabId)
+    const show = (tries: number): void => {
+      const p = panels.get(paneId)
+      if (p && p.loaded() && ui.panes.find(paneId)) { ui.panes.reveal(paneId); p.startEdit() }
+      else if (tries > 0) setTimeout(() => show(tries - 1), 50)
+    }
+    show(60)
+    return info.tabId
+  }
+  /** The active pane when it is a tab's (Ctrl+L focuses its address). */
+  let activeWebPane: string | undefined
+  const onKey = (ev: KeyboardEvent): void => {
+    if (ev.defaultPrevented || !ev.ctrlKey || ev.shiftKey || ev.altKey || ev.metaKey || ev.repeat) return
+    const key = ev.key.toLowerCase()
+    if (key === 't' && ui.systemDesks.isActive(DESK_ID)) { ev.preventDefault(); void newTab() }
+    else if (key === 'l') {
+      const p = activeWebPane ? panels.get(activeWebPane) : undefined
+      if (p?.editable()) { ev.preventDefault(); p.startEdit() }
+    }
+  }
+  document.addEventListener('keydown', onKey)
 
   /** The sticky seals of the tabs whose agent asks for help (the agent's pane and the tab's pane), until handed back. */
   const seals = new Map<string, AttentionHandle[]>()
@@ -1270,8 +1386,14 @@ export function activate(ui: TetherUi): IDisposable[] {
     tab: tabInfoOf(id),
     maximized: ui.panes.find(id)?.api.isMaximized() ?? false,
     letterbox: p.letterbox(),
+    // The person's own tab, the person mark on the pill, and the address field.
+    own: p.own(),
+    person: owner?.dataset.person === 'true',
+    addressField: p.addressField(),
   }
   }))
+  /** The person's "Nova guia", as the palette runs it: the new tab's id. */
+  ui.test.expose('browserNewTab', (url?: string) => newTab(url))
   /** The pane's tab strip element as the person sees it. */
   const tabInfoOf = (paneId: string): { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string } | undefined => {
     const t = [...tabs].find(x => x.element.isConnected && x.paneId === paneId)
@@ -1326,6 +1448,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       offShown: !!pad.element.querySelector('[data-role="off"]'),
       filter: text(pad.element.querySelector('[data-role="filter"]')),
       noneOfAgent: !!pad.element.querySelector('.br-pad-list > .br-empty-help'),
+      mine: [...pad.element.querySelectorAll('[data-section="mine"] .br-pad-row')].map(rowOf),
+      mineHead: text(section('mine')?.querySelector('.br-pad-head')),
       withPerson: [...pad.element.querySelectorAll('[data-section="user"] .br-pad-row')].map(rowOf),
       withPersonHead: text(section('user')?.querySelector('.br-pad-head')),
       sections: [...pad.element.querySelectorAll<HTMLElement>('.br-pad-section')].map(s => s.dataset.section ?? ''),
@@ -1375,7 +1499,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       setTimeout(refreshPad, PAD_ACTION_FRESH_MS + 100)
     }),
     // A move re-creates the pane (init above), but the desk a pane is in also changes with the desk coming and going.
-    ui.panes.onDidChangeActive(() => refreshPad()),
+    ui.panes.onDidChangeActive(info => { activeWebPane = info && panels.has(info.id) ? info.id : undefined; refreshPad() }),
+    ui.commands.registerCommand(NEW_TAB_COMMAND_ID, () => { void newTab() }),
+    { dispose: () => document.removeEventListener('keydown', onKey) },
     ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) goToOldestAsk(); refreshPad() }),
     ui.agents.tabMenu(slotId => {
       if (!padTabs().some(t => t.ownerSlotId === slotId)) return []

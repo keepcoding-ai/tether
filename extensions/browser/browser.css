@@ -17,6 +17,12 @@
 .br-web-navs { flex: none; display: flex; gap: 2px; }
 .br-web-addr { flex: 1 1 auto; min-width: 120px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px 0 2px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); }
 .br-web-url { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; user-select: text; }
+.br-web-url[data-editable="true"] { cursor: text; color: var(--fg); }
+.br-web-url[data-editable="true"]:hover { text-decoration: underline dotted; }
+.br-web-url[hidden], .br-web-url-input[hidden] { display: none; }
+.br-web-url-input { flex: 1 1 auto; min-width: 0; height: 20px; padding: 0 4px; border: 0; border-radius: 4px; outline: none; background: transparent; color: var(--fg); font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
+.br-web-addr:has(.br-web-url-input:not([hidden])) { border-color: var(--accent); }
+.br-web-url-input[data-invalid="true"] { box-shadow: inset 0 0 0 1px var(--error, var(--warn)); }
 .br-web-state { flex: none; color: var(--fg-dim); font-size: 11.5px; }
 .br-web-state:empty { display: none; }
 .br-web-info { position: relative; flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--fg-dim); cursor: pointer; }
@@ -104,6 +110,13 @@
 .br-web-owner-live { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: br-pulse 1.2s ease-in-out infinite; }
 .br-web-owner-live[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .br-web-owner-live { animation: none; } }
+/* The person's own tab: one fixed colour (the accent), on the bar's pill, the tab's emblem and the pad's chips. */
+.br-web-owner[data-person="true"], .br-web-tab-owner[data-person="true"], .br-web-bar .br-web-owner[data-tone="own"] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--fg); border-color: var(--accent);
+}
+.br-web-bar .br-web-owner[data-tone="own"] { cursor: default; }
+.br-web-bar .br-web-owner[data-tone="own"] .br-web-owner-dot { background: var(--accent); }
+.br-web-note[data-kind="logins"] { padding-block: 2px; font-size: 11.5px; }
 .br-web-bar .br-web-owner[data-tone="you"] { background: var(--bg-hover); color: var(--fg); border-color: var(--border); }
 .br-web-bar .br-web-owner[data-tone="ask"] { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--fg); border-color: var(--warn); }
 .br-web-bar .br-web-owner[data-tone="ask"] .br-web-owner-dot { background: var(--warn); }

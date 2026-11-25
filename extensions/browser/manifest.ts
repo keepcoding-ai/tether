@@ -10,6 +10,8 @@ export const PAD_ID = 'browser.tabs'
 export const WEB_PANE_PREFIX = 'web:'
 export const WEB_COMPONENT = 'browser-web'
 export const WEB_TAB = 'browser-web-tab'
+/** The person opens a tab of her own (the palette; the pad's "+" and Ctrl+T in the Browser desk do the same). */
+export const NEW_TAB_COMMAND_ID = 'browser.new-tab'
 
 export const manifest: ExtensionManifest = {
   id: 'browser',
@@ -19,6 +21,9 @@ export const manifest: ExtensionManifest = {
   hosts: ['renderer', 'main', 'daemon'],
   optional: true,
   contributes: {
+    commands: [
+      { command: NEW_TAB_COMMAND_ID, title: 'Navegador: nova guia', category: 'Navegador', icon: 'plus' },
+    ],
     paneTypes: [{
       id: 'web', idPrefix: WEB_PANE_PREFIX, component: WEB_COMPONENT, tabComponent: WEB_TAB,
       optionsOf: p => ({ id: p.id, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: p.title ?? 'Guia', params: p.params ?? {} }),
