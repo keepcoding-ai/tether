@@ -527,6 +527,7 @@ class DaemonImpl implements Daemon {
         const slot = this.slotMap.get(slotId)
         return slot ? this.stateOf(slot) : undefined
       },
+      paintedAt: (slotId) => this.slotMap.get(slotId)?.attention.lastPaintAt,
       list: () => this.slots(),
       isAlive: (slotId) => {
         const slot = this.slotMap.get(slotId)
