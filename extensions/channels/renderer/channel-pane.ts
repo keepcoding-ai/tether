@@ -25,6 +25,9 @@ import {
 } from './reactions.ts'
 import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
+import type { AttachDeps } from './attach-box.ts'
+import type { FileSource } from '../attachments.ts'
+import type { ChannelsIpc } from '../ipc.ts'
 import { engineOf } from '../../../app/renderer/agent-ui.ts'
 import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
@@ -182,6 +185,15 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
   const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
   const moderatorName = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
+  // Attaching files (A1): main looks at the files and stages a pasted print; the daemon copies them on `say`.
+  const filesIpc = ui.ipc<ChannelsIpc>()
+  const attach: AttachDeps = {
+    inspect: paths => filesIpc.invoke('inspect', paths),
+    pick: () => filesIpc.invoke('pick'),
+    stageImage: name => filesIpc.invoke('stageImage', name),
+    discard: paths => { void filesIpc.invoke('discard', paths).catch(() => undefined) },
+    pathOf: file => window.tether.pathForFile(file),
+  }
 
   class ChannelPane implements IContentRenderer {
     readonly element = el('div', 'ch-pane')
@@ -275,7 +287,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     /** When the keyboard last opened a member's menu (the `contextmenu` event it may raise too is ignored for a moment). */
     private keyMenuAt = 0
     private readonly composer = createComposer({
-      send: (text, to) => this.say(text, to),
+      send: (text, to, files) => this.say(text, to, files),
+      attach,
       poll: {
         members: () => (this.answer?.members ?? []).map(m => ({ id: m.id, name: m.name, muted: m.muted, path: m.path })),
         open: async args => { await this.ask('poll', { ...args }) },
@@ -1327,8 +1340,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }
 
-    private async say(text: string, to: string[]): Promise<void> {
-      await this.ask('say', { text, ...(to.length > 0 ? { to } : {}) })
+    private async say(text: string, to: string[], files?: FileSource[]): Promise<void> {
+      await this.ask('say', { text, ...(to.length > 0 ? { to } : {}), ...(files?.length ? { files } : {}) })
       this.toEnd()
     }
 
@@ -1483,7 +1496,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         who.append(em, this.agentName(r.authorId, 'ch-author', r.name), role, dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
-      e.append(this.speech(r.body))
+      if (r.body.trim() !== '' || !r.files?.length) e.append(this.speech(r.body))
+      // The speech's files, by name (A1); their thumbnails and cards come with A2.
+      if (r.files?.length) {
+        const f = el('p', 'ch-msg-files')
+        f.append(glyph('paperclip'), el('span', '', r.files.join(' · ')))
+        e.append(f)
+      }
       // The speech is a stop of its own for the arrows (the log stays the one Tab stop) and reads as a whole: author, time, text, reactions.
       e.tabIndex = -1
       e.setAttribute('role', 'article')

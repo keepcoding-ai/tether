@@ -124,7 +124,7 @@ const asRecord = (args: unknown): Record<string, unknown> => {
 const text = (a: Record<string, unknown>, key: string, optional = false): string => {
   const v = a[key]
   if (typeof v === 'string' && v !== '') return v
-  if (optional && v === undefined) return ''
+  if (optional && (v === undefined || v === '')) return ''
   throw refuse('bad-request', `o argumento ${key} é um texto`)
 }
 const int = (a: Record<string, unknown>, key: string): number | undefined => {

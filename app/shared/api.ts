@@ -145,6 +145,8 @@ export interface TetherApi {
   showInFolder(path: string): Promise<{ ok: true } | { ok: false; message: string }>
   readClipboard(): Promise<string>
   writeClipboard(text: string): void
+  /** The path on disk of a File from a paste or a drop (Electron's webUtils.getPathForFile); '' for one with no file behind it (a pasted print). */
+  pathForFile(file: File): string
   /** Current theme setting and the scheme it paints right now. */
   getTheme(): Promise<ThemeState>
   /** Persists the setting; the new state arrives through onTheme (also on every OS switch while `auto`). */

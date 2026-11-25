@@ -1,6 +1,6 @@
 // Preload: exposes the TetherApi (app/shared/api.ts) to the renderer through contextBridge.
 // Built as CommonJS (app/dist/preload.cjs) because the renderer runs sandboxed.
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Event as DaemonEvent, Notice } from '../../src/daemon/protocol.ts'
 import type { ConnectionState, TetherApi } from '../shared/api.ts'
 import type { AskRequest, Confirmations } from '../shared/dialog.ts'
@@ -53,6 +53,7 @@ const api: TetherApi = {
   showInFolder: path => ipcRenderer.invoke('shell:show-in-folder', path),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboard: text => ipcRenderer.send('clipboard:write', text),
+  pathForFile: file => { try { return webUtils.getPathForFile(file) } catch { return '' } },
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: setting => ipcRenderer.send('theme:set', setting),
   onTheme: listener => on<ThemeState>('tether:theme', listener),

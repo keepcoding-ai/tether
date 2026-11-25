@@ -14,12 +14,17 @@ import paperPlaneTilt from '@phosphor-icons/core/assets/regular/paper-plane-tilt
 import plus from '@phosphor-icons/core/assets/regular/plus.svg'
 import smiley from '@phosphor-icons/core/assets/regular/smiley.svg'
 import warning from '@phosphor-icons/core/assets/regular/warning.svg'
+import paperclip from '@phosphor-icons/core/assets/regular/paperclip.svg'
+import xMark from '@phosphor-icons/core/assets/regular/x.svg'
+import key from '@phosphor-icons/core/assets/regular/key.svg'
+import fileCode from '@phosphor-icons/core/assets/regular/file-code.svg'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { NoticeGlyph } from './view-model.ts'
 
 const LOCAL = {
   'chart-bar': chartBar, 'chats-circle': chatsCircle, lock, 'speaker-high': speakerHigh, 'speaker-slash': speakerSlash, user, 'user-minus': userMinus,
   'user-plus': userPlus, users, 'arrow-bend-down-right': arrowBendDownRight, 'paper-plane-tilt': paperPlaneTilt, plus, smiley, warning,
+  paperclip, x: xMark, key, 'file-code': fileCode,
 } as const
 export type LocalGlyph = keyof typeof LOCAL
 export type GlyphName = LocalGlyph | IconName

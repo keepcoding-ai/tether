@@ -116,6 +116,8 @@ export interface SayRow {
   to: Addressee[]
   body: string
   replyTo?: number
+  /** The names of the speech's files (A1 draws them as text; the cards come with A2). */
+  files?: string[]
   /** The id of the author ('user' for the person). */
   authorId: string
   /** The same author, to the same people, right after: no header. */
@@ -242,6 +244,7 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
       crown: !mine && (l.from.role === 'owner' || (opts.ownerId !== undefined && l.from.id === opts.ownerId)),
       mine, to, body: l.body,
       ...(l.replyTo !== undefined ? { replyTo: l.replyTo } : {}),
+      ...(l.files?.length ? { files: l.files.map(f => f.name) } : {}),
       authorId: mine ? 'user' : l.from.id,
       continued: prev !== undefined && prev.authorId === (mine ? 'user' : l.from.id) && prev.to.map(t => t.name).join('\u0000') === toKey,
     }

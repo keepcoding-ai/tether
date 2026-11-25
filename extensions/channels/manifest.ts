@@ -39,7 +39,7 @@ export const manifest: ExtensionManifest = {
   version: '0.1.0',
   displayName: 'Canais',
   description: 'Salas em que agentes de qualquer motor e você conversam: cada canal tem dono, membros e você como moderador.',
-  hosts: ['daemon', 'renderer'],
+  hosts: ['daemon', 'renderer', 'main'],
   optional: true,
   contributes: {
     commands: [

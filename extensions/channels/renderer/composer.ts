@@ -8,12 +8,16 @@ import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HA
 import { createPollForm, type PollFormSnapshot } from './poll-form.ts'
 import { pollCommand, type PollArgs, type PollMember } from './poll-form-rules.ts'
 import { MENTION_TEXT } from './texts.ts'
+import type { FileSource } from '../attachments.ts'
+import { CLIP_TITLE, createAttachBox, type AttachDeps, type AttachSnapshot } from './attach-box.ts'
 
 export interface ComposerOptions {
   /** Opening a poll from the box (E4): the members the form may call, and the daemon's `poll`. Absent: no button, `/enquete` is a speech. */
   poll?: { members(): readonly PollMember[]; open(args: PollArgs): Promise<void> }
-  /** Asks the daemon's `say`; rejects with the daemon's error. */
-  send(text: string, to: string[]): Promise<void>
+  /** Asks the daemon's `say` (with the files that went in, when any); rejects with the daemon's error. */
+  send(text: string, to: string[], files?: FileSource[]): Promise<void>
+  /** Attaching files (A1): the clip and pasting. Absent: neither. */
+  attach?: AttachDeps
   /** The open channels the "#" list offers, read when the list opens (the current one is marked). */
   channels?(): readonly ChannelChoice[]
 }
@@ -35,7 +39,12 @@ export interface ComposerSnapshot {
   mention: { open: boolean; mark: '@' | '#' | ''; rows: Array<{ name: string; mark: string }>; active: number }
   /** The poll form pinned above the box (E4). */
   poll: PollFormSnapshot
+  /** The files on the speech (A1): chips, the reasons a file did not go in, the room's warning; whether the clip is there. */
+  attach: AttachSnapshot & { clip: boolean }
 }
+
+/** The field's placeholder while the speech has a file: the text is optional then. */
+export const SAY_PLACEHOLDER_FILES = 'Escreva para o canal… (opcional com anexo)'
 
 /** The field's placeholders: the usual one, and the one while nobody is in the channel to hear. */
 export const SAY_PLACEHOLDER = { on: 'Escreva para o canal…', off: 'Escreva para o canal… ninguém ouve ainda' } as const
@@ -137,7 +146,14 @@ export function createComposer(opts: ComposerOptions): Composer {
     open: args => opts.poll!.open(args),
     closed: () => { if (enabled) field.focus() },
   })
-  row.append(hint, el('span', 'ch-say-sp'), ...(opts.poll ? [pollBtn] : []), sendBtn)
+  // The files (A1): the clip at the left of the row (the menu path of pasting) and the chips above the head.
+  const clipBtn = el('button', 'ch-act ch-clip')
+  clipBtn.type = 'button'
+  clipBtn.title = CLIP_TITLE
+  clipBtn.setAttribute('aria-label', 'Anexar arquivo')
+  clipBtn.append(glyph('paperclip'))
+  const box = opts.attach ? createAttachBox(opts.attach, () => paintFiles()) : undefined
+  row.append(...(box ? [clipBtn] : []), hint, el('span', 'ch-say-sp'), ...(opts.poll ? [pollBtn] : []), sendBtn)
   // The "@" list floats over the box, anchored on the caret; the field keeps the focus and points at the active row.
   const listId = `ch-mention-${++composerSeq}`
   const list = el('ul', 'ch-mention-list')
@@ -146,7 +162,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   list.setAttribute('aria-label', MENTION_TEXT.listLabel)
   list.hidden = true
   field.setAttribute('aria-autocomplete', 'list')
-  element.append(...(opts.poll ? [form.element] : []), head, field, note, error, row, list)
+  element.append(...(opts.poll ? [form.element] : []), ...(box?.parts ?? []), head, field, note, error, row, list)
 
   let names: readonly string[] = []
   let marks: ReadonlyMap<string, string> = new Map()
@@ -164,8 +180,9 @@ export function createComposer(opts: ComposerOptions): Composer {
     pick.disabled = !enabled
     sendBtn.disabled = !enabled || busy
     pollBtn.disabled = !enabled
+    clipBtn.disabled = !enabled
     if (!enabled) form.hide()
-    field.placeholder = enabled ? SAY_PLACEHOLDER.on : SAY_PLACEHOLDER.off
+    field.placeholder = !enabled ? SAY_PLACEHOLDER.off : box && box.count() > 0 ? SAY_PLACEHOLDER_FILES : SAY_PLACEHOLDER.on
     field.setAttribute('aria-label', enabled ? SAY_LABEL.on : SAY_LABEL.off)
     note.textContent = enabled ? '' : SAY_OFF_NOTE
     sendBtn.title = enabled ? '' : 'Ninguém ouve ainda'
@@ -180,19 +197,24 @@ export function createComposer(opts: ComposerOptions): Composer {
   }
   paintPick()
 
+  /** The chips changed: the placeholder says the text is optional while there is a file. */
+  function paintFiles(): void { if (enabled) paintEnabled() }
+
   const submit = async (): Promise<void> => {
     const text = field.value.trim()
-    if (text === '' || busy || !enabled) return
+    const files = box?.sources() ?? []
+    if ((text === '' && files.length === 0) || busy || !enabled) return
     // `/enquete` is the command of the poll form, not a speech: the command is consumed, a question after it goes into the form.
-    const asked = opts.poll ? pollCommand(text) : undefined
+    const asked = opts.poll && files.length === 0 ? pollCommand(text) : undefined
     if (asked) { field.value = ''; error.hidden = true; close(); form.show(asked.question); return }
     busy = true
     sendBtn.disabled = true
     error.hidden = true
     try {
-      await opts.send(text, addresseesOf(pick.value, text, names))
+      await opts.send(text, addresseesOf(pick.value, text, names), ...(files.length ? [files] : []))
       field.value = ''
       pick.value = ''
+      box?.sent()
     } catch (e) {
       error.textContent = `Não consegui enviar: ${(e as Error).message}`
       error.hidden = false
@@ -298,6 +320,9 @@ export function createComposer(opts: ComposerOptions): Composer {
   field.addEventListener('click', refresh)
   field.addEventListener('blur', () => { close() })
   sendBtn.addEventListener('click', () => void submit())
+  clipBtn.addEventListener('click', () => { if (enabled && box) void box.pick().finally(() => field.focus()) })
+  // Ctrl+V of a print or of copied files: chips, and the focus stays in the field. Plain text pastes as always.
+  field.addEventListener('paste', ev => { if (enabled && box?.paste(ev)) ev.preventDefault() })
   pollBtn.addEventListener('click', () => form.show())
 
   return {
@@ -325,6 +350,7 @@ export function createComposer(opts: ComposerOptions): Composer {
         active,
       },
       poll: form.snapshot(),
+      attach: { ...(box?.snapshot() ?? { chips: [], notes: [], room: '' }), clip: box !== undefined },
     }),
     openPoll(question) { if (enabled && opts.poll) form.show(question) },
     focus: () => field.focus(),

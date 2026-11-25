@@ -12,6 +12,7 @@ import * as panelPadManager from './panel-pad-manager/main.ts'
 import * as browser from './browser/main.ts'
 import * as context from './context/main.ts'
 import * as sync from './sync/main.ts'
+import * as channels from './channels/main.ts'
 import * as surfaceProbe from '../test/e2e/fixtures/surface-probe/main.ts'
 import * as agentsProbe from '../test/e2e/fixtures/agents-probe/main.ts'
 import * as doorProbe from '../test/e2e/fixtures/door-probe/main.ts'
@@ -30,6 +31,7 @@ export const extensions: readonly ExtensionEntry<TetherMain>[] = [
   { manifest: browser.manifest, activate: browser.activate },
   { manifest: context.manifest, activate: context.activate },
   { manifest: sync.manifest, activate: sync.activate },
+  { manifest: channels.manifest, activate: channels.activate },
   // E2E only: the probe that drives native surfaces.
   ...(typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__ ? [{ manifest: surfaceProbe.manifest, activate: surfaceProbe.activate }, { manifest: agentsProbe.manifest, activate: agentsProbe.activate }, { manifest: doorProbe.manifest, activate: doorProbe.activate }] : []),
 ]
