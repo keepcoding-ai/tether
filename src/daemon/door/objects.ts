@@ -57,18 +57,24 @@ export class ObjectService {
   private readonly changeListeners = new Set<(ext: string, e: ObjectChange) => void>()
   private readonly dropListeners = new Set<(ext: string, e: ObjectDrop) => void>()
   private writing: Promise<void> = Promise.resolve()
+  private settleReady!: { resolve: () => void; reject: (e: unknown) => void }
+
+  /**
+   * Resolves once the files in <home>/objects were read (the loop never blocks on it). Every write waits for it. One promise for
+   * the life of the service: an extension takes it in activate(), before the server attaches the door, so it settles only when
+   * `attach` finished the load. A door that is never attached (a satellite) never loads, and its `ready` stays pending.
+   */
+  readonly ready: Promise<void>
 
   constructor(opts: ObjectServiceOptions) {
     this.log = opts.log
+    this.ready = new Promise<void>((resolve, reject) => { this.settleReady = { resolve, reject } })
   }
-
-  /** Resolves once the files in <home>/objects were read (the loop never blocks on it). Every write waits for it. */
-  ready: Promise<void> = Promise.resolve()
 
   /** The server's port arrived: the home is known, so the files are read. Once. */
   attach(port: SlotPort): void {
     this.port = port
-    this.ready = this.load(port.home)
+    this.load(port.home).then(this.settleReady.resolve, this.settleReady.reject)
   }
 
   private async load(home: string): Promise<void> {
