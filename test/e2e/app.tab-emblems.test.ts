@@ -63,7 +63,7 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 
 const clickMenu = (app: ElectronApplication, id: string) => app.evaluate(({ Menu }, id) => { Menu.getApplicationMenu()?.getMenuItemById(id)?.click() }, id)
 const tab = (id: string): string => `.tether-tab[data-slot="${id}"]`
-const chip = (id: string): string => `${tab(id)} .emb-chip:not([hidden])`
+const chip = (id: string): string => `${tab(id)} .emb-chip:not([hidden]):not(.is-letter)`
 const shot = (page: Page, name: string): Promise<Buffer> => page.screenshot({ path: join(artifacts, `tab-emblems-${name}.png`) })
 
 async function createShellPanel(page: Page, cwd: string): Promise<string> {
