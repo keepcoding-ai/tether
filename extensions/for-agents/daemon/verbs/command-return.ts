@@ -139,6 +139,15 @@ export class ReturnWatch {
   }
 }
 
+/** From the LAST echo line of the typed command (`❯ /name`, `> /name`) on; the text intact when there is none. */
+export function trimToEcho(text: string, name: string): string {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const echo = new RegExp(`^\\s*[❯>]\\s*/${escaped}(\\s|$)`)
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) if (echo.test(lines[i]!)) return lines.slice(i).join('\n')
+  return text
+}
+
 /** The body of the system message that hands the screen back; undefined when nothing is delivered. */
 export function returnBody(command: string, result: ReturnResult): string | undefined {
   let outcome: string

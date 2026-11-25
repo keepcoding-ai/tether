@@ -112,6 +112,16 @@ describe('PendingCommands with return', () => {
     assert.match(delivered[0]!.msg.body, /saida nova/)
   })
 
+  test('an idle pane has no turn field (as in the real daemon): it is idle, not gone', async () => {
+    delete (slot as { turn?: string }).turn
+    pending.add(PANE, OWNER, 'compact', undefined, true)
+    await pending.flush()
+    await fc.advance(RETURN_QUIET_MS + RETURN_POLL_MS)
+    for (let i = 0; i < 100 && delivered.length === 0; i++) await new Promise((r) => setTimeout(r, 50))
+    assert.equal(delivered.length, 1)
+    assert.match(delivered[0]!.msg.body, /comando \/compact: terminou/)
+  })
+
   test('turn: nothing is delivered', async () => {
     pending.add(PANE, OWNER, 'compact', undefined, true)
     await pending.flush()

@@ -9,7 +9,7 @@ import { createScreenReaders, historyString, screenString } from '../../screen/i
 import { conductorFor } from './common.ts'
 import { buildContext, type ContextDeps } from '../context.ts'
 import { SYSTEM_FROM } from '../notices.ts'
-import { ReturnWatch, realClock, returnBody, type ReturnClock, type ReturnResult } from './command-return.ts'
+import { ReturnWatch, realClock, returnBody, trimToEcho, type ReturnClock, type ReturnResult } from './command-return.ts'
 import { awakeTarget, ok, commanded, optString, refuse, touch, wantString, GUIA_PROP, targetOf, type VerbDef, type VerbDeps } from './common.ts'
 
 const GIVE_UP_MS = 5 * 60_000
@@ -105,18 +105,20 @@ export class PendingCommands {
     const target = (): ReturnType<typeof targetOf> => targetOf(deps, paneId)
     const ctx = (): ReturnType<typeof buildContext> => buildContext(deps as ContextDeps, next.owner, target())
     const watch = new ReturnWatch({
-      turn: () => deps.api.slots.get(paneId)?.turn,
+      // The protocol marks only a busy pane (`turn: 'busy'`); an idle pane has no `turn`. Only a missing slot is undefined.
+      turn: () => { const s = deps.api.slots.get(paneId); return s === undefined ? undefined : (s.turn ?? 'idle') },
       idleSince: () => deps.api.slots.get(paneId)?.idleSince,
       paintedAt: () => deps.api.slots.paintedAt(paneId),
       userTypedAt: () => deps.api.slots.userTypedAt(paneId),
       detect: () => conductorFor(target(), 'detect').detect!(ctx()),
-      readSince: async (m) => { const raw = deps.api.slots.readScreen(paneId, { since: m }); return { text: await renderRaw(raw), reset: raw.reset } },
-      readAll: async () => renderRaw(deps.api.slots.readScreen(paneId)),
+      readSince: async (m) => { const raw = deps.api.slots.readScreen(paneId, { since: m }); return { text: trimToEcho(await renderRaw(raw), next.name), reset: raw.reset } },
+      readAll: async () => trimToEcho(await renderRaw(deps.api.slots.readScreen(paneId)), next.name),
     }, { typedAt, mark, self: paneId === next.owner }, this.clock)
     this.watches.add(watch)
     void watch.run().then(async (result: ReturnResult | undefined) => {
       this.watches.delete(watch)
       if (!result) return
+      if (result.outcome === 'gone') deps.api.log(`retorno de ${next.name} em ${paneId}: a guia sumiu, nada a entregar`)
       const body = returnBody(label, result)
       if (body !== undefined) await this.deliver(deps, next.owner, body)
     }).catch((e: unknown) => { this.watches.delete(watch); deps.api.log(`retorno de ${next.name} em ${paneId} falhou: ${(e as Error).message}`) })

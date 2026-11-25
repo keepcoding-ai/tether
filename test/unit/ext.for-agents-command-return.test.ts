@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  RETURN_LIMIT_MS, RETURN_POLL_MS, RETURN_QUIET_MS, ReturnWatch, returnBody,
+  RETURN_LIMIT_MS, RETURN_POLL_MS, RETURN_QUIET_MS, ReturnWatch, returnBody, trimToEcho,
   type ReturnClock, type ReturnResult, type ReturnSources,
 } from '../../extensions/for-agents/daemon/verbs/command-return.ts'
 
@@ -173,5 +173,20 @@ describe('returnBody', () => {
   test('nothing for turn and gone', () => {
     assert.equal(returnBody('/x', { outcome: 'turn', elapsedMs: 1 }), undefined)
     assert.equal(returnBody('/x', { outcome: 'gone', elapsedMs: 1 }), undefined)
+  })
+})
+
+describe('trimToEcho', () => {
+  test('a duplicated echo keeps from the last one', () => {
+    const text = 'relatorio velho\n❯ /compact\ncopia cortada\n❯ /compact\nrelatorio novo'
+    assert.equal(trimToEcho(text, 'compact'), '❯ /compact\nrelatorio novo')
+  })
+  test('no echo leaves the text intact', () => {
+    const text = 'saida\noutra /compact no meio'
+    assert.equal(trimToEcho(text, 'compact'), text)
+  })
+  test('a longer command name is not the echo', () => {
+    const text = '> /compact-x\nfim'
+    assert.equal(trimToEcho(text, 'compact'), text)
   })
 })
