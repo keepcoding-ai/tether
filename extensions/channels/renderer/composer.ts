@@ -2,9 +2,11 @@
 // Shift+Enter breaks the line. The recipient is an address, not a lock (P8): everyone hears, `to` only marks who it speaks to.
 // The line comes back through the channel's `line` event; this file only asks `say` and keeps the text when the ask fails.
 import { engineOf } from '../../../app/renderer/agent-ui.ts'
+import { bareMark } from '../../../app/renderer/agent-identity.ts'
+import type { Identity } from '../../../app/renderer/agent-identity-rules.ts'
 import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph } from './glyphs.ts'
-import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HASH_TEXT, listTrigger, mentionToken, type ChannelChoice, type ListTrigger } from './mentions.ts'
+import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HASH_TEXT, listTrigger, mentionToken, type ChannelChoice, type ListTrigger, type MentionOption } from './mentions.ts'
 import { createPollForm, type PollFormSnapshot } from './poll-form.ts'
 import { pollCommand, type PollArgs, type PollMember } from './poll-form-rules.ts'
 import { MENTION_TEXT } from './texts.ts'
@@ -23,7 +25,7 @@ export interface ComposerOptions {
 }
 
 /** One row of whichever list is open: its text, the discreet mark and what goes after the mark when it is picked. */
-interface Row { label: string; mark: string; token: string; all: boolean; /** The member's engine (its agent kind), when the app knows it. */ kind?: string | undefined }
+interface Row { label: string; mark: string; token: string; all: boolean; /** Who the member is (engine, emblem or letter), when the row is a member. */ ident?: Identity }
 
 /** What a test reads of the box. */
 export interface ComposerSnapshot {
@@ -65,8 +67,12 @@ export interface Composer {
   setMembers(names: readonly string[]): void
   /** A discreet mark per member name for the "@" list ("calado", "não ouve agora"); a name without one has none. */
   setMarks(marks: ReadonlyMap<string, string>): void
-  /** The engine (agent kind: 'claude', 'soul'…) per member name: the "@" list draws its icon in a fixed column before the name. */
-  setEngines(kinds: ReadonlyMap<string, string>): void
+  /**
+   * Who each member is, in the order of `setMembers` (the same index): the "@" list draws [engine icon] [emblem or letter] before each
+   * name, also for members that share a name (the list is by name, so only the pair tells them apart). `kind` is absent when the app
+   * does not know the member's agent.
+   */
+  setIdentities(list: readonly (Identity | undefined)[]): void
   /** How many members hear the channel: with none the box is off (its draft is kept), with one or more it is on. */
   setAudience(n: number): void
   snapshot(): ComposerSnapshot
@@ -81,10 +87,34 @@ export interface Composer {
 
 let composerSeq = 0
 
+/**
+ * Pairs each option of the "@" list with the identity of its member. The list is by name: members that share a name come as separate
+ * options in the order of `names`, so the nth option of a name takes the nth identity of that name.
+ */
+function withIdentities(opts: readonly MentionOption[], names: readonly string[], list: readonly (Identity | undefined)[]): { o: MentionOption; ident: Identity | undefined }[] {
+  const seen = new Map<string, number>()
+  return opts.map(o => {
+    if (o.all) return { o, ident: undefined }
+    const nth = seen.get(o.name) ?? 0
+    seen.set(o.name, nth + 1)
+    let at = -1
+    for (let i = 0, n = 0; i < names.length; i++) if (names[i] === o.name && n++ === nth) { at = i; break }
+    return { o, ident: at >= 0 ? list[at] : undefined }
+  })
+}
+
+/** The fixed column of the "@" list that holds the emblem or the letter; an empty column of the same width for "todos". */
+function markCell(ident: Identity | undefined): HTMLElement {
+  const cell = el('span', 'ch-mention-av')
+  if (!ident) { cell.setAttribute('aria-hidden', 'true'); return cell }
+  cell.append(bareMark(ident.mark))
+  return cell
+}
+
 /** The fixed column of the "@" list that holds an engine's icon (named by title and label); an empty column of the same width when there is none. */
 function engineCell(kind: string | undefined): HTMLElement {
   const cell = el('span', 'ch-mention-eng')
-  if (kind === undefined) { cell.setAttribute('aria-hidden', 'true'); return cell }
+  if (!kind) { cell.setAttribute('aria-hidden', 'true'); return cell }
   const e = engineOf(kind)
   cell.append(glyph((ICON_NAMES as readonly string[]).includes(e.icon) ? e.icon as IconName : 'robot'))
   cell.title = e.label
@@ -168,7 +198,7 @@ export function createComposer(opts: ComposerOptions): Composer {
 
   let names: readonly string[] = []
   let marks: ReadonlyMap<string, string> = new Map()
-  let engines: ReadonlyMap<string, string> = new Map()
+  let identities: readonly (Identity | undefined)[] = []
   let options: Row[] = []
   let active = 0
   let trigger: ListTrigger | undefined
@@ -266,8 +296,8 @@ export function createComposer(opts: ComposerOptions): Composer {
 
   /** The rows the trigger asks for: the members for `@` ("todos" first), the open channels for `#`. */
   const rowsFor = (t: ListTrigger): Row[] => t.mark === '@'
-    ? filterMentionOptions(t.term, names).map(o => ({
-      label: o.all ? MENTION_TEXT.everyone : o.name, mark: o.all ? '' : marks.get(o.name) ?? '', token: mentionToken(o.name, names), all: o.all, kind: o.all ? undefined : engines.get(o.name),
+    ? withIdentities(filterMentionOptions(t.term, names), names, identities).map(({ o, ident }) => ({
+      label: o.all ? MENTION_TEXT.everyone : o.name, mark: o.all ? '' : marks.get(o.name) ?? '', token: mentionToken(o.name, names), all: o.all, ...(ident ? { ident } : {}),
     }))
     : filterChannelOptions(t.term, opts.channels?.() ?? []).map(c => ({ label: `#${c.name}`, mark: c.current ? HASH_TEXT.current : '', token: c.name, all: false }))
 
@@ -288,7 +318,7 @@ export function createComposer(opts: ComposerOptions): Composer {
       li.id = `${listId}-${i}`
       li.setAttribute('role', 'option')
       // The "@" list of members: the engine's icon in a fixed column, empty for "todos" and for a member whose engine is unknown.
-      if (t.mark === '@') li.append(engineCell(o.kind))
+      if (t.mark === '@') li.append(engineCell(o.ident?.kind), markCell(o.ident))
       li.append(el('span', 'ch-mention-name', o.label))
       if (o.mark !== '') li.append(el('span', 'ch-mention-mark', o.mark))
       // mousedown would blur the field; the choice is taken on click.
@@ -335,7 +365,7 @@ export function createComposer(opts: ComposerOptions): Composer {
       paintPick()
     },
     setMarks(next) { marks = next },
-    setEngines(next) { engines = next },
+    setIdentities(next) { identities = next },
     setAudience(n) {
       const next = n > 0
       if (next === enabled) return

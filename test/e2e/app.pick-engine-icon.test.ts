@@ -132,12 +132,11 @@ test('engine icon: the agent lists show it in a fixed column, the members and th
     assert.deepEqual(await rows.evaluateAll(lis => lis.map(li => li.querySelector('.pk-engine')?.getAttribute('aria-label') ?? '')), titles, 'aria-label = title')
     assert.ok((await rows.evaluateAll(lis => lis.map(li => li.querySelectorAll('.pk-engine svg').length))).every(n => n === 1), 'an icon drawn in each engine cell')
     allSame(await rect(rows, '.pk-engine'), 'engine icon')
-    allSame(await rect(rows, '.pk-icon'), 'avatar')
-    allSame(await rect(rows, '.pk-label'), 'name')
-    // The emblem's chip and the empty slot of the rows without one share the same x: nothing moves when it comes or goes.
     assert.equal(await picker.locator('.pk-emblem').count(), 1, 'one row wears an emblem')
-    const ends = await rows.evaluateAll(lis => lis.map(li => { const e = li.querySelector('.pk-emblem, .pk-slot'); return e ? Math.round(e.getBoundingClientRect().left * 10) / 10 : -1 }))
-    allSame(ends, 'emblem slot')
+    // The emblem stands in the avatar's place (the letter's, in the rows without one): nothing moves when it comes or goes.
+    const avatars = await rows.evaluateAll(lis => lis.map(li => { const e = li.querySelector('.pk-emblem, .pk-icon'); return e ? Math.round(e.getBoundingClientRect().left * 10) / 10 : -1 }))
+    allSame(avatars, 'avatar or emblem')
+    allSame(await rect(rows, '.pk-label'), 'name')
     await page.screenshot({ path: join(SHOTS, 'icone-motor-seletor.png'), clip: await picker.evaluate(d => { const r = d.getBoundingClientRect(); return { x: Math.max(0, r.x - 12), y: Math.max(0, r.y - 12), width: r.width + 24, height: r.height + 24 } }) })
     // The filter finds agents by the engine's name.
     await page.keyboard.type('soul')

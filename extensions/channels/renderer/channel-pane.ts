@@ -11,7 +11,6 @@ import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
-import { emblemBadge } from '../../../app/renderer/tab-emblems.ts'
 import type { ChannelEvent, LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line, type PollMissingWhy } from '../rules.ts'
 import {
@@ -31,7 +30,8 @@ import type { FileSource } from '../attachments.ts'
 import type { ChannelsIpc } from '../ipc.ts'
 import { createViewer, type ViewerSnapshot } from './viewer.ts'
 import { DROP_CLOSED, DROP_NO_FILE, DROP_SUB, DROP_TITLE, dragHasFiles } from './viewer-rules.ts'
-import { engineOf } from '../../../app/renderer/agent-ui.ts'
+import { bareMark } from '../../../app/renderer/agent-identity.ts'
+import { identityOf, type Identity } from '../../../app/renderer/agent-identity-rules.ts'
 import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
 import { isPeekModifier } from '../../../app/renderer/link-open.ts'
@@ -192,6 +192,26 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   const paneHolding = (node: Node): ChannelPane | undefined => [...live].find(p => p.element.contains(node))
   /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
   const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
+  /** Who an agent is as the lists draw it: its engine and, in the emblem's place, the emblem its tab wears or its letter (agent-identity.ts). */
+  const identityOfAgent = (id: string, name: string): Identity => identityOf({ kind: ui.agents.get(id)?.kind ?? '', name, seed: id, emblem: ui.panes.personEmblem(id) })
+  /** The engine's cell (`.ch-em`): the agent's engine icon, the generic robot when the app does not know the agent. `crown` rings the owner's. */
+  const engineCell = (ident: Identity, crown: boolean): HTMLElement => {
+    const cell = el('span', `ch-em${crown ? ' crown' : ''}`)
+    if (ident.kind === '') { cell.append(glyph('robot')); return cell }
+    const name = (ICON_NAMES as readonly string[]).includes(ident.engine.icon) ? ident.engine.icon as IconName : 'robot'
+    cell.dataset.engine = ident.kind
+    cell.title = ident.engine.label
+    cell.setAttribute('role', 'img')
+    cell.setAttribute('aria-label', ident.engine.label)
+    cell.append(glyph(name))
+    return cell
+  }
+  /** The emblem's chip or the letter's square, in the emblem's own place. */
+  const markCell = (ident: Identity): HTMLElement => {
+    const m = bareMark(ident.mark)
+    if (ident.mark.type === 'emblem') { m.classList.add('ch-emblem'); m.title = ident.mark.emblem.name }
+    return m
+  }
   const moderatorName = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
   // Attaching files (A1): main looks at the files and stages a pasted print; the daemon copies them on `say`.
   const filesIpc = ui.ipc<ChannelsIpc>()
@@ -1318,6 +1338,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       sub.append(`${this.answer.members.length === 1 ? '1 membro' : `${this.answer.members.length} membros`} · dono: `)
       const owner = this.agentName(h.ownerId, 'ch-oname', h.ownerName)
       hueStyle(owner, h.ownerHue)
+      if (h.ownerId !== undefined) {
+        const ident = identityOfAgent(h.ownerId, h.ownerName)
+        const lead = el('span', 'ch-olead')
+        lead.append(engineCell(ident, false), markCell(ident))
+        sub.append(lead)
+      }
       sub.append(owner)
       if (h.closed) sub.append(' · encerrado')
       this.titleBox.append(glyph(h.closed ? 'lock' : 'chats-circle'), el('span', 'ch-name-title', h.title), sub)
@@ -1437,10 +1463,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.composer.setMembers(this.answer.members.map(m => m.name))
       this.composer.setMarks(new Map(memberRows(this.answer, undefined, noDesk).flatMap((m): Array<[string, string]> =>
         m.muted ? [[m.name, MENTION_TEXT.muted]] : m.tone === 'wait' ? [[m.name, MENTION_TEXT.deaf]] : [])))
-      // The "@" list is by name: two members with the same name cannot tell their engines apart there, so neither gets an icon.
-      const kinds = new Map<string, string | undefined>()
-      for (const m of this.answer.members) kinds.set(m.name, kinds.has(m.name) ? undefined : ui.agents.get(m.id)?.kind)
-      this.composer.setEngines(new Map([...kinds].filter((e): e is [string, string] => e[1] !== undefined)))
+      // The "@" list draws the pair of every member (also homonyms: the pair is what tells them apart).
+      this.composer.setIdentities(this.answer.members.map(m => identityOfAgent(m.id, m.name)))
       this.composer.setAudience(this.answer.members.length)
       if (this.composerSlot.firstChild !== this.composer.element) this.composerSlot.replaceChildren(this.composer.element)
     }
@@ -1583,8 +1607,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       hueStyle(e, r.hue)
       if (!r.continued) {
         const who = el('div', 'ch-who')
-        const em = el('span', `ch-em${r.crown ? ' crown' : ''}${r.mine ? ' me' : ''}`)
-        em.append(glyph(r.mine ? 'user' : r.crown ? 'crown-simple' : 'robot'))
+        const em = this.authorLead(r)
         const role = el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role)
         const dest = el('span', 'ch-dest')
         dest.append(glyph('arrow-bend-down-right'))
@@ -1598,7 +1621,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
             dest.append(n)
           })
         }
-        who.append(em, this.agentName(r.authorId, 'ch-author', r.name), role, dest, el('time', '', r.time))
+        who.append(...em, this.agentName(r.authorId, 'ch-author', r.name), role, dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
       if (r.body.trim() !== '' || !r.files?.length) e.append(this.speech(r.body))
@@ -1622,6 +1645,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       return e
     }
 
+    /** What leads an author's name: the person's own mark ("Você"), or the agent's engine icon and emblem or letter. */
+    private authorLead(r: { mine: boolean; crown: boolean; authorId: string; name: string }): HTMLElement[] {
+      if (r.mine) { const me = el('span', 'ch-em me'); me.append(glyph('user')); return [me] }
+      const ident = identityOfAgent(r.authorId, r.name)
+      return [engineCell(ident, r.crown), markCell(ident)]
+    }
+
     /** A poll's row: the author's header like a speech's (no "para"), then the card. It takes no reaction (only a speech does). */
     private pollRowEl(r: Extract<Row, { kind: 'poll' }>): HTMLElement {
       const e = el('div', 'ch-prow')
@@ -1629,9 +1659,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       hueStyle(e, r.hue)
       e.tabIndex = -1
       const who = el('div', 'ch-who')
-      const em = el('span', `ch-em${r.crown ? ' crown' : ''}${r.mine ? ' me' : ''}`)
-      em.append(glyph(r.mine ? 'user' : r.crown ? 'crown-simple' : 'robot'))
-      who.append(em, this.agentName(r.authorId, 'ch-author', r.name), el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role), el('time', '', r.time))
+      who.append(...this.authorLead(r), this.agentName(r.authorId, 'ch-author', r.name), el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role), el('time', '', r.time))
       e.append(who)
       const card = this.cardFor(r.seq)
       if (card) { e.append(this.pollCardEl(card)); this.nameRow(e, card) }
@@ -2309,21 +2337,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         row.setAttribute('aria-label', memberAria(m))
         hueStyle(row, m.hue)
         const l1 = el('div', 'ch-l1')
-        const em = el('span', `ch-em${m.crown ? ' crown' : ''}`)
-        // The engine's icon (Claude, Soul…) from the agent's kind; the generic robot when the app does not know the member.
-        const kind = ui.agents.get(m.id)?.kind
-        if (kind) {
-          const engine = engineOf(kind)
-          const g = glyph((ICON_NAMES as readonly string[]).includes(engine.icon) ? engine.icon as IconName : 'robot')
-          em.dataset.engine = kind
-          em.title = engine.label
-          em.setAttribute('role', 'img')
-          em.setAttribute('aria-label', engine.label)
-          em.append(g)
-        } else em.append(glyph('robot'))
+        // [engine icon] [emblem or letter] name, the order of the tab.
+        const ident = identityOfAgent(m.id, m.name)
+        const em = engineCell(ident, m.crown)
         // The row's own right-click menu (open channel) is the name's menu too: it bubbles up from the name.
         const name = this.agentName(m.id, 'ch-oname ch-link', m.name, !this.isClosed())
-        l1.append(em, name)
+        l1.append(em, markCell(ident), name)
         // The narrow row is one line: the role, the muted mark and the state as a dot ride on it (the second line is away there).
         const nrole = el('span', 'ch-nrole')
         nrole.append(el('span', 'ch-role', m.role))
@@ -2344,12 +2363,6 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           const warn = el('span', 'ch-warnlbl', 'não ouve')
           warn.setAttribute('aria-hidden', 'true')
           l1.append(warn)
-        }
-        if (m.emblem) {
-          const chip = emblemBadge(m.emblem)
-          chip.classList.add('ch-emblem')
-          chip.title = m.emblem.name
-          l1.append(chip)
         }
         if (!this.isClosed()) {
           // The owner's row has only the "⋯"; the others show Calar and Tirar on hover and focus, and the "⋯" always.

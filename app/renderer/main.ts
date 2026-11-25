@@ -3108,13 +3108,13 @@ let menuOpener: HTMLElement | undefined
 /** While set, showContextMenu collects its items here instead of showing them (a pane type's menu read as data). */
 let menuCapture: MenuEntry[] | undefined
 
-/** A menu row's icon; a name the app does not have draws no icon (an extension's typo must not take the whole menu down). */
 /** A menu row of a terminal pane: after the engine's icon, the emblem the tab wears or the agent's letter (agent-identity.ts). */
 function leadOf(panelId: string, name: string): { lead?: HTMLElement } {
   const s = slots.get(panelId)
   return s ? { lead: markOf(identityOf({ kind: s.kind, name, seed: panelId, emblem: emblemOfPanel(panelId) })) } : {}
 }
 
+/** A menu row's icon; a name the app does not have draws no icon (an extension's typo must not take the whole menu down). */
 function rowIcon(name: string): SVGSVGElement[] {
   return (ICON_NAMES as readonly string[]).includes(name) ? [icon(name as IconName)] : []
 }
@@ -3303,9 +3303,10 @@ function fromExtMenu(entries: readonly ContextMenuRow[]): MenuEntry[] {
   return entries.map((e): MenuEntry => {
     if (e === 'sep') return SEP
     if ('heading' in e) return { heading: String(e.heading) }
-    const { children, hint, ...item } = e
+    const { children, hint, agent, ...item } = e
     const trail = hint ? Object.assign(document.createElement('kbd'), { textContent: hint }) : undefined
-    return { ...item, icon: item.icon as IconName, ...(trail ? { trail } : {}), ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
+    const lead = agent !== undefined ? leadOf(agent, findPanel(agent)?.api.title ?? agent) : {}
+    return { ...item, icon: item.icon as IconName, ...(trail ? { trail } : {}), ...lead, ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
   })
 }
 

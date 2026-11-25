@@ -9,6 +9,8 @@
   flex: none; display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 12px;
   border-bottom: 1px solid var(--border); user-select: none;
 }
+.fa-inv-lead { display: inline-flex; flex: none; margin-right: 6px; }
+.fa-inv-lead:empty { display: none; }
 .fa-inv-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fa-inv-top .action-bar { flex: none; }
 .fa-inv-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 12px; }

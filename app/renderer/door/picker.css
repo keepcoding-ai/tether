@@ -39,7 +39,9 @@ dialog.picker .pk-field input[type="text"]:focus { outline: none; }
 .pk-detail { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: 11.5px; }
 /* The person's emblem at the row's right end (PickItem.emblem): the tab's chip; it never shrinks, the detail truncates before it. */
 .pk-item .pk-emblem { flex: none; margin-left: auto; }
-/* An agent list: the engine's icon in a column of its own at the left (same width in every row, so names line up), and a slot as wide as the emblem's chip kept at the right whether or not the row wears one. */
+/* In an agent list the emblem stands in the avatar's place (after the engine's icon), so it does not go to the right end. */
+.pk-item .pk-engine ~ .pk-emblem { margin-left: 0; }
+/* An agent list: the engine's icon in a column of its own at the left (same width in every row, so names line up); the emblem or the letter follows it. */
 .pk-engine { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 16px; color: var(--fg-dim); }
 .pk-engine .ph { width: 16px; height: 16px; }
 .pk-slot { flex: none; width: 16px; height: 16px; margin-left: auto; }

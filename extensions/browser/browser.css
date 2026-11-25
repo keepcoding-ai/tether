@@ -163,6 +163,13 @@
   font-size: 10px; font-weight: 600; line-height: 1; max-width: none;
 }
 .br-web-tab .br-web-tab-owner[hidden] { display: none; }
+/* The tight place: the owner's emblem or letter, the engine's icon as a seal on its corner (agent-identity.ts engineSeal). */
+.br-web-tab .br-web-tab-owner { position: relative; overflow: visible; }
+.br-web-tab .br-web-tab-owner[data-mark="emblem"] { background: transparent; border: 0; }
+/* The owner on the pill and on the pad's chip: the pair, after the state dot. */
+.br-web-owner-id { display: inline-flex; align-items: center; flex: none; }
+.br-web-owner-id:empty { display: none; }
+.br-web-owner .aid-eng { color: inherit; }
 .br-web-tab-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .br-web-tab-dot[hidden] { display: none; }
 .br-web-tab[data-activity="agent"] .br-web-tab-dot { background: var(--ok); }

@@ -217,9 +217,12 @@ export class Picker {
             } else eng.setAttribute('aria-hidden', 'true')
             li.append(eng)
           }
-          li.append(ic, text)
-          if (row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem))
-          else if (agentList) { const slot = document.createElement('span'); slot.className = 'pk-slot'; slot.setAttribute('aria-hidden', 'true'); li.append(slot) }
+          // An agent's row: [engine icon] [emblem OR letter] name; the emblem takes the letter's place. Another list keeps the emblem at the right end.
+          if (agentList && row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem), text)
+          else {
+            li.append(ic, text)
+            if (row.item.emblem && makeBadge) li.append(makeBadge(row.item.emblem))
+          }
           list.append(li)
           // The featured row is apart from the rest: a rule under it, when there is a rest.
           if (row.featured && rows.length > 1) { const sep = document.createElement('li'); sep.className = 'pk-sep'; sep.setAttribute('role', 'presentation'); list.append(sep) }

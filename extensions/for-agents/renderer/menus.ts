@@ -33,7 +33,7 @@ export type Action =
 export type Row =
   | { kind: 'info'; text: string }
   | { kind: 'sep' }
-  | { kind: 'item'; icon: string; label: string; act: Action; pin?: MenuPin; danger?: boolean; disabled?: boolean }
+  | { kind: 'item'; icon: string; label: string; act: Action; pin?: MenuPin; danger?: boolean; disabled?: boolean; agent?: OwnerId }
   | { kind: 'submenu'; icon: string; label: string; children: Row[] }
 
 /** A request waiting on a pane, when the app can tell (the pane's attention, routed to its owner or the person's own). */
@@ -73,7 +73,7 @@ export function effOf(f: MenuFacts, paneId: string): Effective {
 }
 
 const liveOwner = (o: Ownership | undefined): OwnerId | undefined => (o && !o.ended ? o.owner : undefined)
-const item = (icon: string, label: string, act: Action, extra: { pin?: MenuPin; danger?: boolean } = {}): Row => ({ kind: 'item', icon, label, act, ...extra })
+const item = (icon: string, label: string, act: Action, extra: { pin?: MenuPin; danger?: boolean; agent?: OwnerId } = {}): Row => ({ kind: 'item', icon, label, act, ...extra })
 const pane = (id: string): Target => ({ kind: 'pane', id })
 const desk = (id: string): Target => ({ kind: 'desk', id })
 
@@ -96,7 +96,7 @@ export function deskMenu(f: MenuFacts, deskId: string): Row[] {
   const n = f.nameOf(o.owner)
   const hand = f.deskHand.get(deskId)
   const frozen = f.frozen.get(o.owner)
-  const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: o.owner })
+  const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: o.owner }, { agent: o.owner })
   const takeIt = item('hand-grabbing', L.takeDesk, { do: 'take', target: t })
   const inventory = item('sliders-horizontal', L.inventoryDesk(n), { do: 'inventory', target: t })
   const passIt = item('swap', L.giveDeskOther, { do: 'give', target: t })
@@ -216,7 +216,7 @@ export function paneMenu(f: MenuFacts, paneId: string): Row[] {
       pane1.push(inventory)
     } else {
       const w = f.waiting?.(paneId)
-      const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: cmd }, { pin: 'icon' })
+      const goTo = item('arrow-square-out', L.goTo(n), { do: 'go-owner', owner: cmd }, { pin: 'icon', agent: cmd })
       const pause = item('pause', eff.via === 'self' ? L.pauseSelf(n) : L.pausePane(n), { do: 'pause', target: t }, eff.via === 'self' ? {} : { pin: 'icon' })
       if (eff.via === 'desk') {
         const take = item('hand-grabbing', w ? L.takeAndAnswer : L.take, { do: 'take', target: t }, { pin: 'icon' })
@@ -247,7 +247,7 @@ export function toRows(rows: readonly Row[], run: (act: Action) => void): Contex
     if (r.kind === 'info') out.push({ heading: r.text })
     else if (r.kind === 'sep') out.push('sep')
     else if (r.kind === 'item') {
-      out.push({ icon: r.icon, label: r.label, run: () => run(r.act), ...(r.pin ? { pin: r.pin } : {}), ...(r.danger ? { danger: true } : {}), ...(r.disabled ? { disabled: true } : {}) })
+      out.push({ icon: r.icon, label: r.label, run: () => run(r.act), ...(r.pin ? { pin: r.pin } : {}), ...(r.danger ? { danger: true } : {}), ...(r.disabled ? { disabled: true } : {}), ...(r.agent ? { agent: r.agent } : {}) })
     } else {
       out.push({ icon: r.icon, label: r.label, run: () => {}, children: toRows(r.children, run) })
     }
