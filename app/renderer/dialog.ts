@@ -5,12 +5,19 @@
 // between cards. Also exports the choice-card renderer, shared with the panel overlays.
 import type { ChoiceTone, DialogAnswer, DialogChoice, DialogSpec } from '../shared/dialog.ts'
 import { icon, ICON_NAMES, type IconName } from './icons.ts'
+import { markOf } from './agent-identity.ts'
+import type { HueName } from '../shared/palette.ts'
 
 const ICON_SET = new Set<string>(ICON_NAMES)
 
 /** The spec names icons as strings (shared types); an unknown name falls back to a neutral mark. */
 function iconEl(name: string): SVGSVGElement {
   return icon((ICON_SET.has(name) ? name : 'question') as IconName)
+}
+
+/** The agent's emblem or letter as the context block carries it (the spec is plain data: it may cross windows). */
+function contextMark(m: NonNullable<NonNullable<DialogSpec['context']>['mark']>): HTMLElement {
+  return markOf(m.type === 'emblem' ? { mark: { type: 'emblem', emblem: { name: m.emblem.name, color: m.emblem.color as HueName, icon: m.emblem.icon } } } : { mark: m })
 }
 
 const TONE_ORDER: Record<ChoiceTone, number> = { safe: 0, neutral: 1, destructive: 2 }
@@ -101,7 +108,9 @@ export function askDialog(spec: DialogSpec, host: HTMLElement = document.body): 
       const name = document.createElement('div'); name.className = 'ctx-name'; name.textContent = spec.context.name
       text.append(name)
       for (const line of spec.context.lines) { const l = document.createElement('div'); l.className = 'ctx-line'; l.textContent = line; text.append(l) }
-      ctx.append(icon, text)
+      // An agent: the engine's icon, then its emblem or letter, then the name (agent-identity.ts).
+      if (spec.context.mark) ctx.append(icon, contextMark(spec.context.mark), text)
+      else ctx.append(icon, text)
       if (spec.context.status) {
         const st = document.createElement('span'); st.className = `ctx-status ${spec.context.status.tone}`; st.textContent = spec.context.status.label
         ctx.append(st)

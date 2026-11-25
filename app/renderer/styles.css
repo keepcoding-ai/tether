@@ -1813,6 +1813,28 @@ body.dim-unfocused:not(:has(.frame:focus-within, .frame.kbd-focused, .frame.draw
 .emb-chip.emb-none { box-shadow: inset 0 0 0 1px var(--border); }
 .emb-chip.emb-new { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .emb-chip.emb-new .ph { width: 14px; height: 14px; }
+/* The tab's chip with no emblem worn: the agent's letter in its hue (agent-identity.ts), in the emblem's own place. */
+.emb-chip .emb-l { display: none; }
+.emb-chip.is-letter svg { display: none; }
+.emb-chip.is-letter .emb-l { display: inline; font-size: 10px; font-weight: 700; line-height: 1; }
+.emb-chip.is-letter { color: hsl(var(--aid-hue, 0) var(--mark-s) var(--mark-fg-l)); background: hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-bg-a)); box-shadow: inset 0 0 0 1px hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-line-a)); }
+
+/* --- the agent's identity (agent-identity.ts): [engine icon] [emblem or letter] name --- */
+.aid { display: inline-flex; align-items: center; gap: 4px; flex: none; vertical-align: middle; }
+.aid-eng { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; height: 14px; color: var(--fg-dim); }
+.aid-eng svg { width: 14px; height: 14px; }
+.aid-mark { display: inline-flex; flex: none; border-radius: 4px; }
+.aid-mark.crown { box-shadow: 0 0 0 1.5px hsl(var(--aid-hue, var(--oh, 0)) var(--mark-solid-s) var(--mark-solid-l)); }
+.aid-mark .emb-chip { margin: 0; }
+.aid-letter { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; flex: none; font-size: 10px; font-weight: 700; line-height: 1;
+  color: hsl(var(--aid-hue, 0) var(--mark-s) var(--mark-fg-l)); background: hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-bg-a));
+  box-shadow: inset 0 0 0 1px hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-line-a)); }
+/* Compact: the mark at full size, the engine a small seal on its lower right corner. */
+.aid.compact { position: relative; gap: 0; }
+.aid.compact .aid-eng { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg-2); color: var(--fg); }
+.aid.compact .aid-eng svg { width: 8px; height: 8px; }
+.aid-view { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.aid-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ctx-menu.emb-menu .emb-dim { color: var(--fg-dim); }
 #ctx-menu.emb-menu .emb-mname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

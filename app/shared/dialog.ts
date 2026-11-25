@@ -23,7 +23,10 @@ export interface DialogChoice {
 
 /** The "which panel / what state" block under the title. */
 export interface DialogContext {
+  /** The engine's icon of an agent (or the block's own icon). */
   icon: string
+  /** An agent's emblem or letter, drawn between the icon and the name (agent-identity.ts). */
+  mark?: { type: 'emblem'; emblem: { name: string; color: string; icon: string } } | { type: 'letter'; letter: string; hue: number }
   name: string
   /** Secondary lines (folder, session id). */
   lines: string[]

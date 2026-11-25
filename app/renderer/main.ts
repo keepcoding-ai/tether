@@ -91,7 +91,9 @@ import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange
 import type { DeskView, PaneInfo, PickItem } from './ext-api.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
-import { type EmblemHost, emblemChip, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
+import { type EmblemHost, emblemOfPanel, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
+import { identityOf, markOf } from './agent-identity.ts'
+import { letterOf } from './agent-identity-rules.ts'
 import { extensionRows } from './extensions-list.ts'
 import { agentPaneChanges, agentPaneOf, loosePaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
@@ -524,7 +526,7 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
         },
         showHidden: (x, y, list, pick, opener) => showContextMenu(x, y, list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, run: () => pick(t.id) })), opener),
         isAsleep: id => asleepPanes.has(id),
-        showAsleep: (x, y, list, wake, opener) => showContextMenu(x, y, [{ heading: 'Guias hibernadas' }, ...list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, trail: emblemChip(t.id), run: () => { wake(t.id); void startSlot(t.id) } }))], opener),
+        showAsleep: (x, y, list, wake, opener) => showContextMenu(x, y, [{ heading: 'Guias hibernadas' }, ...list.map(t => ({ icon: t.icon, label: t.label, attention: t.attention, ...leadOf(t.id, t.label), run: () => { wake(t.id); void startSlot(t.id) } }))], opener),
         paneMenu: (id, x, y, opener) => {
           menuOpener = opener
           // A pad that absorbs its header: its frame's "⋯" is the pad's menu too (the pad's items after the pane's).
@@ -1622,7 +1624,8 @@ function pickPeek(): void {
     const route = peekRoute(s, tab !== undefined, tab ? tabInView(tabPlaceOf(s.slotId, tab)) : true)
     if (route !== 'card' && route !== 'lend') continue
     const h = peekHeader(s, now)
-    items.push({ value: s.slotId, label: h.title, detail: h.text, engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: Array.from(h.title.trim())[0]?.toUpperCase() ?? '?', hue: agentHue(s.slotId) })
+    const emblem = emblemOfPanel(s.slotId)
+    items.push({ value: s.slotId, label: h.title, detail: h.text, engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: letterOf(h.title), ...(emblem ? { emblem } : {}), hue: agentHue(s.slotId) })
   }
   void door.pickList<string>({ title: 'Espiar agente', placeholder: 'Buscar agente…', items, emptyText: 'Nenhum agente vivo fora da tela.' }).then(id => { if (id) peek(id) })
 }
@@ -3083,7 +3086,7 @@ async function sendSetProfile(slot: SlotState, profileId: string | null, name: s
  * `pin`: how the item also shows outside the menu (ext-api MenuPin). `standalone`: it acts without the pane on screen (a closed
  * tab's menu runs it as is). `tip`: tooltip. `children`: a submenu row (menu-submenus.ts), one level; `run` is not called.
  */
-interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string; trail?: HTMLElement; children?: MenuEntry[] }
+interface MenuItem { icon: IconName; label: string; run(): void; danger?: boolean; attention?: boolean; disabled?: boolean; checked?: boolean; pin?: MenuPin; standalone?: boolean; tip?: string; trail?: HTMLElement; lead?: HTMLElement; children?: MenuEntry[] }
 /** A thin line between groups of items. */
 const SEP = 'sep' as const
 /** A line naming what the items under it act on (a pad's title over its items); not an item. */
@@ -3106,6 +3109,12 @@ let menuOpener: HTMLElement | undefined
 let menuCapture: MenuEntry[] | undefined
 
 /** A menu row's icon; a name the app does not have draws no icon (an extension's typo must not take the whole menu down). */
+/** A menu row of a terminal pane: after the engine's icon, the emblem the tab wears or the agent's letter (agent-identity.ts). */
+function leadOf(panelId: string, name: string): { lead?: HTMLElement } {
+  const s = slots.get(panelId)
+  return s ? { lead: markOf(identityOf({ kind: s.kind, name, seed: panelId, emblem: emblemOfPanel(panelId) })) } : {}
+}
+
 function rowIcon(name: string): SVGSVGElement[] {
   return (ICON_NAMES as readonly string[]).includes(name) ? [icon(name as IconName)] : []
 }
@@ -3172,7 +3181,7 @@ function showContextMenu(x: number, y: number, items: MenuEntry[], explicitOpene
     if (item.danger) li.classList.add('danger')
     if (item.disabled) li.setAttribute('aria-disabled', 'true')
     if (item.tip) li.title = item.tip
-    li.append(...rowIcon(item.icon), document.createTextNode(item.label))
+    li.append(...rowIcon(item.icon), ...(item.lead ? [item.lead] : []), document.createTextNode(item.label))
     if (item.checked) li.append(icon('check', 'ctx-check'))
     if (item.trail) li.append(item.trail)
     if (item.attention) { const dot = document.createElement('span'); dot.className = 'attn-dot'; dot.setAttribute('aria-label', 'pede atenção'); li.append(dot) }
@@ -3863,7 +3872,7 @@ const commandHost: CommandHost = {
   asleepMenu: () => {
     const ids = deskPanes(desks.activeDeskId).map(p => p.id).filter(id => asleepPanes.has(id))
     const items: MenuEntry[] = ids.length
-      ? ids.map(id => ({ icon: (slots.get(id) ? KIND_ICON[slots.get(id)!.kind] : undefined) ?? 'terminal-window', label: findPanel(id)?.api.title ?? id, trail: emblemChip(id), run: () => { findPanel(id)?.api.setActive(); void startSlot(id) } }))
+      ? ids.map(id => ({ icon: (slots.get(id) ? KIND_ICON[slots.get(id)!.kind] : undefined) ?? 'terminal-window', label: findPanel(id)?.api.title ?? id, ...leadOf(id, findPanel(id)?.api.title ?? id), run: () => { findPanel(id)?.api.setActive(); void startSlot(id) } }))
       : [{ icon: 'moon' as const, label: 'Nenhuma guia hibernada nesta mesa', run: () => {} }]
     showContextMenu(Math.round(innerWidth / 2) - 120, 80, [{ heading: 'Guias hibernadas' }, ...items])
   },

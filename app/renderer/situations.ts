@@ -9,6 +9,8 @@ import type { DialogContext, DialogSpec } from '../shared/dialog.ts'
 import type { LinkAssociation } from '../shared/api.ts'
 import { isUnsafe } from '../../src/core/unsafe.ts'
 import { KIND_ICON } from './icons.ts'
+import { identityOf } from './agent-identity-rules.ts'
+import { emblemOfPanel } from './tab-emblems.ts'
 import { pauseFirstConsequence } from './sessions-rules.ts'
 
 /** "o Claude", "o soul", "o shell": the subject of every sentence about the panel. */
@@ -31,7 +33,9 @@ function panelContext(s: SlotState): DialogContext {
     : s.status === 'starting' ? { label: 'iniciando', tone: 'warn' as const }
     : s.status === 'queued' ? { label: 'na fila para iniciar', tone: 'warn' as const }
     : { label: 'nada rodando', tone: 'dim' as const }
-  return { icon: KIND_ICON[s.kind] ?? 'terminal-window', name: s.title ?? s.name ?? folderName(s.cwd), lines, status }
+  const name = s.title ?? s.name ?? folderName(s.cwd)
+  const { mark } = identityOf({ kind: s.kind, name, seed: s.slotId, emblem: emblemOfPanel(s.slotId) })
+  return { icon: KIND_ICON[s.kind] ?? 'terminal-window', mark, name, lines, status }
 }
 
 /**

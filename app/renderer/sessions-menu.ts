@@ -9,6 +9,8 @@ import type { SlotState } from '../../src/daemon/protocol.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
 import type { RequestBody } from '../shared/api.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
+import { identityOf, markOf } from './agent-identity.ts'
+import { emblemOfPanel } from './tab-emblems.ts'
 import { canResume, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
 import { bulkCloseAction, OPEN_ELSEWHERE_LABEL, pauseAction, rowMenuPlan, sessionRows, sessionsCounter, sessionsSummary, type RowGroup, type SessionRow } from './sessions-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
@@ -236,7 +238,9 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       ev.stopPropagation()
       host.contextMenu(ev.clientX, ev.clientY, rowMenu(r.slotId, group))
     })
-    row.append(led, kind, tx, acts)
+    // The engine's icon, then the emblem the pane wears or the agent's letter, then the name (agent-identity.ts).
+    const mark = markOf(identityOf({ kind: kindName, name: r.name, seed: r.slotId, emblem: emblemOfPanel(r.slotId) }))
+    row.append(led, kind, mark, tx, acts)
     return row
   }
 

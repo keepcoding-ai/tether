@@ -29,7 +29,9 @@ import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
 import { RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
-import { mountTabEmblem } from './tab-emblems.ts'
+import { mountTabEmblem, setTabLetter } from './tab-emblems.ts'
+import { letterOf } from './agent-identity-rules.ts'
+import { agentHue } from '../shared/agent-color.ts'
 import { focusIfStillActive, followActive, type ActivePanelApi } from './focus-follow.ts'
 import { startProbe } from '../../src/core/perf-probe.ts'
 import { perfKey } from './perf-collector.ts'
@@ -1021,6 +1023,7 @@ export class SlotTab implements ITabRenderer {
       // Before the daemon answers: the layout's hint and a "starting" dot.
       const hint = this.hint
       setIcon(this.kind, hint ? KIND_ICON[hint.kind] ?? 'terminal-window' : 'question')
+      setTabLetter(this.api.id, hint ? { letter: letterOf(this.api.title ?? this.api.id), hue: agentHue(this.api.id) } : undefined)
       setIfChanged(this.text, this.api.title ?? this.api.id)
       setClass(this.dot, 'dot starting')
       if (this.unsafe.hidden !== !hint?.unsafe) this.unsafe.hidden = !hint?.unsafe
@@ -1029,6 +1032,7 @@ export class SlotTab implements ITabRenderer {
       return
     }
     setIcon(this.kind, s ? KIND_ICON[s.kind] ?? 'terminal-window' : 'question')
+    setTabLetter(this.api.id, s ? { letter: letterOf(this.api.title ?? this.api.id), hue: agentHue(this.api.id) } : undefined)
     setIfChanged(this.text, this.api.title ?? this.api.id)
     // A hibernated pane: a closed eye instead of the "ended" dot. A suspended one: a small leaf (it still counts as working).
     const asleep = !!s && effectiveStatus(s) === 'exited' && !!this.host.isAsleep?.(this.api.id)

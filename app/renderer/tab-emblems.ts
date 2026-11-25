@@ -79,15 +79,32 @@ function newChip(): Chip {
   el.hidden = true
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.append(document.createElementNS('http://www.w3.org/2000/svg', 'use'))
-  el.append(svg)
+  const l = document.createElement('span')
+  l.className = 'emb-l'
+  el.append(svg, l)
   return el
 }
 
-/** Writes the chip only when what it shows differs. */
-function paint(el: Chip, e: Emblem | undefined): void {
-  const key = e ? `${e.color}|${e.icon}|${displayName(e)}` : ''
+/** The agent's letter a tab shows when it wears no emblem (agent-identity.ts): set by the panel on each render. */
+export interface TabLetter { letter: string; hue: number }
+const letters = new Map<string, TabLetter>()
+
+/** Writes the chip only when what it shows differs: the emblem, else the letter, else nothing. */
+function paint(el: Chip, e: Emblem | undefined, letter?: TabLetter): void {
+  const key = e ? `${e.color}|${e.icon}|${displayName(e)}` : letter ? `L|${letter.letter}|${letter.hue}` : ''
   if (el.embKey === key) return
   el.embKey = key
+  if (!e && letter) {
+    el.classList.add('is-letter')
+    el.style.background = ''
+    el.style.color = ''
+    el.style.setProperty('--aid-hue', String(letter.hue))
+    el.lastElementChild!.textContent = letter.letter
+    el.title = ''
+    el.hidden = false
+    return
+  }
+  el.classList.remove('is-letter')
   if (!e) { el.hidden = true; return }
   addSymbols([e.icon])
   el.style.background = `var(--x-${e.color})`
@@ -127,7 +144,22 @@ function repaintPanel(panelId: string): void {
   const set = chips.get(panelId)
   if (!set) return
   const e = shownEmblem(lib, worn.get(panelId))
-  for (const c of set) paint(c, e)
+  const letter = letters.get(panelId)
+  for (const c of set) paint(c, e, letter)
+}
+
+/** The tab shows this letter while it wears no emblem (undefined: none, as for a pane that is no agent). Repaints at once. */
+export function setTabLetter(panelId: string, letter: TabLetter | undefined): void {
+  const was = letters.get(panelId)
+  if (was?.letter === letter?.letter && was?.hue === letter?.hue) return
+  if (letter) letters.set(panelId, letter); else letters.delete(panelId)
+  repaintPanel(panelId)
+}
+
+/** The emblem a mounted tab wears now, as the identity piece reads it (agent-identity.ts); undefined when it wears none. */
+export function emblemOfPanel(panelId: string): PaneEmblem | undefined {
+  const e = shownEmblem(lib, worn.get(panelId))
+  return e ? { name: displayName(e), color: e.color, icon: e.icon } : undefined
 }
 
 function repaintAll(): void { for (const id of chips.keys()) repaintPanel(id) }
@@ -141,13 +173,13 @@ export function mountTabEmblem(kind: HTMLElement, api: { id: string }, params: u
   let set = chips.get(id)
   if (!set) chips.set(id, set = new Set())
   set.add(el)
-  paint(el, shownEmblem(lib, worn.get(id)))
+  paint(el, shownEmblem(lib, worn.get(id)), letters.get(id))
   return () => {
     el.remove()
     const s = chips.get(id)
     if (!s) return
     s.delete(el)
-    if (!s.size) { chips.delete(id); worn.delete(id) }
+    if (!s.size) { chips.delete(id); worn.delete(id); letters.delete(id) }
   }
 }
 

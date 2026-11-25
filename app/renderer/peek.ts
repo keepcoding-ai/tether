@@ -22,6 +22,8 @@
 // or screen, Esc is always the content's). The keyboard goes back to the exact element that had it before the card opened.
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { icon, KIND_ICON, type IconName } from './icons.ts'
+import { identityOf, markOf } from './agent-identity.ts'
+import { emblemOfPanel } from './tab-emblems.ts'
 import type { TerminalPanel } from './panel.ts'
 import { backButton, closeTip, lentNotice, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type PeekMenuItem, type PeekOpenButton, type PeekTop } from './peek-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
@@ -84,6 +86,9 @@ export class PeekCard {
   private readonly card: HTMLElement
   private readonly body: HTMLElement
   private readonly kind: HTMLElement
+  /** The emblem the pane wears, or the agent's letter: the identity piece's mark, right after the engine's icon. */
+  private readonly mark: HTMLElement
+  private markKey = ''
   private readonly title: HTMLElement
   private readonly state: HTMLElement
   private readonly foot: HTMLElement
@@ -122,11 +127,13 @@ export class PeekCard {
     this.backBtn.addEventListener('click', () => this.back())
     const id = el('div', 'peek-id')
     this.kind = el('span', 'peek-kind')
+    this.mark = el('span', 'peek-mark-slot')
+    this.mark.hidden = true
     this.title = el('span', 'peek-title')
     this.state = el('span', 'peek-state')
     // The state changes while the card is open (working, waiting, ended): a screen reader hears it, politely.
     this.state.setAttribute('aria-live', 'polite')
-    id.append(this.kind, this.title, this.state)
+    id.append(this.kind, this.mark, this.title, this.state)
     const acts = el('div', 'peek-acts')
     this.openBtn = el('button', 'peek-open')
     this.openBtn.type = 'button'
@@ -319,6 +326,7 @@ export class PeekCard {
       const s = cur.screen
       if (this.kind.dataset.icon !== s.icon) { this.kind.dataset.icon = s.icon; this.kind.replaceChildren(icon(s.icon)) }
       this.kind.className = 'peek-kind screen'
+      this.mark.hidden = true
       if (this.title.textContent !== s.title) this.title.textContent = s.title
       this.state.hidden = true
       this.state.replaceChildren()
@@ -338,6 +346,7 @@ export class PeekCard {
     this.kind.className = `peek-kind ${kind}`
     const h = s ? peekHeader(s, Date.now()) : { title: cur.slotId, state: 'ended' as const, text: 'encerrada' }
     if (this.title.textContent !== h.title) this.title.textContent = h.title
+    this.paintMark(cur.slotId, kind, h.title)
     this.state.hidden = false
     this.state.className = `peek-state ${h.state}`
     if (this.state.textContent !== h.text) { this.state.replaceChildren(Object.assign(document.createElement('span'), { className: 'dot' }), document.createTextNode(h.text)) }
@@ -349,6 +358,16 @@ export class PeekCard {
     this.moreBtn.disabled = h.state === 'ended'
     const foot = peekFoot(s?.kind, hints, h.state === 'ended')
     if (this.foot.textContent !== foot) this.foot.textContent = foot
+  }
+
+  /** Redraws the mark only when the emblem, the name's initial or the slot changed (the card repaints on every state change). */
+  private paintMark(slotId: string, kind: string, name: string): void {
+    const id = identityOf({ kind, name, seed: slotId, emblem: emblemOfPanel(slotId) })
+    const key = id.mark.type === 'emblem' ? `e|${id.mark.emblem.name}|${id.mark.emblem.color}|${id.mark.emblem.icon}` : `l|${id.mark.letter}|${id.mark.hue}`
+    this.mark.hidden = false
+    if (key === this.markKey) return
+    this.markKey = key
+    this.mark.replaceChildren(markOf(id))
   }
 
   /** The "⋯" menu at (x, y) (the screen's own right-click on its header asks for it: ext-api panes.showTabMenu). */
