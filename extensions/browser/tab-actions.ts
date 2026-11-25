@@ -124,6 +124,22 @@ export function giveTabDialog(agent: string, title: string): DialogSpec {
   }
 }
 
+/** The give did not happen (the agent's new tab did not open or load, or the tab was no longer hers to give): hers stays hers. */
+export function giveFailedDialog(agent: string, outcome: string): DialogSpec {
+  const why = outcome === 'failed' ? 'A guia nova não abriu a página a tempo.'
+    : outcome === 'no-agent' ? `${agent} não está mais vivo.`
+    : outcome === 'full' ? `${agent} já tem guias demais.`
+    : 'A guia não estava mais com você.'
+  return {
+    situation: 'browser.give-failed',
+    tone: 'warn',
+    icon: 'shield-warning',
+    title: `A guia não foi entregue a ${agent}`,
+    message: `${why} Nada mudou: a guia continua sua.`,
+    choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'A guia continua com você.', tone: 'safe' }],
+  }
+}
+
 /** The question before closing a tab the agent is using. */
 export function closeTabDialog(agent: string, title: string): DialogSpec {
   return {

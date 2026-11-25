@@ -4,7 +4,8 @@
 //      answer reaches the page and the page goes on;
 //   2. `<input type=file>` opens the tether's chooser (stood in by a list with one file: no window opens in a test) and the page
 //      receives the file;
-//   3. a download lands in the `person` folder and the pad's "Baixados" lists it under "Você";
+//   3. a download lands in the system's Downloads folder (a test build: a folder of its home), never in the agents' tree, and the
+//      pad's "Baixados" lists it under "Você";
 //   4. Ctrl+L typed with the focus inside the page opens the address field (the page never sees it); her tab throttles in the
 //      background;
 //   5. on an AGENT's tab (control `agent`) a dialog is not answered by the tether (no band; it waits for the agent's CDP), Ctrl+L
@@ -41,13 +42,14 @@ type Tabs = {
   registry: { list(): { tabId: string; ownerSlotId: string; url: string }[]; surface(id: string): { debugger: { send(m: string, p?: object): Promise<unknown> } } | undefined }
   create(owner: string, url: string, ticket?: boolean | string): Promise<{ tabId: string }>
   eval(tabId: string, code: string): Promise<unknown>
-  control: { view(id: string): { holder: string } }
+  control: { view(id: string): { holder: string }; take(id: string): void }
   setChooser(paths: string[] | null): void
   chooserCalls(): number
   pageDialogs(): { tabId: string; kind: string }[]
   throttling(tabId: string): boolean | undefined
   ctrlKey(tabId: string, key: string): void
   downloadsDir(): string
+  personDownloadsDir(): string
 }
 
 const pipe = `\\\\.\\pipe\\tether-brpage-${process.pid}`
@@ -159,10 +161,12 @@ test('browser: the page in her hands (dialogs, chooser, downloads, Ctrl+L); an a
     await until('the tether\'s chooser opened', async () => (await B(t => t.chooserCalls())) === 1)
     assert.equal(await until('the page received the file', async () => { const v = await pageEval(mine, 'window.__file'); return v ? v : undefined }), 'escolhido.txt:ARQUIVO-ESCOLHIDO')
 
-    // ---- 3. a download of hers: the person folder, "Baixados" under "Você" ----
+    // ---- 3. a download of hers: the system's Downloads folder (its stand-in), "Baixados" under "Você" ----
     await pageEval(mine, `document.getElementById('dl').click(); 1`)
-    const folder = join(await B(t => t.downloadsDir()), 'person')
-    await until('her download saved in the person folder', async () => existsSync(join(folder, 'arquivo.txt')))
+    const folder = await B(t => t.personDownloadsDir())
+    assert.ok(folder.startsWith(home), 'a test build never writes to the real Downloads folder')
+    await until('her download saved in the Downloads folder', async () => existsSync(join(folder, 'arquivo.txt')))
+    assert.equal(existsSync(join(await B(t => t.downloadsDir()), 'person')), false, 'nothing of hers in the agents\' downloads tree')
     await win.evaluate(() => window.__tether.browserPadOpen())
     const pad = await until('"Baixados" lists it', async () => {
       const p = await win.evaluate(() => window.__tether.browserPad())
@@ -202,6 +206,13 @@ test('browser: the page in her hands (dialogs, chooser, downloads, Ctrl+L); an a
     await pageEval(agentTab, `document.getElementById('f').click(); 1`)
     await sleep(800)
     assert.equal(await B(t => t.chooserCalls()), 1, 'the tether\'s chooser never opens for an agent\'s tab')
+    assert.equal(await pageEval(agentTab, 'window.__file'), '')
+    // Temper N3-1: taken by her ("Assumir"), the agent's tab still gets no tether chooser (the agent's upload consent is the way).
+    await B((t, id) => t.control.take(id), agentTab)
+    await until('she holds the agent\'s tab', async () => (await B((t, id) => t.control.view(id).holder, agentTab)) === 'user')
+    await pageEval(agentTab, `document.getElementById('f').click(); 1`)
+    await sleep(800)
+    assert.equal(await B(t => t.chooserCalls()), 1, 'no tether chooser on an agent\'s tab she took')
     assert.equal(await pageEval(agentTab, 'window.__file'), '')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})

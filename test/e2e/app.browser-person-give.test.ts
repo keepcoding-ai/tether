@@ -3,16 +3,16 @@
 //   1. opens a tab of her own on a page with a field, after another page (so the tab has a history), and types in the field
 //      without sending; the agent's connection (discovering targets) sees none of it;
 //   2. gives the tab to Sonda from the tab's menu: the agent picker (the core's list), then the one-line question;
-//   3. the page reloaded before the agent saw it: the field is empty, the history is gone (no way back to her page), the page no
-//      longer slows down out of view, the tab is the agent's (owner, control `agent`, the shield on); her local-network grant key
-//      is not involved (the local network is allowed here: the agent's own navigation needs no question);
+//   3. the agent gets a NEW tab at the same address, in the place of hers, and hers closes (out of the closed history): the field
+//      is empty, there is no history (no way back to her page), the page does not slow down out of view, the tab is the agent's
+//      (owner, control `agent`, the shield on);
 //   4. the agent got `Target.targetCreated`, finds the tab in getTargets, reads the empty field and navigates the tab;
 //   5. the pill carries Sonda's name, and she takes it back with "Assumir" (the tab stays Sonda's: no new way back).
 // Screenshots go to BROWSER_GIVE_SHOTS (default test/e2e/artifacts).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -148,38 +148,50 @@ test('browser: the person gives her tab to an agent; it reloads clean first, the
     assert.equal(await owner(mine), 'person', 'nothing changed before her answer')
     await dlg.locator('button.choice[data-choice="give"]').click()
 
-    // ---- 3. reloaded clean, then the agent's ----
-    await until('the tab is Sonda\'s', async () => (await owner(mine)) === sonda, 20_000)
-    assert.equal(await pageEval(mine, 'document.getElementById("f").value'), '', 'what she typed and did not send went with the reload')
-    assert.equal(await pageEval(mine, 'history.length'), 1, 'her pages behind went with the history')
-    const view = await B((t, id) => t.control.view(id), mine)
+    // ---- 3. a new tab of Sonda's at the same address, in the place of hers; hers closed ----
+    const theirs = (await until('Sonda\'s new tab', async () => (await B(t => t.registry.list())).find(x => x.ownerSlotId === sonda), 20_000)).tabId
+    await until('her tab closed', async () => (await owner(mine)) === undefined && !(await pane(mine)))
+    assert.notEqual(theirs, mine, 'a new tab: nothing of hers per tab exists in it')
+    const theirPane = await until('the new tab\'s pane', () => pane(theirs))
+    assert.equal(theirPane.id !== paneId, true)
+    assert.equal(await pageEval(theirs, 'document.getElementById("f").value'), '', 'what she typed and did not send is not there')
+    assert.equal(await pageEval(theirs, 'history.length'), 1, 'her pages behind are not there')
+    const view = await B((t, id) => t.control.view(id), theirs)
     assert.equal(view.holder, 'agent')
     assert.equal(view.why, undefined)
-    assert.equal(await B((t, id) => t.shield(id), mine), true, 'the shield is on: the agent has it')
-    assert.equal(await B((t, id) => t.throttling(id), mine), false, 'an agent tab never slows down')
+    assert.equal(await B((t, id) => t.shield(id), theirs), true, 'the shield is on: the agent has it')
+    assert.equal(await B((t, id) => t.throttling(id), theirs), false, 'an agent tab never slows down')
+    await sleep(500)
+    const closedFile = join(home, 'browser', 'closed-tabs.json')
+    const closed = existsSync(closedFile) ? JSON.parse(readFileSync(closedFile, 'utf8')) as unknown : []
+    assert.ok(!JSON.stringify(closed).includes(mine), 'her given tab is not in the closed history (it was given, not closed)')
 
     // ---- 4. the agent was told, sees the tab, reads it and drives it ----
-    const created = await until('targetCreated for the agent', async () => agentWs!.events.find(e => e.method === 'Target.targetCreated' && String(e.params?.targetInfo?.url ?? '').endsWith('/form.html')))
+    // The new tab is announced when it is created (on its blank page), and loads the address next.
+    const created = await until('targetCreated for the agent', async () => agentWs!.events.find(e => e.method === 'Target.targetCreated'))
     const targetId = created.params.targetInfo.targetId as string
-    const seen = (await agentWs.call('Target.getTargets')).result.targetInfos as { targetId: string; url: string }[]
+    const seen = await until('the tab at her address in the agent\'s getTargets', async () => {
+      const list = (await agentWs!.call('Target.getTargets')).result.targetInfos as { targetId: string; url: string }[]
+      return list.length === 1 && list[0]!.url.endsWith('/form.html') ? list : undefined
+    })
     assert.deepEqual(seen.map(t => t.targetId), [targetId], 'the tab is in the agent\'s getTargets')
     const sid = (await agentWs.call('Target.attachToTarget', { targetId, flatten: true })).result.sessionId as string
     const read = await agentWs.call('Runtime.evaluate', { expression: 'document.getElementById("f").value', returnByValue: true }, sid)
     assert.equal(read.result?.result?.value, '', 'the agent reads an empty field')
     assert.ok(!JSON.stringify(agentWs.events).includes(TYPED), 'her typing is in no event the agent got')
     assert.ok(!(await agentWs.call('Page.navigate', { url: `${pages.base}/agent.html` }, sid)).error)
-    await until('the agent navigated the tab', async () => (await pageEval(mine, 'document.body && document.body.innerText')) === 'AGENT-PAGE', 20_000)
+    await until('the agent navigated the tab', async () => (await pageEval(theirs, 'document.body && document.body.innerText')) === 'AGENT-PAGE', 20_000)
 
     // ---- 5. the pill says Sonda; "Assumir" takes it back, the tab stays Sonda's ----
-    const given = await until('the pill carries Sonda', async () => { const p = await pane(mine); return p && p.owner === sonda && p.controlText.startsWith('Sonda') ? p : undefined })
+    const given = await until('the pill carries Sonda', async () => { const p = await pane(theirs); return p && p.owner === sonda && p.controlText.startsWith('Sonda') ? p : undefined })
     assert.equal(given.control, 'agent')
     await win.mouse.move(5, 5)
     await shot('agent')
-    await win.locator(`.br-web[data-tab="${mine}"] .br-web-actions .ab-act[data-label="Assumir"]`).click()
-    await until('taken back', async () => (await B((t, id) => t.control.view(id), mine)).holder === 'user')
-    assert.equal((await B((t, id) => t.control.view(id), mine)).why, 'taken')
-    assert.equal(await owner(mine), sonda, 'the tab stays Sonda\'s')
-    const taken = await until('the pill: with her', async () => { const p = await pane(mine); return p && p.control === 'user' ? p : undefined })
+    await win.locator(`.br-web[data-tab="${theirs}"] .br-web-actions .ab-act[data-label="Assumir"]`).click()
+    await until('taken back', async () => (await B((t, id) => t.control.view(id), theirs)).holder === 'user')
+    assert.equal((await B((t, id) => t.control.view(id), theirs)).why, 'taken')
+    assert.equal(await owner(theirs), sonda, 'the tab stays Sonda\'s')
+    const taken = await until('the pill: with her', async () => { const p = await pane(theirs); return p && p.control === 'user' ? p : undefined })
     assert.match(taken.controlText, /^Com você/)
     await shot('taken')
   } finally {

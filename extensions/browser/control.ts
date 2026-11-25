@@ -32,8 +32,8 @@ export interface ControlHooks {
   /** Before a help request's tab goes back to the agent: reload, so nothing the person typed and did not send is left (rule 16). */
   beforeGiveBack(tabId: string): Promise<void>
   /**
-   * Before her own tab goes to an agent: reload and drop the page's history, so nothing she typed and did not send is left, now
-   * or one page back (rule 16, the other way). Absent: nothing runs (unit tests).
+   * The clean give of her own tab when `give` is called without a hand-over of its own (unit tests). Throwing aborts the give.
+   * Absent: nothing runs.
    */
   beforeGive?(tabId: string): Promise<void>
   log(msg: string): void
@@ -122,16 +122,23 @@ export class ControlHub {
   }
 
   /**
-   * "Entregar a um agente…": her own tab becomes an agent's tab (with the agent, unpaused). The state flips first, so the shield
-   * is on and her open dialog goes before the page reloads under nobody's hands; the clean give (reload, history dropped) runs
-   * next. The caller changes the tab's owner only after this resolves, so the agent never sees the page before the reload.
-   * False: the tab is not hers to give (nothing changed).
+   * "Entregar a um agente…": her own tab leaves her hands. The state flips first, so the shield is on and her open dialog goes
+   * while the clean give runs (`handOver`, else the `beforeGive` hook: main opens a fresh tab of the agent's at the same address,
+   * and closes hers only after this resolves true). The give fails closed: a hand-over that throws puts the tab back in her hands
+   * (her own again) and answers false, so the caller hands nothing over. False also when the tab is not hers to give.
    */
-  async give(tabId: string): Promise<boolean> {
+  async give(tabId: string, handOver?: (tabId: string) => Promise<void>): Promise<boolean> {
     const { before, after } = this.apply(tabId, { type: 'give' })
     if (after === before) return false
-    if (reloadsOnGive(before)) await this.hooks.beforeGive?.(tabId).catch(e => this.hooks.log(`controle: recarga da entrega falhou (${(e as Error).message})`))
-    return true
+    if (!reloadsOnGive(before)) return true
+    try {
+      await (handOver ?? this.hooks.beforeGive)?.(tabId)
+      return true
+    } catch (e) {
+      this.hooks.log(`controle: recarga da entrega falhou, a guia continua dela (${(e as Error).message})`)
+      this.apply(tabId, { type: 'own' })
+      return false
+    }
   }
 
   pause(tabId: string): void { this.apply(tabId, { type: 'pause' }) }

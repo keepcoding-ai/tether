@@ -5,8 +5,9 @@
 //     (`ask`), and her answer goes back as `Page.handleJavaScriptDialog`. A dialog opened while the agent had the tab stays the
 //     agent's until she takes the tab (the agent can no longer answer it then); one opened while she held it is dismissed when
 //     the tab leaves her (the agent never saw it open).
-//   - the file chooser: while she holds the tab the tether's chooser opens (`chooseFiles`) and the files go to the input
-//     (`DOM.setFileInputFiles`), unless the tab changed hands meanwhile. With the agent, nothing here: its own session answers.
+//   - the file chooser: while she holds her OWN tab the tether's chooser opens (`chooseFiles`) and the files go to the input
+//     (`DOM.setFileInputFiles`), unless the tab changed hands or pages meanwhile. On an agent's tab (even one she took), nothing
+//     here: the agent's own session answers, through the upload consent (E13).
 //   - Ctrl+T and Ctrl+L typed in the page: kept from the page and handed to the interface (`key`), the keyboard back on it.
 import { randomUUID } from 'node:crypto'
 import type { Event as ElectronEvent } from 'electron'
@@ -21,6 +22,11 @@ import {
 export interface PersonPageOptions {
   surface(tabId: string): Surface | undefined
   control(tabId: string): Control
+  /**
+   * Is the tab her own (owner PERSON_OWNER)? Only her own tab gets the tether's file chooser: on an agent's tab she took, the
+   * file would go to the agent's page without the upload consent that names the origin and the agent (E13).
+   */
+  ownTab(tabId: string): boolean
   /** A dialog for the band of the tab's pane. */
   ask(ask: PageDialogAsk): void
   /** The band's dialog is gone (answered elsewhere, closed by the page, the tab left her). */
@@ -33,7 +39,11 @@ export interface PersonPageOptions {
 }
 
 interface OpenDialog { ask: PageDialogAsk; shown: boolean; /** Opened while she held the tab. */ hers: boolean }
-interface TabState { subs: IDisposable[]; dialog?: OpenDialog; epoch: number; choosing: boolean }
+/**
+ * `epoch` counts the control changes, `documents` the main frame's new documents: a chooser's answer stands only if neither moved
+ * (a new document, even of the same site, may number its nodes anew and put the old input's id on another input).
+ */
+interface TabState { subs: IDisposable[]; dialog?: OpenDialog; epoch: number; documents: number; choosing: boolean }
 
 export class PersonPage {
   private readonly opts: PersonPageOptions
@@ -45,7 +55,7 @@ export class PersonPage {
   added(tabId: string): void {
     const surface = this.opts.surface(tabId)
     if (!surface || this.tabs.has(tabId)) return
-    const t: TabState = { subs: [], epoch: 0, choosing: false }
+    const t: TabState = { subs: [], epoch: 0, documents: 0, choosing: false }
     this.tabs.set(tabId, t)
     t.subs.push(surface.debugger.onMessage((method, params, sessionId) => {
       if (sessionId !== undefined || this.tabs.get(tabId) !== t) return
@@ -61,8 +71,11 @@ export class PersonPage {
       surface.focusInterface()
       this.opts.key(tabId, key)
     }
+    // A navigation of the main frame to a new document (not a same-document one: the page's nodes stay as they are).
+    const onDocument = (): void => { t.documents++ }
     wc.on('before-input-event', onKey as never)
-    t.subs.push({ dispose: () => { if (!wc.isDestroyed()) wc.off('before-input-event', onKey as never) } })
+    wc.on('did-navigate', onDocument)
+    t.subs.push({ dispose: () => { if (!wc.isDestroyed()) { wc.off('before-input-event', onKey as never); wc.off('did-navigate', onDocument) } } })
   }
 
   closed(tabId: string): void {
@@ -141,16 +154,17 @@ export class PersonPage {
   }
 
   private async choose(tabId: string, t: TabState, surface: Surface, params: unknown): Promise<void> {
-    if (t.choosing || !servesPerson(this.opts.control(tabId))) return
+    if (t.choosing || !servesPerson(this.opts.control(tabId)) || !this.opts.ownTab(tabId)) return
     const p = (params && typeof params === 'object' ? params : {}) as { mode?: unknown; backendNodeId?: unknown }
     if (typeof p.backendNodeId !== 'number') return
-    const at = { tab: t, epoch: t.epoch }
+    const at = { tab: t, epoch: t.epoch, documents: t.documents, origin: originOfPage(surface) }
     const properties = chooserProperties(p.mode)
     t.choosing = true
     try {
       const files = chosenFiles(await this.opts.chooseFiles(properties).catch(() => []), properties.includes('multiSelections'))
-      if (!choiceStands(at, { tab: this.tabs.get(tabId), epoch: t.epoch, control: this.opts.control(tabId) })) {
-        if (files.length) this.opts.log(`guia ${tabId}: arquivos escolhidos recusados (a guia mudou de mão enquanto o seletor estava aberto)`)
+      const now = { tab: this.tabs.get(tabId), epoch: t.epoch, documents: t.documents, origin: originOfPage(surface), control: this.opts.control(tabId) }
+      if (!choiceStands(at, now) || !this.opts.ownTab(tabId)) {
+        if (files.length) this.opts.log(`guia ${tabId}: arquivos escolhidos recusados (a guia mudou de mão ou de página enquanto o seletor estava aberto)`)
         return
       }
       if (files.length === 0 || surface.webContents.isDestroyed()) return
@@ -162,4 +176,11 @@ export class PersonPage {
       t.choosing = false
     }
   }
+}
+
+/** The origin of the page the tab shows now ('' when there is none). */
+function originOfPage(surface: Surface): string {
+  const wc = surface.webContents
+  if (wc.isDestroyed()) return ''
+  try { return new URL(wc.getURL()).origin } catch { return '' }
 }

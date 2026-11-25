@@ -80,7 +80,7 @@ export const isPersonOwned = (ownerSlotId: string | undefined): boolean => owner
 
 /**
  * May her tab go to the agent `to` ("Entregar a um agente…")? Only a tab she owns, only to a live agent (a slot id, never the
- * person), only while that agent is under its ceiling of tabs. The tab keeps its id; only its owner changes.
+ * person), only while that agent is under its ceiling of tabs (the give opens him a new tab at the same address and closes hers).
  */
 export function giveVerdict(tab: { ownerSlotId: string } | undefined, to: unknown, agent: { alive: boolean } | undefined, toTabs: number): 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full' {
   if (!tab) return 'no-tab'

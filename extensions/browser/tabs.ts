@@ -84,8 +84,6 @@ export interface TabBlocked {
 export interface TabWatcher {
   added(info: TabInfo): void
   closed(tabId: string): void
-  /** Her own tab went to an agent (`give`): the same tab, a new owner. */
-  given?(info: TabInfo): void
 }
 
 export interface TabEvents {
@@ -300,23 +298,28 @@ export class TabRegistry {
   }
 
   /**
-   * Her own tab goes to the agent `to` (the caller checked `giveVerdict` and ran the clean give first): the owner changes, the
-   * page stops slowing down out of view (an agent works on it unseen), and her local-network questions still open on it are
-   * withdrawn (her answer would give the agent a ticket). Her popups stay hers: they are tabs of their own, with her as owner.
-   * The watchers hear `given` (the gate tells the agent), the renderer the tab's change.
+   * Resolves once the tab's first document has loaded (Chromium's error page for a site that is down does not count); rejects
+   * when the main frame fails, the tab goes, or `ms` pass first. The give waits on it before her tab closes.
    */
-  give(tabId: string, to: string): TabInfo | undefined {
-    const e = this.entries.get(tabId)
-    if (!e || !isPersonOwned(e.tab.ownerSlotId) || !isId(to) || isPersonOwned(to)) return undefined
-    e.tab.ownerSlotId = to
-    const wc = e.surface.webContents
-    if (!wc.isDestroyed()) wc.setBackgroundThrottling(throttlesInBackground(to))
-    this.local.gate.cancelTab(tabId)
-    this.scrubbedLog(`guia ${tabId} entregue a ${to}`)
-    const info = infoOf(e)
-    this.events.changed(info)
-    for (const w of [...this.watchers]) w.given?.(info)
-    return info
+  loaded(tabId: string, ms: number): Promise<void> {
+    const wc = this.webContents(tabId)
+    if (!wc || wc.isDestroyed()) return Promise.reject(new Error('guia: não existe'))
+    return new Promise<void>((resolve, reject) => {
+      const finish = (err?: string): void => {
+        clearTimeout(timer)
+        if (!wc.isDestroyed()) { wc.off('did-finish-load', onLoad); wc.off('did-fail-load', onFail as never); wc.off('destroyed', onGone) }
+        if (err) reject(new Error(err))
+        else resolve()
+      }
+      const onLoad = (): void => finish()
+      // -3 (ERR_ABORTED): the load was replaced by another (a redirect the page made); the next load decides.
+      const onFail = (_e: unknown, code: number, _d: string, _u: string, isMainFrame: boolean): void => { if (isMainFrame && code !== -3) finish(`a página não carregou (${code})`) }
+      const onGone = (): void => finish('a guia fechou')
+      const timer = setTimeout(() => finish(`a página não carregou em ${Math.round(ms / 1000)} s`), ms)
+      wc.on('did-finish-load', onLoad)
+      wc.on('did-fail-load', onFail as never)
+      wc.once('destroyed', onGone)
+    })
   }
 
   /** How many tabs `owner` has, open and opening (the ceiling of a give). */
@@ -372,7 +375,7 @@ export class TabRegistry {
   /** The page's limits and the events the renderer follows. */
   private guard(entry: Entry, ses: TabSession): IDisposable[] {
     const wc = entry.surface.webContents
-    // The owner is read when a popup opens, never kept from here: her tab may go to an agent (`give`), and its later popups are his.
+    // The owner is read when a popup opens (`entry.tab` is the one place it lives).
     const { tabId } = entry.tab
     ses.prepare(wc)
     // JavaScript dialogs: Electron's default listener of its internal '-run-dialog' event shows a NATIVE box. It is replaced so

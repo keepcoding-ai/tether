@@ -76,7 +76,7 @@ export interface GateTabs {
   cancelQuestions(questionKey: string): void
   /** One ticket for `url` on the tab without asking: only after the person allowed it through `Tether.requestLocalNetwork`. */
   grantLocal?(tabId: string, url: string): Promise<boolean>
-  watch(w: { added(info: TabInfo): void; closed(tabId: string): void; given?(info: TabInfo): void }): IDisposable
+  watch(w: { added(info: TabInfo): void; closed(tabId: string): void }): IDisposable
 }
 
 export interface GateOptions {
@@ -793,8 +793,6 @@ export async function startGate(opts: GateOptions): Promise<Gate> {
 
   const watcher = opts.tabs.watch({
     added: info => { for (const c of conns) c.tabAdded(info) },
-    // The person handed her tab to an agent: for that agent it is a new tab (targetCreated, auto-attach), already reloaded clean.
-    given: info => { for (const c of conns) c.tabAdded(info) },
     closed: tabId => {
       const known = targetIds.get(tabId)
       targetIds.delete(tabId)

@@ -80,6 +80,10 @@ describe('page rules', () => {
     assert.equal(choiceStands({ tab, epoch: 2 }, { tab, epoch: 2, control: 'agent' }), false)
     assert.equal(choiceStands({ tab, epoch: 2 }, { tab: {}, epoch: 2, control: 'user' }), false, 'another tab under the same id')
     assert.equal(choiceStands({ tab, epoch: 2 }, { tab: undefined, epoch: 2, control: 'user' }), false, 'the tab closed')
+    const at = { tab, epoch: 2, documents: 4, origin: 'https://a.test' }
+    assert.equal(choiceStands(at, { ...at, control: 'user' }), true)
+    assert.equal(choiceStands(at, { ...at, documents: 5, control: 'user' }), false, 'a new document in between')
+    assert.equal(choiceStands(at, { ...at, origin: 'https://b.test', control: 'user' }), false, 'another origin')
   })
 })
 
@@ -90,13 +94,16 @@ function fakeSurface() {
   const listeners = new Set<Listener>()
   const sent: { method: string; params?: Record<string, unknown>; sessionId?: string }[] = []
   const keyListeners = new Set<(e: { preventDefault(): void; prevented?: boolean }, input: object) => void>()
+  const navListeners = new Set<() => void>()
   let focusedInterface = 0
+  let url = 'https://site.test/form'
   const surface = {
     id: 's1',
     webContents: {
       isDestroyed: () => false,
-      on: (ev: string, fn: never) => { if (ev === 'before-input-event') keyListeners.add(fn) },
-      off: (ev: string, fn: never) => { if (ev === 'before-input-event') keyListeners.delete(fn) },
+      getURL: () => url,
+      on: (ev: string, fn: never) => { if (ev === 'before-input-event') keyListeners.add(fn); else if (ev === 'did-navigate') navListeners.add(fn) },
+      off: (ev: string, fn: never) => { if (ev === 'before-input-event') keyListeners.delete(fn); else if (ev === 'did-navigate') navListeners.delete(fn) },
     },
     debugger: {
       send: async (method: string, params?: Record<string, unknown>, sessionId?: string) => { sent.push({ method, params, sessionId }); return {} },
@@ -110,11 +117,13 @@ function fakeSurface() {
     emit: (method: string, params: unknown, sessionId?: string) => { for (const l of [...listeners]) l(method, params, sessionId) },
     key: (input: object): boolean => { let prevented = false; for (const l of [...keyListeners]) l({ preventDefault: () => { prevented = true } }, input); return prevented },
     focused: () => focusedInterface,
-    listening: () => listeners.size + keyListeners.size,
+    listening: () => listeners.size + keyListeners.size + navListeners.size,
+    /** The main frame commits a new document at `to` (did-navigate); `inPage` only changes the address (no new document). */
+    navigate: (to: string, inPage = false) => { url = to; if (!inPage) for (const l of [...navListeners]) l() },
   }
 }
 
-function setup(initial: Control) {
+function setup(initial: Control, own = true) {
   const f = fakeSurface()
   let control: Control = initial
   const asks: PageDialogAsk[] = []
@@ -124,6 +133,7 @@ function setup(initial: Control) {
   const page = new PersonPage({
     surface: id => (id === 't1' ? f.surface : undefined),
     control: () => control,
+    ownTab: () => own,
     ask: a => asks.push(a),
     cancelled: id => cancelled.push(id),
     key: (tabId, key) => keys.push([tabId, key]),
@@ -231,6 +241,37 @@ describe('the page in her hands (main side)', () => {
     s.f.emit('Page.fileChooserOpened', { mode: 'selectSingle', backendNodeId: 9 })
     await tick(); await tick()
     assert.deepEqual(s.f.sent.filter(x => x.method === 'DOM.setFileInputFiles'), [], 'she cancelled')
+  })
+
+  test('the chooser: an agent\'s tab she took is not served by the tether (the upload consent is the agent\'s way)', async () => {
+    const s = setup('user', false)
+    let opened = 0
+    s.setChooser(async () => { opened++; return ['C:/f.txt'] })
+    s.f.emit('Page.fileChooserOpened', { mode: 'selectSingle', backendNodeId: 7 })
+    await tick(); await tick()
+    assert.equal(opened, 0, 'no tether chooser on an agent\'s tab, even in her hands')
+    assert.deepEqual(s.f.sent, [])
+  })
+
+  test('the chooser: refused when the page moved on while it was open (a new document, or another origin)', async () => {
+    for (const move of ['document', 'origin'] as const) {
+      const s = setup('user')
+      let release!: (p: string[]) => void
+      s.setChooser(() => new Promise(r => { release = r }))
+      s.f.emit('Page.fileChooserOpened', { mode: 'selectSingle', backendNodeId: 5 })
+      await tick()
+      if (move === 'document') s.f.navigate('https://site.test/form')
+      else s.f.navigate('https://other.test/#x', true)
+      release(['C:/secret.txt'])
+      await tick(); await tick()
+      assert.deepEqual(s.f.sent.filter(x => x.method === 'DOM.setFileInputFiles'), [], `${move}: the files never reach the new page`)
+    }
+    // A same-document move (an anchor) on the same site keeps the input: the choice goes.
+    const s = setup('user')
+    s.setChooser(async () => { s.f.navigate('https://site.test/form#part', true); return ['C:/f.txt'] })
+    s.f.emit('Page.fileChooserOpened', { mode: 'selectSingle', backendNodeId: 5 })
+    await tick(); await tick(); await tick()
+    assert.equal(s.f.sent.filter(x => x.method === 'DOM.setFileInputFiles').length, 1)
   })
 
   test('Ctrl+L in her page: kept from the page, the keyboard back on the interface; an agent\'s page keeps it', () => {

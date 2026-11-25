@@ -79,9 +79,6 @@ async function until<T>(what: string, fn: () => Promise<T | undefined | false>, 
 
 test('temper: her tab given to an agent keeps nothing of hers per tab, and no POST is sent again', {
   timeout: 300_000,
-  // Red on purpose until the clean give starts the agent on a fresh browsing context (Temper 25/11: sessionStorage, window.name and
-  // history.state survive the reload). Remove `todo` with the fix.
-  todo: 'Temper N4-1: per-tab state survives the give',
 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit', env: { ...process.env, TETHER_TEST_EXTENSIONS: '1' } })
   assert.equal(build.status, 0, 'app build failed')
@@ -162,7 +159,8 @@ test('temper: her tab given to an agent keeps nothing of hers per tab, and no PO
     await dlg.waitFor()
     const t0 = Date.now()
     await dlg.locator('button.choice[data-choice="give"]').click()
-    await until('the tab is Sonda\'s', async () => (await owner(mine)) === sonda, 30_000)
+    // The give hands Sonda a new tab at the same address and closes hers.
+    await until('Sonda has the tab and hers is closed', async () => (await owner(mine)) === undefined && (await B(t => t.registry.list())).some(x => x.ownerSlotId === sonda), 30_000)
     console.log(`TEMPER: give took ${Date.now() - t0} ms`)
 
     // ---- what the agent reads ----

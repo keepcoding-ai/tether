@@ -152,9 +152,9 @@ export function reloadsOnGiveBack(t: TabControl): boolean {
 }
 
 /**
- * Does handing her own tab to an agent reload it first (and drop its history)? Always: rule 16 in the other direction. Whatever
- * she typed and did not send (a form, a code) would be read by the agent's first snapshot, and a page she left in the history
- * would come back with its fields filled when the agent goes back. The agent sees the tab only after this.
+ * Does handing her own tab to an agent run the clean give first? Always: rule 16 in the other direction. Whatever she typed and
+ * did not send (a form, a code), the pages behind it, and the state a page keeps per tab (sessionStorage, window.name,
+ * history.state, which a reload keeps) would reach the agent; the clean give hands him a new tab at the same address instead.
  */
 export function reloadsOnGive(before: TabControl): boolean {
   return before.why === 'own'

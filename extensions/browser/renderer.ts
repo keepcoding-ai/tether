@@ -60,7 +60,7 @@ import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEP
 import { insertIndex, isPersonOwned, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { PAGE_DIALOG_CANCEL, PAGE_DIALOG_FIELD, PAGE_DIALOG_OK, type PageDialogAsk, pageDialogHead } from './page-rules.ts'
 import {
-  canGive, CLOSE_TAB, closeNeedsConfirm, closeTabDialog, GIVE_PICK, GIVE_TAB, GIVE_TAB_ICON, giveItems, giveTabDialog, type TabAction, type TabActionId,
+  canGive, CLOSE_TAB, closeNeedsConfirm, closeTabDialog, giveFailedDialog, GIVE_PICK, GIVE_TAB, GIVE_TAB_ICON, giveItems, giveTabDialog, type TabAction, type TabActionId,
   type TabActionState, tabActions,
 } from './tab-actions.ts'
 
@@ -244,6 +244,8 @@ export function activate(ui: TetherUi): IDisposable[] {
    * "Entregar a um agente…" on her own tab: the agent picker (the core's list, the rows the tether uses to give a pane), then one
    * question; main reloads the page clean before the agent sees it. Taking it back is the agent tab's own "Assumir".
    */
+  /** The agent's new tab of a give in flight (its pane id) -> her tab's pane it takes the place of, and whether that was in front. */
+  const replacing = new Map<string, { pane: string; active: boolean }>()
   const giveTab = async (tabId: string): Promise<void> => {
     const p = panels.get(paneIdOf(tabId))
     const title = p?.padTab()?.title || shortAddress(p?.padTab()?.url ?? '') || 'Guia'
@@ -252,10 +254,19 @@ export function activate(ui: TetherUi): IDisposable[] {
       items: giveItems(ui.agents.list(), ownerHue, id => ui.panes.personEmblem(id)),
     })
     if (to === undefined || !canGive(actionState(tabId))) return
-    const a = await ui.dialogs.ask(giveTabDialog(shortName(ui.agents.get(to)?.name || 'o agente'), title)).catch(() => undefined)
+    const agent = shortName(ui.agents.get(to)?.name || 'o agente')
+    const a = await ui.dialogs.ask(giveTabDialog(agent, title)).catch(() => undefined)
     if (a?.choice !== 'give') return
-    const outcome = await ipc.invoke('give', tabId, to).catch(() => 'no-tab' as const)
-    if (outcome !== 'ok') console.error(`browser: guia não entregue (${outcome})`)
+    // The agent's tab is a new one (main opens it at the same address and closes hers once it loaded): named here, so its pane
+    // is drawn where hers is.
+    const newTabId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
+    const from = paneIdOf(tabId)
+    replacing.set(paneIdOf(newTabId), { pane: from, active: activeWebPane === from })
+    const outcome = await ipc.invoke('give', tabId, to, newTabId).catch(() => 'failed' as const)
+    replacing.delete(paneIdOf(newTabId))
+    if (outcome === 'ok') return
+    console.error(`browser: guia não entregue (${outcome})`)
+    await ui.dialogs.ask(giveFailedDialog(agent, outcome)).catch(() => undefined)
   }
 
   /** "Sair de todas as contas" (design §12a): asks first; the answer clears every login of every agent. */
@@ -1303,6 +1314,16 @@ export function activate(ui: TetherUi): IDisposable[] {
   const openTab = (info: TabInfo): void => {
     const paneId = paneIdOf(info.tabId)
     if (ui.panes.find(paneId)) return
+    // The agent's new tab of a give: in her tab's place (its desk, its group, next to it); in front if hers was.
+    const swap = replacing.get(paneId)
+    const old = swap ? ui.panes.find(swap.pane) : undefined
+    if (swap && old) {
+      const options = { id: paneId, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: info.title || 'Guia', params: { ...savedOf(info) } }
+      if (ui.panes.describe(old.id)?.place === 'Browser') ui.systemDesks.addPane(DESK_ID, options, { reference: old.id, index: old.group.panels.indexOf(old) + 1 })
+      else ui.panes.open(options, { target: { level: 'pane', placement: 'within' } as Target, reference: old.id })
+      if (swap.active) ui.panes.reveal(paneId)
+      return
+    }
     // "Abrir ao lado" of a link: the person's new tab goes beside the pane the link was clicked in, not to the Browser desk.
     const beside = isPersonOwned(info.ownerSlotId) ? sideOrigin : undefined
     if (beside && ui.panes.find(beside)) {
@@ -1627,11 +1648,8 @@ export function activate(ui: TetherUi): IDisposable[] {
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))
-      const ownerWas = p?.saved?.ownerSlotId
       if (p) p.bind(info)
       else openTab(info)
-      // Her tab given to an agent: its strip emblem and its place in the pad follow the new owner.
-      if (p && ownerWas !== undefined && ownerWas !== info.ownerSlotId) { paintTabs(); refreshPad() }
     }),
     ipc.on('localNetworkAsk', enqueue),
     ipc.on('control', onControl),

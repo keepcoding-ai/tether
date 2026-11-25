@@ -16,8 +16,8 @@ export interface BrowserStatus {
 /** What `go` did: navigated, the address may not open, the tab is not hers to drive (not held by her), or it is gone. */
 export type GoOutcome = 'ok' | 'bad-url' | 'not-held' | 'no-tab'
 
-/** What `give` did (tab-rules.ts `giveVerdict`). */
-export type GiveOutcome = 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full'
+/** What `give` did: tab-rules.ts `giveVerdict`'s refusals, or 'failed' (the agent's new tab did not open or load; hers stays hers). */
+export type GiveOutcome = 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full' | 'failed'
 
 export interface BrowserChannels {
   invoke: {
@@ -68,10 +68,11 @@ export interface BrowserChannels {
      */
     go: (tabId: string, raw: string) => GoOutcome
     /**
-     * "Entregar a um agente…": her own tab goes to the agent `slotId`, reloaded clean first (nothing she typed and did not send
-     * reaches him); from then on it is his tab like any other. `giveVerdict`'s refusals, or 'ok'.
+     * "Entregar a um agente…": the agent `slotId` gets a new tab `newTabId` (named by the interface, so its pane takes the place of
+     * hers) at her tab's address, a fresh page with nothing of hers; once it loaded, her tab closes. Any failure first leaves her
+     * tab with her ('failed').
      */
-    give: (tabId: string, slotId: string) => GiveOutcome
+    give: (tabId: string, slotId: string, newTabId: string) => GiveOutcome
     /** The brake on a set of tabs (all, or one agent's): the interface knows which, loaded or not. */
     pauseTabs: (tabIds: string[]) => void
     resumeTabs: (tabIds: string[]) => void

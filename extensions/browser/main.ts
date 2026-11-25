@@ -28,7 +28,7 @@ import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
-import { giveVerdict, isId, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
+import { giveVerdict, isId, isNavigable, isPersonOwned, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 import { PersonPage } from './person-page.ts'
 
@@ -58,6 +58,9 @@ function reloadAndWait(wc: WebContents, ticket: (url: string) => Promise<unknown
     wc.reload()
   }))
 }
+
+/** How long the agent's new tab of a give may take to load before the give is called off (her tab stays hers). */
+const GIVE_LOAD_MS = 15_000
 
 // Defined by app/build.mjs: true only in a build made with TETHER_TEST_EXTENSIONS=1 (the E2E).
 declare const __TETHER_TEST_EXTENSIONS__: boolean | undefined
@@ -99,8 +102,9 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   let gate: Gate | undefined
   let gateDisposed = false
   const testing = typeof __TETHER_TEST_EXTENSIONS__ !== 'undefined' && __TETHER_TEST_EXTENSIONS__
-  // E13: downloads, by the agent that owns the tab.
-  const downloads = new DownloadStore(join(main.home, 'browser'), log)
+  // E13: downloads, by the agent that owns the tab; the person's go to the system's Downloads folder (a test build: its home's).
+  const personDownloads = testing ? join(main.home, 'system-downloads') : app.getPath('downloads')
+  const downloads = new DownloadStore(join(main.home, 'browser'), log, personDownloads)
   void session.then(s => s.onDownload((item, page) => {
     const tabId = registry.tabOfPage(page.id)
     const owner = tabId === undefined ? undefined : registry.get(tabId)?.ownerSlotId
@@ -160,16 +164,6 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       await surface.reapplyEmulation().catch(() => {})
       log(`guia ${tabId}: recarregada ao devolver`)
     },
-    beforeGive: async tabId => {
-      const surface = registry.surface(tabId)
-      const wc = surface?.webContents
-      if (!surface || !wc || wc.isDestroyed()) return
-      // Her tab going to an agent (rule 16, the other way): what she typed and did not send goes with the reload, and the pages
-      // behind it go with the history (going back would bring their fields back as she left them).
-      await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
-      if (!wc.isDestroyed()) wc.navigationHistory.clear()
-      log(`guia ${tabId}: recarregada ao entregar`)
-    },
     log,
   })
   // E9: the agent's commands light the tab's dot; at most one event per tab every 400 ms (forgotten when the tab closes).
@@ -194,6 +188,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   const personPage = new PersonPage({
     surface: tabId => registry.surface(tabId),
     control: tabId => control.control(tabId),
+    ownTab: tabId => isPersonOwned(registry.get(tabId)?.ownerSlotId),
     ask: a => ipc.send('pageDialog', a),
     cancelled: id => ipc.send('pageDialogClosed', id),
     key: (tabId, key) => ipc.send('pageKey', tabId, key),
@@ -234,6 +229,17 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   // What each agent's tool calls its tabs, kept with the tabs (the gate creates `<home>/browser` owner-only before serving).
   const agentTabs = new AgentTabs(join(main.home, 'browser', AGENT_TABS_FILE), log)
   const tabIdsOf = (ids: unknown): string[] => (Array.isArray(ids) ? ids.filter(isId).slice(0, 512) : [])
+  /**
+   * Tabs a give closed (her tab handed over, or the agent's new tab of a give that failed): they were not closed by anybody, so
+   * the pane's close that follows does not put them in the closed history. Bounded: an id nobody closes again is let go.
+   */
+  const quietCloses = new Set<string>()
+  const closeQuietly = (tabId: string): void => {
+    quietCloses.add(tabId)
+    if (quietCloses.size > 64) quietCloses.delete(quietCloses.values().next().value!)
+    registry.close(tabId)
+    control.closed(tabId)
+  }
   // The closed history (closed-history.ts), next to the agents' tab ids; its expiry follows the setting at every read.
   const closedReady = ClosedHistory.open({ file: join(main.home, 'browser', CLOSED_HISTORY_FILE), keep: () => keepOf(main.settings.get('closedHistory')), log })
   /**
@@ -241,6 +247,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
    * tab main never loaded). A tab that goes with the window, or is recreated after a crash, never passes here.
    */
   const recordClose = (tabId: string, by: ClosedBy, saved?: SavedTab, ownerNameWas?: string): void => {
+    if (quietCloses.delete(tabId)) return
     const live = registry.get(tabId)
     const from = live ?? (saved && saved.tabId === tabId ? saved : undefined)
     if (!from) return
@@ -358,14 +365,36 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       if (control.control(tabId) !== 'user') return 'not-held'
       return registry.go(tabId, raw)
     }),
-    // "Entregar a um agente…" (her gesture, confirmed in the interface): checked, the state flips to the agent (shield on, her dialog
-    // dismissed), the page reloads clean, and only then the owner changes: the agent's first look is at the reloaded page.
-    ipc.handle('give', async (tabId, slotId) => {
+    // "Entregar a um agente…" (her gesture, confirmed in the interface): checked, her tab leaves her hands (shield on, her dialog
+    // dismissed), and the agent gets a NEW tab (`newTabId`, named by the interface so it draws the pane where hers is) at the
+    // same address, a fresh page: nothing of hers per tab (sessionStorage, window.name, history and its state, what she typed)
+    // exists there. Her tab closes only once the new one has loaded; anything failing first (the tab not created, the page not
+    // loading, the time) closes the new tab and leaves hers with her. Her click is the consent a local address needs.
+    ipc.handle('give', async (tabId, slotId, newTabId) => {
       if (typeof tabId !== 'string' || typeof slotId !== 'string') return 'no-tab'
       const verdict = giveVerdict(registry.get(tabId), slotId, main.agents.get(slotId), registry.countOf(slotId))
       if (verdict !== 'ok') return verdict
-      if (!await control.give(tabId)) return 'not-hers'
-      return registry.give(tabId, slotId) ? 'ok' : 'no-tab'
+      if (!isId(newTabId) || registry.get(newTabId)) return 'failed'
+      if (control.view(tabId).why !== 'own') return 'not-hers'
+      const handOver = async (): Promise<void> => {
+        const from = registry.get(tabId)
+        if (!from) throw new Error('a guia dela fechou')
+        try {
+          await registry.create(slotId, isNavigable(from.url) ? from.url : 'about:blank', { tabId: newTabId, ...(from.title ? { title: from.title } : {}), ticket: 'granted' })
+          await registry.loaded(newTabId, GIVE_LOAD_MS)
+          if (!registry.get(tabId)) throw new Error('a guia dela fechou')
+          // The blank page the surface was born on stays behind as an entry: the agent's tab starts with no way back.
+          const wc = registry.webContents(newTabId)
+          if (wc && !wc.isDestroyed()) wc.navigationHistory.clear()
+        } catch (e) {
+          closeQuietly(newTabId)
+          throw e
+        }
+      }
+      if (!await control.give(tabId, handOver)) return 'failed'
+      closeQuietly(tabId)
+      log(`guia ${tabId} entregue a ${slotId} (guia nova ${newTabId})`)
+      return 'ok'
     }),
     // E12: a tab restored from layout.json and not loaded yet has no entry in the registry; pausing it keeps the state in the hub,
     // and the tab is born paused when the person shows it.
@@ -415,6 +444,8 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       control,
       /** E13: where the downloads land, and what "Mostrar na pasta" would have shown. */
       downloadsDir: () => join(main.home, 'browser', 'downloads'),
+      /** N7: the folder that stands in for the system's Downloads (her own tabs' downloads). */
+      personDownloadsDir: () => personDownloads,
       shownInFolder,
       openUploads: () => uploads.open().map(a => ({ ...a, image: a.image ? a.image.slice(0, 32) : undefined })),
       shield: (tabId: string) => registry.surface(tabId)?.state().shield,

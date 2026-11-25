@@ -87,10 +87,14 @@ export const CHOSEN_FILES_MAX = 100
 
 /**
  * The files she chose still go to the page only if the tab never left her while the chooser was open (the same tab, no control
- * change in between, and she holds it now). Anything else: refused, nothing reaches the page.
+ * change in between, and she holds it now) and the page is the one that asked (no new document of the main frame, the same
+ * origin: a new document may give the old input's node id to another input). Anything else: refused, nothing reaches the page.
  */
-export function choiceStands(at: { tab: object; epoch: number }, now: { tab: object | undefined; epoch: number; control: Control | undefined }): boolean {
-  return now.tab === at.tab && now.epoch === at.epoch && servesPerson(now.control)
+export function choiceStands(
+  at: { tab: object; epoch: number; documents?: number; origin?: string },
+  now: { tab: object | undefined; epoch: number; documents?: number; origin?: string; control: Control | undefined },
+): boolean {
+  return now.tab === at.tab && now.epoch === at.epoch && now.documents === at.documents && now.origin === at.origin && servesPerson(now.control)
 }
 
 /** The chooser's answer as paths: strings only, at most CHOSEN_FILES_MAX; one when the input takes one. */
