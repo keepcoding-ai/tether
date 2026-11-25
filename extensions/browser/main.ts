@@ -315,7 +315,8 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('reload', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'reload') }),
     // The person's own tab: her gesture (palette, the pad's "+", Ctrl+T) is the consent a local address needs, as on "Reabrir".
     ipc.handle('openForPerson', async url => {
-      const target = url === undefined || url === '' ? 'about:blank' : typedUrl(url)
+      // No address arrives as undefined here, or as null across the browser process's wire: the blank page.
+      const target = url === undefined || url === null || url === '' ? 'about:blank' : typedUrl(url)
       if (!target) return null
       return registry.create(PERSON_OWNER, target, { ticket: 'granted' }).catch(e => { log(`guia da pessoa não abriu (${(e as Error).message})`); return null })
     }),
