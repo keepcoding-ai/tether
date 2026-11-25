@@ -244,8 +244,8 @@ export function activate(ui: TetherUi): IDisposable[] {
    * "Entregar a um agente…" on her own tab: the agent picker (the core's list, the rows the tether uses to give a pane), then one
    * question; main reloads the page clean before the agent sees it. Taking it back is the agent tab's own "Assumir".
    */
-  /** The agent's new tab of a give in flight (its pane id) -> her tab's pane it takes the place of, and whether that was in front. */
-  const replacing = new Map<string, { pane: string; active: boolean }>()
+  /** The agent's new tab of a give in flight (its pane id) -> her tab's pane it takes the place of. */
+  const replacing = new Map<string, string>()
   const giveTab = async (tabId: string): Promise<void> => {
     const p = panels.get(paneIdOf(tabId))
     const title = p?.padTab()?.title || shortAddress(p?.padTab()?.url ?? '') || 'Guia'
@@ -261,10 +261,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     // is drawn where hers is.
     const newTabId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
     const from = paneIdOf(tabId)
-    replacing.set(paneIdOf(newTabId), { pane: from, active: activeWebPane === from })
+    const wasActive = activeWebPane === from
+    replacing.set(paneIdOf(newTabId), from)
     const outcome = await ipc.invoke('give', tabId, to, newTabId).catch(() => 'failed' as const)
     replacing.delete(paneIdOf(newTabId))
-    if (outcome === 'ok') return
+    // In front only now: main answers 'ok' once the new tab's shield is up (never a click of hers into the agent's page).
+    if (outcome === 'ok') { if (wasActive && ui.panes.find(paneIdOf(newTabId))) ui.panes.reveal(paneIdOf(newTabId)); return }
     console.error(`browser: guia não entregue (${outcome})`)
     await ui.dialogs.ask(giveFailedDialog(agent, outcome)).catch(() => undefined)
   }
@@ -1314,14 +1316,17 @@ export function activate(ui: TetherUi): IDisposable[] {
   const openTab = (info: TabInfo): void => {
     const paneId = paneIdOf(info.tabId)
     if (ui.panes.find(paneId)) return
-    // The agent's new tab of a give: in her tab's place (its desk, its group, next to it); in front if hers was.
+    // The agent's new tab of a give: in her tab's place (its desk, its group, next to it); brought in front by `giveTab` once main answered (its shield is up).
     const swap = replacing.get(paneId)
-    const old = swap ? ui.panes.find(swap.pane) : undefined
+    const old = swap ? ui.panes.find(swap) : undefined
     if (swap && old) {
       const options = { id: paneId, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: info.title || 'Guia', params: { ...savedOf(info) } }
       if (ui.panes.describe(old.id)?.place === 'Browser') ui.systemDesks.addPane(DESK_ID, options, { reference: old.id, index: old.group.panels.indexOf(old) + 1 })
-      else ui.panes.open(options, { target: { level: 'pane', placement: 'within' } as Target, reference: old.id })
-      if (swap.active) ui.panes.reveal(paneId)
+      else {
+        // Opening a pane outside the Browser desk brings it in front: hers goes back in front until the give is answered.
+        ui.panes.open(options, { target: { level: 'pane', placement: 'within' } as Target, reference: old.id })
+        ui.panes.reveal(old.id)
+      }
       return
     }
     // "Abrir ao lado" of a link: the person's new tab goes beside the pane the link was clicked in, not to the Browser desk.

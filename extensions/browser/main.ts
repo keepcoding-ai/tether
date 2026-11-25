@@ -386,6 +386,13 @@ export function activateLocal(main: TetherMain): IDisposable[] {
           // The blank page the surface was born on stays behind as an entry: the agent's tab starts with no way back.
           const wc = registry.webContents(newTabId)
           if (wc && !wc.isDestroyed()) wc.navigationHistory.clear()
+          // The shield went up when the tab was added, but asynchronously (its view loads first): her tab closes, and the new pane
+          // comes to the front, only once it is up, so she never clicks into a page the agent drives. No shield: no give.
+          const surface = registry.surface(newTabId)
+          if (!surface) throw new Error('a guia nova fechou')
+          const shielded = control.control(newTabId) === 'agent'
+          await surface.setInputShield(shielded)
+          if (shielded && !surface.state().shield) throw new Error('o escudo da guia nova não subiu')
         } catch (e) {
           closeQuietly(newTabId)
           throw e
