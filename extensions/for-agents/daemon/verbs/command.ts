@@ -15,7 +15,15 @@ import { awakeTarget, ok, commanded, optString, refuse, touch, wantString, GUIA_
 const GIVE_UP_MS = 5 * 60_000
 const POLL_MS = 500
 
-interface Waiting { owner: string; name: string; args: string | undefined; since: number; ret: boolean }
+interface Waiting {
+  owner: string
+  name: string
+  args: string | undefined
+  since: number
+  ret: boolean
+  /** What held it at the last look, in words (said to the owner if it is given up). */
+  heldBy?: string
+}
 
 /** A raw read as text, through a throwaway terminal (the incremental reader of the context ignores `since`). */
 async function renderRaw(raw: ScreenRead): Promise<string> {
@@ -55,13 +63,16 @@ export class PendingCommands {
 
   add(paneId: string, owner: string, name: string, args: string | undefined, ret = false): void {
     const list = this.byPane.get(paneId) ?? []
-    list.push({ owner, name, args, since: Date.now(), ret })
+    list.push({ owner, name, args, since: this.clock.now(), ret })
     this.byPane.set(paneId, list)
     this.timer ??= setInterval(() => { void this.flush() }, POLL_MS)
     this.timer.unref?.()
   }
 
-  /** Tries each waiting pane: a command goes when the turn is over and the gate lets the owner write. */
+  /**
+   * Tries each waiting pane: a command goes when the turn is over, the gate lets the owner write and the delivery leaves the
+   * box alone (no notice queued, being typed or settling, no unsent text of the tether's in it): two typists never share a box.
+   */
   async flush(): Promise<void> {
     const deps = this.deps
     if (!deps || this.running) return
@@ -71,8 +82,19 @@ export class PendingCommands {
         const slot = deps.api.slots.get(paneId)
         const next = list[0]
         if (!next) { this.byPane.delete(paneId); continue }
-        if (!slot || Date.now() - next.since > GIVE_UP_MS) { list.shift(); deps.api.log(`comando ${next.name} de ${paneId} descartado`); continue }
-        if (slot.turn === 'busy' || deps.gate.check(paneId, next.owner) !== undefined) continue
+        if (!slot || this.clock.now() - next.since > GIVE_UP_MS) {
+          list.shift()
+          deps.api.log(`comando ${next.name} de ${paneId} descartado`)
+          if (next.ret) {
+            const why = !slot ? 'a guia sumiu' : next.heldBy
+            await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
+          }
+          continue
+        }
+        next.heldBy = slot.turn === 'busy' ? 'turno busy'
+          : deps.gate.check(paneId, next.owner) !== undefined ? 'pessoa na guia'
+            : !deps.api.delivery.quiet(paneId) ? 'avisos do tether na caixa' : undefined
+        if (next.heldBy !== undefined) continue
         list.shift()
         if (next.ret) { await this.fireWithReturn(deps, paneId, next); continue }
         try {
