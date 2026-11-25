@@ -1,6 +1,6 @@
 // Claude Code status line for every Claude launched by tether (injected via --settings).
 // Claude pipes a JSON object on stdin; we print one line: model (strong alert when it is Fable), effort, cwd.
-// Then the user's own statusLine.command (if any) runs with the same stdin and its output follows on the next line.
+// Then the user's own statusLine.command (if any) runs with the same stdin and its output follows on the same line.
 // Plain Node, no dependencies, never throws and never exits non-zero.
 
 import { spawn } from 'node:child_process'
@@ -192,7 +192,7 @@ function main() {
     persistContext(payload)
     try {
       const chained = await runUserStatusLine(userStatusLineCommand(payload), data)
-      if (chained) out += String.fromCharCode(10) + chained
+      if (chained) out += '  ' + chained.split(/\r?\n/).filter(Boolean).join(' · ')
     } catch { /* ours alone */ }
     // exit once flushed: a timed-out command's orphan pipe must not keep us alive
     try { process.stdout.write(out, () => process.exit(0)) } catch { process.exit(0) }

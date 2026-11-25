@@ -78,22 +78,24 @@ describe('chaining the user status line', () => {
     assert.match(r.stdout, /FABLE ATIVO/)
   })
 
-  test('(b) user echo follows our ribbon on the next line, in user, project and local settings', () => {
+  test('(b) user echo follows our ribbon on the same line, in user, project and local settings', () => {
     for (const where of ['user', 'project', 'local'] as const) {
       const { config, cwd } = withUser('echo USERLINE', where)
-      const lines = run(cwd, config).stdout.split('\n')
-      assert.match(lines[0]!, /FABLE ATIVO/, where)
-      assert.equal(lines[1]!.trim(), 'USERLINE', where)
+      const out = run(cwd, config).stdout
+      assert.ok(!out.includes('\n'), where)
+      assert.match(out, /FABLE ATIVO.*USERLINE/, where)
     }
   })
 
   test('the user command gets the same stdin; the last file wins', () => {
     const { config, cwd } = withUser('echo LOCAL', 'local')
     writeFileSync(join(config, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: 'echo USER' } }))
-    assert.equal(run(cwd, config).stdout.split('\n')[1]!.trim(), 'LOCAL')
+    const out = run(cwd, config).stdout
+    assert.match(out, /LOCAL/)
+    assert.ok(!out.includes('USER'))
     const echoStdin = `node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).marker))"`
     const w = withUser(echoStdin)
-    assert.equal(run(w.cwd, w.config, { marker: 'SAME' }).stdout.split('\n')[1]!.trim(), 'SAME')
+    assert.match(run(w.cwd, w.config, { marker: 'SAME' }).stdout, /SAME$/)
   })
 
   test('(c) failing, empty or hanging user command: only our ribbon, within the timeout', () => {
