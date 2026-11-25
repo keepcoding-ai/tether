@@ -1833,6 +1833,8 @@ body.dim-unfocused:not(:has(.frame:focus-within, .frame.kbd-focused, .frame.draw
 .aid.compact { position: relative; gap: 0; }
 .aid.compact .aid-eng { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg-2); color: var(--fg); }
 .aid.compact .aid-eng svg { width: 8px; height: 8px; }
+.aid-seal { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg-2); color: var(--fg); }
+.aid-seal svg { width: 8px; height: 8px; }
 .aid-view { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .aid-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ctx-menu.emb-menu .emb-dim { color: var(--fg-dim); }

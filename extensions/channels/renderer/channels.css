@@ -58,7 +58,6 @@
 .ch-pane.narrow .ch-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--fg-dim); }
 .ch-pane.narrow .ch-dot[data-tone="on"] { background: var(--ok); }
 .ch-pane.narrow .ch-dot[data-tone="wait"] { background: var(--warn); }
-.ch-pane.narrow .ch-l1 .ch-emblem { order: 1; margin-left: 0; }
 .ch-pane.narrow .ch-l1 .ch-mmore { order: 2; margin-left: auto; }
 /* The narrow header is one line: the name (cut with an ellipsis), the state chip and the bar; dono and count live in the strip and the menu. */
 .ch-pane.narrow .ch-head { flex-wrap: nowrap; }
@@ -119,6 +118,7 @@
 .ch-mention-opt[aria-selected="true"], .ch-mention-opt:hover { background: var(--bg-hover); }
 .ch-mention-eng { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; align-self: center; color: var(--fg-dim); }
 .ch-mention-eng svg.ph { width: 14px; height: 14px; }
+.ch-mention-av { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; align-self: center; margin-left: -4px; }
 .ch-mention-opt .ch-mention-name { flex: 1; }
 .ch-mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-mention-opt.all .ch-mention-name { font-style: italic; }
@@ -151,7 +151,9 @@
 .ch-mrow { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; border-radius: 6px; }
 .ch-mrow:hover { background: var(--bg-hover); }
 .ch-l1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.ch-l1 .ch-emblem { flex: none; margin-left: auto; }
+/* The emblem (or the agent's letter) sits right after the engine's icon, before the name: the order of the tab. */
+.ch-l1 .ch-emblem, .ch-l1 .aid-letter { flex: none; margin-left: -3px; }
+.ch-olead { display: inline-flex; align-items: center; gap: 3px; margin: 0 4px 0 1px; vertical-align: middle; }
 .ch-l1 .ch-oname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 /* An agent's name is a way to its pane (click: go; Alt+click or right-click: peek) but does not look like a link: same colour and weight,

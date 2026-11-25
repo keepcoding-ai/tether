@@ -89,6 +89,11 @@ export interface ContextMenuItem {
   pin?: MenuPin
   /** The gesture that does the same, written on the right of the row ("Ctrl+clique"). */
   hint?: string
+  /**
+   * The agent (its slot id) the row is about ("Ir para ‹agente›"): the menu draws its emblem, or its letter when it wears none,
+   * between the icon and the label. Ignored when the app has no such agent.
+   */
+  agent?: string
   children?: readonly ContextMenuRow[]
 }
 export type ContextMenuEntry = ContextMenuItem | 'sep'

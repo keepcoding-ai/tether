@@ -3,7 +3,7 @@
 // form: the emblem or letter at full size and the engine as a small seal on its corner.
 import { ICON_NAMES, icon, type IconName } from './icons.ts'
 import { emblemBadge } from './tab-emblems.ts'
-import { identityLabel, identityOf, type Identity, type IdentityInput } from './agent-identity-rules.ts'
+import { identityLabel, identityOf, type Identity, type IdentityInput, type IdentityMark } from './agent-identity-rules.ts'
 
 export { identityOf, letterOf, type Identity, type IdentityInput } from './agent-identity-rules.ts'
 
@@ -34,6 +34,21 @@ function engineIcon(id: Identity): HTMLElement {
   cell.setAttribute('aria-label', id.engine.label)
   cell.dataset.engine = id.kind
   return cell
+}
+
+/** The emblem's chip or the letter's square itself, with no wrapper (a row that places and spaces it by its own rules). */
+export function bareMark(m: IdentityMark): HTMLElement {
+  if (m.type === 'letter') return letterSquare(m.letter, m.hue)
+  const chip = emblemBadge(m.emblem)
+  chip.classList.add('aid-emblem')
+  return chip
+}
+
+/** The engine's icon as a small seal for the corner of a mark (the tight places); the parent must be `position: relative`. */
+export function engineSeal(id: Identity): HTMLElement {
+  const seal = engineIcon(id)
+  seal.classList.add('aid-seal')
+  return seal
 }
 
 /** Only the emblem-or-letter square (for a list that already draws the engine's icon itself). */

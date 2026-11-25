@@ -7,6 +7,8 @@
 import { createActionBar, type ActionBar } from '../../../app/renderer/action-bar.ts'
 import type { ContextMenuEntry, PadHost, PadView, TetherUi } from '../../../app/renderer/ext-api.ts'
 import { icon } from '../../../app/renderer/icons.ts'
+import { identityMark } from '../../../app/renderer/agent-identity.ts'
+import { identityOf } from '../../../app/renderer/agent-identity-rules.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { OBJECT_KEYS, type Inventory } from '../rules.ts'
 import {
@@ -56,6 +58,8 @@ export function inventoryPad(ui: Ui): IDisposable[] {
 
   class View implements PadView {
     readonly element = el('div', 'fa-inv')
+    /** The owner of the desk: [engine icon] [emblem or letter], before the title that names it. */
+    private readonly lead = el('span', 'fa-inv-lead')
     private readonly title = el('span', 'fa-inv-title')
     private readonly bar: ActionBar
     private readonly body = el('div', 'fa-inv-body')
@@ -74,7 +78,7 @@ export function inventoryPad(ui: Ui): IDisposable[] {
         openMenu: (x, y) => ui.menus.context(x, y, [...host.menuItems(), 'sep', ...this.menu()]),
       })
       const top = el('div', 'fa-inv-top')
-      top.append(this.title, this.bar.element)
+      top.append(this.lead, this.title, this.bar.element)
       this.element.append(top, this.body)
       host.setMenuHosted(true)
       this.subs = [
@@ -117,11 +121,23 @@ export function inventoryPad(ui: Ui): IDisposable[] {
       const focused = this.body.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.key : undefined
       this.title.textContent = m.title
       this.title.title = m.title
+      this.paintLead(m.owner)
       this.body.replaceChildren(...this.sections(m, facts))
       this.body.scrollTop = keep
       if (focused) this.body.querySelector<HTMLElement>(`[data-key="${CSS.escape(focused)}"]`)?.focus()
       this.bar.refresh()
       this.host.menuChanged()
+    }
+
+    /** The pair of an agent the app knows (undefined for an owner with no pane). */
+    private pairOf(id: string, name: string): HTMLElement | undefined {
+      const pane = ui.agents.get(id)
+      return pane ? identityMark(identityOf({ kind: pane.kind, name, seed: id, emblem: ui.panes.personEmblem(id) })) : undefined
+    }
+
+    private paintLead(owner: { id: string; name: string } | undefined): void {
+      const pair = owner ? this.pairOf(owner.id, owner.name) : undefined
+      if (pair) this.lead.replaceChildren(pair); else this.lead.replaceChildren()
     }
 
     private sections(m: InventoryModel, facts: InventoryFacts): HTMLElement[] {
@@ -200,7 +216,7 @@ export function inventoryPad(ui: Ui): IDisposable[] {
           open.dataset.key = `other:${o.paneId}:open`
           // Opens that pane's own line here; it brings no pane or desk forward.
           open.addEventListener('click', () => { pin = { target: { paneId: o.paneId }, activeDesk: ui.desks.activeId() }; this.render() })
-          row.append(el('span', 'fa-em', ownerLetter(o.ownerName)), grow, open)
+          row.append(this.pairOf(o.ownerId, o.ownerName) ?? el('span', 'fa-em', ownerLetter(o.ownerName)), grow, open)
           out.push(row)
         }
       }

@@ -3303,9 +3303,10 @@ function fromExtMenu(entries: readonly ContextMenuRow[]): MenuEntry[] {
   return entries.map((e): MenuEntry => {
     if (e === 'sep') return SEP
     if ('heading' in e) return { heading: String(e.heading) }
-    const { children, hint, ...item } = e
+    const { children, hint, agent, ...item } = e
     const trail = hint ? Object.assign(document.createElement('kbd'), { textContent: hint }) : undefined
-    return { ...item, icon: item.icon as IconName, ...(trail ? { trail } : {}), ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
+    const lead = agent !== undefined ? leadOf(agent, findPanel(agent)?.api.title ?? agent) : {}
+    return { ...item, icon: item.icon as IconName, ...(trail ? { trail } : {}), ...lead, ...(Array.isArray(children) ? { children: fromExtMenu(children) } : {}) }
   })
 }
 

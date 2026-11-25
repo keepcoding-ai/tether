@@ -34,6 +34,8 @@ import { type ActionBar, createActionBar } from '../../app/renderer/action-bar.t
 import type { Target } from '../../app/renderer/create.ts'
 import type { AttentionHandle, ContextMenuEntry, PadHost, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../app/renderer/icons.ts'
+import { bareMark, engineSeal, identityMark } from '../../app/renderer/agent-identity.ts'
+import { identityOf, type Identity } from '../../app/renderer/agent-identity-rules.ts'
 import { createTabHeader } from '../../app/renderer/tab-header.ts'
 import { factsOf } from '../../app/renderer/surface-host.ts'
 import { hostVisible } from '../../app/shared/surface-panel-rules.ts'
@@ -87,13 +89,19 @@ function dressChip(chip: HTMLElement, slotId: string | undefined, agent: { name:
  * The owner on the tab strip: a compact emblem (the owner's initial on its hue, the size of the terminal tabs' emblems), with
  * the full text ("‹agente›", "‹agente› encerrado") in data-label, the tooltip and aria-label instead of inline.
  */
-function dressTabOwner(badge: HTMLElement, slotId: string | undefined, agent: { name: string; alive: boolean } | undefined): void {
+function dressTabOwner(badge: HTMLElement, slotId: string | undefined, agent: { name: string; alive: boolean } | undefined, ident?: Identity): void {
   const c = ownerChip(agent)
   const label = slotId ? c.text : ''
   badge.dataset.label = label
   badge.dataset.ended = c.ended ? 'true' : 'false'
   badge.hidden = !label
   badge.textContent = label ? (agent ? shortName(agent.name) : label).trim().charAt(0).toUpperCase() : ''
+  // The tab is too tight for the pair: the badge is the owner's emblem (else its letter, as before) with the engine's icon as a seal on its corner.
+  badge.dataset.mark = label && ident?.mark.type === 'emblem' ? 'emblem' : 'letter'
+  if (label && ident) {
+    if (ident.mark.type === 'emblem') badge.replaceChildren(bareMark(ident.mark))
+    if (ident.kind !== '') badge.append(engineSeal(ident))
+  }
   badge.style.setProperty('--br-hue', String(slotId ? ownerHue(slotId) : 0))
   badge.dataset.person = isPersonOwned(slotId) ? 'true' : 'false'
   const tip = isPersonOwned(slotId) ? PERSON_TITLE : agent ? (c.ended ? c.text : `Agente: ${agent.name}`) : label
@@ -119,6 +127,12 @@ export function activate(ui: TetherUi): IDisposable[] {
     const pane = ui.agents.get(slotId)
     return resolveAgent(pane ? { name: pane.name, alive: pane.alive } : undefined, slots.get(slotId), slotsKnown)
   })
+  /** The identity of a tab's owner (its engine and emblem or letter); the person's own tabs have none: they say "Você". */
+  const ownerIdentity = (slotId: string | undefined): Identity | undefined => {
+    if (!slotId || isPersonOwned(slotId)) return undefined
+    const pane = ui.agents.get(slotId)
+    return identityOf({ kind: pane?.kind ?? '', name: pane?.name ?? agentName(slotId), seed: slotId, emblem: ui.panes.personEmblem(slotId) })
+  }
   /** Who has each tab (main's views, kept as they come). */
   const controls = new Map<string, ControlView>()
   /** F3: the open JavaScript dialog of each page she holds, by tab: shown in its pane's band, never in the agents' question queue. */
@@ -411,6 +425,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       dressChip(chip, g.slotId, agentInfo(g.slotId) ?? { name: g.name, alive: false })
       // The ended section already says it: the chip is the short name alone.
       if (g.ended || !chip.textContent) chip.textContent = g.name
+      // The group's agent: [engine icon] [emblem or letter] before its name.
+      const pair = ownerIdentity(g.slotId)
+      if (pair) chip.prepend(identityMark({ ...pair, name: g.name }))
       chip.addEventListener('click', () => { ui.agents.focus(g.slotId) })
       const count = el('span', 'br-pad-count', String(g.tabs.length))
       count.dataset.role = 'count'
@@ -638,6 +655,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     private readonly fwdBtn = el('button', 'br-web-nav')
     private readonly reloadBtn = el('button', 'br-web-nav')
     private readonly ownerEl = el('button', 'br-web-owner')
+    /** The agent that owns the tab: [engine icon] [emblem or letter] (empty for the person's own tab, which says "Você"). */
+    private readonly ownerId = el('span', 'br-web-owner-id')
+    private ownerIdKey = ''
     private readonly ownerText = el('span', 'br-web-owner-text')
     private readonly ownerLive = el('span', 'br-web-owner-live')
     private readonly ownerShort = el('span', 'br-web-owner-short')
@@ -715,7 +735,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       this.ownerLive.title = 'O agente está agindo'
       this.ownerToggle.hidden = true
       // The long phrase and the short one are both in the pill; the pane's width (a container query) shows one.
-      this.ownerEl.append(el('span', 'br-web-owner-dot'), this.ownerText, this.ownerShort, this.ownerLive, this.ownerToggle)
+      this.ownerEl.append(el('span', 'br-web-owner-dot'), this.ownerId, this.ownerText, this.ownerShort, this.ownerLive, this.ownerToggle)
       // During a help request the pill opens and collapses the card; otherwise it goes to the agent.
       this.ownerEl.addEventListener('click', () => {
         if (this.turnAsk) { this.toggleTurn(); return }
@@ -1014,6 +1034,15 @@ export function activate(ui: TetherUi): IDisposable[] {
       return true
     }
 
+    /** Redraws the owner's pair only when what it shows changed (the pill repaints on every state change of the tab). */
+    private paintOwnerId(ident: Identity | undefined): void {
+      const m = ident?.mark
+      const key = ident ? `${ident.kind}|${m!.type === 'emblem' ? `e${m!.emblem.name}${m!.emblem.color}${m!.emblem.icon}` : `l${m!.letter}${m!.hue}`}` : ''
+      if (key === this.ownerIdKey) return
+      this.ownerIdKey = key
+      if (ident) this.ownerId.replaceChildren(identityMark(ident)); else this.ownerId.replaceChildren()
+    }
+
     /** The pill: the owner's colour and name, and what goes on, in one phrase; a click goes to the agent (or toggles the card). */
     private paintOwner(view: TabView): void {
       const slotId = this.saved?.ownerSlotId
@@ -1028,6 +1057,7 @@ export function activate(ui: TetherUi): IDisposable[] {
       const toggle = view.owner.toggle
       this.ownerEl.title = toggle ? toggle.title : this.own() ? PERSON_TITLE : agent ? `Ver o agente: ${agent.name}` : ''
       if (toggle) this.ownerEl.setAttribute('aria-expanded', String(!view.ask?.collapsed)); else this.ownerEl.removeAttribute('aria-expanded')
+      this.paintOwnerId(this.own() ? undefined : ownerIdentity(slotId))
       this.ownerText.textContent = view.owner.text
       this.ownerShort.textContent = view.owner.short
       this.ownerLive.hidden = !view.owner.live
@@ -1294,7 +1324,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     paint(): void {
       const panel = panels.get(this.paneId)
       const owner = panel?.saved?.ownerSlotId ?? this.element.dataset.owner
-      dressTabOwner(this.chip, owner, owner ? agentOf(owner) : undefined)
+      dressTabOwner(this.chip, owner, owner ? agentOf(owner) : undefined, ownerIdentity(owner))
       const favicon = panel?.favicon()
       if (favicon) { if (this.iconEl.src !== favicon) this.iconEl.src = favicon } else this.iconEl.removeAttribute('src')
       this.iconEl.hidden = !favicon
