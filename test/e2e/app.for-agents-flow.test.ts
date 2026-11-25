@@ -403,6 +403,7 @@ test('for-agents flow: the scene of section 8 with fake agents and the owner dri
     if (app) await killElectron(app, root).catch(() => {})
     list.splice(0, list.length, ...setAside)
     probe.dispose()
+    await door.mcp.close().catch(() => {})
     await daemon.close().catch(() => {})
     await removeHome(home)
   }

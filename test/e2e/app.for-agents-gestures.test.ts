@@ -391,6 +391,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     throw e
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
+    await door.mcp.close().catch(() => {})
     await daemon.close()
     await removeHome(home)
   }
