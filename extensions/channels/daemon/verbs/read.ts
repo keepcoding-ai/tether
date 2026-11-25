@@ -7,6 +7,7 @@ import {
   closedByText, missingText, owedPolls, pollTally, REACTION_WINDOW, stillCalled, sumReactions, tallyText, votersText,
   type Channel, type Line, type PollResult, type PollTally, type ReactionTally,
 } from '../../rules.ts'
+import { withFiles } from '../../attachments.ts'
 import type { ChannelStore } from '../store.ts'
 import { CANAL_PROP, hhmm, optFlag, optInt, ok, refOf, resolveChannel, wantString, type VerbDef } from './common.ts'
 
@@ -96,7 +97,11 @@ export const readVerb: VerbDef = {
       if (l.kind === 'notice' && l.event?.type === 'poll-close' && l.result) return `${l.seq} tether: [enquete ${l.result.poll} fechou · ${closedByText(l.result)}] ${tallyText(l.result.tally)}`
       const head = l.kind === 'notice' ? '·' : `${l.from.name}${l.to?.length ? ` → ${l.to.join(', ')}` : ''}:`
       const tallies = l.kind === 'message' ? sums.get(l.seq) : undefined
-      return `${l.seq} ${head} ${l.body}${tallies?.length ? `  [${pills(tallies)}]` : ''}`
+      // A speech's files: the same block the agents got (`anexos:` and one absolute path per line), under the speech's line.
+      const [first = '', ...rest] = withFiles(l.body, l.files).split('\n')
+      const text = l.files?.length && l.body.trim() === '' ? ['', first, ...rest] : [first, ...rest]
+      text[0] = `${l.seq} ${head}${text[0] ? ` ${text[0]}` : ''}${tallies?.length ? `  [${pills(tallies)}]` : ''}`
+      return text.join('\n')
     }
     const rows = shown.map(row)
     const earlierText = [...earlier].map(([seq, list]) => `${seq} ${list.map((e) => `${e.emoji} ${e.name}`).join(', ')}`).join('; ')

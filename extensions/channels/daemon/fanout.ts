@@ -44,6 +44,8 @@ import {
   type AgentId, type Channel, type ChannelId, type Line, type LineEventType, type OpenPoll, type PollClosedBy, type PollMissingWhy, type PollPerson,
   type PollResult, type Reaction, type ReactionRide, type Who,
 } from '../rules.ts'
+import { withFiles, type FileRefusal } from '../attachments.ts'
+import { storeFiles, type FileSource } from './files.ts'
 import { TAIL_LINES, type ChannelStore, type NewLine, type StoreError } from './store.ts'
 import {
   clockText, closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
@@ -66,6 +68,7 @@ export type Refusal =
   | 'unknown-agent' | 'bad-request'
   | 'unknown-line' | 'not-a-message' | 'too-old' | 'bad-reaction' | 'limit' | 'slow-down'
   | 'too-long' | 'vote-first' | 'nobody-called' | 'poll-closed' | 'not-called' | 'bad-option' | 'not-author'
+  | FileRefusal
 
 export type Outcome<T> = ({ ok: true } & T) | { ok: false; error: Refusal }
 
@@ -118,6 +121,8 @@ export interface SayInput {
   to?: readonly string[]
   /** The seq of the line it answers, in the same channel. */
   replyTo?: number
+  /** Files the speech carries (at most ATTACH_MAX_PER_SAY): copied into the channel's folder; with files the body may be ''. */
+  files?: readonly FileSource[]
 }
 
 export interface ReactInput {
@@ -133,7 +138,7 @@ export interface Channels {
   /** A common channel. An agent creator joins as its member and owner; the person creates a channel she owns. */
   create(who: Who, input: { name: string; title?: string }): Promise<Outcome<{ channel: Channel; line: Line }>>
   /** A line from a member (role `member`, the owner too) or the moderator (`who: 'user'`). Delivered to every member but the speaker. */
-  say(who: Who, id: ChannelId, input: SayInput): Promise<Outcome<{ line: Line; receipts: Record<AgentId, LineReceipt> }>>
+  say(who: Who, id: ChannelId, input: SayInput): Promise<Outcome<{ line: Line; receipts: Record<AgentId, LineReceipt> }> & { file?: string }>
   /**
    * A reaction (or its removal) on the message `seq`: a line of its own (`kind: 'reaction'`) in the record, the event `reaction`,
    * and NOTHING else: no delivery, no notice, no turn, no change to "seen". `changed: false` (no line) when it was there already
@@ -298,7 +303,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     const ref = `${ch.name}#${line.seq}`
     if (line.kind === 'notice') return { kind: 'notice', room: ch.name, from: { ...SYSTEM_FROM }, body: line.body, ref }
     const msg: DeliveryMessage = {
-      kind: 'message', room: ch.name, body: withReplyHint(line.body, ch.name, path, tools), ref,
+      kind: 'message', room: ch.name, body: withReplyHint(withFiles(line.body, line.files), ch.name, path, tools), ref,
       from: { name: line.from.name, id: line.from.id, role: deliveryRoleOf(line.from.role) },
     }
     if (line.to?.length) msg.to = line.to
@@ -772,11 +777,17 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
-        if (typeof input.body !== 'string' || input.body.trim() === '') return fail('bad-request')
+        const sources = input.files ?? []
+        if (typeof input.body !== 'string' || (input.body.trim() === '' && sources.length === 0)) return fail('bad-request')
         const refusal = sayRefusal(who, ch)
         if (refusal) return fail(refusal)
+        // The files are checked again here (never trusting the screen) and copied before the line: a line never names a missing file.
+        const stored = sources.length ? await storeFiles(store.filesDir(ch.id), sources) : undefined
+        if (stored && !stored.ok) return { ok: false as const, error: stored.error, file: stored.file }
+        const files = stored?.ok ? stored.files : []
         const role = roleIn(who, ch)!
         const line = await append(ch, {
+          ...(files.length ? { files } : {}),
           kind: 'message', from: { id: who, name: nameOf(who), role }, body: input.body,
           ...(input.to?.length ? { to: [...input.to] } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         })

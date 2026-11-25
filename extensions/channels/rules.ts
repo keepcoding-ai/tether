@@ -109,7 +109,12 @@ export interface Line {
   vote?: PollVote
   /** Only on a poll's close notice (`event.type: 'poll-close'`): the result. */
   result?: PollResult
+  /** Only on a message: its files, copied into the channel's folder (attachments.ts); `body` may then be ''. */
+  files?: LineFile[]
 }
+
+/** One file of a speech, as the line keeps it: the name shown, its absolute path in the channel's folder, its size and type. */
+export interface LineFile { name: string; path: string; size: number; type: string }
 
 // ---- polls --------------------------------------------------------------------------------------
 

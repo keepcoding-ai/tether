@@ -11,6 +11,7 @@
 // POLLS_CLOSED_KEPT results are: the lines of a poll are in the record like any other, the index is what is open now.
 import { randomInt } from 'node:crypto'
 import type { DaemonIo } from '../../../src/daemon/ext-api.ts'
+import { FILES_DIR } from '../attachments.ts'
 import {
   endsOwnership, isRoomName, POLLS_CLOSED_KEPT, type AgentId, type Channel, type ChannelId, type ChannelOwner, type Line, type Member, type OpenPoll, type Who,
   USER, deskChannelId,
@@ -109,6 +110,8 @@ export interface ChannelStore {
   since(id: ChannelId, since: number, limit?: number): Promise<Line[]>
   /** Channels whose tail is in memory, least recently used first. */
   cachedChannels(): ChannelId[]
+  /** The channel's folder of files (attachments): `<home>/channels/<id>/files`, made when the first file comes. */
+  filesDir(id: ChannelId): string
 }
 
 interface IndexFile {
@@ -573,6 +576,7 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
     },
 
     cachedChannels: () => [...tails.keys()],
+    filesDir: (id) => `${dirOf(id)}/${FILES_DIR}`,
   }
   return store
 }

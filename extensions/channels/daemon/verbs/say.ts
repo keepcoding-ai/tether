@@ -2,7 +2,8 @@
 // the delivery: the result says what became of the line for each member.
 import { sayRefusal } from '../../rules.ts'
 import { CANAL_PROP, ok, optInt, optStrings, refOf, refuse, resolveChannel, settle, wantString, whoByRef, type VerbDef, type VerbDeps } from './common.ts'
-import type { Channel } from '../../rules.ts'
+import type { Channel, Line } from '../../rules.ts'
+import type { LineReceipt } from '../fanout.ts'
 
 /** The names a line addresses (whoByRef: the person or a member); anything else is `unknown-member`. */
 function addressees(deps: VerbDeps, ch: Channel, refs: readonly string[]): string[] {
@@ -33,7 +34,7 @@ export const sayVerb: VerbDef = {
     const refusal = sayRefusal(caller.slotId, ch)
     if (refusal) refuse(refusal, refusal === 'closed' ? 'o canal está encerrado' : refusal === 'muted' ? 'você está calado neste canal' : 'o agente não está no canal')
     const to = refs?.length ? addressees(deps, ch, refs) : undefined
-    const done = settle(await deps.channels.say(caller.slotId, ch.id, { body: text, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}) }))
+    const done = settle<{ ok: true; line: Line; receipts: Record<string, LineReceipt> }>(await deps.channels.say(caller.slotId, ch.id, { body: text, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}) }))
     const delivered = Object.entries(done.receipts).map(([id, state]) => ({ id, name: deps.channels.nameOf(id), state }))
     return ok(`Falou em #${ch.name} (${done.line.seq}).`, { channel: refOf(ch), ref: `${ch.name}#${done.line.seq}`, seq: done.line.seq, delivered })
   },

@@ -10,7 +10,9 @@ import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
 import { isCalled, personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
+import { refusalText, type FileRefusal } from '../attachments.ts'
 import type { Channels, Outcome } from './fanout.ts'
+import { parseSources } from './files.ts'
 import { PAGE } from './store.ts'
 
 /** How long `seen` waits before it writes the index: a pane that scrolls sends many. */
@@ -247,8 +249,15 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const ch = channelOf(c, a)
       const to = names(a, 'to')
       const reply = int(a, 'reply')
-      const r = done(await c.say(USER, ch.id, { body: text(a, 'text'), ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}) }))
-      return { line: r.line, receipts: r.receipts }
+      // Files (attachments): `[{ path, name? }]`, checked again by the fan-out by name and size, then copied into the channel's folder.
+      const files = parseSources(a.files)
+      if (files === 'bad-request') throw refuse('bad-request', 'o argumento files é uma lista de { path, name? } com caminhos absolutos')
+      if (files === 'too-many') throw refuse('too-many', refusalText('too-many', '', { accepted: 0, tried: (a.files as unknown[]).length }).rest)
+      const body = text(a, 'text', files.length > 0)
+      const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}) })
+      if (!r.ok && r.file !== undefined) throw refuse(r.error, (({ lead, rest }) => `${lead} ${rest}`)(refusalText(r.error as FileRefusal, r.file)))
+      const said = done(r)
+      return { line: said.line, receipts: said.receipts }
     }],
 
     ['create', async (c, a, ctx) => {

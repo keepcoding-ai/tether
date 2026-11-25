@@ -175,6 +175,12 @@ const REFUSALS: Record<Refusal, string> = {
   'not-called': 'a enquete não chama você',
   'bad-option': 'opção inválida: use o número da opção ou o texto dela',
   'not-author': 'só quem abriu a enquete (ou você, a pessoa) a encerra',
+  'secret-file': 'arquivo com nome de segredo (.env, chaves, certificados, credenciais) não é anexado',
+  'too-large': 'arquivo grande demais: o limite é 20 MB por arquivo',
+  'is-folder': 'pasta não é anexada: compacte em .zip',
+  'not-found': 'o arquivo não existe',
+  'too-many': 'arquivos demais: o limite é 10 por fala',
+  'copy-failed': 'não consegui copiar o arquivo para a pasta do canal',
 }
 
 /** The fan-out's answer as the verb's: the success, or the refusal thrown with the verb's error code (`messages` overrides the text). */
