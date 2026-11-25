@@ -57,7 +57,7 @@ const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-sprev-${process.pid}`
 const atriumTmp = /^(.*?[\\/]\.tmp)(?=[\\/])/.exec(root)?.[1] ?? resolve(root, '..', '..', '.tmp')
-const tmpBase = existsSync(atriumTmp) ? atriumTmp : tmpdir()
+const tmpBase = tmpdir() // the test home must live in the OS temp folder: guardAppEnv refuses any other
 const shots = join(atriumTmp, 'search')
 const PAD_SEL = '.pad[data-pad="search.view"]'
 const SCROLL = `${PAD_SEL} .sr-scroll`

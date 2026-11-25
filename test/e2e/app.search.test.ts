@@ -71,7 +71,7 @@ const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-appsearch-${process.pid}`
 // <atrium>/.tmp: the checkout lives in <atrium>/workspace/tether, or in a worktree under <atrium>/.tmp itself.
 const atriumTmp = /^(.*?[\\/]\.tmp)(?=[\\/])/.exec(root)?.[1] ?? resolve(root, '..', '..', '.tmp')
-const tmpBase = existsSync(atriumTmp) ? atriumTmp : tmpdir()
+const tmpBase = tmpdir() // the test home must live in the OS temp folder: guardAppEnv refuses any other
 const shots = join(atriumTmp, 'search')
 const PAD_SEL = '.pad[data-pad="search.view"]'
 const SCROLL = `${PAD_SEL} .sr-scroll`
