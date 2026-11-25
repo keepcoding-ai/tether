@@ -81,7 +81,7 @@ export interface BrowserChannels {
     /** E14: "Sair de todas as contas": cookies and storage of the tabs' partition cleared, open tabs reloaded. */
     logoutAll: () => void
     /** E13: every agent's downloaded files ("Baixados"). */
-    downloads: () => DownloadEntry[]
+    downloads: () => DownloadEntry[] | Promise<DownloadEntry[]>
     /** E13: "Mostrar na pasta": the system's file browser on the file (never opens the file). */
     showDownload: (slotId: string, name: string) => void
     /** E13: the upload questions still waiting, and the person's answer ('allow'; anything else refuses). */

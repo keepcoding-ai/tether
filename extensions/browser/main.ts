@@ -212,7 +212,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     }),
     downloads.onEvent(e => {
       gate?.download(e)
-      if (e.state === 'completed') ipc.send('downloads', downloads.list())
+      if (e.state === 'completed') void downloads.list().then(l => ipc.send('downloads', l), () => {})
     }),
     main.agents.onDidExit(e => control.agentExited(e.slotId)),
     main.agents.onDidChange(a => ipc.send('agent', { slotId: a.slotId, name: a.name, alive: a.alive })),
@@ -335,8 +335,8 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('controls', () => control.views()),
     ipc.handle('downloads', () => downloads.list()),
     // Opens the system's file browser on the file (selected), never the file itself.
-    ipc.handle('showDownload', (slotId, name) => {
-      const path = typeof slotId === 'string' && typeof name === 'string' ? downloads.pathOf(slotId, name) : undefined
+    ipc.handle('showDownload', async (slotId, name) => {
+      const path = typeof slotId === 'string' && typeof name === 'string' ? await downloads.pathOf(slotId, name) : undefined
       if (!path) return
       if (testing) shownInFolder.push(path)
       else shell.showItemInFolder(path)

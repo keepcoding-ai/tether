@@ -6,7 +6,8 @@
 // "Baixados" is read from the folders (so it survives a restart); "Mostrar na pasta" opens the system's file browser on the
 // file, never the file itself. Listeners hear every download's progress (the gate tells the owner's agent connections).
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 import type { DownloadItem } from 'electron'
 import { type DownloadEntry, downloadOver, safeDownloadName, uniqueName, zoneIdentifier } from './files-rules.ts'
@@ -59,28 +60,34 @@ export class DownloadStore {
   }
 
   /** Her downloads the pad remembers, as recorded (paths not checked). */
-  private personRecords(): PersonFile[] {
+  private async personRecords(): Promise<PersonFile[]> {
     let raw: unknown
-    try { raw = JSON.parse(readFileSync(this.personFile, 'utf8')) } catch { return [] }
+    try { raw = JSON.parse(await readFile(this.personFile, 'utf8')) } catch { return [] }
     if (!Array.isArray(raw)) return []
     return raw.filter((r): r is PersonFile => !!r && typeof r === 'object' && typeof r.name === 'string' && typeof r.path === 'string' && typeof r.at === 'number'
       && r.name === safeDownloadName(r.name) && isAbsolute(r.path) && basename(r.path) === r.name)
   }
 
+  /** The recordings in flight, in order: a read of the list waits for them. */
+  private recording: Promise<void> = Promise.resolve()
+
   private recordPerson(name: string, path: string): void {
-    const kept = this.personRecords().filter(r => r.path !== path)
-    kept.push({ name, path, at: Date.now() })
-    try { writeFileSync(this.personFile, JSON.stringify(kept.slice(-PERSON_DOWNLOADS_MAX))) } catch (e) {
-      this.log(`download da pessoa fora da lista de baixados (${(e as NodeJS.ErrnoException).code ?? 'erro'})`)
-    }
+    this.recording = this.recording.then(async () => {
+      const kept = (await this.personRecords()).filter(r => r.path !== path)
+      kept.push({ name, path, at: Date.now() })
+      try { await writeFile(this.personFile, JSON.stringify(kept.slice(-PERSON_DOWNLOADS_MAX))) } catch (e) {
+        this.log(`download da pessoa fora da lista de baixados (${(e as NodeJS.ErrnoException).code ?? 'erro'})`)
+      }
+    })
   }
 
   /** Her finished files that are still where they landed (she may have moved or deleted them). */
-  private personFiles(): (DownloadEntry & { path: string })[] {
+  private async personFiles(): Promise<(DownloadEntry & { path: string })[]> {
+    await this.recording
     const out: (DownloadEntry & { path: string })[] = []
-    for (const r of this.personRecords()) {
+    for (const r of await this.personRecords()) {
       try {
-        const st = statSync(r.path)
+        const st = await stat(r.path)
         if (st.isFile()) out.push({ slotId: PERSON_OWNER, name: r.name, bytes: st.size, at: st.mtimeMs, path: r.path })
       } catch { /* gone */ }
     }
@@ -125,15 +132,15 @@ export class DownloadStore {
   }
 
   /** Every agent's finished files and hers (the pad's "Baixados"). */
-  list(): DownloadEntry[] {
-    const hers = this.personFiles().map(({ path: _p, ...e }) => e)
+  async list(): Promise<DownloadEntry[]> {
+    const hers = (await this.personFiles()).map(({ path: _p, ...e }) => e)
     if (!existsSync(this.root)) return hers
     return [...readdirSync(this.root).filter(id => isId(id) && !isPersonOwned(id)).flatMap(slotId => this.filesOf(slotId)), ...hers]
   }
 
   /** The file's full path for "Mostrar na pasta"; undefined unless it is a file of that agent's folder (or one of her downloads). */
-  pathOf(slotId: string, name: string): string | undefined {
-    if (isPersonOwned(slotId)) return this.personFiles().filter(f => f.name === name).at(-1)?.path
+  async pathOf(slotId: string, name: string): Promise<string | undefined> {
+    if (isPersonOwned(slotId)) return (await this.personFiles()).filter(f => f.name === name).at(-1)?.path
     const dir = this.folderOf(slotId)
     if (!dir || name !== safeDownloadName(name)) return undefined
     const p = join(dir, name)

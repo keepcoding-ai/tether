@@ -138,7 +138,7 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
     localNetworkOpen: () => [],
     controls: () => [],
     agents: () => main.agents.list().map(a => ({ slotId: a.slotId, name: a.name, alive: a.alive })),
-    downloads: () => (downloadStore ??= new DownloadStore(join(main.home, 'browser'), log)).list(),
+    downloads: async () => (downloadStore ??= new DownloadStore(join(main.home, 'browser'), log)).list(),
     uploadOpen: () => [],
     // The history is a file: readable without the process (never written here: the process owns that).
     closedList: async () => {
