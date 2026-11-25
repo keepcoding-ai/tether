@@ -126,7 +126,7 @@ export function browsersFromOverride(json: string, exists: (p: string) => boolea
 }
 
 /** The detected browser behind a connected one's name ("Chrome" → "Google Chrome"); undefined when none matches. */
-export function detectedFor(detected: readonly DetectedBrowser[], name: string): DetectedBrowser | undefined {
+export function detectedFor<T extends Pick<DetectedBrowser, 'name'>>(detected: readonly T[], name: string): T | undefined {
   const key = name.toLowerCase()
   return key ? detected.find(d => d.name.toLowerCase().includes(key)) : undefined
 }
