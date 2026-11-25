@@ -141,6 +141,8 @@ test('cartão de espiar: o foco volta à caixa de fala do canal e a quem abriu o
     assert.equal(await inField(), true)
     await page.evaluate(id => window.__tether.peek(id), b)
     await waitPeek(b)
+    // The card hands the keyboard to its content on the next animation frame, after the state says "open".
+    await page.waitForFunction(() => !!document.activeElement?.closest('#peek'))
     assert.equal(await inField(), false, 'the keyboard went into the card')
     await page.keyboard.press('Control+Shift+O')
     await waitClosed()
