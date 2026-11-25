@@ -32,7 +32,7 @@ export interface ForAgentsDaemon {
  * returned disposable undoes the door's state, and runs after them (it is added last).
  */
 export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposables: IDisposable[] } {
-  const store = new OwnershipStore(api.objects, api.desks)
+  const store = new OwnershipStore(api.objects, api.desks, undefined, (m) => api.log(m))
   const reconciler = new Reconciler({ slots: api.slots, attention: api.attention, desks: api.desks, store, log: (m) => api.log(m), ready: () => Promise.all([api.objects.ready, api.desks.ready]) })
   const gate = new WriteGate(store, api.slots)
   const typingTakes = (slotId: string): void => {
@@ -44,8 +44,8 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
   }
   const disposables: IDisposable[] = [
     ...bindDeskOwners(api.objects),
-    api.objects.onDidChange((e) => reconciler.objectChanged(e)),
-    api.objects.onDidDrop((e) => { if (e.kind === 'pane') reconciler.paneDropped(e.id) }),
+    api.objects.onDidChange((e) => { store.ownerChanged(e); reconciler.objectChanged(e) }),
+    api.objects.onDidDrop((e) => { store.ownerDropped(e); if (e.kind === 'pane') reconciler.paneDropped(e.id) }),
     api.desks.onDidChange((map) => reconciler.deskMapChanged(map)),
     api.slots.onUserTyped(typingTakes),
     // The name the struck mark keeps is read here: by the time a pane object drops, its slot is no longer listed.

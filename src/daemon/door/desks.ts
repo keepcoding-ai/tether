@@ -52,23 +52,30 @@ export class DeskService implements DoorDesks {
   private readonly listeners = new Set<(map: DeskMap) => void>()
   private writing: Promise<void> = Promise.resolve()
 
+  private resolveReady!: () => void
+
   constructor(opts: DeskServiceOptions) {
     this.log = opts.log
+    this.ready = new Promise<void>((resolve) => { this.resolveReady = resolve })
   }
 
   /** The server's port arrived: the home is known, so the last map is read from disk. Once. */
   attach(port: SlotPort): void {
     this.port = port
-    this.ready = readFile(desksPath(port.home), 'utf8').then((text) => {
+    readFile(desksPath(port.home), 'utf8').then((text) => {
       const map = parseDeskMap(JSON.parse(text))
       if (map && this.current === undefined) this.adopt(map)
     }).catch((e: unknown) => {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`door: desks.json ilegível, ignorado: ${(e as Error).message}`)
-    })
+    }).finally(this.resolveReady)
   }
 
-  /** Resolves once the map on disk was read (the loop never blocks on it); a map the app sent first wins over the disk's. */
-  ready: Promise<void> = Promise.resolve()
+  /**
+   * Resolves once the map on disk was read (the loop never blocks on it); a map the app sent first wins over the disk's. One
+   * promise for the life of the service: an extension takes it in activate(), before the server attaches the door, so it settles
+   * only when `attach` finished the read. A door that is never attached (a satellite) never reads, and its `ready` stays pending.
+   */
+  readonly ready: Promise<void>
 
   // ---- DoorDesks ---------------------------------------------------------------------------------
 

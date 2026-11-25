@@ -389,6 +389,34 @@ describe('the desk channel (F1)', () => {
     assert.ok(isMember(c, outsider), 'the old owner from outside stays, as before the restart')
   })
 
+  test('the start pass only opens and realigns: a feed that is still empty at the start does not close an open channel; a real event does', async () => {
+    const o = await running('setima-a')
+    desks.d7 = deskOf('d7', 'Setima', [o])
+    await sendMap()
+    await give('d7', o)
+    await said('#setima nasceu com a mesa · owner: setima-a', 'd7')
+    const from = await lastSeq('d7')
+    // A tetherd start whose feed is active and ready but has not delivered the owner yet.
+    const late = createDeskOwnerFeed()
+    late.setActive(true)
+    late.markReady()
+    for (const d of wiring) d.dispose()
+    wiring = wireDeskChannels({ desks: doorApi.desks, slots: doorApi.slots, log: (m) => logs.push(m) }, Promise.resolve({ ...ch, store }), late)
+    await sleep(400)
+    assert.equal(channelOf('d7')!.closed, undefined, 'the absent fact does not close')
+    // The feed arrives with the owner: nothing changes.
+    const fact = { deskId: 'd7', owner: o, since: channelOf('d7')!.createdAt }
+    late.publish('d7', fact)
+    await sleep(300)
+    assert.equal(channelOf('d7')!.closed, undefined)
+    assert.deepEqual(lines.filter((e) => e.channelId === deskChannelId('d7') && e.line.seq > from).map((e) => e.line.body), [], 'no new line')
+    // A real event taking the owner away closes it.
+    late.publish('d7', undefined)
+    await said('#setima foi encerrado: a mesa ficou sem dono', 'd7', from)
+    assert.equal(channelOf('d7')!.closed!.by, USER)
+    rewire()
+  })
+
   test('for-agents on again with no desk owned: one pass reconciles at once, with no change of the desk map', async () => {
     unbind()
     // While off, every desk loses its owner: on again, the feed publishes nothing.

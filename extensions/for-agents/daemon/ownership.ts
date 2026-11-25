@@ -59,10 +59,50 @@ export class OwnershipStore {
   /** The owners paused everywhere ('frozen' on their own pane). Kept from the change events; `refreshFrozen` rebuilds it. */
   private readonly frozenSet = new Set<OwnerId>()
 
-  constructor(objects: DoorObjects, desks: DoorDesks, now: () => string = () => new Date().toISOString()) {
+  private readonly log: (msg: string) => void
+  /** The 'owner' keys (`kind:id`) this store is writing now: their change event is its own, already logged. */
+  private readonly ownWrites = new Set<string>()
+
+  constructor(objects: DoorObjects, desks: DoorDesks, now: () => string = () => new Date().toISOString(), log: (msg: string) => void = () => {}) {
     this.objects = objects
     this.desks = desks
     this.now = now
+    this.log = log
+  }
+
+  // ---- the trace of ownership in the log -------------------------------------------------------
+  // One line per give or revoke: the verb, the target (desk or pane), the relation (self or agent), who did it and by which way.
+  // Only ids and fixed words, never a user's text.
+
+  private traceOwner(verb: 'deu' | 'tirou', kind: 'desk' | 'pane', id: string, owner: OwnerId | undefined, by: string, via: string): void {
+    const target = `${kind === 'desk' ? 'a mesa' : 'a guia'} ${id}`
+    const rel = owner === undefined ? '' : ` (relação ${owner === id ? 'self' : 'agente'}, por ${by}, via ${via})`
+    const who = owner === undefined ? ` (por ${by}, via ${via})` : rel
+    this.log(`posse: ${verb} ${target}${verb === 'deu' ? ` a ${owner}` : owner === undefined ? '' : ` de ${owner}`}${who}`)
+  }
+
+  /** `by` of a gesture of this store: the person's gesture, or an agent's verb. */
+  private route(by: Who): string { return by === 'user' ? 'gesto' : 'verbo' }
+
+  private async writeOwner(kind: 'desk' | 'pane', id: string, value: Ownership | undefined): Promise<void> {
+    const key = `${kind}:${id}`
+    this.ownWrites.add(key)
+    try { await this.objects.set(kind, id, OBJECT_KEYS.owner, value) } finally { this.ownWrites.delete(key) }
+  }
+
+  /** The door's change event: an 'owner' written by someone else (the app's gesture) leaves its line; this store's writes do not. */
+  ownerChanged(e: { kind: 'desk' | 'pane'; id: string; key: string; value: unknown }): void {
+    if (e.key !== OBJECT_KEYS.owner || this.ownWrites.has(`${e.kind}:${e.id}`)) return
+    const o = asOwnership(e.value)
+    if (o) this.traceOwner('deu', e.kind, e.id, o.owner, String(o.givenBy ?? 'user'), 'gesto do app')
+    else this.traceOwner('tirou', e.kind, e.id, undefined, 'a pessoa', 'gesto do app')
+  }
+
+  /** The door's drop event: a pane (or desk) that vanished with an owner of its own loses it; says why. */
+  ownerDropped(e: { kind: 'desk' | 'pane'; id: string; data: Record<string, unknown> }): void {
+    const o = asOwnership(e.data[OBJECT_KEYS.owner])
+    if (!o) return
+    this.traceOwner('tirou', e.kind, e.id, o.owner, e.kind === 'pane' ? 'o slot esquecido' : 'a mesa fora do mapa', e.kind === 'pane' ? 'esquecimento do slot' : 'mapa de mesas')
   }
 
   // ---- reads ------------------------------------------------------------------------------------
@@ -150,15 +190,18 @@ export class OwnershipStore {
     if (!desk) throw new OwnershipRefusal('unknown-desk', `a mesa ${deskId} não existe`)
     if (!deskAcceptsOwner(desk.kind)) throw new OwnershipRefusal('system-desk', `a mesa ${desk.name} é de sistema: não recebe dono`)
     const value: Ownership = { owner, since: this.now(), givenBy: 'user' }
-    await this.objects.set('desk', deskId, OBJECT_KEYS.owner, value)
+    await this.writeOwner('desk', deskId, value)
+    this.traceOwner('deu', 'desk', deskId, owner, by, this.route(by))
     return value
   }
 
   /** The person takes a desk back from its owner (also how a forgotten owner's struck mark is cleared: "Ficar com a mesa"). */
   async revokeDesk(deskId: string, by: Who = 'user'): Promise<void> {
     if (by !== 'user') throw new OwnershipRefusal('not-owner', 'só a pessoa revoga uma mesa')
-    if (!asOwnership(this.objects.get('desk', deskId, OBJECT_KEYS.owner))) throw new OwnershipRefusal('not-given', `a mesa ${deskId} não tem dono`)
-    await this.objects.set('desk', deskId, OBJECT_KEYS.owner, undefined)
+    const was = asOwnership(this.objects.get('desk', deskId, OBJECT_KEYS.owner))
+    if (!was) throw new OwnershipRefusal('not-given', `a mesa ${deskId} não tem dono`)
+    await this.writeOwner('desk', deskId, undefined)
+    this.traceOwner('tirou', 'desk', deskId, was.owner, by, this.route(by))
   }
 
   /**
@@ -169,15 +212,18 @@ export class OwnershipStore {
   async givePane(paneId: string, to: OwnerId, by: Who = 'user'): Promise<Ownership> {
     if (!mayGiveOrRevoke(by, this.deskOfPane(paneId))) throw new OwnershipRefusal('not-owner', `só a pessoa ou o dono da mesa dá a guia ${paneId}`)
     const value: Ownership = { owner: to, since: this.now(), givenBy: by }
-    await this.objects.set('pane', paneId, OBJECT_KEYS.owner, value)
+    await this.writeOwner('pane', paneId, value)
+    this.traceOwner('deu', 'pane', paneId, to, by, this.route(by))
     return value
   }
 
   /** Takes a pane's own owner away (it falls back to the desk's owner, or to the person). Same permission as giving. */
   async revokePane(paneId: string, by: Who = 'user'): Promise<void> {
     if (!mayGiveOrRevoke(by, this.deskOfPane(paneId))) throw new OwnershipRefusal('not-owner', `só a pessoa ou o dono da mesa revoga a guia ${paneId}`)
-    if (!asOwnership(this.objects.get('pane', paneId, OBJECT_KEYS.owner))) throw new OwnershipRefusal('not-given', `a guia ${paneId} não foi dada a ninguém`)
-    await this.objects.set('pane', paneId, OBJECT_KEYS.owner, undefined)
+    const was = asOwnership(this.objects.get('pane', paneId, OBJECT_KEYS.owner))
+    if (!was) throw new OwnershipRefusal('not-given', `a guia ${paneId} não foi dada a ninguém`)
+    await this.writeOwner('pane', paneId, undefined)
+    this.traceOwner('tirou', 'pane', paneId, was.owner, by, this.route(by))
   }
 
   /** The person takes (`why: 'taken'`) or pauses (`why: 'paused'`) a pane or a desk. Typing into a commanded pane is `by: 'typing'`. */
@@ -210,7 +256,8 @@ export class OwnershipStore {
     for (const kind of ['desk', 'pane'] as const) {
       for (const [id, o] of this.owned(kind)) {
         if (o.owner !== owner || o.ended) continue
-        await this.objects.set(kind, id, OBJECT_KEYS.owner, { ...o, ended: { at, name } } satisfies Ownership)
+        await this.writeOwner(kind, id, { ...o, ended: { at, name } } satisfies Ownership)
+        this.log(`posse: dono ${owner} esquecido; marca de fim em ${kind === 'desk' ? 'a mesa' : 'a guia'} ${id} (via esquecimento do slot)`)
         touched.push(`${kind}:${id}`)
       }
     }

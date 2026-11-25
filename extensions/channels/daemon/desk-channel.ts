@@ -46,6 +46,8 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
   const seen = new Map<string, Set<AgentId>>()
   /** The feed activation already passed over (a new `ready` is for-agents on again). */
   let passed: Promise<void> | undefined
+  /** The start pass (the first one after the feed is active) has run: from then on an absent owner or desk closes. */
+  let started = false
 
   let queue: Promise<void> = Promise.resolve()
   const run = (what: string, fn: (c: Channels) => Promise<void>): void => {
@@ -61,7 +63,7 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
   }
 
   /** Brings the desk's channel in line with its owner and its desk. */
-  async function follow(c: Channels, deskId: string): Promise<void> {
+  async function follow(c: Channels, deskId: string, mayClose: boolean = started): Promise<void> {
     if (!feed.active) return
     const map = api.desks.map()
     const desk = deskIn(map, deskId)
@@ -72,6 +74,8 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
     const owner = liveOwner(fact)
     const gone = map !== undefined && desk === undefined
     if (!owner || gone) {
+      // The start pass only opens and realigns: a fact not there yet is not a fact that ended (closing is for real events).
+      if (!mayClose) return
       if (ch && !ch.closed) refused(`encerrar ${id}`, await c.desk.close(id, gone ? 'gone' : fact?.ended ? 'ended' : 'revoked'))
       open.delete(deskId)
       if (gone) seen.delete(deskId)
@@ -114,11 +118,16 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
   function pass(): void {
     for (const deskId of watched()) run(`mesa ${deskId}`, (c) => follow(c, deskId))
   }
+  /** The first pass after the feed is active: open and realign only, then closing is on. */
+  function startPass(): void {
+    for (const deskId of watched()) run(`mesa ${deskId}`, (c) => follow(c, deskId, false))
+    run('partida', async () => { started = true })
+  }
   /** for-agents on again (a fresh `ready`): once it published, one pass reconciles. */
   function activation(): void {
     if (!feed.active || feed.ready === passed) return
     passed = feed.ready
-    void passed.then(pass)
+    void passed.then(started ? pass : startPass)
   }
 
   void Promise.all([ready, api.desks.ready]).then(([c]) => {
@@ -133,7 +142,7 @@ export function wireDeskChannels(api: DeskChannelsApi, ready: Promise<Channels>,
     feed.onDidChange((deskId) => {
       if (!live) return
       activation()
-      run(`mesa ${deskId}`, (c) => follow(c, deskId))
+      run(`mesa ${deskId}`, (c) => follow(c, deskId, true)) // a change of the feed is a real event
     }),
     // for-agents on again with nothing to publish: no change would come, so its activation starts the pass.
     feed.onDidActivate(() => { if (live) activation() }),
