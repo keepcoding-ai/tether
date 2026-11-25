@@ -14,6 +14,7 @@ import {
   validKeyShape,
 } from '../../extensions/browser/gate-rules.ts'
 import { dialogsProven } from '../../extensions/browser/tabs.ts'
+import { isPersonOwned, PERSON_OWNER } from '../../extensions/browser/tab-rules.ts'
 import { acceptOf, frame, FrameParser } from '../../extensions/browser/ws-frames.ts'
 
 const KEY = 'abcdefghABCDEFGH01234567_-xyz'
@@ -69,6 +70,23 @@ test('gate: the key store sees a deleted or replaced key after its clock', () =>
     assert.equal(store.owner('zzzzzzzzzzzzzzzzzzzzzzzz'), 'slot-a')
   } finally { rmSync(dir, { recursive: true, force: true }) }
   assert.equal(new KeyStore(join(tmpdir(), 'no-such-gate-dir-x')).owner(KEY), undefined, 'no folder: no keys')
+})
+
+test('gate (person): no key stands for the person, so no connection is ever served her own tabs', () => {
+  // The gate serves a connection only the tabs whose owner is the key's slot (getTargets, attach, closeTarget, createTarget):
+  // the person's own tabs (owner PERSON_OWNER) are out of reach as long as no key resolves to PERSON_OWNER.
+  assert.equal(slotOfKeyFile(`${PERSON_OWNER}.key`), undefined)
+  assert.equal(slotOfKeyFile('person-2.key'), 'person-2', 'only the exact owner name is refused')
+  const dir = mkdtempSync(join(tmpdir(), 'gate-keys-'))
+  try {
+    writeFileSync(join(dir, `${PERSON_OWNER}.key`), KEY)
+    const store = new KeyStore(dir, 1000, () => 0)
+    assert.equal(store.owner(KEY), undefined, 'a person.key on disk is not a key')
+    assert.equal(store.valid(PERSON_OWNER, KEY), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+  // A daemon slot id (8 hex) never names the person.
+  assert.equal(isPersonOwned('a1b2c3d4'), false)
+  assert.ok(isPersonOwned(PERSON_OWNER))
 })
 
 test('gate: session table — ids are the gate\'s, another connection\'s id is unknown', () => {

@@ -5,6 +5,7 @@
 // the remappings (input scale, a hidden tab's capture), the event filter (rule 12), and the table that maps the gate's session
 // ids to the debugger's own (an agent never sees nor names an internal session).
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { PERSON_OWNER } from './tab-rules.ts'
 
 type Headers = Record<string, string | string[] | undefined>
 
@@ -63,7 +64,8 @@ export function parseKeyFile(text: string): string | undefined {
 /** The slot id of a key file name (`<slotId>.key`), or undefined. */
 export function slotOfKeyFile(name: string): string | undefined {
   const m = /^([\w.:-]{1,80})\.key$/.exec(name)
-  return m && !m[1]!.startsWith('.') ? m[1] : undefined
+  // No key may stand for the person: a connection as PERSON_OWNER would be served her own tabs.
+  return m && !m[1]!.startsWith('.') && m[1] !== PERSON_OWNER ? m[1] : undefined
 }
 
 /**

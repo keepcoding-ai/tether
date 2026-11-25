@@ -33,8 +33,9 @@ import type { TabSession } from './session.ts'
 import { scrubLogLine } from './log-scrub.ts'
 import {
   cleanTitle, faviconPlan, FAVICON_MAX, isId, isNavigable, isWebUrl, makeTab, POPUP_WINDOW_MS, POPUPS_PER_WINDOW, popupVerdict, type SavedTab,
-  storableUrl, type Tab, type TabCrash, type TabInfo, TABS_PER_OWNER,
+  storableUrl, type Tab, type TabCrash, type TabInfo, TABS_PER_OWNER, typedUrl,
 } from './tab-rules.ts'
+import type { GoOutcome } from './ipc.ts'
 
 export const PAGE_SIZE = { width: 1280, height: 800 } as const
 
@@ -255,6 +256,23 @@ export class TabRegistry {
     if (how === 'back') h.goBack()
     else if (how === 'forward') h.goForward()
     else wc.reload()
+  }
+
+  /**
+   * The person typed an address in the bar and pressed Enter (the caller checks she holds the tab). `raw` is checked here, in
+   * main, whatever the interface did (typedUrl: http/https only, `https://` when there is no scheme). Typing it is her consent:
+   * a local address gets its one-use ticket without a question.
+   */
+  async go(tabId: string, raw: unknown): Promise<GoOutcome> {
+    const url = typedUrl(raw)
+    if (!url) return 'bad-url'
+    const wc = this.webContents(tabId)
+    if (!wc || wc.isDestroyed()) return 'no-tab'
+    await this.grantLocal(tabId, url)
+    if (wc.isDestroyed()) return 'no-tab'
+    // A page that fails to load still shows (Chromium's error page): the promise's refusal is not the person's error.
+    wc.loadURL(url).catch(() => {})
+    return 'ok'
   }
 
   /**

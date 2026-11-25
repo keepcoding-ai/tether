@@ -28,8 +28,11 @@ export interface TabAsk {
 export interface TabControl {
   holder: 'agent' | 'user'
   paused: boolean
-  /** Why the person holds it: she took it, the agent asked (login or other), or the tab is a popup of a tab she holds. */
-  why?: 'taken' | 'asked' | 'login' | 'popup'
+  /**
+   * Why the person holds it: she took it, the agent asked (login or other), the tab is a popup of a tab she holds, or the tab is
+   * her own (`own`: she opened it; it has no agent to hand back to, and it is never paused).
+   */
+  why?: 'taken' | 'asked' | 'login' | 'popup' | 'own'
   ask?: TabAsk
   /** The last help request ran out of time and the tab was not handed back yet ("desistiu de esperar"). */
   askExpired?: boolean
@@ -44,6 +47,7 @@ export function controlOf(t: TabControl): Control {
 
 /** The short reason sent with the state (`Tether.getTabState`/`tabStateChanged`), never the person's words. */
 export function reasonOf(t: TabControl): string | undefined {
+  if (t.why === 'own') return 'the person\'s own tab'
   if (t.holder === 'user') return t.why === 'asked' || t.why === 'login' ? 'the person is helping, as you asked' : t.why === 'popup' ? 'opened from a tab the person holds' : 'the person took control'
   return t.paused ? 'paused by the person' : undefined
 }
@@ -58,6 +62,7 @@ export type ControlEvent =
   | { type: 'pause' }
   | { type: 'resume' }
   | { type: 'popupOf'; opener: TabControl }
+  | { type: 'own' }
 
 /** What a transition settles besides the new state: the help request it ends, and how. */
 export interface Transition {
@@ -65,7 +70,13 @@ export interface Transition {
   settle?: { id: string } & AskAnswer
 }
 
+/** The person's own tab, from birth: she holds it, it is not paused, and nothing ever changes that. */
+export const OWN: TabControl = { holder: 'user', paused: false, why: 'own' }
+
 export function transition(t: TabControl, e: ControlEvent): Transition {
+  if (e.type === 'own') return { state: t.why === 'own' && !t.paused && !t.ask ? t : OWN }
+  // Her own tab has no agent: no hand-back, no brake, no help request (one is dismissed at once), no popup rule.
+  if (t.why === 'own') return e.type === 'ask' ? { state: t, settle: { id: e.ask.id, outcome: 'dismissed' } } : { state: t }
   switch (e.type) {
     case 'take':
       return { state: t.holder === 'user' ? t : { ...t, holder: 'user', why: 'taken' } }

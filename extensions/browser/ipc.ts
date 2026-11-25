@@ -12,6 +12,9 @@ export interface BrowserStatus {
   persistentLogins: boolean
 }
 
+/** What `go` did: navigated, the address may not open, the tab is not hers to drive (not held by her), or it is gone. */
+export type GoOutcome = 'ok' | 'bad-url' | 'not-held' | 'no-tab'
+
 export interface BrowserChannels {
   invoke: {
     list: () => TabInfo[]
@@ -50,6 +53,16 @@ export interface BrowserChannels {
     back: (tabId: string) => void
     forward: (tabId: string) => void
     reload: (tabId: string) => void
+    /**
+     * The person opens a tab of her own (owner PERSON_OWNER, held by her from birth): the address she gave, or the blank page.
+     * Her gesture is the consent a local address needs. Null when it could not open (bad address, the owner's ceiling).
+     */
+    openForPerson: (url?: string) => TabInfo | null
+    /**
+     * The person typed an address in the bar of a tab she holds (hers, or an agent's she took) and pressed Enter. Validated in
+     * main (http/https only; `https://` added without a scheme); typing it is the consent a local address needs.
+     */
+    go: (tabId: string, raw: string) => GoOutcome
     /** The brake on a set of tabs (all, or one agent's): the interface knows which, loaded or not. */
     pauseTabs: (tabIds: string[]) => void
     resumeTabs: (tabIds: string[]) => void
@@ -99,7 +112,7 @@ export interface BrowserChannels {
 export const BROWSER_INVOKES = [
   'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
-  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed',
+  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'go',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
 type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>
 const whole: [Missing] extends [never] ? true : Missing = true

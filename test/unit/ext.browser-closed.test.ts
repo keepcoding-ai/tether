@@ -21,6 +21,12 @@ describe('browser closed history: what enters', () => {
     assert.deepEqual(e, { id: 't1', ownerSlotId: 's1', ownerName: 'Sonda', title: 'Docs', url: 'https://docs.test/a?q=1', closedAt: NOW, by: 'user' })
   })
 
+  test('the person\'s own tab enters with "Você" as its owner, whatever name came with it', () => {
+    const e = closedEntryOf({ tabId: 'm1', ownerSlotId: 'person', ownerName: '', title: 'Docs', url: 'https://docs.test/', closedAt: NOW, by: 'user' })
+    assert.equal(e?.ownerName, 'Você')
+    assert.equal(closedEntryOf({ tabId: 'm2', ownerSlotId: 'person', ownerName: 'agente', url: 'https://docs.test/', closedAt: NOW, by: 'user' })?.ownerName, 'Você')
+  })
+
   test('an address that carried a credential never enters (the layout.json rule)', () => {
     for (const url of ['https://x.test/cb?token=abc', 'https://x.test/#access_token=abc', 'https://user:pw@x.test/', 'https://x.test/?api-key=1', 'https://x.test/?code=9']) {
       assert.equal(closedEntryOf({ tabId: 't1', ownerSlotId: 's1', url, closedAt: NOW, by: 'agent' }), undefined, url)

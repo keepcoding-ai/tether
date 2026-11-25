@@ -22,6 +22,8 @@ export interface TabActionState {
   asking?: boolean
   /** The last help request ran out and the tab was not handed back yet. */
   expired?: boolean
+  /** The person's own tab: no agent behind it, so nothing to take, hand back, pause or clean; only close (no question). */
+  own?: boolean
 }
 
 export interface TabAction {
@@ -43,7 +45,7 @@ export const CLOSE_TAB_SITUATION = 'browser.close-tab'
 
 /** The agent is using the tab now: it holds it, unpaused, alive, and main has the tab. */
 export function agentUsing(s: TabActionState): boolean {
-  return s.loaded && s.holder === 'agent' && !s.paused && s.agentAlive
+  return !s.own && s.loaded && s.holder === 'agent' && !s.paused && s.agentAlive
 }
 
 /** Closing asks first only while the agent is using the tab (the label then ends in "…", as every action that asks). */
@@ -54,6 +56,7 @@ export function tabActions(s: TabActionState, agent: string): TabAction[] {
   const t = controlTexts(agent)
   const out: TabAction[] = []
   const add = (id: TabActionId, label: string, danger?: boolean, pin?: MenuPin): void => { out.push({ id, icon: TAB_ACTION_ICON[id], label, ...(danger ? { danger } : {}), ...(pin ? { pin } : {}) }) }
+  if (s.own) { add('close', CLOSE_TAB, true, 'icon'); return out }
   if (s.holder === 'user') {
     const asking = !!s.asking && s.agentAlive
     add('give-back', asking ? t.done : s.expired ? t.giveBackAnyway : t.giveBack, false, s.agentAlive ? 'highlight' : undefined)

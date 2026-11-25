@@ -5,8 +5,9 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ACTION_FRESH_MS, actionKindOf, buildPad, isEnded, lastActionText, logoutDialog, oldestAsking, padBadge, pillBadgeCount, padSections, padMenu, padGroupMenu, rowStateText, PAD_ACTIVE, PAD_ENDED, PAD_CLOSE_ALL_ENDED, padOnlyAgent, type PadModel, type PadGroup, resolveAgent, shortAddress, type PadAgentInfo, type PadTab,
-  COLLAPSED_MAX, groupHead, padViewStateOf, toggleCollapsed,
+  COLLAPSED_MAX, groupHead, padViewStateOf, toggleCollapsed, brakeableIds, PERSON_AGENT, withPersonAgent,
 } from '../../extensions/browser/pad-rules.ts'
+import { PERSON_OWNER } from '../../extensions/browser/tab-rules.ts'
 
 const tab = (tabId: string, ownerSlotId: string, over: Partial<PadTab> = {}): PadTab =>
   ({ tabId, ownerSlotId, title: tabId, url: `https://${tabId}.test/`, control: 'agent', asking: false, expired: false, ...over })
@@ -264,5 +265,46 @@ describe('browser pad: collapsing an agent group', () => {
     assert.deepEqual(padViewStateOf(undefined), { collapsed: [], closedCollapsed: [] })
     assert.deepEqual(padViewStateOf({ collapsed: ['a', 'a', 3, '', 'b'], closedCollapsed: 'x' }), { collapsed: ['a', 'b'], closedCollapsed: [] })
     assert.deepEqual(padViewStateOf({ collapsed: [], closedCollapsed: ['*', 'c'] }), { collapsed: [], closedCollapsed: ['*', 'c'] })
+  })
+})
+
+describe('browser pad: the person\'s own tabs', () => {
+  const P = PERSON_OWNER
+  const of = withPersonAgent(agentOf)
+  test('her tab is never "encerrado": the owner with no slot nor pane is "Você", alive (isEnded(undefined) would say ended)', () => {
+    assert.equal(isEnded(agentOf(P)), true, 'the trap: without the rule her tab reads as an ended agent\'s')
+    assert.deepEqual(of(P), PERSON_AGENT)
+    assert.deepEqual(PERSON_AGENT, { name: 'Você', alive: true })
+    assert.equal(isEnded(of(P)), false)
+    assert.deepEqual(of('a'), agents.a, 'agents answer as before')
+  })
+  test('her tabs are their own section, first; never an agent\'s group, "Com você", the ended ones or the icon\'s number', () => {
+    const tabs = [tab('t1', 'a'), tab('m1', P, { control: 'user' }), tab('t2', 'c'), tab('m2', P, { control: 'user' }), tab('t3', 'a', { control: 'user' })]
+    const m = buildPad(tabs, of)
+    assert.deepEqual(m.mine.map(t => t.tabId), ['m1', 'm2'])
+    assert.deepEqual(m.withPerson.map(t => t.tabId), ['t3'], 'only an agent\'s tab she took is "Com você"')
+    assert.deepEqual(m.groups.map(g => g.slotId), ['a', 'c'])
+    assert.equal(m.total, 5)
+    assert.equal(m.attention, 1, 'her own tabs light nothing')
+    assert.equal(m.endedTabs, 1)
+    assert.equal(padBadge(m)?.count, 1)
+    const s = padSections(m)
+    assert.deepEqual(s.mine.map(t => t.tabId), ['m1', 'm2'])
+    assert.deepEqual(s.endedIds, ['t2'], '"Fechar todas" of the ended never closes hers')
+    // Only her tabs: a list (not the empty state), nothing to brake, no badge.
+    const only = buildPad([tab('m1', P, { control: 'user' })], of)
+    assert.equal(only.total, 1)
+    assert.equal(only.brakeable, 0)
+    assert.equal(padBadge(only), undefined)
+    assert.equal(padMenu(only, false).find(i => i !== 'sep' && i.id === 'pause-all') && (padMenu(only, false).find(i => i !== 'sep' && i.id === 'pause-all') as { disabled?: boolean }).disabled, true)
+  })
+  test('"Pausar todas" never takes her tabs, even unwrapped (agentOf without the rule) and not loaded', () => {
+    const tabs = [tab('t1', 'a'), tab('m1', P, { control: 'agent' }), tab('t2', 'c'), tab('t3', 'b', { control: 'paused' })]
+    assert.deepEqual(brakeableIds(tabs, of), ['t1'])
+    assert.deepEqual(brakeableIds(tabs, slot => (slot === P ? { name: 'x', alive: true } : agentOf(slot))), ['t1'])
+    assert.equal(buildPad(tabs, of).brakeable, 1)
+  })
+  test('her row has no state sentence', () => {
+    assert.equal(rowStateText('mine', { control: 'user', asking: false, expired: false, ended: false, name: 'Você', url: 'https://a.test/', now: 0 }), '')
   })
 })

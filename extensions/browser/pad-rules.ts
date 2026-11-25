@@ -4,7 +4,8 @@
 import type { DialogSpec } from '../../app/shared/dialog.ts'
 import type { MenuPin } from '../../app/renderer/ext-api.ts'
 import { controlTexts, type Control } from './control-rules.ts'
-import { shortName } from './rules.ts'
+import { PERSON_NAME, shortName } from './rules.ts'
+import { isPersonOwned } from './tab-rules.ts'
 
 /** What the pad knows of one tab. `place` is the desk the pane is in now (the Browser desk, or where the person took it). */
 export interface PadTab {
@@ -37,7 +38,9 @@ export interface PadGroup {
 }
 
 export interface PadModel {
-  /** The tabs with the person, in the order the tabs are given. */
+  /** The person's own tabs (owner PERSON_OWNER), in the order the tabs are given: their own section, first. */
+  mine: PadTab[]
+  /** The agents' tabs with the person, in the order the tabs are given. */
   withPerson: PadTab[]
   groups: PadGroup[]
   total: number
@@ -72,12 +75,32 @@ export function resolveAgent(
 
 export const isEnded = (agent: PadAgentInfo | undefined): boolean => !agent || !agent.alive
 
+/** The owner of the person's own tabs as the interface tells it: never ended (she is the one reading). */
+export const PERSON_AGENT: PadAgentInfo = { name: PERSON_NAME, alive: true }
+
+/** `agentOf` with the person's own tabs answered first (no slot, no pane: `isEnded(undefined)` would call her tabs ended). */
+export function withPersonAgent(agentOf: (slotId: string) => PadAgentInfo | undefined): (slotId: string) => PadAgentInfo | undefined {
+  return slotId => (isPersonOwned(slotId) ? PERSON_AGENT : agentOf(slotId))
+}
+
+/**
+ * The tabs "Pausar todas as guias" acts on: agents' tabs (never the person's own), alive, not paused yet. One rule for the menu's
+ * count and the action.
+ */
+export function brakeableIds(tabs: readonly PadTab[], agentOf: (slotId: string) => PadAgentInfo | undefined): string[] {
+  return tabs.filter(t => !isPersonOwned(t.ownerSlotId) && t.control !== 'paused' && !isEnded(agentOf(t.ownerSlotId))).map(t => t.tabId)
+}
+
 /**
  * The pad's model. `tabs` come in the order the panes are on screen: the owners go in the order of their first tab, and each
  * agent's tabs keep theirs. `only` keeps one agent's tabs ("Ver guias do ‹agente›").
  */
 export function buildPad(tabs: readonly PadTab[], agentOf: (slotId: string) => PadAgentInfo | undefined, only?: string): PadModel {
-  const kept = only === undefined ? tabs : tabs.filter(t => t.ownerSlotId === only)
+  const all = only === undefined ? tabs : tabs.filter(t => t.ownerSlotId === only)
+  // The person's own tabs are neither an agent's group nor "Com você" (that is an agent's tab in her hands), and never count
+  // for the icon's attention or the brake.
+  const mine = all.filter(t => isPersonOwned(t.ownerSlotId))
+  const kept = all.filter(t => !isPersonOwned(t.ownerSlotId))
   const order: string[] = []
   const bySlot = new Map<string, PadTab[]>()
   for (const t of kept) {
@@ -95,8 +118,8 @@ export function buildPad(tabs: readonly PadTab[], agentOf: (slotId: string) => P
   })
   const top = kept.filter(withPerson)
   return {
-    withPerson: top, groups, total: kept.length, paused: kept.filter(t => t.control === 'paused').length,
-    brakeable: kept.filter(t => t.control !== 'paused' && !isEnded(agentOf(t.ownerSlotId))).length,
+    mine, withPerson: top, groups, total: all.length, paused: kept.filter(t => t.control === 'paused').length,
+    brakeable: brakeableIds(kept, agentOf).length,
     endedTabs: groups.reduce((n, g) => n + (g.ended ? g.total : 0), 0), attention: top.length, asking: kept.filter(t => t.asking).length,
   }
 }
@@ -225,7 +248,9 @@ export function pillBadgeCount(waiting: readonly { paneInBrowserDesk: boolean }[
 // ---- the pad's sections ----
 
 export interface PadSections {
-  /** Tabs with the person (asking, or she holds them): the pad's first section. */
+  /** The person's own tabs ("Suas guias"): the pad's first section. */
+  mine: PadTab[]
+  /** Agents' tabs with the person (asking, or she holds them). */
   withPerson: PadTab[]
   /** Alive agents that have at least one tab not with the person, in the model's order. */
   active: PadGroup[]
@@ -239,7 +264,7 @@ export function padSections(m: PadModel): PadSections {
   const shown = m.groups.filter(g => g.tabs.length > 0)
   const ended = shown.filter(g => g.ended)
   return {
-    withPerson: m.withPerson, active: shown.filter(g => !g.ended), ended,
+    mine: m.mine, withPerson: m.withPerson, active: shown.filter(g => !g.ended), ended,
     endedIds: ended.flatMap(g => g.tabs.map(t => t.tabId)),
   }
 }
@@ -281,11 +306,11 @@ export function padGroupMenu(g: PadGroup): (PadGroupMenuItem | 'sep')[] {
 
 // ---- the row's one state sentence ----
 
-export type PadSectionId = 'user' | 'active' | 'ended'
+export type PadSectionId = 'mine' | 'user' | 'active' | 'ended'
 
-/** The sentence of a row; the section already says what the ended ones are. */
+/** The sentence of a row; the section already says what the ended ones and the person's own are. */
 export function rowStateText(section: PadSectionId, i: Parameters<typeof lastActionText>[0]): string {
-  if (section === 'ended') return ''
+  if (section === 'ended' || section === 'mine') return ''
   if (section === 'user') {
     if (i.asking) return `${i.name} espera você`
     if (i.expired) return lastActionText(i)

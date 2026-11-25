@@ -8,7 +8,8 @@
 //   - on disk: `<home>/browser/closed-tabs.json` ({ v: 1, items: [...] }, newest first), written in one move with owner-only
 //     mode inside the owner-only folder. Addresses never go to the log.
 // The pure rules (no node import: the renderer bundle uses them too); `ClosedHistory` (closed-history.ts) is the file around them.
-import { cleanTitle, isId, storableUrl } from './tab-rules.ts'
+import { PERSON_NAME } from './rules.ts'
+import { cleanTitle, isId, isPersonOwned, storableUrl } from './tab-rules.ts'
 
 /** The ceiling of kept entries, whatever the expiry. */
 export const CLOSED_HISTORY_MAX = 500
@@ -51,7 +52,9 @@ export const keepMs = (keep: ClosedHistoryKeep): number | undefined => KEEP_MS[k
  */
 export function closedEntryOf(f: { tabId: unknown; ownerSlotId: unknown; ownerName?: unknown; title?: unknown; url: unknown; closedAt: number; by: ClosedBy }): ClosedTab | undefined {
   if (!isId(f.tabId) || !isId(f.ownerSlotId) || !storableUrl(f.url) || !Number.isFinite(f.closedAt)) return undefined
-  return { id: f.tabId, ownerSlotId: f.ownerSlotId, ownerName: cleanTitle(f.ownerName).slice(0, 120), title: cleanTitle(f.title), url: f.url, closedAt: f.closedAt, by: f.by }
+  // The person's own tab has no agent name to keep: it is hers, "Você".
+  const ownerName = isPersonOwned(f.ownerSlotId) ? PERSON_NAME : cleanTitle(f.ownerName).slice(0, 120)
+  return { id: f.tabId, ownerSlotId: f.ownerSlotId, ownerName, title: cleanTitle(f.title), url: f.url, closedAt: f.closedAt, by: f.by }
 }
 
 /** The list as kept: newest first, the expired gone, no entry twice, at most `max`. */

@@ -9,6 +9,7 @@ import {
   type AskAnswer, type AskInput, controlOf, type Control, type ControlEvent, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack,
   type TabControl, transition,
 } from './control-rules.ts'
+import { isPersonOwned } from './tab-rules.ts'
 
 /** What the renderer and the gate are told of a tab's control. */
 export interface ControlView {
@@ -81,9 +82,13 @@ export class ControlHub {
     w.resolve(answer)
   }
 
-  /** A new tab: a popup of a tab the person holds is hers from birth. */
-  added(tabId: string, openerTabId: string | undefined): void {
-    if (openerTabId !== undefined) this.apply(tabId, { type: 'popupOf', opener: this.state(openerTabId) })
+  /**
+   * A new tab: the person's own tab (owner PERSON_OWNER, its popups too) is hers and stays hers; a popup of a tab the person
+   * holds is hers from birth.
+   */
+  added(tabId: string, openerTabId: string | undefined, ownerSlotId?: string): void {
+    if (isPersonOwned(ownerSlotId)) this.apply(tabId, { type: 'own' })
+    else if (openerTabId !== undefined) this.apply(tabId, { type: 'popupOf', opener: this.state(openerTabId) })
   }
 
   /** The person takes the tab ("Assumir"). */

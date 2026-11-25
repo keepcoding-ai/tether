@@ -5,8 +5,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ASK_MESSAGE_MAX, ASK_NOTE_MAX, ASK_TIMEOUT_DEFAULT_MS, ASK_TIMEOUT_MAX_MS, ASK_TIMEOUT_MIN_MS, ASKS_PER_AGENT, checkAsk, cleanAskMessage, cleanAskNote, controlOf,
-  controlTexts, handoffKeepsScript, heldError, helpLine, INITIAL, needsCleanHandoff, reasonOf, reloadsOnGiveBack, type TabControl, transition,
+  controlTexts, handoffKeepsScript, heldError, helpLine, INITIAL, needsCleanHandoff, OWN, reasonOf, reloadsOnGiveBack, type TabControl, transition,
 } from '../../extensions/browser/control-rules.ts'
+import { PERSON_OWNER } from '../../extensions/browser/tab-rules.ts'
 import { ControlHub, type ControlView } from '../../extensions/browser/control.ts'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -274,4 +275,52 @@ test('control hub: a new ask of the same owner replaces the open one (dismissed)
   await h.giveBack('t1', 'feito')
   assert.deepEqual(await second.answer, { outcome: 'returned', note: 'feito' })
   assert.deepEqual(reloaded, ['t1'], 'the hand-back still reloads')
+})
+
+test('control (own): the person\'s own tab is hers from birth; nothing hands it back, pauses or asks on it', () => {
+  const own = transition(INITIAL, { type: 'own' }).state
+  assert.deepEqual(own, OWN)
+  assert.deepEqual(own, { holder: 'user', paused: false, why: 'own' })
+  assert.equal(controlOf(own), 'user')
+  assert.equal(reasonOf(own), 'the person\'s own tab')
+  // A tab paused before it loaded (the state waits in the hub) is born unpaused when it turns out to be hers.
+  assert.deepEqual(transition({ holder: 'agent', paused: true }, { type: 'own' }).state, OWN)
+  for (const e of [{ type: 'take' }, { type: 'giveBack' }, { type: 'decline', note: 'x' }, { type: 'pause' }, { type: 'resume' },
+    { type: 'askTimeout', id: 'q' }, { type: 'askDismissed', id: 'q' }, { type: 'popupOf', opener: INITIAL }] as const) {
+    const r = transition(own, e)
+    assert.equal(r.state, own, `${e.type} leaves it as it is`)
+    assert.equal(r.settle, undefined)
+  }
+  // A help request on it (no agent may reach it; the rule holds anyway) is dismissed at once and leaves it as it is.
+  const r = transition(own, ask('q1', 'login'))
+  assert.equal(r.state, own)
+  assert.deepEqual(r.settle, { id: 'q1', outcome: 'dismissed' })
+  assert.equal(needsCleanHandoff(own, r.state), false)
+  assert.equal(reloadsOnGiveBack(own), false)
+})
+
+test('control hub (own): added with the person as owner; pause many, give back and decline do nothing; an ask settles dismissed', async () => {
+  const { h, cleaned, reloaded } = hub()
+  h.pause('mine') // "Pausar todas" before the tab loaded: the state waits in the hub
+  h.added('mine', undefined, PERSON_OWNER)
+  assert.equal(h.view('mine').why, 'own')
+  assert.equal(h.control('mine'), 'user')
+  assert.equal(h.view('mine').paused, false)
+  h.pauseMany(['mine', 'agents'])
+  assert.equal(h.control('mine'), 'user', 'out of "Pausar todas"')
+  assert.equal(h.control('agents'), 'paused')
+  await h.giveBack('mine')
+  await h.decline('mine')
+  assert.equal(h.view('mine').why, 'own')
+  assert.deepEqual(reloaded, [], 'no hand-back reload')
+  const { answer } = h.ask('mine', 'agent-a', { message: 'x', kind: 'login', timeoutMs: 60_000 })
+  assert.deepEqual(await answer, { outcome: 'dismissed' })
+  assert.deepEqual(cleaned, [], 'no clean hand-off')
+  assert.equal(h.view('mine').ask, undefined)
+  // A popup of her tab has her as owner too (the registry gives a popup its opener's owner): hers, not "popup".
+  h.added('pop', 'mine', PERSON_OWNER)
+  assert.equal(h.view('pop').why, 'own')
+  // An agent's tab is not touched by the rule.
+  h.added('agent-tab', undefined, 'a1b2c3d4')
+  assert.equal(h.control('agent-tab'), 'agent')
 })

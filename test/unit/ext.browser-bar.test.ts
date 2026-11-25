@@ -3,7 +3,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { tabFacts, tabView, type TabViewInput } from '../../extensions/browser/bar-rules.ts'
-import { POPUPS_REFUSED } from '../../extensions/browser/rules.ts'
+import { POPUPS_REFUSED, SHARED_LOGINS } from '../../extensions/browser/rules.ts'
+import { closeNeedsConfirm, tabActions } from '../../extensions/browser/tab-actions.ts'
 
 const ask = { id: 'a1', message: 'Faça login no Sandbox nesta guia.' }
 const at = (over: Partial<TabViewInput> = {}): TabViewInput => ({
@@ -113,5 +114,35 @@ describe('browser bar: the facts behind the ⓘ', () => {
     assert.deepEqual(tabFacts({ cookies: 0, persistentLogins: true, debug: false, addressLost: false }), [])
     assert.deepEqual(tabFacts({ cookies: 3, persistentLogins: false, debug: true, addressLost: true }), ['cookies', 'memory', 'debug', 'address'])
     assert.deepEqual(tabFacts({ cookies: 1, persistentLogins: true, debug: false, addressLost: false }), ['cookies'])
+  })
+})
+
+describe('browser bar: the person\'s own tab', () => {
+  const own = { holder: 'user' as const, paused: false, why: 'own' as const }
+  test('the pill "Você" in its own tone, the shared-logins line always, her history buttons, only close (no question)', () => {
+    for (const i of [at({ own: true }), at({ control: own }), at({ own: true, control: own, agent: { name: 'Você', alive: true } })]) {
+      const v = tabView(i)
+      assert.deepEqual(v.owner, { tone: 'own', text: 'Você', short: 'Você', live: false })
+      assert.equal(v.ask, undefined)
+      assert.deepEqual(v.notices, [{ kind: 'logins', text: SHARED_LOGINS }])
+      assert.equal(SHARED_LOGINS, 'Contas em que você entrar aqui ficam disponíveis aos agentes.')
+      assert.equal(v.nav, true)
+      assert.deepEqual(v.actions.map(a => [a.id, a.label]), [['close', 'Fechar guia']], 'no "Devolver", no "Pausar", no "Recarregar limpo"; close without "…"')
+      assert.deepEqual(pinned(i), [], 'nothing pinned on the bar (the tab has its ×)')
+    }
+  })
+  test('not loaded yet: no history; refused popups still say so, under the logins line', () => {
+    assert.equal(tabView(at({ own: true, loaded: false })).nav, false)
+    assert.deepEqual(tabView(at({ own: true, popupsRefused: 2 })).notices.map(n => n.kind), ['logins', 'popups'])
+  })
+  test('a dead "agent", the shield click or an ask never reach her tab\'s bar', () => {
+    const v = tabView(at({ own: true, agent: { name: 'x', alive: false }, ignored: true, control: { ...own, ask } }))
+    assert.equal(v.owner.tone, 'own')
+    assert.deepEqual(v.notices.map(n => n.kind), ['logins'])
+    assert.equal(v.ask, undefined)
+  })
+  test('closing her tab never asks', () => {
+    assert.equal(closeNeedsConfirm({ holder: 'agent', paused: false, loaded: true, agentAlive: true, own: true }), false)
+    assert.deepEqual(tabActions({ holder: 'user', paused: false, loaded: true, agentAlive: true, own: true }, 'Você').map(a => a.id), ['close'])
   })
 })

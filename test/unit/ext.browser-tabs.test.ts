@@ -2,7 +2,7 @@
 // layout.json may keep, where a new tab goes among its owner's, and the cookie-encryption fuse read from the wire.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt, insertIndex, isNavigable, isWebUrl, makeTab, savedOf, savedTabOf, storableUrl } from '../../extensions/browser/tab-rules.ts'
+import { cookieEncryptionOn, FUSE_SENTINEL, fuseWireAt, insertIndex, isNavigable, isWebUrl, makeTab, PERSON_OWNER, savedOf, savedTabOf, storableUrl, TYPED_URL_MAX, typedUrl } from '../../extensions/browser/tab-rules.ts'
 import { ownerLabel } from '../../extensions/browser/rules.ts'
 
 describe('browser: tab rules', () => {
@@ -71,4 +71,23 @@ test('tab rules (E7c, H3): a tab opens at most 3 popups per 10 s, an owner has a
   assert.equal(popupVerdict(recent, 1000 + POPUP_WINDOW_MS, 4), 'ok', 'the oldest left the window')
   assert.equal(popupVerdict([], 0, TABS_PER_OWNER), 'owner')
   assert.equal(popupVerdict([], 0, TABS_PER_OWNER - 1), 'ok')
+})
+
+test('typed address (go): http/https only, https:// added without a scheme, nothing else opens', () => {
+  assert.equal(typedUrl('example.com'), 'https://example.com')
+  assert.equal(typedUrl('  example.com/a?b=1  '), 'https://example.com/a?b=1')
+  assert.equal(typedUrl('localhost:3000/x'), 'https://localhost:3000/x', 'a host and port is not a scheme')
+  assert.equal(typedUrl('http://localhost:5173/'), 'http://localhost:5173/')
+  assert.equal(typedUrl('HTTPS://Example.com'), 'HTTPS://Example.com')
+  for (const raw of [
+    'javascript:alert(1)', 'JavaScript:alert(1)', 'file:///C:/Windows/win.ini', 'data:text/html,<b>x</b>', 'about:blank', 'chrome://gpu',
+    'devtools://devtools/x', 'view-source:https://a.test', 'blob:https://a.test/x', 'mailto:a@b.test', 'ftp://a.test', 'vbscript:x',
+    'tether://x', '', '   ', 'two words', 'a.test/ b', 'http://', 'https://', 42, undefined, null, 'x'.repeat(TYPED_URL_MAX + 1),
+  ]) assert.equal(typedUrl(raw), undefined, String(raw).slice(0, 40))
+  // An address with a credential still opens (the person typed it); it is never stored (storableUrl).
+  assert.equal(typedUrl('https://u:p@a.test/'), 'https://u:p@a.test/')
+  assert.equal(storableUrl(typedUrl('https://u:p@a.test/')), false)
+  assert.equal(savedOf({ tabId: 't', ownerSlotId: PERSON_OWNER, url: 'https://a.test/?token=x', title: '' }).url, undefined)
+  // The person's own tab is a tab like any other in layout.json (its owner is a valid id).
+  assert.deepEqual(savedTabOf({ tabId: 't', ownerSlotId: PERSON_OWNER, url: 'https://a.test/', title: 'A' }), { tabId: 't', ownerSlotId: PERSON_OWNER, url: 'https://a.test/', title: 'A' })
 })

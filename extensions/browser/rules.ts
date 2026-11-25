@@ -48,6 +48,19 @@ export const REOPEN = 'Reabrir'
 export const POPUPS_REFUSED = 'Esta página tentou abrir janelas demais; as que passaram do limite foram recusadas.'
 export const LOGINS_NOT_KEPT = 'Logins não são guardados: as guias usam uma sessão em memória, que acaba quando o Tether fecha.'
 
+/** The person's own tabs (owner PERSON_OWNER): the owner's name on the pill, the chips and the closed history. */
+export const PERSON_NAME = 'Você'
+export const PERSON_TITLE = 'Sua guia'
+/** The fixed line on the bar of her tab: the tabs share one partition, so whatever account she signs in to, the agents can use. */
+export const SHARED_LOGINS = 'Contas em que você entrar aqui ficam disponíveis aos agentes.'
+/** The pad's section of her own tabs (first), and the gestures that open one. */
+export const PAD_MINE = 'Suas guias'
+export const NEW_TAB = 'Nova guia'
+/** The address field while the person can type in it, and its hint. */
+export const EDIT_ADDRESS = 'Endereço da página'
+export const EDIT_ADDRESS_HINT = 'Digite um endereço e tecle Enter (Ctrl+L)'
+export const BAD_ADDRESS = 'Endereço inválido: só http e https.'
+
 export const BACK = 'Voltar'
 export const FORWARD = 'Avançar'
 export const RELOAD = 'Recarregar'

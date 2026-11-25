@@ -12,10 +12,10 @@
 // Closing is never pinned on the bar: the tab has its ×.
 import type { MenuPin } from '../../app/renderer/ext-api.ts'
 import { askCardTexts, controlTexts, type TabControl } from './control-rules.ts'
-import { POPUPS_REFUSED, shortName, type TabFactId } from './rules.ts'
+import { PERSON_NAME, POPUPS_REFUSED, SHARED_LOGINS, shortName, type TabFactId } from './rules.ts'
 import { type TabAction, type TabActionId, tabActions } from './tab-actions.ts'
 
-export type OwnerTone = 'agent' | 'ask' | 'you' | 'paused' | 'ended'
+export type OwnerTone = 'agent' | 'ask' | 'you' | 'paused' | 'ended' | 'own'
 
 export interface TabViewInput {
   /** Main's word on the tab's control; undefined before it answered (the tab starts with the agent). */
@@ -32,9 +32,11 @@ export interface TabViewInput {
   collapsedAsk?: string
   /** The agent acted a moment ago (the pill's live dot). */
   acting: boolean
+  /** The person's own tab (owner PERSON_OWNER): known from the pane before main's control answers. */
+  own?: boolean
 }
 
-export type NoticeKind = 'ignored' | 'scripts' | 'popups'
+export type NoticeKind = 'ignored' | 'scripts' | 'popups' | 'logins'
 export interface TabNotice {
   kind: NoticeKind
   text: string
@@ -76,6 +78,7 @@ export function tabFacts(f: { cookies: number; persistentLogins: boolean; debug:
 }
 
 export function tabView(i: TabViewInput): TabView {
+  if (i.own || i.control?.why === 'own') return ownTabView(i)
   const name = shortName(i.agent.name)
   const t = controlTexts(name)
   const holder = i.control?.holder ?? 'agent'
@@ -127,4 +130,18 @@ export function tabView(i: TabViewInput): TabView {
     actions,
     nav: i.loaded && holder === 'user',
   }
+}
+
+/**
+ * The bar of the person's own tab: the pill "Você" in its fixed colour (a click goes nowhere: there is no agent), nothing to hand
+ * back or pause, close without a question, her history buttons, and the fixed line about the shared logins.
+ */
+function ownTabView(i: TabViewInput): TabView {
+  const notices: TabNotice[] = [{ kind: 'logins', text: SHARED_LOGINS }]
+  if (i.popupsRefused > 0) notices.push({ kind: 'popups', text: POPUPS_REFUSED })
+  const actions = tabActions({ holder: 'user', paused: false, loaded: i.loaded, agentAlive: true, own: true }, PERSON_NAME).map(a => {
+    const { pin: _menuPin, ...rest } = a
+    return rest
+  })
+  return { owner: { tone: 'own', text: PERSON_NAME, short: PERSON_NAME, live: false }, notices, actions, nav: i.loaded }
 }

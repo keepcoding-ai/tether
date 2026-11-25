@@ -69,6 +69,35 @@ export function isId(v: unknown): v is string {
   return typeof v === 'string' && ID.test(v)
 }
 
+/**
+ * The owner of the person's own tabs (she opened them herself: the palette, the pad's "+", Ctrl+T). It never collides with an
+ * agent: the daemon's slot ids are 8 hex characters. No agent ever reaches these tabs: the gate serves only the tabs whose owner
+ * is the connection's slot, and no key file may name this owner (gate-rules.ts `slotOfKeyFile`).
+ */
+export const PERSON_OWNER = 'person'
+
+export const isPersonOwned = (ownerSlotId: string | undefined): boolean => ownerSlotId === PERSON_OWNER
+
+/** The longest address the person may type in the bar. */
+export const TYPED_URL_MAX = 8192
+
+/**
+ * What the person typed in the address bar, as the address the tab opens, or undefined when it may not open. Without a scheme it
+ * gets `https://` ("example.com", "localhost:3000/x": a host and port is not a scheme); with one, only http and https pass
+ * (`javascript:`, `file:`, `data:`, `about:`, `chrome:`… are refused). Spaces inside are refused: the bar is not a search box.
+ */
+export function typedUrl(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const text = raw.trim()
+  if (text === '' || text.length > TYPED_URL_MAX || /\s/.test(text)) return undefined
+  const scheme = /^([a-z][a-z0-9+.-]*):(?!\d)/i.exec(text)
+  const url = scheme ? text : `https://${text}`
+  if (scheme && !/^https?$/i.test(scheme[1]!)) return undefined
+  if (!isWebUrl(url)) return undefined
+  try { if (new URL(url).hostname === '') return undefined } catch { return undefined }
+  return url
+}
+
 /** An address a tab may open: http or https, nothing else (file:, data:, javascript:, chrome:, devtools: are refused). */
 export function isWebUrl(v: unknown): v is string {
   if (typeof v !== 'string' || v.length > 8192) return false

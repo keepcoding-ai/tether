@@ -28,7 +28,7 @@ import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
-import { isId, isWebUrl, type SavedTab, savedTabOf } from './tab-rules.ts'
+import { isId, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 
 import { activateRemote, wantsBrowserProcess } from './process-host.ts'
@@ -178,7 +178,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
   }
   const controlSubs: IDisposable[] = [
     registry.watch({
-      added: info => { control.added(info.tabId, registry.opener(info.tabId)); shieldOf(info.tabId) },
+      added: info => { control.added(info.tabId, registry.opener(info.tabId), info.ownerSlotId); shieldOf(info.tabId) },
       closed: tabId => { uploads.cancelTab(tabId, 'guia fechada'); control.closed(tabId); lastPulse.delete(tabId); notices.get(tabId)?.resolve(); notices.delete(tabId) },
     }),
     control.onChange(v => {
@@ -313,6 +313,18 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('back', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'back') }),
     ipc.handle('forward', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'forward') }),
     ipc.handle('reload', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'reload') }),
+    // The person's own tab: her gesture (palette, the pad's "+", Ctrl+T) is the consent a local address needs, as on "Reabrir".
+    ipc.handle('openForPerson', async url => {
+      const target = url === undefined || url === '' ? 'about:blank' : typedUrl(url)
+      if (!target) return null
+      return registry.create(PERSON_OWNER, target, { ticket: 'granted' }).catch(e => { log(`guia da pessoa não abriu (${(e as Error).message})`); return null })
+    }),
+    // The address she typed: only on a tab she holds (hers, or an agent's she took); the address is checked in the registry.
+    ipc.handle('go', async (tabId, raw) => {
+      if (typeof tabId !== 'string' || !registry.get(tabId)) return 'no-tab'
+      if (control.control(tabId) !== 'user') return 'not-held'
+      return registry.go(tabId, raw)
+    }),
     // E12: a tab restored from layout.json and not loaded yet has no entry in the registry; pausing it keeps the state in the hub,
     // and the tab is born paused when the person shows it.
     ipc.handle('pause', tabId => { if (isId(tabId)) control.pause(tabId) }),
