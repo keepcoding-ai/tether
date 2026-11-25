@@ -5,9 +5,13 @@ import { engineOf } from '../../../app/renderer/agent-ui.ts'
 import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph } from './glyphs.ts'
 import { addresseesOf, applyPick, filterChannelOptions, filterMentionOptions, HASH_TEXT, listTrigger, mentionToken, type ChannelChoice, type ListTrigger } from './mentions.ts'
+import { createPollForm, type PollFormSnapshot } from './poll-form.ts'
+import { pollCommand, type PollArgs, type PollMember } from './poll-form-rules.ts'
 import { MENTION_TEXT } from './texts.ts'
 
 export interface ComposerOptions {
+  /** Opening a poll from the box (E4): the members the form may call, and the daemon's `poll`. Absent: no button, `/enquete` is a speech. */
+  poll?: { members(): readonly PollMember[]; open(args: PollArgs): Promise<void> }
   /** Asks the daemon's `say`; rejects with the daemon's error. */
   send(text: string, to: string[]): Promise<void>
   /** The open channels the "#" list offers, read when the list opens (the current one is marked). */
@@ -29,6 +33,8 @@ export interface ComposerSnapshot {
   note: string
   /** The "@" or "#" list: whether it is open, which mark opened it, its rows (name and discreet mark) and the highlighted one. */
   mention: { open: boolean; mark: '@' | '#' | ''; rows: Array<{ name: string; mark: string }>; active: number }
+  /** The poll form pinned above the box (E4). */
+  poll: PollFormSnapshot
 }
 
 /** The field's placeholders: the usual one, and the one while nobody is in the channel to hear. */
@@ -58,6 +64,8 @@ export interface Composer {
   focus(): void
   /** Puts the member as the recipient ("para …") and focuses the field; a name nobody in the box answers to is ignored. */
   address(name: string): void
+  /** Opens the poll form above the box (the draft in the field stays); `question` pre-fills it. */
+  openPoll(question?: string): void
 }
 
 let composerSeq = 0
@@ -119,7 +127,17 @@ export function createComposer(opts: ComposerOptions): Composer {
   sendBtn.append(glyph('paper-plane-tilt'), document.createTextNode('Enviar'))
   const who = el('span', 'ch-role mod', 'moderador')
   head.append('falar como ', who, ' · para ', pick)
-  row.append(hint, el('span', 'ch-say-sp'), sendBtn)
+  // The poll: a button next to "Enviar" and the form pinned above the whole box. The box and its draft are not touched by it.
+  const pollBtn = el('button', 'ch-pollbtn')
+  pollBtn.type = 'button'
+  pollBtn.append(glyph('chart-bar'), document.createTextNode('Enquete'))
+  pollBtn.title = 'Abrir enquete (/enquete)'
+  const form = createPollForm({
+    members: () => opts.poll?.members() ?? [],
+    open: args => opts.poll!.open(args),
+    closed: () => { if (enabled) field.focus() },
+  })
+  row.append(hint, el('span', 'ch-say-sp'), ...(opts.poll ? [pollBtn] : []), sendBtn)
   // The "@" list floats over the box, anchored on the caret; the field keeps the focus and points at the active row.
   const listId = `ch-mention-${++composerSeq}`
   const list = el('ul', 'ch-mention-list')
@@ -128,7 +146,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   list.setAttribute('aria-label', MENTION_TEXT.listLabel)
   list.hidden = true
   field.setAttribute('aria-autocomplete', 'list')
-  element.append(head, field, note, error, row, list)
+  element.append(...(opts.poll ? [form.element] : []), head, field, note, error, row, list)
 
   let names: readonly string[] = []
   let marks: ReadonlyMap<string, string> = new Map()
@@ -145,6 +163,8 @@ export function createComposer(opts: ComposerOptions): Composer {
     field.disabled = !enabled
     pick.disabled = !enabled
     sendBtn.disabled = !enabled || busy
+    pollBtn.disabled = !enabled
+    if (!enabled) form.hide()
     field.placeholder = enabled ? SAY_PLACEHOLDER.on : SAY_PLACEHOLDER.off
     field.setAttribute('aria-label', enabled ? SAY_LABEL.on : SAY_LABEL.off)
     note.textContent = enabled ? '' : SAY_OFF_NOTE
@@ -163,6 +183,9 @@ export function createComposer(opts: ComposerOptions): Composer {
   const submit = async (): Promise<void> => {
     const text = field.value.trim()
     if (text === '' || busy || !enabled) return
+    // `/enquete` is the command of the poll form, not a speech: the command is consumed, a question after it goes into the form.
+    const asked = opts.poll ? pollCommand(text) : undefined
+    if (asked) { field.value = ''; error.hidden = true; close(); form.show(asked.question); return }
     busy = true
     sendBtn.disabled = true
     error.hidden = true
@@ -275,6 +298,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   field.addEventListener('click', refresh)
   field.addEventListener('blur', () => { close() })
   sendBtn.addEventListener('click', () => void submit())
+  pollBtn.addEventListener('click', () => form.show())
 
   return {
     element,
@@ -300,7 +324,9 @@ export function createComposer(opts: ComposerOptions): Composer {
         rows: [...list.children].map(li => ({ name: li.querySelector('.ch-mention-name')?.textContent ?? '', mark: li.querySelector('.ch-mention-mark')?.textContent ?? '' })),
         active,
       },
+      poll: form.snapshot(),
     }),
+    openPoll(question) { if (enabled && opts.poll) form.show(question) },
     focus: () => field.focus(),
     address(name) {
       if (!enabled || !names.includes(name)) return

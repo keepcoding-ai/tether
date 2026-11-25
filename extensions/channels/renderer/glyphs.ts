@@ -1,5 +1,6 @@
 // The icons the channel's pane draws. The ones the core table has come from it; the rest are Phosphor's own files imported here,
 // so the pane needs nothing new in app/renderer/icons.ts (its table is the core's, closed to extensions).
+import chartBar from '@phosphor-icons/core/assets/regular/chart-bar.svg'
 import chatsCircle from '@phosphor-icons/core/assets/regular/chats-circle.svg'
 import lock from '@phosphor-icons/core/assets/regular/lock.svg'
 import speakerHigh from '@phosphor-icons/core/assets/regular/speaker-high.svg'
@@ -17,7 +18,7 @@ import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { NoticeGlyph } from './view-model.ts'
 
 const LOCAL = {
-  'chats-circle': chatsCircle, lock, 'speaker-high': speakerHigh, 'speaker-slash': speakerSlash, user, 'user-minus': userMinus,
+  'chart-bar': chartBar, 'chats-circle': chatsCircle, lock, 'speaker-high': speakerHigh, 'speaker-slash': speakerSlash, user, 'user-minus': userMinus,
   'user-plus': userPlus, users, 'arrow-bend-down-right': arrowBendDownRight, 'paper-plane-tilt': paperPlaneTilt, plus, smiley, warning,
 } as const
 export type LocalGlyph = keyof typeof LOCAL

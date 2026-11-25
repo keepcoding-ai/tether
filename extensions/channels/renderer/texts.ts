@@ -387,7 +387,7 @@ export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
   ]
 }
 
-export type ChannelMenuId = 'join' | 'members' | 'toEnd' | 'mute' | 'unmute' | 'remove' | 'link' | 'channelLink' | 'move' | 'closePane' | 'close' | 'reopen'
+export type ChannelMenuId = 'join' | 'members' | 'toEnd' | 'mute' | 'unmute' | 'remove' | 'poll' | 'link' | 'channelLink' | 'move' | 'closePane' | 'close' | 'reopen'
 
 /** A row of the channel's menu: an act the pane runs (`id`), a line of information, or a separator. */
 export type ChannelMenuEntry =
@@ -420,6 +420,8 @@ export function channelMenu(c: ChannelSummary, answer: MembersAnswer | undefined
     rows.push({ id: 'mute', icon: ICON.mute, label: 'Calar agente…', ...(nobody ? { disabled: true } : {}) })
     if (muted > 0) rows.push({ id: 'unmute', icon: ICON.unmute, label: 'Devolver a voz…' })
     rows.push({ id: 'remove', icon: ICON.remove, label: 'Tirar agente…', ...(nobody ? { disabled: true } : {}) })
+    // What has a key has a menu: the poll form also opens by the box's button and by `/enquete`.
+    rows.push({ id: 'poll', icon: 'plus', label: 'Abrir enquete…', ...(nobody ? { disabled: true } : {}) })
   }
   rows.push('sep',
     { id: 'link', icon: 'link', label: 'Copiar link do painel' },

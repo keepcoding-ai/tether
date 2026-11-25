@@ -260,7 +260,8 @@ export function parseVoteOption(options: readonly string[], vote: unknown): numb
 
 /** Whether `p` calls `who`: named in `to`, and still in the channel (the person always is). The author is never called. */
 export function isCalled(ch: Channel, p: OpenPoll, who: Who): boolean {
-  if (who === p.author.id || !p.to.some((t) => t.id === who)) return false
+  // An agent author is never called; the person who opens a poll may include herself ("incluir você") and then votes by the card.
+  if ((who === p.author.id && who !== USER) || !p.to.some((t) => t.id === who)) return false
   return who === USER || isMember(ch, who)
 }
 

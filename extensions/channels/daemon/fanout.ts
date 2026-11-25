@@ -849,7 +849,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (!Number.isFinite(timeout) || timeout < POLL_TIMEOUT_MIN_MS || timeout > POLL_TIMEOUT_MAX_MS) return fail('bad-request')
         if (input.to?.some((w) => w !== USER && !isMember(ch, w))) return fail('bad-request')
         // The author is never called; by default every agent member but the author, the person only when named.
-        const called = [...new Set(input.to?.length ? input.to : Object.keys(ch.members))].filter((w) => w !== who)
+        const called = [...new Set(input.to?.length ? input.to : Object.keys(ch.members))].filter((w) => w !== who || w === USER)
         if (called.length === 0) return fail('nobody-called')
         recent.push(now)
         const spec = { ...kind, question, to: called.map(personOf), closesAt: new Date(now + timeout).toISOString() }

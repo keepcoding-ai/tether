@@ -184,6 +184,21 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       }
     }],
 
+    // The person opens a poll (as the moderator): the same rules as an agent's `poll`. `to` are agent ids and `user` (herself, who then
+    // votes by the card); `timeoutMs` the time from now. Every refusal comes back as the error code; the answer says who does not hear now.
+    ['poll', async (c, a, ctx) => {
+      moderator(ctx)
+      const ch = channelOf(c, a)
+      const question = text(a, 'question')
+      const options = names(a, 'options')
+      const to = names(a, 'to')
+      const timeoutMs = int(a, 'timeoutMs')
+      const r = done(await c.poll(USER, ch.id, {
+        question, ...(options?.length ? { options } : {}), ...(to ? { to } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      }))
+      return { seq: r.line.seq, poll: openView(r.poll), closesAt: r.poll.closesAt, deaf: r.deaf.map((d) => ({ id: d.id, name: d.name, why: d.why })) }
+    }],
+
     // The person votes (she must be called): the same rules as an agent's `vote`; a vote or a change takes the poll in the answer.
     ['vote', async (c, a, ctx) => {
       moderator(ctx)

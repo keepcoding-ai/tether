@@ -61,6 +61,8 @@ const EARLY_REACTIONS_MAX = 200
 const RECENTS_KEY = 'tether.channels.recentReactions'
 /** The command that opens the picker on the focused speech: its key is `r` here until the person binds the command to another. */
 export const REACT_COMMAND = 'channels.react'
+/** The palette's command that opens the poll form of the active channel pane. */
+export const POLL_COMMAND_ID = 'channels.poll'
 const REACT_DEFAULT_KEY = 'r'
 
 interface Kept { timeline: Timeline; tallies: Tallies; polls: Map<number, PollState>; scrollTop: number; stick: boolean; floor: number | undefined }
@@ -269,6 +271,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private keyMenuAt = 0
     private readonly composer = createComposer({
       send: (text, to) => this.say(text, to),
+      poll: {
+        members: () => (this.answer?.members ?? []).map(m => ({ id: m.id, name: m.name, muted: m.muted, path: m.path })),
+        open: async args => { await this.ask('poll', { ...args }) },
+      },
       channels: () => openChannels().map(c => ({ name: c.name, current: c.id === this.channelId })),
     })
 
@@ -1284,6 +1290,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         join: () => this.joinAgent(),
         members: () => this.toggleMembers(),
         toEnd: () => this.toEnd(),
+        poll: () => this.openPollForm(),
         mute: ask(CMD.mute), unmute: ask(CMD.unmute), remove: ask(CMD.remove), close: ask(CMD.close), reopen: ask(CMD.reopen),
         link: () => ui.panes.copyLink(paneId),
         channelLink: () => ui.shell.writeClipboard(channelUrl(channel)),
@@ -1294,6 +1301,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         e === 'sep' || 'heading' in e ? e
           : { icon: e.icon, label: e.label, run: run[e.id], ...(e.danger ? { danger: true } : {}), ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(e.disabled ? { disabled: true } : {}) })
     }
+
+    /** Opens the poll form above the speaking box (the box's button, `/enquete`, the palette and the "⋯" menu land here). */
+    openPollForm(): void { this.composer.openPoll() }
 
     private toggleMembers(): void { this.membersTouched = true; this.membersOpen = !this.membersOpen; this.paintSide() }
 
@@ -2330,6 +2340,11 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   ]
 
   const disposables: Disposable[] = [
+    // The palette's row to open a poll (what has a key has a menu): it acts on the channel pane that is active.
+    ui.commands.register({
+      id: POLL_COMMAND_ID, title: 'Abrir enquete…', group: 'Canais', icon: 'chats-circle', when: inChannel,
+      run: (): void => { activeChannelPane()?.openPollForm() },
+    }),
     ui.commands.register(...reactRows.map(r => ({
       id: r.id, title: r.title, group: 'Canais', icon: 'chats-circle', when: inChannel, ignoreRepeat: true,
       run: (): void => { const p = activeChannelPane(); if (p) r.run(p) },

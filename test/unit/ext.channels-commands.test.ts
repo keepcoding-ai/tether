@@ -242,7 +242,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
   // Open, loose, nobody muted: no "Devolver a voz…"; "Encerrar canal…" last.
   const open = ans(CONF, [member('a', false), member('b', false)])
   assert.deepEqual(ids(channelMenu(CONF, open)),
-    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'close'])
+    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', 'poll', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'close'])
   const close = channelMenu(CONF, open).at(-1) as { label: string; danger?: boolean }
   assert.deepEqual([close.label, close.danger], ['Encerrar canal…', true])
 
