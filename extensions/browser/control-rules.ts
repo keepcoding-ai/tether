@@ -63,6 +63,7 @@ export type ControlEvent =
   | { type: 'resume' }
   | { type: 'popupOf'; opener: TabControl }
   | { type: 'own' }
+  | { type: 'give' }
 
 /** What a transition settles besides the new state: the help request it ends, and how. */
 export interface Transition {
@@ -75,6 +76,9 @@ export const OWN: TabControl = { holder: 'user', paused: false, why: 'own' }
 
 export function transition(t: TabControl, e: ControlEvent): Transition {
   if (e.type === 'own') return { state: t.why === 'own' && !t.paused && !t.ask ? t : OWN }
+  // She hands her own tab to an agent ("Entregar a um agente…"): from now on it is an agent's tab like any other, with the agent,
+  // unpaused. Any other tab is not hers to give: nothing changes.
+  if (e.type === 'give') return { state: t.why === 'own' ? INITIAL : t }
   // Her own tab has no agent: no hand-back, no brake, no help request (one is dismissed at once), no popup rule.
   if (t.why === 'own') return e.type === 'ask' ? { state: t, settle: { id: e.ask.id, outcome: 'dismissed' } } : { state: t }
   switch (e.type) {
@@ -145,6 +149,15 @@ export function handoffKeepsScript(params: { source?: unknown; [key: string]: un
  */
 export function reloadsOnGiveBack(t: TabControl): boolean {
   return heldOnRequest(t)
+}
+
+/**
+ * Does handing her own tab to an agent reload it first (and drop its history)? Always: rule 16 in the other direction. Whatever
+ * she typed and did not send (a form, a code) would be read by the agent's first snapshot, and a page she left in the history
+ * would come back with its fields filled when the agent goes back. The agent sees the tab only after this.
+ */
+export function reloadsOnGive(before: TabControl): boolean {
+  return before.why === 'own'
 }
 
 // ---- Tether.askUser's limits ----

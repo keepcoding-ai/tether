@@ -70,6 +70,60 @@ export function tabActions(s: TabActionState, agent: string): TabAction[] {
   return out
 }
 
+// ---- "Entregar a um agente…": her own tab goes to an agent (the tab menu, the bar's "⋯", the pad's row) ----
+
+export const GIVE_TAB = 'Entregar a um agente…'
+export const GIVE_TAB_ICON = 'robot'
+export const GIVE_TAB_SITUATION = 'browser.give-tab'
+
+/** Offered on her own tab once main has it (a pane back from layout.json has nothing to reload yet). */
+export const canGive = (s: TabActionState): boolean => !!s.own && s.loaded
+
+/** The agent picker's texts (the core's list picker, the rows the tether uses to give a pane). */
+export const GIVE_PICK = {
+  title: (title: string): string => `Entregar «${title}» a um agente`,
+  placeholder: 'Buscar agente…',
+  empty: 'Nenhum agente vivo para receber a guia',
+}
+
+/** An agent as the picker shows it (the core's `agents.list()` row). */
+export interface GiveAgent { slotId: string; name: string; kind?: string; alive: boolean; deskTitle?: string; inDrawer?: boolean; placed?: false }
+
+/**
+ * The picker's rows: live agents only, by name, each with its engine's icon, initial and hue (the owner pill's colour) and where
+ * it lives, plus the emblem its tab wears, the way the tether lists agents to give a pane to.
+ */
+export function giveItems<E>(agents: readonly GiveAgent[], hue: (slotId: string) => number, emblemOf?: (slotId: string) => E | undefined): {
+  value: string; label: string; detail?: string; engine?: string; icon: string; letter: string; hue: number; emblem?: E
+}[] {
+  return agents.filter(a => a.alive).sort((a, b) => a.name.localeCompare(b.name)).map(a => {
+    const where = a.placed === false ? 'sem guia' : a.inDrawer ? 'na Gaveta' : a.deskTitle ? `na mesa ${a.deskTitle}` : ''
+    const emblem = emblemOf?.(a.slotId)
+    return {
+      value: a.slotId, label: a.name, icon: 'robot', letter: a.name.trim().charAt(0).toUpperCase() || '?', hue: hue(a.slotId),
+      ...(where ? { detail: where } : {}), ...(a.kind ? { engine: a.kind } : {}), ...(emblem ? { emblem } : {}),
+    }
+  })
+}
+
+/** The one-line question before giving: what changes for her (the page reloads, her logins go along with the tab). */
+export function giveTabDialog(agent: string, title: string): DialogSpec {
+  return {
+    situation: GIVE_TAB_SITUATION,
+    tone: 'warn',
+    icon: GIVE_TAB_ICON,
+    title: `Entregar esta guia a ${agent}?`,
+    message: 'A página recarrega e as contas em que você entrou ficam com ele.',
+    context: { icon: 'globe-simple', name: title || 'Guia', lines: [] },
+    choices: [
+      { id: 'cancel', icon: 'globe-simple', label: 'Manter comigo', consequence: 'Nada muda: a guia continua sua.', tone: 'safe' },
+      { id: 'give', icon: GIVE_TAB_ICON, label: 'Entregar', consequence: `A guia passa a ser de ${agent}; você pode assumir de volta quando quiser.`, tone: 'neutral' },
+    ],
+    defaultChoice: 'cancel',
+    escChoice: 'cancel',
+  }
+}
+
 /** The question before closing a tab the agent is using. */
 export function closeTabDialog(agent: string, title: string): DialogSpec {
   return {

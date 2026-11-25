@@ -16,6 +16,9 @@ export interface BrowserStatus {
 /** What `go` did: navigated, the address may not open, the tab is not hers to drive (not held by her), or it is gone. */
 export type GoOutcome = 'ok' | 'bad-url' | 'not-held' | 'no-tab'
 
+/** What `give` did (tab-rules.ts `giveVerdict`). */
+export type GiveOutcome = 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full'
+
 export interface BrowserChannels {
   invoke: {
     list: () => TabInfo[]
@@ -64,6 +67,11 @@ export interface BrowserChannels {
      * main (http/https only; `https://` added without a scheme); typing it is the consent a local address needs.
      */
     go: (tabId: string, raw: string) => GoOutcome
+    /**
+     * "Entregar a um agente…": her own tab goes to the agent `slotId`, reloaded clean first (nothing she typed and did not send
+     * reaches him); from then on it is his tab like any other. `giveVerdict`'s refusals, or 'ok'.
+     */
+    give: (tabId: string, slotId: string) => GiveOutcome
     /** The brake on a set of tabs (all, or one agent's): the interface knows which, loaded or not. */
     pauseTabs: (tabIds: string[]) => void
     resumeTabs: (tabIds: string[]) => void
@@ -123,7 +131,7 @@ export interface BrowserChannels {
 export const BROWSER_INVOKES = [
   'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
-  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'go',
+  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'go', 'give',
   'pageDialogOpen', 'pageDialogAnswer',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
 type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>

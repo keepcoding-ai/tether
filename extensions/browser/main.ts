@@ -28,7 +28,7 @@ import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
-import { isId, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
+import { giveVerdict, isId, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 import { PersonPage } from './person-page.ts'
 
@@ -159,6 +159,16 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
       await surface.reapplyEmulation().catch(() => {})
       log(`guia ${tabId}: recarregada ao devolver`)
+    },
+    beforeGive: async tabId => {
+      const surface = registry.surface(tabId)
+      const wc = surface?.webContents
+      if (!surface || !wc || wc.isDestroyed()) return
+      // Her tab going to an agent (rule 16, the other way): what she typed and did not send goes with the reload, and the pages
+      // behind it go with the history (going back would bring their fields back as she left them).
+      await reloadAndWait(wc, url => registry.grantLocal(tabId, url))
+      if (!wc.isDestroyed()) wc.navigationHistory.clear()
+      log(`guia ${tabId}: recarregada ao entregar`)
     },
     log,
   })
@@ -347,6 +357,15 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       if (typeof tabId !== 'string' || !registry.get(tabId)) return 'no-tab'
       if (control.control(tabId) !== 'user') return 'not-held'
       return registry.go(tabId, raw)
+    }),
+    // "Entregar a um agente…" (her gesture, confirmed in the interface): checked, the state flips to the agent (shield on, her dialog
+    // dismissed), the page reloads clean, and only then the owner changes: the agent's first look is at the reloaded page.
+    ipc.handle('give', async (tabId, slotId) => {
+      if (typeof tabId !== 'string' || typeof slotId !== 'string') return 'no-tab'
+      const verdict = giveVerdict(registry.get(tabId), slotId, main.agents.get(slotId), registry.countOf(slotId))
+      if (verdict !== 'ok') return verdict
+      if (!await control.give(tabId)) return 'not-hers'
+      return registry.give(tabId, slotId) ? 'ok' : 'no-tab'
     }),
     // E12: a tab restored from layout.json and not loaded yet has no entry in the registry; pausing it keeps the state in the hub,
     // and the tab is born paused when the person shows it.

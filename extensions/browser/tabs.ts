@@ -84,6 +84,8 @@ export interface TabBlocked {
 export interface TabWatcher {
   added(info: TabInfo): void
   closed(tabId: string): void
+  /** Her own tab went to an agent (`give`): the same tab, a new owner. */
+  given?(info: TabInfo): void
 }
 
 export interface TabEvents {
@@ -297,6 +299,29 @@ export class TabRegistry {
     return this.create(ownerSlotId, isNavigable(url) ? url : 'about:blank', { tabId, ...(title ? { title } : {}), ticket: 'granted' })
   }
 
+  /**
+   * Her own tab goes to the agent `to` (the caller checked `giveVerdict` and ran the clean give first): the owner changes, the
+   * page stops slowing down out of view (an agent works on it unseen), and her local-network questions still open on it are
+   * withdrawn (her answer would give the agent a ticket). Her popups stay hers: they are tabs of their own, with her as owner.
+   * The watchers hear `given` (the gate tells the agent), the renderer the tab's change.
+   */
+  give(tabId: string, to: string): TabInfo | undefined {
+    const e = this.entries.get(tabId)
+    if (!e || !isPersonOwned(e.tab.ownerSlotId) || !isId(to) || isPersonOwned(to)) return undefined
+    e.tab.ownerSlotId = to
+    const wc = e.surface.webContents
+    if (!wc.isDestroyed()) wc.setBackgroundThrottling(throttlesInBackground(to))
+    this.local.gate.cancelTab(tabId)
+    this.scrubbedLog(`guia ${tabId} entregue a ${to}`)
+    const info = infoOf(e)
+    this.events.changed(info)
+    for (const w of [...this.watchers]) w.given?.(info)
+    return info
+  }
+
+  /** How many tabs `owner` has, open and opening (the ceiling of a give). */
+  countOf(owner: string): number { return this.tabsOf(owner) }
+
   close(tabId: string): void {
     this.entries.get(tabId)?.surface.destroy()
   }
@@ -347,7 +372,8 @@ export class TabRegistry {
   /** The page's limits and the events the renderer follows. */
   private guard(entry: Entry, ses: TabSession): IDisposable[] {
     const wc = entry.surface.webContents
-    const { tabId, ownerSlotId } = entry.tab
+    // The owner is read when a popup opens, never kept from here: her tab may go to an agent (`give`), and its later popups are his.
+    const { tabId } = entry.tab
     ses.prepare(wc)
     // JavaScript dialogs: Electron's default listener of its internal '-run-dialog' event shows a NATIVE box. It is replaced so
     // nothing is shown and the dialog waits for CDP (`Page.handleJavaScriptDialog`, the agent's). Internal Electron API (E6
@@ -381,6 +407,7 @@ export class TabRegistry {
     wc.setWindowOpenHandler(details => {
       if (isWebUrl(details.url) && POPUP_DISPOSITIONS.has(details.disposition)) {
         const now = Date.now()
+        const ownerSlotId = entry.tab.ownerSlotId
         const verdict = popupVerdict(entry.popups, now, this.tabsOf(ownerSlotId))
         if (verdict !== 'ok') {
           // H3: refused; one log line per burst (at most one per window), and the tab's seal counts them.

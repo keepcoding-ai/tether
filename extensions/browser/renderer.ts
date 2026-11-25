@@ -59,7 +59,10 @@ import { BAD_ADDRESS, EDIT_ADDRESS, EDIT_ADDRESS_HINT, NEW_TAB, PAD_MINE, PERSON
 import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPEN, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
 import { insertIndex, isPersonOwned, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { PAGE_DIALOG_CANCEL, PAGE_DIALOG_FIELD, PAGE_DIALOG_OK, type PageDialogAsk, pageDialogHead } from './page-rules.ts'
-import { CLOSE_TAB, closeNeedsConfirm, closeTabDialog, type TabAction, type TabActionId, type TabActionState, tabActions } from './tab-actions.ts'
+import {
+  canGive, CLOSE_TAB, closeNeedsConfirm, closeTabDialog, GIVE_PICK, GIVE_TAB, GIVE_TAB_ICON, giveItems, giveTabDialog, type TabAction, type TabActionId,
+  type TabActionState, tabActions,
+} from './tab-actions.ts'
 
 export { manifest }
 
@@ -221,7 +224,9 @@ export function activate(ui: TetherUi): IDisposable[] {
     const entry = (a: TabAction): ContextMenuEntry => ({ icon: a.icon, label: a.label, ...(a.danger ? { danger: true } : {}), ...(a.pin ? { pin: a.pin } : {}), run: () => { void runTabAction(a.id, tabId) } })
     const url = p.padTab()?.url ?? ''
     const owner = p.saved?.ownerSlotId
+    const give: ContextMenuEntry[] = canGive(actionState(tabId)) ? [{ icon: GIVE_TAB_ICON, label: GIVE_TAB, run: () => { void giveTab(tabId) } }] : []
     return [
+      ...give,
       ...acts.filter(a => a.id !== 'close').map(entry),
       'sep',
       ...(owner && !isPersonOwned(owner) && agentOf(owner) ? [{ icon: 'globe-simple', label: padSeeAgent(agentName(owner)), run: () => seeAgent(owner) }] : []),
@@ -234,6 +239,24 @@ export function activate(ui: TetherUi): IDisposable[] {
     ]
   }
   const showWebMenu = (paneId: string, x: number, y: number): void => { ui.menus.context(x, y, tabMenuEntries(paneId)) }
+
+  /**
+   * "Entregar a um agente…" on her own tab: the agent picker (the core's list, the rows the tether uses to give a pane), then one
+   * question; main reloads the page clean before the agent sees it. Taking it back is the agent tab's own "Assumir".
+   */
+  const giveTab = async (tabId: string): Promise<void> => {
+    const p = panels.get(paneIdOf(tabId))
+    const title = p?.padTab()?.title || shortAddress(p?.padTab()?.url ?? '') || 'Guia'
+    const to = await ui.pick.list<string>({
+      title: GIVE_PICK.title(title), placeholder: GIVE_PICK.placeholder, emptyText: GIVE_PICK.empty,
+      items: giveItems(ui.agents.list(), ownerHue, id => ui.panes.personEmblem(id)),
+    })
+    if (to === undefined || !canGive(actionState(tabId))) return
+    const a = await ui.dialogs.ask(giveTabDialog(shortName(ui.agents.get(to)?.name || 'o agente'), title)).catch(() => undefined)
+    if (a?.choice !== 'give') return
+    const outcome = await ipc.invoke('give', tabId, to).catch(() => 'no-tab' as const)
+    if (outcome !== 'ok') console.error(`browser: guia não entregue (${outcome})`)
+  }
 
   /** "Sair de todas as contas" (design §12a): asks first; the answer clears every login of every agent. */
   const confirmLogout = async (): Promise<void> => {
@@ -1604,8 +1627,11 @@ export function activate(ui: TetherUi): IDisposable[] {
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))
+      const ownerWas = p?.saved?.ownerSlotId
       if (p) p.bind(info)
       else openTab(info)
+      // Her tab given to an agent: its strip emblem and its place in the pad follow the new owner.
+      if (p && ownerWas !== undefined && ownerWas !== info.ownerSlotId) { paintTabs(); refreshPad() }
     }),
     ipc.on('localNetworkAsk', enqueue),
     ipc.on('control', onControl),
