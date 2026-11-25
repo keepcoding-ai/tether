@@ -9,7 +9,7 @@ import { clipboard, dialog, nativeImage } from 'electron'
 import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { ATTACH_MAX_BYTES, kindOf, safeFileName } from './attachments.ts'
-import { INSPECT_MAX, LOOK_MAX, THUMB_PX, VIEW_THUMB_PX, type AttachInfo, type ChannelsIpc, type FileLook } from './ipc.ts'
+import { INSPECT_MAX, LOOK_MAX, THUMB_PX, VIEWER_PX, VIEW_THUMB_PX, type AttachInfo, type ChannelsIpc, type FileLook, type FileView } from './ipc.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -48,6 +48,27 @@ async function lookOne(path: string): Promise<FileLook> {
     if (!s.isFile()) return { path, missing: true }
     const thumb = await thumbOf(path, basename(path), s.size, VIEW_THUMB_PX)
     return { path, missing: false, ...(thumb ? { thumb } : {}) }
+  } catch {
+    return { path, missing: true }
+  }
+}
+
+/** The image at viewing size: read by the system's own decoder, shrunk when over VIEWER_PX, a JPEG stays a JPEG (small) and the rest is a PNG. */
+async function viewOne(path: string): Promise<FileView> {
+  try {
+    const s = await stat(path)
+    if (!s.isFile()) return { path, missing: true }
+    if (kindOf(basename(path)) !== 'image' || s.size > ATTACH_MAX_BYTES) return { path, missing: false }
+    let img = nativeImage.createFromPath(path)
+    if (img.isEmpty()) {
+      try { img = await nativeImage.createThumbnailFromPath(path, { width: VIEWER_PX, height: VIEWER_PX }) } catch { /* no thumbnailer for this type */ }
+    }
+    if (img.isEmpty()) return { path, missing: false }
+    const { width, height } = img.getSize()
+    const small = Math.max(width, height) > VIEWER_PX ? (width >= height ? img.resize({ width: VIEWER_PX }) : img.resize({ height: VIEWER_PX })) : img
+    const jpeg = /\.jpe?g$/i.test(path)
+    const url = jpeg ? `data:image/jpeg;base64,${small.toJPEG(90).toString('base64')}` : small.toDataURL()
+    return { path, missing: false, url, width, height }
   } catch {
     return { path, missing: true }
   }
@@ -100,6 +121,10 @@ export function activate(main: TetherMain): IDisposable[] {
     ipc.handle('look', async (paths) => {
       if (!isPathList(paths)) return []
       return Promise.all(paths.slice(0, LOOK_MAX).map((p) => (inChannelFiles(p) ? lookOne(p) : { path: p, missing: true })))
+    }),
+    ipc.handle('view', async (path) => {
+      if (typeof path !== 'string' || !isAbsolute(path) || !inChannelFiles(path)) return { path: String(path), missing: true }
+      return viewOne(path)
     }),
     ipc.handle('discard',async (paths) => {
       if (!isPathList(paths)) return

@@ -227,7 +227,9 @@ test('channel pane: attachments in the conversation (thumbnails, cards, open, me
     await until(async () => (await opened()).length === 1, 10_000, 'the PDF card opened the file')
     assert.deepEqual(await opened(), [join(filesDir, 'contrato-v3.pdf')])
     await shots.first().click()
-    // An image opens in the app's own preview tab (as any file link to an image does); the channel's tab comes forward again.
+    // A3: a click on a thumbnail opens the viewer over the pane; "Abrir no app" is what the click did in A2 (the app's own preview tab).
+    await pane.locator('.ch-viewer').waitFor()
+    await pane.locator('.ch-vapp').click()
     await until(async () => (await page.locator('.dv-tab, .tab').allInnerTexts()).some(t => t.includes('Prévia: grafico.png')), 10_000, 'the thumbnail opened the image in a preview')
     assert.equal((await opened()).length, 1, 'an image does not go to the system')
     await openPane()

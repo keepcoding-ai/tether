@@ -161,7 +161,7 @@ test('channel pane: attaching files (paste a print, the clip, ✕, refusals, ten
     let v = await waitView('pane with the box', x => x.loaded && x.composer?.enabled === true)
     assert.equal(v.composer!.attach.clip, true, 'the clip is in the box')
     assert.deepEqual([v.composer!.attach.chips, v.composer!.attach.room], [[], ''])
-    assert.equal(await pane.locator('.ch-clip').getAttribute('title'), 'Anexar arquivo · também: cole com Ctrl+V')
+    assert.equal(await pane.locator('.ch-clip').getAttribute('title'), 'Anexar arquivo · também: arraste para a guia ou cole com Ctrl+V')
     await pane.locator('.ch-say').screenshot({ path: join(SHOTS, '1-caixa-com-clipe.png') })
 
     // ---- 1. a print pasted from the clipboard ----

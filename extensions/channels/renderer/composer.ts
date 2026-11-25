@@ -75,6 +75,8 @@ export interface Composer {
   address(name: string): void
   /** Opens the poll form above the box (the draft in the field stays); `question` pre-fills it. */
   openPoll(question?: string): void
+  /** Files dropped on the pane (A3): chips by the paste's road; 'off' while nobody hears (the box is off), 'no-file' when nothing dropped is a file on disk. */
+  drop(dt: DataTransfer): 'added' | 'off' | 'no-file'
 }
 
 let composerSeq = 0
@@ -353,6 +355,10 @@ export function createComposer(opts: ComposerOptions): Composer {
       attach: { ...(box?.snapshot() ?? { chips: [], notes: [], room: '' }), clip: box !== undefined },
     }),
     openPoll(question) { if (enabled && opts.poll) form.show(question) },
+    drop(dt) {
+      if (!enabled || !box) return 'off'
+      return box.drop(dt) ? 'added' : 'no-file'
+    },
     focus: () => field.focus(),
     address(name) {
       if (!enabled || !names.includes(name)) return

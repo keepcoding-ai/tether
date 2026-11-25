@@ -32,6 +32,19 @@ export interface FileLook {
   /** A data: URL of at most VIEW_THUMB_PX on its longest side, for an image main could read. */
   thumb?: string
 }
+/** The longest side of the picture the viewer gets (a bigger one is shrunk by main: the renderer never holds the file itself). */
+export const VIEWER_PX = 2400
+
+/** An image of a speech at viewing size (slice A3), made on demand and let go of when the viewer closes. */
+export interface FileView {
+  path: string
+  missing: boolean
+  /** A data: URL of the picture, at most VIEWER_PX on its longest side; absent when the system cannot read it as an image. */
+  url?: string
+  /** The size of the file's own picture (not of the shrunk one). */
+  width?: number
+  height?: number
+}
 /** The most paths one `inspect` looks at. */
 export const INSPECT_MAX = 64
 
@@ -47,5 +60,7 @@ export interface ChannelsIpc {
     discard(paths: string[]): void
     /** Looks at the files of speeches (only inside a channel's files folder): gone or not, and a thumbnail of an image. */
     look(paths: string[]): FileLook[]
+    /** The picture of one image of a speech at viewing size (only inside a channel's files folder). */
+    view(path: string): FileView
   }
 }

@@ -17,8 +17,8 @@ export interface AttachDeps {
   pathOf(file: File): string
 }
 
-/** The clip's tooltip (dragging comes with its own slice and is said there). */
-export const CLIP_TITLE = 'Anexar arquivo · também: cole com Ctrl+V'
+/** The clip's tooltip: the three ways in. */
+export const CLIP_TITLE = 'Anexar arquivo · também: arraste para a guia ou cole com Ctrl+V'
 export const SECRET_SMALL = 'Recusado: parece conter segredos'
 
 /** What a test reads of the chips. */
@@ -38,6 +38,8 @@ export interface AttachBox {
   pick(): Promise<void>
   /** A paste in the field: files or a print become chips (true: the paste was the box's, the default must not run). */
   paste(ev: ClipboardEvent): boolean
+  /** Files dropped on the pane become chips by the same road as a paste (false: nothing dropped has a file on disk behind it). */
+  drop(dt: DataTransfer): boolean
   /** Adds files main looked at (the picker's or the paste's). */
   add(infos: readonly AttachInfo[]): void
   /** The speech went: the chips go, the staged prints are deleted. */
@@ -151,6 +153,12 @@ export function createAttachBox(deps: AttachDeps, changed: () => void): AttachBo
         return true
       }
       return false
+    },
+    drop(dt) {
+      const paths = [...dt.files].map(f => deps.pathOf(f)).filter(p => p !== '')
+      if (paths.length === 0) return false
+      void deps.inspect(paths).then(add)
+      return true
     },
     add,
     sent() {

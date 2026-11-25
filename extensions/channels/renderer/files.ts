@@ -13,8 +13,10 @@ export interface FileViewDeps {
   look(paths: string[]): Promise<FileLook[]>
   /** Opens the file as a link to it does. */
   open(path: string): void
-  /** The link menu of a file at page coordinates. */
-  menu(x: number, y: number, path: string): void
+  /** Opens an image in the viewer over the channel's pane (A3); `from` is the thumbnail that was clicked. */
+  view(path: string, from: HTMLElement): void
+  /** The menu of a file at page coordinates (an image's has "Ver imagem" in it). */
+  menu(x: number, y: number, path: string, image: boolean, from: HTMLElement): void
 }
 
 /** Looks kept in memory (thumbnails are small data: URLs); the oldest goes first. */
@@ -78,9 +80,14 @@ export function createFileViews(deps: FileViewDeps, now: () => number = Date.now
     b.type = 'button'
     b.dataset.path = f.path
     b.dataset.name = f.name
+    b.dataset.label = f.label
     b.setAttribute('aria-label', `${f.name}, ${f.label}`)
-    b.addEventListener('click', ev => { ev.stopPropagation(); if (!b.classList.contains('gone')) deps.open(f.path) })
-    b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); deps.menu(ev.clientX, ev.clientY, f.path) })
+    b.addEventListener('click', ev => {
+      ev.stopPropagation()
+      if (b.classList.contains('gone')) return
+      if (f.kind === 'image') deps.view(f.path, b); else deps.open(f.path)
+    })
+    b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); deps.menu(ev.clientX, ev.clientY, f.path, f.kind === 'image' && !b.classList.contains('gone'), b) })
   }
 
   const card = (f: ViewFile, gone: boolean): HTMLButtonElement => {
@@ -117,6 +124,7 @@ export function createFileViews(deps: FileViewDeps, now: () => number = Date.now
     if (th && l.thumb && !th.querySelector('img')) {
       const img = el('img', '')
       img.alt = ''
+      img.draggable = false
       img.src = l.thumb
       th.replaceChildren(img)
     }

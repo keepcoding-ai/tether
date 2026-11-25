@@ -29,6 +29,8 @@ import { createFileViews } from './files.ts'
 import type { AttachDeps } from './attach-box.ts'
 import type { FileSource } from '../attachments.ts'
 import type { ChannelsIpc } from '../ipc.ts'
+import { createViewer, type ViewerSnapshot } from './viewer.ts'
+import { DROP_CLOSED, DROP_NO_FILE, DROP_SUB, DROP_TITLE, dragHasFiles } from './viewer-rules.ts'
 import { engineOf } from '../../../app/renderer/agent-ui.ts'
 import { ICON_NAMES, type IconName } from '../../../app/renderer/icons.ts'
 import { glyph, NOTICE_ICON } from './glyphs.ts'
@@ -114,6 +116,10 @@ export interface PaneSnapshot {
   last: number
   membersOpen: boolean
   hasComposerSlot: boolean
+  /** The image viewer over the pane (A3); absent while it is closed. */
+  viewer?: ViewerSnapshot
+  /** The drop zone (A3): shown while files of the system are dragged over the pane; `refuse` while the channel is closed. */
+  drop: { shown: boolean; title: string; sub: string; refuse: boolean }
   /** The short notice of a refused reaction, '' when none shows. */
   toast: string
   /** What was last said aloud (the polite live region) about a reaction change. */
@@ -183,6 +189,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     while (kept.size > KEPT_MAX) kept.delete(kept.keys().next().value as string)
   }
   const paneOf = (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId)
+  const paneHolding = (node: Node): ChannelPane | undefined => [...live].find(p => p.element.contains(node))
   /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
   const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
   const moderatorName = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
@@ -199,7 +206,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   const fileViews = createFileViews({
     look: paths => filesIpc.invoke('look', paths),
     open: path => ui.links.follow({ kind: 'file', path }),
-    menu: (x, y, path) => { ui.links.showMenu(x, y, { kind: 'file', path }) },
+    // An image opens in the viewer of the pane that holds the thumbnail (A3); its menu has "Ver imagem" first.
+    view: (path, from) => { paneHolding(from)?.showImage(path) },
+    menu: (x, y, path, image, from) => {
+      const pane = paneHolding(from)
+      if (image && pane) pane.imageMenu(x, y, path)
+      else ui.links.showMenu(x, y, { kind: 'file', path })
+    },
   })
 
   class ChannelPane implements IContentRenderer {
@@ -302,6 +315,77 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       },
       channels: () => openChannels().map(c => ({ name: c.name, current: c.id === this.channelId })),
     })
+    /** The image viewer over the pane (A3): its images are the thumbnails of the conversation, in order. */
+    private readonly viewer = createViewer({
+      host: this.element,
+      items: () => [...this.msgs.querySelectorAll<HTMLElement>('.ch-shot')]
+        .map(b => ({ path: b.dataset.path ?? '', name: b.dataset.name ?? '', label: b.dataset.label ?? '' })).filter(i => i.path !== ''),
+      load: path => filesIpc.invoke('view', path),
+      open: path => ui.links.follow({ kind: 'file', path }),
+      menu: (x, y, path) => { ui.links.showMenu(x, y, { kind: 'file', path }) },
+      restore: path => { [...this.msgs.querySelectorAll<HTMLElement>('.ch-shot')].find(b => b.dataset.path === path)?.focus() },
+    })
+    /** The zone to drop files on (A3), over the whole pane: it takes no pointer, the drag events reach the pane under it. */
+    private readonly dropZone = el('div', 'ch-drop')
+    private dropTimer: ReturnType<typeof setTimeout> | undefined
+
+    showImage(path: string): void { this.viewer.open(path) }
+
+    /** The menu of an image of the conversation: "Ver imagem" first, then what a file link has that the app can do from here. */
+    imageMenu(x: number, y: number, path: string): void {
+      const target = { kind: 'file' as const, path }
+      ui.menus.context(x, y, [
+        { icon: 'file-image', label: 'Ver imagem', hint: 'Enter', run: () => this.viewer.open(path) },
+        { icon: 'arrow-square-out', label: 'Abrir', run: () => ui.links.follow(target) },
+        { icon: 'arrow-square-out', label: 'Abrir ao lado', run: () => ui.links.follow(target, { side: true }) },
+        { icon: 'clipboard-text', label: 'Copiar caminho', run: () => this.copy(path) },
+        'sep',
+        { icon: 'dots-three', label: 'Mais opções do arquivo…', run: () => { ui.links.showMenu(x, y, target) } },
+      ])
+    }
+
+    // Files of the system dragged over the pane (A3): only a drag that carries `Files` counts, so a tab or a panel of the app that
+    // is being moved (dockview's own drag) goes on as it was. The zone stays while dragover keeps coming, and goes when it stops.
+    private onDrag(ev: DragEvent): void {
+      if (!dragHasFiles(ev.dataTransfer?.types)) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      const refuse = this.isClosed()
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = refuse ? 'none' : 'copy'
+      this.paintDrop(true)
+      if (this.dropTimer) clearTimeout(this.dropTimer)
+      this.dropTimer = setTimeout(() => this.paintDrop(false), 400)
+    }
+
+    private onDragLeave(ev: DragEvent): void {
+      if (!dragHasFiles(ev.dataTransfer?.types)) return
+      const r = this.element.getBoundingClientRect()
+      if (ev.clientX <= r.left || ev.clientX >= r.right || ev.clientY <= r.top || ev.clientY >= r.bottom) this.paintDrop(false)
+    }
+
+    private onDrop(ev: DragEvent): void {
+      const dt = ev.dataTransfer
+      if (!dt || !dragHasFiles(dt.types)) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      this.paintDrop(false)
+      if (this.isClosed()) { this.toast(DROP_CLOSED); return }
+      if (!this.answer || !this.composerSlot.contains(this.composer.element)) { this.toast('O canal ainda está carregando. Solte de novo em instantes.'); return }
+      const r = this.composer.drop(dt)
+      if (r === 'off') this.toast('Ninguém ouve ainda: junte um agente ao canal para anexar arquivos.')
+      else if (r === 'no-file') this.toast(DROP_NO_FILE)
+    }
+
+    private paintDrop(on: boolean): void {
+      if (this.dropTimer && !on) { clearTimeout(this.dropTimer); this.dropTimer = undefined }
+      if (!on) { this.dropZone.hidden = true; return }
+      const refuse = this.isClosed()
+      this.dropZone.classList.toggle('refuse', refuse)
+      const [title, sub] = this.dropZone.querySelectorAll('p')
+      title!.textContent = refuse ? 'Canal encerrado' : DROP_TITLE(this.answer?.channel.name ?? '')
+      sub!.textContent = refuse ? DROP_CLOSED : DROP_SUB
+      this.dropZone.hidden = false
+    }
 
     init(p: GroupPanelPartInitParameters): void {
       this.api = p.api
@@ -390,6 +474,18 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.overlays.observe(document.body, { childList: true })
       this.head.append(this.titleBox, this.bar)
       this.element.append(this.head, this.body)
+      const dropBox = el('div', 'ch-drop-box')
+      const dropIll = el('span', 'ch-drop-ill')
+      dropIll.append(glyph('paperclip'))
+      dropBox.append(dropIll, el('p', 'ch-drop-t'), el('p', 'ch-drop-s'))
+      this.dropZone.append(dropBox)
+      this.dropZone.hidden = true
+      this.dropZone.setAttribute('aria-hidden', 'true')
+      this.element.append(this.dropZone)
+      this.element.addEventListener('dragenter', ev => this.onDrag(ev))
+      this.element.addEventListener('dragover', ev => this.onDrag(ev))
+      this.element.addEventListener('dragleave', ev => this.onDragLeave(ev))
+      this.element.addEventListener('drop', ev => this.onDrop(ev))
       this.buildBar()
 
       this.msgs.addEventListener('scroll', () => this.onScroll())
@@ -425,6 +521,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       document.removeEventListener('visibilitychange', this.onWatch)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       if (this.toastTimer) clearTimeout(this.toastTimer)
+      if (this.dropTimer) clearTimeout(this.dropTimer)
+      this.viewer.close(false)
       this.stopPollTimer()
       this.closePicker(false)
       this.ro?.disconnect()
@@ -2369,6 +2467,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         scroll: { top: m.scrollTop, client: m.clientHeight, height: m.scrollHeight, stick: this.stick },
         unread: this.unread, more: this.timeline.more, last: this.timeline.last, membersOpen: this.membersOpen,
         hasComposerSlot: this.element.querySelector('.ch-composer-slot') !== null,
+        ...(this.viewer.snapshot() ? { viewer: this.viewer.snapshot()! } : {}),
+        drop: { shown: !this.dropZone.hidden, title: this.dropZone.querySelector('.ch-drop-t')?.textContent ?? '', sub: this.dropZone.querySelector('.ch-drop-s')?.textContent ?? '', refuse: this.dropZone.classList.contains('refuse') },
         toast: this.toastEl.hidden ? '' : (this.toastEl.textContent ?? ''),
         announce: this.announceEl.textContent ?? '',
         picker: {
