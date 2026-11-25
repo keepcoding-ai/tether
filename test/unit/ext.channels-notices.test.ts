@@ -2,7 +2,7 @@
 // does not hear inside gets the tool and the CLI, tool first; the `inside` road keeps its short forms. Pure: no daemon.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { joinedNotice, mergedNotice, returnNotice, withReplyHint, type Tally } from '../../extensions/channels/daemon/notices.ts'
+import { createdNotice, joinedNotice, mergedNotice, returnNotice, withReplyHint, type Tally } from '../../extensions/channels/daemon/notices.ts'
 
 const tally: Tally = { since: 5, at: '2026-11-23T19:05:00', messages: 2, notices: 0, speakers: ['soul · bancada'], fromUser: 0 }
 
@@ -38,6 +38,13 @@ describe('channels notices: how to answer and read, by road', () => {
       assert.ok(returnNotice('cena', tally, path).startsWith('você voltou · #cena:') && returnNotice('cena', tally, path).endsWith(`; ${want}`), path)
     }
     assert.ok(returnNotice('cena', tally).endsWith('; ler: channels read cena --since 4'))
+  })
+
+  test('the entry notices tell the name the agent has in the room', () => {
+    assert.ok(joinedNotice('cena', undefined, ['a'], 'inside', false, 'Membro').startsWith('você entrou em #cena como «Membro» · members: a'))
+    assert.ok(joinedNotice('cena', 'Guga', ['a'], 'terminal', false, 'Membro').startsWith('você entrou em #cena como «Membro» (por Guga) ·'))
+    assert.equal(createdNotice('cena', 'Autor'), 'você abriu #cena como «Autor» e é o owner dele')
+    assert.equal(createdNotice('cena'), 'você abriu #cena e é o owner dele')
   })
 
   test('the join notice: inside names the Claude tool; the other roads teach the tool and the CLI, tool first', () => {

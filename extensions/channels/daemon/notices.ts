@@ -101,14 +101,17 @@ export const ownerEndedLine =(room: string, who: string, moderator: string): str
 
 // ---- the notices to the agent it is about -------------------------------------------------------
 
-export const createdNotice = (room: string): string => `você abriu #${room} e é o owner dele`
+/** The name the agent has in the room, as every line (`from`) and address (`to`) writes it. */
+export const asName = (name: string): string => `«${name}»`
+
+export const createdNotice = (room: string, name?: string): string => `você abriu #${room}${name ? ` como ${asName(name)}` : ''} e é o owner dele`
 
 /**
  * To the agent that joined. `by` absent: it joined itself. `path` is the delivery's `routeOf` (the road, not the instant): a pane that does not hear
  * inside learns how to speak by the CLI, and one that hears nothing now (`wait`) is told the lines wait for it.
  */
-export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait', tools = false): string {
-  let text = `você entrou em #${room}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
+export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait', tools = false, name?: string): string {
+  let text = `você entrou em #${room}${name ? ` como ${asName(name)}` : ''}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
   if (path === 'inside') text += ` · para responder no canal chame a ferramenta ${claudeToolName('say')} (se ela não estiver carregada, carregue-a antes pela busca de ferramentas); o texto do seu turno não vai ao canal`
   else text += ` · ${cliHint(room, tools)}; o texto do seu turno não vai ao canal`
   if (path === 'wait') text += ' · agora esta guia não ouve as falas: elas esperam até ela poder ouvir, juntadas num aviso só'

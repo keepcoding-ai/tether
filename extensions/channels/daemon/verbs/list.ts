@@ -1,5 +1,6 @@
 // `channels list`: the channels I am in (and, with `all`, the open ones I am not); the way to find my way again after compacting.
 import { roleIn } from '../../rules.ts'
+import { asName } from '../notices.ts'
 import { me, optFlag, ownerRow, ok, type VerbDef } from './common.ts'
 
 export const listVerb: VerbDef = {
@@ -23,14 +24,14 @@ export const listVerb: VerbDef = {
         muted: mine?.muted !== undefined,
         members: Object.keys(ch.members).length,
         ...(last ? { last: { seq: last.seq, at: last.at, from: last.from.name } } : {}),
-        ...(mine ? { since: mine.since } : {}),
+        ...(mine ? { since: mine.since, as: deps.channels.nameOf(caller.slotId) } : {}),
         ...(ch.closed ? { closed: ch.closed.at } : {}),
       }
     }))
     rows.sort((a, b) => (b.last?.at ?? '').localeCompare(a.last?.at ?? ''))
     const text = rows.length === 0
       ? 'Nenhum canal.'
-      : rows.map((r) => `#${r.name} (${r.id}) ${r.role ?? 'fora'}${r.closed ? ', encerrado' : ''}${r.muted ? ', calado' : ''}, ${r.members} membro(s); dono ${r.owner.name}`).join('\n')
+      : rows.map((r) => `#${r.name} (${r.id}) ${r.role ?? 'fora'}${r.as ? ` como ${asName(r.as)}` : ''}${r.closed ? ', encerrado' : ''}${r.muted ? ', calado' : ''}, ${r.members} membro(s); dono ${r.owner.name}`).join('\n')
     return ok(text, { me: me(deps, caller), channels: rows })
   },
 }
