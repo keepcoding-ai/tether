@@ -187,7 +187,7 @@ test('menu de link: botão direito no terminal (http, guia, arquivo), Alt+clique
     const fileText = await print(page, host, filePath.slice(0, 12), filePath.slice(12))
 
     const urlRows = await rightClick(page, await pointOf(page, host, url))
-    assert.deepEqual(urlRows, ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+    assert.deepEqual(urlRows, ['Abrir no navegador do sistema [Ctrl+clique]', 'Abrir no navegador do tether', 'Abrir ao lado', '-', 'Copiar link'])
     await pick(page, 'Copiar link')
     await clipBecomes(url)
     assert.equal(await menuOpen(page), false, 'a pick closes the menu')
@@ -258,7 +258,7 @@ test('menu de link: botão direito no terminal (http, guia, arquivo), Alt+clique
     const web = await centre('a[href^="http"]')
     await page.mouse.click(web.x, web.y, { button: 'right' })
     await page.waitForSelector('#ctx-menu')
-    assert.deepEqual(await menuRows(page), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+    assert.deepEqual(await menuRows(page), ['Abrir no navegador do sistema [Ctrl+clique]', 'Abrir no navegador do tether', 'Abrir ao lado', '-', 'Copiar link'])
     await closeMenu(page)
     const guide = await centre('a[href^="tether"]')
     await page.mouse.click(guide.x, guide.y, { button: 'right' })

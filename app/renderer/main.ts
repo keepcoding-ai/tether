@@ -80,7 +80,7 @@ import { monaco, setSettingsSchema } from './monaco.ts'
 import { installMonacoLinks } from './monaco-links.ts'
 import { openChannelLink, setChannelSource } from './channel-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
-import { bridgeOpener, type LinkMenuAct, setBridgeOpener, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu } from './link-menu.ts'
+import { bridgeOpener, type LinkMenuAct, setBridgeOpener, setBrowserOpener, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu, tetherBrowserOpener } from './link-menu.ts'
 import { type LinkMenuAction, type LinkMenuFacts, linkCopyText, linkMenuPlan, paneOfLink, peekKey, relativeCopyText } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
@@ -3540,6 +3540,7 @@ function linkMenuFacts(target: LinkTarget, origin: LinkOrigin): LinkMenuFacts {
   const bridgeBrowser = target.kind === 'external' ? bridgeOpener()?.browser() : undefined
   return {
     ...(bridgeBrowser ? { bridgeBrowser } : {}),
+    ...(target.kind === 'external' && tetherBrowserOpener() ? { tetherBrowser: true } : {}),
     peekable: pane !== undefined && slots.has(pane), mac: IS_MAC, caseInsensitive: CASE_INSENSITIVE,
     ...(commands.all().some(c => c.id === 'explorer.reveal') ? { explorerRoots: projectFolders.map(f => f.path) } : {}),
     ...(baseDir ? { baseDir } : {}),
@@ -3550,6 +3551,11 @@ function runLinkRow(action: LinkMenuAction, target: LinkTarget, origin: LinkOrig
   if (action === 'copy') { const text = linkCopyText(target); if (text !== undefined) window.tether.writeClipboard(text); return }
   if (action === 'copy-relative') { const text = relativeCopyText(target, linkMenuFacts(target, origin)); if (text !== undefined) window.tether.writeClipboard(text); return }
   if (target.kind === 'external' && action === 'bridge') { bridgeOpener()?.open(target.url); return }
+  if (target.kind === 'external' && (action === 'browser' || action === 'browser-side')) {
+    const originPane = origin.slotId ?? currentDesk().activePanel?.id
+    tetherBrowserOpener()?.open(target.url, { side: action === 'browser-side', ...(originPane ? { originPane } : {}) })
+    return
+  }
   if (target.kind === 'file' && action === 'reveal') { void commands.run('explorer.reveal', 'menu', target.path); return }
   if (target.kind === 'file' && action === 'show-in-folder') {
     void window.tether.showInFolder(target.path).then(r => { if (!r.ok) void askDialog(fileOpenFailedSituation(r.message)) })
@@ -5007,6 +5013,7 @@ function activateRendererExtensions(): void {
         showMenu: (x, y, target, origin) => showLinkMenu(x, y, target, origin),
         provideChannels: source => add(toDisposable(setChannelSource(source).dispose)),
         provideBridge: source => add(toDisposable(setBridgeOpener(source).dispose)),
+        provideBrowser: source => add(toDisposable(setBrowserOpener(source).dispose)),
       },
       layout: { scheduleSave: () => scheduleSave() },
       dialogs: { ask: spec => askDialog(spec) },

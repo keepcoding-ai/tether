@@ -5,7 +5,7 @@ import type { LinkTarget } from '../shared/links.ts'
 import { channelUrl, parseTetherUrl } from '../shared/tether-url.ts'
 
 /** What a row does. `follow` is what Ctrl+click does; `follow-side` opens it beside; `peek` is Alt+click on a pane link. */
-export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative' | 'bridge'
+export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative' | 'bridge' | 'browser' | 'browser-side'
 
 export interface LinkMenuRow { action: LinkMenuAction; label: string; icon: string; hint?: string }
 export type LinkMenuLine = LinkMenuRow | 'sep'
@@ -25,6 +25,8 @@ export interface LinkMenuFacts {
    * daemon is down or no browser is connected. Only then does an http(s) link get "Abrir no <nome> pelo Bridge".
    */
   bridgeBrowser?: string
+  /** The browser extension is on and publishes its opener: an http(s) link then gets the two rows for the tether's own browser. */
+  tetherBrowser?: boolean
 }
 
 /** The follow modifier as the person reads it. */
@@ -113,6 +115,10 @@ export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenu
     case 'external':
       return [
         { action: 'follow', label: 'Abrir no navegador do sistema', icon: 'arrow-square-out', hint: follow },
+        ...(facts.tetherBrowser ? [
+          { action: 'browser', label: 'Abrir no navegador do tether', icon: 'globe-simple' } satisfies LinkMenuRow,
+          { action: 'browser-side', label: 'Abrir ao lado', icon: 'columns' } satisfies LinkMenuRow,
+        ] : []),
         ...(facts.bridgeBrowser ? [{ action: 'bridge', label: `Abrir no ${facts.bridgeBrowser} pelo Bridge`, icon: 'globe-simple' } satisfies LinkMenuRow] : []),
         'sep',
         { action: 'copy', label: 'Copiar link', icon: 'copy' },

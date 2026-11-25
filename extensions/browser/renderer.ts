@@ -31,6 +31,7 @@
 // activity dot inside; its menu and each row of the pad offer the same per-tab actions (tab-actions.ts), run by `runTabAction`.
 import type { GroupPanelPartInitParameters, IContentRenderer, IDockviewPanel, ITabRenderer } from 'dockview-core'
 import { type ActionBar, createActionBar } from '../../app/renderer/action-bar.ts'
+import type { Target } from '../../app/renderer/create.ts'
 import type { AttentionHandle, ContextMenuEntry, PadHost, PadView, SurfaceBinding, TetherUi } from '../../app/renderer/ext-api.ts'
 import { icon, type IconName } from '../../app/renderer/icons.ts'
 import { createTabHeader } from '../../app/renderer/tab-header.ts'
@@ -1192,9 +1193,20 @@ export function activate(ui: TetherUi): IDisposable[] {
   const paintTabs = (): void => { for (const t of tabs) t.paint() }
 
   /** A new tab: a pane in the Browser desk, behind, next to its owner's tabs (each agent's tabs together, in order of arrival). */
+  /** The pane a link's "Abrir ao lado" was clicked in, until the person's tab it asked for is drawn. */
+  let sideOrigin: string | undefined
   const openTab = (info: TabInfo): void => {
     const paneId = paneIdOf(info.tabId)
     if (ui.panes.find(paneId)) return
+    // "Abrir ao lado" of a link: the person's new tab goes beside the pane the link was clicked in, not to the Browser desk.
+    const beside = isPersonOwned(info.ownerSlotId) ? sideOrigin : undefined
+    if (beside && ui.panes.find(beside)) {
+      sideOrigin = undefined
+      ui.panes.open({
+        id: paneId, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: info.title || 'Guia', params: { ...savedOf(info) },
+      }, { target: { level: 'pane', placement: 'right' } as Target, reference: beside })
+      return
+    }
     const inDesk = [...panels.keys()].map(id => ui.panes.find(id)).filter((p): p is IDockviewPanel => !!p && ui.panes.describe(p.id)?.place === 'Browser')
     const home = inDesk.find(p => ownerOfPanel(p) === info.ownerSlotId) ?? inDesk[0]
     const group = home?.group.panels
@@ -1210,11 +1222,12 @@ export function activate(ui: TetherUi): IDisposable[] {
    */
   const newTab = async (url?: string): Promise<string | undefined> => {
     const info = await ipc.invoke('openForPerson', url).catch(() => null)
+    sideOrigin = undefined
     if (!info) return undefined
     const paneId = paneIdOf(info.tabId)
     const show = (tries: number): void => {
       const p = panels.get(paneId)
-      if (p && p.loaded() && ui.panes.find(paneId)) { ui.panes.reveal(paneId); p.startEdit() }
+      if (p && p.loaded() && ui.panes.find(paneId)) { ui.panes.reveal(paneId); if (!url) p.startEdit() }
       else if (tries > 0) setTimeout(() => show(tries - 1), 50)
     }
     show(60)
@@ -1484,6 +1497,12 @@ export function activate(ui: TetherUi): IDisposable[] {
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
       tabMenu: showWebMenu,
       searchTextOf: id => panels.get(id)?.padTab()?.url || undefined,
+    }),
+    ui.links.provideBrowser({
+      open: (url, opts) => {
+        sideOrigin = opts.side ? opts.originPane : undefined
+        void newTab(url)
+      },
     }),
     ipc.on('tab', info => {
       const p = panels.get(paneIdOf(info.tabId))

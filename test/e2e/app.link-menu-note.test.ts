@@ -168,7 +168,7 @@ test('menu de link no editor de notas: linhas do link no topo do menu do editor;
 
     // An http link; "Copiar link" copies it.
     const web = await rightClickAt(page, await pointOf(page, noteId, 'localhost:9'))
-    const webTop = ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link']
+    const webTop = ['Abrir no navegador do sistema [Ctrl+clique]', 'Abrir no navegador do tether', 'Abrir ao lado', '-', 'Copiar link']
     assert.deepEqual(web.slice(0, webTop.length), webTop)
     assert.deepEqual(web.slice(webTop.length), ['-', ...plain])
     await page.locator('.monaco-menu .action-label', { hasText: 'Copiar link' }).first().click()

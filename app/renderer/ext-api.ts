@@ -596,6 +596,11 @@ export interface TetherUi {
      * `browser()` names it, synchronously (undefined while none is connected: the menu row then stays out).
      */
     provideBridge(source: { browser(): string | undefined; open(url: string): void }): IDisposable
+    /**
+     * The browser extension tells the core how to open an http(s) link in a tab of the person's own ("Abrir no navegador do
+     * tether", and "Abrir ao lado": in the group of `originPane`, the pane the link was clicked in).
+     */
+    provideBrowser(source: { open(url: string, opts: { side: boolean; originPane?: string }): void }): IDisposable
   }
   layout: {
     /** A pane's params changed (dockview's updateParameters): the layout is saved soon. */

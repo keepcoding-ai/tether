@@ -27,6 +27,16 @@ describe('link menu rows', () => {
     assert.deepEqual(plan.map(l => (l === 'sep' ? '-' : l.action)), ['follow', 'bridge', '-', 'copy'])
     assert.equal(labels(linkMenuPlan({ kind: 'external', url: 'http://x.y' }, { ...facts, bridgeBrowser: 'Edge' }))[1], 'Abrir no Edge pelo Bridge')
   })
+  test('the tether browser rows come only with the opener published, right after the system browser and before the Bridge row', () => {
+    const link = { kind: 'external', url: 'https://a.b/' } as const
+    assert.ok(!labels(linkMenuPlan(link, facts)).some(l => l.includes('tether')))
+    const plan = linkMenuPlan(link, { ...facts, tetherBrowser: true, bridgeBrowser: 'Chrome' })
+    assert.deepEqual(plan.map(l => (l === 'sep' ? '-' : l.action)), ['follow', 'browser', 'browser-side', 'bridge', '-', 'copy'])
+    assert.deepEqual(labels(plan).slice(0, 3), ['Abrir no navegador do sistema [Ctrl+clique]', 'Abrir no navegador do tether', 'Abrir ao lado'])
+    for (const target of [{ kind: 'tether', url: 'tether://tab/abc' }, { kind: 'channel', id: 'c1' }, { kind: 'file', path: 'C:/a/b.ts' }] as const) {
+      assert.ok(!labels(linkMenuPlan(target, { ...facts, tetherBrowser: true })).some(l => l.includes('navegador do tether')), target.kind)
+    }
+  })
   test('the Bridge row belongs to http(s) links only', () => {
     const f = { ...facts, bridgeBrowser: 'Chrome' }
     for (const target of [{ kind: 'tether', url: 'tether://tab/abc' }, { kind: 'channel', id: 'c1' }, { kind: 'file', path: 'C:/a/b.ts' }] as const) {

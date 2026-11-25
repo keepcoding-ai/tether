@@ -42,7 +42,8 @@ const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const daemonMain = join(root, 'src', 'daemon', 'main.ts')
 const pipe = `\\\\.\\pipe\\tether-linkbridge-${process.pid}`
-const STATUS = '.status-wrap[data-status="web-bridge.status"]'
+const TETHER_ROWS = ['Abrir no navegador do tether', 'Abrir ao lado']
+const STATUS ='.status-wrap[data-status="web-bridge.status"]'
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 function pidAlive(pid: number): boolean {
@@ -208,7 +209,7 @@ test('menu de link http: "Abrir no Chrome pelo Bridge" só com navegador conecta
     await snapshotUntil(page, s => s.daemon === 'up' && s.browsers.length === 1, 'one browser connected')
     await focusPane(page, host)
     const rows = await rightClick(page, await pointOf(page, host, url))
-    assert.deepEqual(rows, ['Abrir no navegador do sistema [Ctrl+clique]', 'Abrir no Chrome pelo Bridge', '-', 'Copiar link'])
+    assert.deepEqual(rows, ['Abrir no navegador do sistema [Ctrl+clique]', ...TETHER_ROWS, 'Abrir no Chrome pelo Bridge', '-', 'Copiar link'])
     await sleep(300)
     await page.screenshot({ path: join(shots, 'l5-menu-bridge.png') })
     await page.locator('#ctx-menu li', { hasText: 'pelo Bridge' }).first().click()
@@ -223,7 +224,7 @@ test('menu de link http: "Abrir no Chrome pelo Bridge" só com navegador conecta
     fake.state.browsers = []
     await snapshotUntil(page, s => s.daemon === 'up' && s.browsers.length === 0, 'no browser')
     await focusPane(page, host)
-    assert.deepEqual(await rightClick(page, await pointOf(page, host, url)), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+    assert.deepEqual(await rightClick(page, await pointOf(page, host, url)), ['Abrir no navegador do sistema [Ctrl+clique]', ...TETHER_ROWS, '-', 'Copiar link'])
     await closeMenu(page)
 
     // ---- 3. the daemon down ----
@@ -232,7 +233,7 @@ test('menu de link http: "Abrir no Chrome pelo Bridge" só com navegador conecta
     fake.up = false
     await snapshotUntil(page, s => s.daemon !== 'up', 'daemon down')
     await focusPane(page, host)
-    assert.deepEqual(await rightClick(page, await pointOf(page, host, url)), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+    assert.deepEqual(await rightClick(page, await pointOf(page, host, url)), ['Abrir no navegador do sistema [Ctrl+clique]', ...TETHER_ROWS, '-', 'Copiar link'])
     await closeMenu(page)
   } finally {
     if (app) await killElectron(app, root).catch(e => console.error(String(e)))

@@ -41,6 +41,23 @@ export function setBridgeOpener(next: BridgeOpener): { dispose(): void } {
 /** The opener in force, if the web-bridge extension is on. */
 export const bridgeOpener = (): BridgeOpener | undefined => bridge
 
+/**
+ * The browser extension's way to open an http(s) address in a tab of the person's own: `side` false brings it to the front in
+ * the Browser desk; `side` true opens it in the group of `originPane`, beside the pane the link was clicked in.
+ */
+export interface BrowserOpener { open(url: string, opts: { side: boolean; originPane?: string }): void }
+
+let browserOpener: BrowserOpener | undefined
+
+/** The browser extension registers its opener while it is on; disposing withdraws it (the two rows leave the menu). */
+export function setBrowserOpener(next: BrowserOpener): { dispose(): void } {
+  browserOpener = next
+  return { dispose: () => { if (browserOpener === next) browserOpener = undefined } }
+}
+
+/** The tether browser's opener in force, if the browser extension is on. */
+export const tetherBrowserOpener = (): BrowserOpener | undefined => browserOpener
+
 /** The core registers how the menu is shown (once, at startup). */
 export function setLinkMenuHandler(fn: LinkMenuHandler): void {
   handler = fn
