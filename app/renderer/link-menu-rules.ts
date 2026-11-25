@@ -5,7 +5,7 @@ import type { LinkTarget } from '../shared/links.ts'
 import { channelUrl, parseTetherUrl } from '../shared/tether-url.ts'
 
 /** What a row does. `follow` is what Ctrl+click does; `follow-side` opens it beside; `peek` is Alt+click on a pane link. */
-export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative'
+export type LinkMenuAction = 'follow' | 'follow-side' | 'peek' | 'copy' | 'reveal' | 'show-in-folder' | 'copy-relative' | 'bridge'
 
 export interface LinkMenuRow { action: LinkMenuAction; label: string; icon: string; hint?: string }
 export type LinkMenuLine = LinkMenuRow | 'sep'
@@ -20,6 +20,11 @@ export interface LinkMenuFacts {
   baseDir?: string
   /** Paths compare without case (Windows, macOS). */
   caseInsensitive?: boolean
+  /**
+   * The name of the browser the Bridge has connected ("Chrome", "Edge"…); undefined when the web-bridge extension is off, its
+   * daemon is down or no browser is connected. Only then does an http(s) link get "Abrir no <nome> pelo Bridge".
+   */
+  bridgeBrowser?: string
 }
 
 /** The follow modifier as the person reads it. */
@@ -108,6 +113,7 @@ export function linkMenuPlan(target: LinkTarget, facts: LinkMenuFacts): LinkMenu
     case 'external':
       return [
         { action: 'follow', label: 'Abrir no navegador do sistema', icon: 'arrow-square-out', hint: follow },
+        ...(facts.bridgeBrowser ? [{ action: 'bridge', label: `Abrir no ${facts.bridgeBrowser} pelo Bridge`, icon: 'globe-simple' } satisfies LinkMenuRow] : []),
         'sep',
         { action: 'copy', label: 'Copiar link', icon: 'copy' },
       ]

@@ -417,6 +417,16 @@ export function showReleaseAll(s: Pick<StatusSnapshot, 'agents'>): boolean {
   return s.agents.some(a => a.live)
 }
 
+/**
+ * The connected browser a link opens in ("Abrir no <nome> pelo Bridge"): the active one, else the first connected; undefined
+ * while the daemon is not up or no browser is connected (the link menu then leaves the row out).
+ */
+export function linkBrowser(s: Pick<StatusSnapshot, 'daemon' | 'browsers'>): Pick<BrowserView, 'id' | 'name'> | undefined {
+  if (s.daemon !== 'up') return undefined
+  const b = s.browsers.find(x => x.active) ?? s.browsers[0]
+  return b ? { id: b.id, name: b.name } : undefined
+}
+
 /** The update marker (a build was written under a loaded extension) is settled once a connected browser reports the vendored version. */
 export function markerSettled(browsers: readonly Pick<BrowserView, 'extensionVersion'>[], vendored: string | undefined): boolean {
   return vendored !== undefined && browsers.some(b => b.extensionVersion === vendored)

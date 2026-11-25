@@ -20,7 +20,7 @@ import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import type { DetectedBrowser } from './browsers.ts'
 import type { ActionOutcome, InstallOutcome, StatusSnapshot, WebBridgeChannels } from './ipc.ts'
 import { BRIDGE_NAME, STATUS_ID } from './manifest.ts'
-import { DAEMON_OUTDATED_TEXT, activeAgents, agentGroups, badgeOf, browserAlert, browserMenu, pauseAction, EMPTY_SNAPSHOT, fallbackLine, showReleaseAll, stateMarks, stateOf, titleOf, type AgentView, type BrowserMenuItem, type BrowserView } from './status.ts'
+import { DAEMON_OUTDATED_TEXT, linkBrowser, activeAgents, agentGroups, badgeOf, browserAlert, browserMenu, pauseAction, EMPTY_SNAPSHOT, fallbackLine, showReleaseAll, stateMarks, stateOf, titleOf, type AgentView, type BrowserMenuItem, type BrowserView } from './status.ts'
 
 export { manifest } from './manifest.ts'
 
@@ -457,7 +457,22 @@ export function activate(ui: TetherUi): IDisposable[] {
     status: (): { snapshot: StatusSnapshot; state: string; badge: number | 'dot' | undefined; title: string; watching: boolean } => ({ snapshot, state: stateOf(snapshot, Date.now()), badge: badgeOf(snapshot, Date.now()), title: titleOf(snapshot, Date.now(), BRIDGE_NAME), watching: popoverOpen }),
   })
 
+  // The link menu's "Abrir no <nome> pelo Bridge": shown only while a browser is connected (the last snapshot says which).
+  const links = ui.links.provideBridge({
+    browser: () => linkBrowser(snapshot)?.name,
+    open: url => {
+      void ipc.invoke('openUrl', url).then(r => {
+        if (r.ok) return
+        void ui.dialogs.ask({
+          situation: 'web-bridge-open-failed', tone: 'danger', icon: 'x-circle', title: 'Não foi possível abrir o link', message: r.message,
+          choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi aberto.', tone: 'neutral' }], escChoice: 'ok',
+        }).catch(() => undefined)
+      })
+    },
+  })
+
   return [
+    links,
     ui.commands.registerCommand('web-bridge.install', () => { void run() }),
     toDisposable(() => guide?.close()),
     handle,

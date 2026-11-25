@@ -49,6 +49,11 @@ export interface WebBridgeChannels {
     activate(browserId: string): Promise<ActionOutcome>
     /** An arrow: brings a tab under control (and its window) to the front. */
     focusTab(browserId: string, tabId: number): Promise<ActionOutcome>
+    /**
+     * The link menu's "Abrir no <nome> pelo Bridge": opens an http(s) address in the connected browser (the active one), the
+     * way "Opções da extensão" opens its page: the browser's own executable with the address, a plain tab of the person's.
+     */
+    openUrl(url: string): Promise<ActionOutcome>
   }
   send: {
     /** The popover opened (poll every 2 s) or closed (every 15 s). */

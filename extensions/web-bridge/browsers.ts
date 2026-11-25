@@ -125,6 +125,29 @@ export function browsersFromOverride(json: string, exists: (p: string) => boolea
   return out
 }
 
+/** The detected browser behind a connected one's name ("Chrome" → "Google Chrome"); undefined when none matches. */
+export function detectedFor(detected: readonly DetectedBrowser[], name: string): DetectedBrowser | undefined {
+  const key = name.toLowerCase()
+  return key ? detected.find(d => d.name.toLowerCase().includes(key)) : undefined
+}
+
+/** A launcher that only runs through the shell (a .cmd or .bat stand-in): the address it gets must hold no shell syntax. */
+export const isScriptExe = (exe: string): boolean => /\.(cmd|bat)$/i.test(exe)
+
+/**
+ * The address a link hands to a browser's command line: an absolute http(s) URL, normalized (spaces and quotes escaped by the
+ * URL parser), never an option (it cannot start with `-`). Through a shell launcher, only a URL with no character cmd reads
+ * (`& | ^ % < > " ! ( )`) passes. Undefined refuses.
+ */
+export function launchUrl(url: unknown, viaShell: boolean): string | undefined {
+  if (typeof url !== 'string' || url.length > 8192) return undefined
+  let href: string
+  try { href = new URL(url.trim()).href } catch { return undefined }
+  if (!/^https?:\/\//i.test(href)) return undefined
+  if (viaShell && /[&|^%<>"!()\s]/.test(href)) return undefined
+  return href
+}
+
 /**
  * The extension's own options page. Chromium browsers ignore chrome:// / edge:// / brave:// URLs given on the
  * command line (the window lands on a New Tab), but chrome-extension:// is honoured when the extension is installed.

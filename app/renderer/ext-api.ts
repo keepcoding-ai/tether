@@ -591,6 +591,11 @@ export interface TetherUi {
      * `#name` of an existing channel becomes a link on every surface, and tether://channel/<id> opens its pane.
      */
     provideChannels(source: { list(): readonly { id: string; name: string; closed?: boolean }[]; open(channelId: string): void }): IDisposable
+    /**
+     * The web-bridge extension tells the core how to open an http(s) link in the browser the Bridge has connected:
+     * `browser()` names it, synchronously (undefined while none is connected: the menu row then stays out).
+     */
+    provideBridge(source: { browser(): string | undefined; open(url: string): void }): IDisposable
   }
   layout: {
     /** A pane's params changed (dockview's updateParameters): the layout is saved soon. */

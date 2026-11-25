@@ -17,8 +17,21 @@ describe('link menu rows', () => {
   test('a note link', () => {
     assert.deepEqual(labels(linkMenuPlan({ kind: 'tether', url: 'tether://note?path=C%3A%2Fa%2Fb.md' }, facts)), ['Abrir nota [Ctrl+clique]', 'Abrir ao lado', '-', 'Copiar link'])
   })
-  test('an external link: only the system browser (the others belong to another slice)', () => {
+  test('an external link with no browser connected to the Bridge: the system browser and copy', () => {
     assert.deepEqual(labels(linkMenuPlan({ kind: 'external', url: 'http://localhost:9/x' }, facts)), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+    assert.deepEqual(labels(linkMenuPlan({ kind: 'external', url: 'https://a.b/' }, { ...facts, bridgeBrowser: '' })), ['Abrir no navegador do sistema [Ctrl+clique]', '-', 'Copiar link'])
+  })
+  test('an external link with a browser connected: the Bridge row after the system browser, named after it, before copy', () => {
+    const plan = linkMenuPlan({ kind: 'external', url: 'https://a.b/c?d=1' }, { ...facts, mac: true, bridgeBrowser: 'Chrome' })
+    assert.deepEqual(labels(plan), ['Abrir no navegador do sistema [Cmd+clique]', 'Abrir no Chrome pelo Bridge', '-', 'Copiar link'])
+    assert.deepEqual(plan.map(l => (l === 'sep' ? '-' : l.action)), ['follow', 'bridge', '-', 'copy'])
+    assert.equal(labels(linkMenuPlan({ kind: 'external', url: 'http://x.y' }, { ...facts, bridgeBrowser: 'Edge' }))[1], 'Abrir no Edge pelo Bridge')
+  })
+  test('the Bridge row belongs to http(s) links only', () => {
+    const f = { ...facts, bridgeBrowser: 'Chrome' }
+    for (const target of [{ kind: 'tether', url: 'tether://tab/abc' }, { kind: 'channel', id: 'c1' }, { kind: 'file', path: 'C:/a/b.ts' }] as const) {
+      assert.ok(!labels(linkMenuPlan(target, f)).some(l => l.includes('Bridge')), target.kind)
+    }
   })
   test('a file and a folder', () => {
     // No folder of reference, no explorer: only the rows that always make sense.

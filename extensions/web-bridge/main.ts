@@ -9,13 +9,13 @@ import type { TetherMain } from '../../app/main/ext-api.ts'
 import type { IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { toDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { readBuildInfo } from './bridge-home.ts'
-import { browsersFromOverride, detectBrowsers, optionsUrl, type DetectedBrowser } from './browsers.ts'
+import { browsersFromOverride, detectBrowsers, detectedFor, isScriptExe, launchUrl, optionsUrl, type DetectedBrowser } from './browsers.ts'
 import { createInstaller } from './installer.ts'
 import type { WebBridgeChannels } from './ipc.ts'
 import { bridgeHomeOf, bridgePortOf, extensionDirOf } from './paths.ts'
 import { createStatusPoller } from './status-poll.ts'
 import { bundleSha256Of, readDaemonRecord } from './warmup.ts'
-import type { StatusSnapshot } from './status.ts'
+import { linkBrowser, type StatusSnapshot } from './status.ts'
 import { extensionVersionOf, readUpdateMarker, settleUpdateMarker } from './update.ts'
 import { findNode } from './find-node-sync.ts'
 
@@ -119,7 +119,27 @@ export function activate(main: TetherMain): IDisposable[] {
     } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) } }
   }
 
+  // The link menu's "Abrir no <nome> pelo Bridge": the connected (active) browser's own executable with the address, as
+  // openOptions does; the tab is a plain one of the person's, never under an agent's control.
+  const openUrl = (url: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const target = linkBrowser(poller.current())
+    if (!target) return Promise.resolve({ ok: false, message: 'Nenhum navegador está conectado ao Bridge.' })
+    const browser = detectedFor(detected(), target.name)
+    if (!browser) return Promise.resolve({ ok: false, message: `O ${target.name} conectado ao Bridge não foi encontrado neste computador.` })
+    const script = isScriptExe(browser.exe)
+    const href = launchUrl(url, script)
+    if (!href) return Promise.resolve({ ok: false, message: 'Esse endereço não pode ser aberto no navegador.' })
+    try {
+      const child = spawn(browser.exe, [href], { detached: true, stdio: 'ignore', windowsHide: script, shell: script })
+      child.on('error', () => {})
+      child.unref()
+      main.log(`link aberto no ${browser.name} pelo Bridge`)
+      return Promise.resolve({ ok: true })
+    } catch (e) { return Promise.resolve({ ok: false, message: e instanceof Error ? e.message : String(e) }) }
+  }
+
   return [
+    ipc.handle('openUrl', url => openUrl(url)),
     ipc.handle('browsers', () => Promise.resolve(detected())),
     ipc.handle('install', browserId => {
       const browser = detected().find(b => b.id === browserId)

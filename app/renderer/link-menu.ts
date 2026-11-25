@@ -24,6 +24,23 @@ export function linkMenuRows(target: LinkTarget, origin: LinkOrigin = {}): LinkM
   return rowsProvider ? rowsProvider(target, origin) : []
 }
 
+/**
+ * The web-bridge extension's way to open an http(s) address in the browser the Bridge has connected: `browser()` names it
+ * (synchronously, from the extension's last status) or is undefined when none is connected; `open` hands the address over.
+ */
+export interface BridgeOpener { browser(): string | undefined; open(url: string): void }
+
+let bridge: BridgeOpener | undefined
+
+/** The web-bridge extension registers its opener while it is on; disposing withdraws it (the row leaves the menu). */
+export function setBridgeOpener(next: BridgeOpener): { dispose(): void } {
+  bridge = next
+  return { dispose: () => { if (bridge === next) bridge = undefined } }
+}
+
+/** The opener in force, if the web-bridge extension is on. */
+export const bridgeOpener = (): BridgeOpener | undefined => bridge
+
 /** The core registers how the menu is shown (once, at startup). */
 export function setLinkMenuHandler(fn: LinkMenuHandler): void {
   handler = fn
