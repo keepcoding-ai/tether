@@ -10,6 +10,7 @@ import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } fro
 import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
+import { markdownNodes, markdownPlain } from './speech-markdown.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
 import type { ChannelEvent, LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line, type PollMissingWhy } from '../rules.ts'
@@ -1630,7 +1631,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // The speech is a stop of its own for the arrows (the log stays the one Tab stop) and reads as a whole: author, time, text, reactions.
       e.tabIndex = -1
       e.setAttribute('role', 'article')
-      this.msgMeta.set(e, { who: r.name, time: r.time, to: r.to.map(t => t.name), body: r.body })
+      this.msgMeta.set(e, { who: r.name, time: r.time, to: r.to.map(t => t.name), body: markdownPlain(r.body) })
       // The narrow composition has no hover bar: this "⋯" is always there and opens the same menu (the menu key does too).
       const more = this.actionBtn('ch-msg-more', 'Reagir e mais ações da fala', 'dots-three', () => {
         const b = more.getBoundingClientRect()
@@ -2153,21 +2154,37 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
      * The text of a speech as nodes (never innerHTML): the http(s) and tether:// links in it are links of the app. A plain click
      * follows (Alt+click on a pane link peeks at it) and the right button opens the link's menu.
      */
-    private speech(body: string): HTMLParagraphElement {
-      const p = el('p', '')
-      let at = 0
-      for (const l of detectUrlLinks(body)) {
-        if (l.start > at) this.plainSpeech(p, body.slice(at, l.start))
-        const target = linkTargetOfUrl(l.url)
-        const a = el('a', 'ch-link', l.url)
-        a.href = '#'
-        a.addEventListener('click', ev => { ev.preventDefault(); ui.links.follow(target, ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}) })
-        a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.links.showMenu(ev.clientX, ev.clientY, target) })
-        p.append(a)
-        at = l.end
-      }
-      if (at < body.length) this.plainSpeech(p, body.slice(at))
-      return p
+    private speech(body: string): HTMLElement {
+      const box = el('div', 'ch-speech')
+      box.append(markdownNodes(body, {
+        leaf: (text, parent) => {
+          // markdown-it's linkify does not know tether://, and a text already inside a link must not nest another.
+          if (parent.closest('a')) { this.plainSpeech(parent, text); return }
+          let at = 0
+          for (const l of detectUrlLinks(text)) {
+            if (l.start > at) this.plainSpeech(parent, text.slice(at, l.start))
+            parent.append(this.linkAnchor(l.url, l.url))
+            at = l.end
+          }
+          if (at < text.length) this.plainSpeech(parent, text.slice(at))
+        },
+        link: (href, parent) => {
+          const a = this.linkAnchor(href)
+          parent.append(a)
+          return a
+        },
+      }))
+      return box
+    }
+
+    /** The app link for a URL: a plain click follows, Alt+click peeks, the right button opens the link's menu. */
+    private linkAnchor(url: string, text?: string): HTMLAnchorElement {
+      const target = linkTargetOfUrl(url)
+      const a = el('a', 'ch-link', text)
+      a.href = '#'
+      a.addEventListener('click', ev => { ev.preventDefault(); ui.links.follow(target, ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}) })
+      a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.links.showMenu(ev.clientX, ev.clientY, target) })
+      return a
     }
 
     /**
