@@ -52,6 +52,8 @@
 .rg-left { border-right: 1px solid var(--border); background: var(--bg-2); }
 .rg-right { border-left: 1px solid var(--border); background: var(--bg-2); }
 .rg-center { position: relative; overflow: hidden; background: var(--frame-bg); }
+/* Where the quick view docks (pane.ts quickAnchor): the conversation under its bar, which stays in reach. Takes no pointer. */
+.rg-quick { position: absolute; top: 44px; left: 0; right: 0; bottom: 0; pointer-events: none; visibility: hidden; }
 
 .rg .rg-ic { display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--fg-dim); }
 .rg .rg-ic svg { width: 13px; height: 13px; }

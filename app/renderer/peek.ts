@@ -390,7 +390,11 @@ export class PeekCard {
     } else {
       this.releaseAll(true)
     }
-    if (over) this.opener = from ?? this.activeOutside()
+    if (over) {
+      // Docked, the row that asked last is where Esc closes and where the keyboard goes back (Space on another row swaps).
+      this.opener = from ?? this.activeOutside()
+      if (this.opener) this.returnTo = this.opener
+    }
     const holder = make('div', 'peek-pane')
     holder.dataset.pane = paneId
     this.body.replaceChildren(holder)
@@ -940,7 +944,14 @@ export class PeekCard {
     requestAnimationFrame(() => {
       if (this.current !== cur || !cur) return
       if (cur.kind === 'screen') cur.screen.focus()
-      else if (cur.kind === 'pane') { if (cur.loan) this.host.focusPane(cur.paneId); else this.qvGo.focus() }
+      else if (cur.kind === 'pane') {
+        if (cur.loan) this.host.focusPane(cur.paneId)
+        // A type without a focus of its own (or one that focuses elsewhere): the body itself holds the keyboard (Tab goes on
+        // from there); a pane that could not come, "Ir até a guia".
+        if (!this.card.contains(document.activeElement)) {
+          if (cur.loan) { cur.holder.tabIndex = -1; cur.holder.focus({ preventScroll: true }) } else this.qvGo.focus()
+        }
+      }
       else cur.panel.focus()
     })
   }

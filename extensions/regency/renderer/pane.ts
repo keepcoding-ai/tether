@@ -100,6 +100,8 @@ export class RegencyPane implements IContentRenderer {
   private readonly convHost = el('div', 'rg-convs')
   private readonly center = el('section', 'rg-col rg-center')
   private readonly embedHost = el('div', 'rg-embed')
+  /** The place the quick view docks on: the conversation under its bar, the same element whatever conversation is shown. */
+  private readonly quickHost = el('div', 'rg-quick')
   private readonly closedBar = el('div', 'rg-closed-bar', 'Conversa encerrada: só leitura.')
   private readonly voidBox = el('div', 'rg-void')
   private readonly members = el('section', 'rg-members')
@@ -168,7 +170,8 @@ export class RegencyPane implements IContentRenderer {
     this.center.setAttribute('aria-label', 'Conversa')
     this.embedHost.hidden = true
     this.closedBar.hidden = true
-    this.center.append(this.closedBar, this.embedHost, this.voidBox)
+    this.quickHost.setAttribute('aria-hidden', 'true')
+    this.center.append(this.closedBar, this.embedHost, this.voidBox, this.quickHost)
     this.right.setAttribute('aria-label', 'Neste canal e o Tether')
     this.membersHead.type = 'button'
     this.membersHead.dataset.action = 'members'
@@ -238,10 +241,13 @@ export class RegencyPane implements IContentRenderer {
   /** The tier the pane is drawn in now (the ruler of four, by the pane's width). */
   get tier(): string { return this.element.dataset.tier ?? 'desktop' }
 
-  /** What the quick view docks on: the conversation column, or the whole pane when the column is not on screen (the phone's other tabs). */
+  /**
+   * What the quick view docks on: the conversation's body under its bar (the bar's actions stay in reach), else the
+   * conversation column, else the whole pane when the column is not on screen (the phone's other tabs).
+   */
   quickAnchor(): HTMLElement {
-    const r = this.center.getBoundingClientRect()
-    return r.width > 0 && r.height > 0 ? this.center : this.element
+    const r = this.quickHost.getBoundingClientRect()
+    return r.width > 0 && r.height > 0 ? this.quickHost : this.element
   }
 
   /** "Gerir" or "Imersão", kept in the pane's layout. */

@@ -32,12 +32,16 @@
 //      each line is the agent, how long ago it ended; the search filters it (and opens it), a state filter empties it; Space
 //      does nothing on it; "Reabrir em…" lists the awake desks and "Nova mesa", puts the session there without changing desk,
 //      and the new row glows; "Esquecer…" asks first (r2-fechadas, r2-fechadas-reabrir).
+//  17. the quick view docked over the conversation: Space on an agent's row shows its live terminal in a card over the
+//      centre, no veil, nothing inert, the keyboard on the row; the box of speech takes text and sends with it open (Esc
+//      there is the box's); Space on another row swaps the pane (the first back whole); Esc on the row closes; a note by
+//      Space, closed by ✕ (r3-cartao-regencia-terminal, r3-cartao-regencia-nota).
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.regency.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
@@ -71,6 +75,10 @@ type Hooks = {
   systemDesks(): { id: string; name: string; panes: string[]; active: boolean }[]
   commands(): { id: string; title: string }[]
   runCommand(id: string): Promise<string>
+  peekState(): unknown
+  paneLoan(id: string): { state?: string }
+  openNote(path: string): Promise<void>
+  notes(): { id: string }[]
   ext: {
     channels: {
       open(channelId: string, name?: string): void
@@ -1057,6 +1065,83 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await until('"Fechadas" is empty', async () => (await closedCount()) === 0)
     assert.equal(await page.locator('.rg-cl-empty').textContent(), 'Nenhuma sessão fechada')
     await stays('reopen')
+
+    // ---- 17. the quick view docked over the conversation (V2) ----
+    console.log('step 17')
+    type Peek = { open: boolean; pane?: string; paneLent?: boolean; mode?: string }
+    const peekState = (): Promise<Peek> => page.evaluate(() => window.__tether.peekState() as Peek)
+    const loanOf = (id: string): Promise<string | undefined> => page.evaluate(i => window.__tether.paneLoan(i).state, id)
+    const rectOf = (sel: string): Promise<{ left: number; top: number; right: number; bottom: number } | undefined> => page.evaluate(s => {
+      const r = (document.querySelector(s) as unknown as { getBoundingClientRect(): { left: number; top: number; right: number; bottom: number } } | null)?.getBoundingClientRect()
+      return r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : undefined
+    }, sel)
+    const countOf = (sel: string): Promise<number> => page.locator(sel).count()
+    await page.evaluate(() => { window.__tether.ext.regency.search(''); window.__tether.ext.regency.filter('all'); window.__tether.ext.regency.view('desk') })
+    await page.evaluate(i => window.__tether.ext.regency.select(i), obra)
+    await until('the centre shows obra', async () => (await embed(obra))?.loaded === true)
+    // Space on a's row: the card docks over the conversation, a's live terminal in it; the keyboard stays on the row.
+    const aKey = `pane:agent:${a}`
+    await page.locator(`.rg-tree [data-key="${aKey}"]`).focus()
+    await page.keyboard.press(' ')
+    await page.waitForSelector('#peek[data-open="true"][data-mode="docked"]')
+    await page.waitForSelector('#peek .peek-pane > .panel-body .xterm')
+    const p17 = await peekState()
+    assert.deepEqual({ open: p17.open, pane: p17.pane, paneLent: p17.paneLent, mode: p17.mode }, { open: true, pane: a, paneLent: true, mode: 'docked' })
+    assert.equal(await focusedKey(), aKey, 'the keyboard stays on the row')
+    assert.equal((await state()).desk, DESK, 'the Regency stays')
+    assert.equal(await countOf('[data-inert-onscreen]'), 0, 'docked: nothing behind is inert')
+    const centre = (await rectOf('.rg-center'))!
+    const card = (await rectOf('#peek .peek-card'))!
+    assert.ok(card.left >= centre.left && card.right <= centre.right + 0.5 && card.top >= centre.top && card.bottom <= centre.bottom, `the card sits over the conversation: ${JSON.stringify({ card, centre })}`)
+    assert.equal(await page.locator('#peek .qv-head .qv-type').textContent(), 'agente')
+    assert.equal(await page.locator('#peek .qv-foot .qv-go').textContent(), 'Ir até a guia')
+    await page.screenshot({ path: join(SHOTS, 'r3-cartao-regencia-terminal.png') })
+    // The conversation stays usable: the box takes text and sends with the card open; Esc there is the box's.
+    const box17 = page.locator(`.rg-center .ch-pane[data-channel="${obra}"] .ch-composer-slot textarea`)
+    await box17.click()
+    await box17.fill('Falo com o cartão aberto.')
+    await page.keyboard.press('Enter')
+    await until('the line went with the card open', async () => (await embed(obra))?.rows.some(r => r.text === 'Falo com o cartão aberto.' && r.mine) === true)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    assert.equal((await peekState()).open, true, 'Esc in the box does not close the card')
+    // Space on b's row: the card shows b, a goes back to its tab whole.
+    const bKey = `pane:agent:${b}`
+    await page.locator(`.rg-tree [data-key="${bKey}"]`).focus()
+    await page.keyboard.press(' ')
+    await until('the card shows b', async () => (await peekState()).pane === b)
+    assert.equal(await loanOf(a), 'home', 'a is back in its tab')
+    // (b may be a background tab of its frame, its shell out of the DOM: the loan is read off the shell.)
+    assert.equal(await loanOf(b), 'lent', 'b in the card')
+    assert.equal(await countOf('#peek[data-open="true"]'), 1, 'one card')
+    // Esc on the row that opened it closes; b goes back whole.
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    assert.equal(await loanOf(b), 'home', 'b is back in its tab')
+    assert.equal(await countOf('.peek-lent'), 0)
+    assert.equal(await countOf('.peek-tab-eye'), 0)
+    assert.equal(await focusedKey(), bKey, 'the keyboard on the row')
+    // A note of a queue desk, by Space; closed by its ✕.
+    const notePath = join(home, 'regencia.md')
+    writeFileSync(notePath, '# Regência\n\n- [x] árvore\n- [ ] visão rápida em toda guia\n')
+    await page.evaluate(q => window.__tether.switchDesk(q), queueDesk)
+    await page.waitForFunction(q => window.__tether.activeDesk() === q, queueDesk)
+    await page.evaluate(p => window.__tether.openNote(p), notePath)
+    await page.waitForFunction(() => window.__tether.notes().length === 1)
+    const noteId = await page.evaluate(() => window.__tether.notes()[0]!.id)
+    await enter()
+    const nKey = `pane:pane:${noteId}`
+    await until('the note in the tree', async () => (await countOf(`.rg-tree [data-key="${nKey}"]`)) === 1)
+    await page.locator(`.rg-tree [data-key="${nKey}"]`).focus()
+    await page.keyboard.press(' ')
+    await page.waitForSelector('#peek[data-mode="docked"] .peek-pane > .note-panel .monaco-editor')
+    assert.equal(await page.locator('#peek .qv-head .qv-type').textContent(), 'nota')
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: join(SHOTS, 'r3-cartao-regencia-nota.png') })
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    assert.equal(await loanOf(noteId), 'home', 'the note is back in its tab')
+    await stays('quick view')
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})

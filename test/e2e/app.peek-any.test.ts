@@ -10,6 +10,15 @@
 //      hibernating keeps the loan; given back with the draft and at its size; closed while lent leaves nothing;
 //   5. a TERMINAL (the type's own hooks: only its body moves, the status bar stays in the tab), lent and given back at the
 //      size it had; the peek card is never involved.
+// The quick view's card (V2, peekPane), modal outside the Regency:
+//   6. a NOTE in the card: the window behind inert, the tab with the notice and the eye; the header (title, "nota", "em
+//      <mesa>") and the foot (the tab's menu, "Ir até a guia"); typed in the card; Esc in the editor stays the editor's; the
+//      menu at the foot is the manager's ("Ir até a guia" last); Esc on the foot closes, the note back whole;
+//   7. a CHANNEL and a MARKDOWN PREVIEW: the same header and foot; a line shows alive; another pane takes the card's place
+//      and the first goes back to its tab (screenshot r3-cartao-modal-canal);
+//   8. a pane of a SLEEPING desk: "dormindo" and "Acordar", the desk not woken by the peek; "Acordar" wakes it (r3-cartao-dormindo);
+//   9. the pane CLOSED while in the card: the card closes, nothing left;
+//  10. a tab IN VIEW only gets the keyboard (no card).
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.peek-any.test.ts   (the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -44,22 +53,28 @@ type Hooks = {
   closePanel(id: string): void
   termSize(slotId: string): { cols: number; rows: number } | undefined
   peekState(): { open: boolean; lent: boolean }
+  peekPane(id: string, over?: string): void
   lendPane(id: string): string
   giveBackPane(id: string): boolean
   paneLoan(id: string): Loan
   hibernateDesk(id: string): Promise<void>
   wakeDesk(id: string): string[]
-  desks(): { id: string; asleep?: boolean }[]
+  desks(): { id: string; name: string; asleep?: boolean }[]
   openNote(path: string): Promise<void>
   notes(): { id: string; path: string; text: string; dirty: boolean; viewport: { width: number; height: number } }[]
   note(id: string): { text: string; dirty: boolean; viewport: { width: number; height: number } } | undefined
-  ext: { channels: { run(id: string, arg?: unknown): void; view(id: string): { loaded: boolean; rows: { text: string }[]; composer?: { text: string; enabled: boolean } } | undefined } }
+  ext: {
+    channels: { run(id: string, arg?: unknown): void; view(id: string): { loaded: boolean; rows: { text: string }[]; composer?: { text: string; enabled: boolean } } | undefined }
+    note: { openPreview(side: boolean): string | undefined }
+  }
 }
+type PeekState = { open: boolean; routed?: boolean; lent?: boolean; pane?: string; paneLent?: boolean; refusal?: string; mode?: string }
 type Box = { width: number; height: number }
 declare const window: { __tether: Hooks }
 declare const document: {
   querySelector(s: string): { getBoundingClientRect(): Box; textContent: string | null } | null
-  querySelectorAll(s: string): { length: number }
+  querySelectorAll(s: string): ArrayLike<{ className: string }>
+  activeElement: unknown
 }
 
 const require = createRequire(import.meta.url)
@@ -295,6 +310,132 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     assert.equal(await count(`${shellOf(a)} > .panel > .panel-body .xterm`), 1)
     assert.equal(await count('.peek-lent'), 0)
     await page.waitForFunction(([id, s]) => { const t = window.__tether.termSize(id); return t?.cols === s.cols && t.rows === s.rows }, [a, before] as const)
+
+    // ---- 6. the quick view's card (V2), modal outside the Regency: a note ----
+    console.log('step 6')
+    const CARD = '#peek[data-open="true"]'
+    const PANE = '#peek .peek-pane'
+    const peekPane = (id: string): Promise<void> => page.evaluate(id => window.__tether.peekPane(id), id)
+    const peekState = (): Promise<PeekState> => page.evaluate(() => window.__tether.peekState() as PeekState)
+    const text = (sel: string): Promise<string> => page.evaluate(s => document.querySelector(s)?.textContent ?? '', sel)
+    // The chrome of the card as a list of its parts: the same for every type.
+    const chrome = (): Promise<string[]> => page.evaluate(() => Array.from(document.querySelectorAll('#peek .qv-head > *, #peek .qv-head .peek-id > *, #peek .qv-foot > *')).map(e => e.className))
+    const closeCard = async (): Promise<void> => { await page.click('#peek .peek-close'); await page.waitForSelector('#peek', { state: 'hidden' }) }
+    const otherName = (await page.evaluate(d => window.__tether.desks().find(x => x.id === d)?.name, otherDesk))!
+    await switchTo(otherDesk)
+    await page.evaluate(p => window.__tether.openNote(p), notePath)
+    await page.waitForFunction(() => window.__tether.notes().length === 1)
+    const note2 = await page.evaluate(() => window.__tether.notes()[0]!.id)
+    await page.waitForSelector(`${shellOf(note2)} > .note-panel .monaco-editor`)
+    const preview = (await page.evaluate(() => window.__tether.ext.note.openPreview(true)))!
+    assert.ok(preview, 'the markdown preview opened beside the note')
+    await page.waitForSelector(`${shellOf(preview)} > .preview-panel`)
+    await page.evaluate(id => window.__tether.ext.channels.run('channels.open', { channel: id }), vit)
+    await page.waitForSelector(CH(shellOf(chPane)))
+    await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.loaded === true, vit)
+    await switchTo(homeDesk)
+
+    await peekPane(note2)
+    await page.waitForSelector(`${CARD}[data-mode="modal"] .peek-card[data-content="pane"]`)
+    await page.waitForSelector(`${PANE} > .note-panel .monaco-editor`)
+    assert.deepEqual(await peekState(), { open: true, routed: false, lent: false, pane: note2, paneLent: true, mode: 'modal' })
+    // (The note is a background tab of its frame now, the channel opened over it: dockview keeps its shell out of the DOM.)
+    assert.equal((await loan(note2)).state, 'lent', 'the tab holds "sendo espiada" in its place')
+    assert.equal(await count(`.peek-tab-eye`), 1, 'the tab shows the eye')
+    assert.ok((await count('[data-inert-onscreen]')) > 0, 'modal: the window behind is inert')
+    assert.match(await text('#peek .qv-head .peek-title'), /espiar/)
+    assert.equal(await text('#peek .qv-head .qv-type'), 'nota')
+    assert.equal(await text('#peek .qv-head .qv-where-t'), `em ${otherName}`)
+    assert.equal(await text('#peek .qv-foot .qv-go'), 'Ir até a guia')
+    assert.equal(await page.locator('#peek .qv-foot .qv-wake').isVisible(), false, 'awake: no "Acordar"')
+    assert.equal(await page.locator('#peek .qv-foot .qv-menu').isVisible(), true, 'the tab\'s menu at the foot')
+    assert.equal(await count('#peek .peek-head:not(.qv-head)'), 0, 'the slot\'s header is not in the card')
+    const noteChrome = await chrome()
+    // Alive and editable; Esc in the editor is the editor's.
+    await page.locator(`${PANE} .monaco-editor .view-lines`).click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\nescrito na visão rápida')
+    await page.waitForFunction(id => window.__tether.note(id)?.text.includes('escrito na visão rápida') === true, note2)
+    await page.keyboard.press('Escape')
+    await frames()
+    assert.equal((await peekState()).open, true, 'Esc in the content does not close')
+    // The tab's menu at the foot: the manager's menu aimed at the pane, "Ir até a guia" last; Esc closes the menu, then (on the foot) the card.
+    await page.click('#peek .qv-menu')
+    await page.locator('#ctx-menu').waitFor()
+    const rows = await page.locator('#ctx-menu [role="menuitem"]').allTextContents()
+    console.log(`card menu: ${JSON.stringify(rows)}`)
+    assert.match(rows.at(-1) ?? '', /Ir até a guia/)
+    await page.keyboard.press('Escape')
+    await page.locator('#ctx-menu').waitFor({ state: 'detached' })
+    assert.equal((await peekState()).open, true, 'Esc closed the menu only')
+    await page.locator('#peek .qv-menu').focus()
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    assert.equal((await loan(note2)).state, 'home', 'the note is back in its tab')
+    assert.equal(await count('.peek-lent'), 0)
+    assert.equal(await count('.peek-tab-eye'), 0, 'the eye went')
+    assert.equal(await count('[data-inert-onscreen]'), 0, 'the window is back')
+
+    // ---- 7. a channel in the same card: same header and foot ----
+    console.log('step 7')
+    await peekPane(chPane)
+    await page.waitForSelector(`${PANE} > .ch-pane[data-channel="${vit}"]`)
+    assert.equal(await text('#peek .qv-head .qv-type'), 'canal')
+    assert.deepEqual(await chrome(), noteChrome, 'the same chrome for a channel')
+    assert.ok((await ch.say(a, vit, { body: 'fala vista no cartão' })).ok)
+    await page.locator(`${PANE} .ch-msg`, { hasText: 'fala vista no cartão' }).waitFor()
+    assert.equal(await page.locator(`${PANE} .ch-head`).isVisible(), false, 'only the body: the channel\'s own bar is the card header\'s job')
+    assert.ok(await page.evaluate(() => !!(document.activeElement as unknown as { closest(s: string): unknown } | null)?.closest('#peek .peek-card')), 'modal: the keyboard is in the card')
+    // (The pointer off the buttons it last pressed: the capture shows no hover.)
+    await page.mouse.move(700, 420)
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: join(SHOTS, '..', 'r3-cartao-modal-canal.png') })
+    // Another pane takes the card's place: the channel goes back to its tab whole.
+    await peekPane(preview)
+    await page.waitForSelector(`${PANE} > .preview-panel`)
+    assert.equal(await count(CH(shellOf(chPane))), 1, 'the channel is back in its tab')
+    assert.equal(await count(`${shellOf(chPane)} > .peek-lent`), 0)
+    assert.equal(await text('#peek .qv-head .qv-type'), 'prévia')
+    assert.deepEqual(await chrome(), noteChrome, 'the same chrome for a markdown preview')
+    assert.equal(await count('.peek-lent'), 1, 'one card, one pane lent')
+    await closeCard()
+    assert.equal(await count(`${shellOf(preview)} > .preview-panel`), 1, 'the preview is back in its tab')
+
+    // ---- 8. a pane of a sleeping desk: "dormindo" and "Acordar", never woken by the peek ----
+    console.log('step 8')
+    await page.evaluate(d => window.__tether.hibernateDesk(d), otherDesk)
+    await page.waitForFunction(d => window.__tether.desks().find(x => x.id === d)?.asleep === true, otherDesk)
+    await peekPane(note2)
+    await page.waitForSelector(`${PANE} > .note-panel`)
+    assert.equal(await text('#peek .qv-head .peek-state'), 'dormindo')
+    await page.locator('#peek .qv-foot .qv-wake').waitFor()
+    assert.equal(await text('#peek .qv-foot .qv-wake'), 'Acordar')
+    await page.waitForTimeout(400)
+    assert.equal(await page.evaluate(d => window.__tether.desks().find(x => x.id === d)?.asleep, otherDesk), true, 'the peek did not wake the desk')
+    await page.mouse.move(700, 420)
+    await page.screenshot({ path: join(SHOTS, '..', 'r3-cartao-dormindo.png') })
+    await page.click('#peek .qv-foot .qv-wake')
+    await page.waitForFunction(d => window.__tether.desks().find(x => x.id === d)?.asleep !== true, otherDesk)
+    await page.locator('#peek .qv-foot .qv-wake').waitFor({ state: 'hidden' })
+    assert.equal(await page.locator('#peek .qv-head .peek-state').isVisible(), false, 'awake, a note has no state')
+
+    // ---- 9. the pane closed while in the card: the card closes clean ----
+    console.log('step 9')
+    await page.evaluate(id => window.__tether.closePanel(id), note2)
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await page.waitForFunction(id => !window.__tether.panelIds().includes(id), note2)
+    assert.equal(await count('.peek-lent'), 0)
+    assert.equal(await count('.peek-tab-eye'), 0)
+    assert.equal(await count('#peek .peek-pane'), 0, 'nothing left in the card')
+    assert.equal(await count('[data-inert-onscreen]'), 0)
+
+    // ---- 10. a tab in view only gets the keyboard ----
+    console.log('step 10')
+    await page.evaluate(id => window.__tether.activatePanel(id), a)
+    await frames()
+    await peekPane(a)
+    await frames()
+    assert.equal((await peekState()).open, false, 'in view: no card')
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})

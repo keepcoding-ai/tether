@@ -96,7 +96,10 @@ button.qv-go .ph, button.qv-wake .ph { width: 14px; height: 14px; }
 button.qv-wake[hidden] { display: none; }
 /* The pane's content fills the body as it filled its tab (the id wins over the content's own `position`). */
 .peek-body > .peek-pane { position: absolute; inset: 0; overflow: hidden; background: var(--frame-bg); }
+.peek-body > .peek-pane:focus { outline: none; }
 #peek .peek-pane > :not(.qv-reason) { position: absolute; inset: 0; }
+/* Only the pane's body comes to the card: a bar a type marks as its own (title, its actions) is the card header's job there. */
+#peek .peek-pane [data-pane-bar] { display: none; }
 .qv-reason { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
 .qv-reason .ill { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); }
 .qv-reason .ill .ph { width: 24px; height: 24px; }

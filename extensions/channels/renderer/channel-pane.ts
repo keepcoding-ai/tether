@@ -537,6 +537,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       })
       this.overlays.observe(document.body, { childList: true })
       this.head.append(this.titleBox, this.bar)
+      // The pane's own bar: the quick view's card shows only the body, under its own header (peek.css [data-pane-bar]).
+      this.head.dataset.paneBar = ''
       this.element.append(this.head, this.body)
       const dropBox = el('div', 'ch-drop-box')
       const dropIll = el('span', 'ch-drop-ill')
