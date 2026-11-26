@@ -4,8 +4,9 @@
 import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import { identityMark, identityOf, identityView, type IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { MemberRow } from '../../channels/renderer/view-model.ts'
-import type { AgentGroupRow, AgentPaneRow, ConvRow, RegencyModel, Target, TreeDeskRow, TreePaneRow, WaitingItem } from '../model.ts'
-import { deskRowKey, groupRowKey, paneRowKey } from './tree-keys.ts'
+import { formatAgo } from '../../../app/renderer/sessions-rules.ts'
+import { CLOSED_ID, type AgentGroupRow, type AgentPaneRow, type ClosedRow, type ConvRow, type RegencyModel, type Target, type TreeDeskRow, type TreePaneRow, type WaitingItem } from '../model.ts'
+import { CLOSED_HEAD_KEY, closedRowKey, deskRowKey, groupRowKey, paneRowKey } from './tree-keys.ts'
 
 export interface ColumnsContext {
   /** The agent behind a pane, as the identity draws it; undefined for a pane that is not an agent's. */
@@ -34,7 +35,7 @@ export function targetOf(key: string | undefined): Target | undefined {
   const at = key.indexOf(':')
   if (at <= 0) return undefined
   const kind = key.slice(0, at)
-  if (kind !== 'desk' && kind !== 'pane' && kind !== 'channel' && kind !== 'agent') return undefined
+  if (kind !== 'desk' && kind !== 'pane' && kind !== 'channel' && kind !== 'agent' && kind !== 'session') return undefined
   return { kind, id: key.slice(at + 1) }
 }
 
@@ -86,7 +87,7 @@ function row(cls: string, target: Target, label: string): HTMLElement {
  * A row of the tree: a treeitem with its focus key (`data-key`, unique even where a group and its agent's pane share a
  * target), its kind (`data-row`) and, when it folds, its fold id. Out of the tab order: the pane gives the one roving stop.
  */
-function treeRow(cls: string, target: Target, label: string, key: string, kind: 'desk' | 'group' | 'agent' | 'pane', level: 1 | 2): HTMLElement {
+function treeRow(cls: string, target: Target, label: string, key: string, kind: 'desk' | 'group' | 'agent' | 'pane' | 'closed-head' | 'closed', level: 1 | 2): HTMLElement {
   const r = row(cls, target, label)
   r.tabIndex = -1
   r.dataset.key = key
@@ -393,7 +394,55 @@ export function paintTree(host: HTMLElement, model: RegencyModel, ctx: TreeConte
     }
   }
   if (ctx.narrowed && out.length === 0 && model.closed.count === 0) out.push(nothingShown())
+  out.push(closedSection(model, ctx))
   host.replaceChildren(...out)
+}
+
+/** "Fechadas" at the tree's foot: the head (folds; its count is the sessions that pass the search) and, open, one line each. */
+function closedSection(model: RegencyModel, ctx: TreeContext): HTMLElement {
+  const { count, collapsed, rows } = model.closed
+  const group = el('div', 'rg-group')
+  group.setAttribute('role', 'none')
+  group.dataset.closed = 'true'
+  const label = `Fechadas, ${count} ${count === 1 ? 'sessão' : 'sessões'}`
+  if (count === 0) {
+    // Nothing to fold: a plain head (out of the keyboard's walk), and the sentence when nothing narrows the tree.
+    const head = el('div', 'rg-cl-head rg-cl-off')
+    head.setAttribute('aria-label', label)
+    head.append(glyph('clock-counter-clockwise', 'Fechadas'), el('span', 'rg-dn', 'Fechadas'), el('span', 'rg-n2', '0'))
+    group.append(head)
+    if (!ctx.narrowed) group.append(el('p', 'rg-empty rg-cl-empty', 'Nenhuma sessão fechada'))
+    return group
+  }
+  const head = treeRow('rg-cl-head', { kind: 'session', id: CLOSED_ID }, label, CLOSED_HEAD_KEY, 'closed-head', 1)
+  head.dataset.fold = CLOSED_ID
+  head.setAttribute('aria-expanded', String(!collapsed))
+  head.append(
+    glyph(collapsed ? 'caret-right' : 'caret-down', collapsed ? 'Mostrar as sessões fechadas' : 'Recolher as sessões fechadas'),
+    glyph('clock-counter-clockwise', 'Fechadas'),
+    el('span', 'rg-dn', 'Fechadas'),
+    el('span', 'rg-n2', String(count)),
+  )
+  group.append(head)
+  for (const c of rows) group.append(closedRow(c, ctx))
+  return group
+}
+
+/** An ended session: the agent's identity (engine icon, letter, name), its title when it has one, and how long ago it ended. */
+function closedRow(c: ClosedRow, ctx: TreeContext): HTMLElement {
+  const r = treeRow('rg-cl', c.target, `${c.name}, encerrada`, closedRowKey(c.target.id), 'closed', 2)
+  r.dataset.session = c.target.id
+  r.append(identityView(ctx.identity(c.target.id) ?? { kind: c.kind, name: c.name, seed: c.target.id }))
+  if (c.title && c.title !== c.name) r.append(el('span', 'rg-sub', c.title))
+  r.append(el('span', 'rg-sp'))
+  const at = c.endedAt ? Date.parse(c.endedAt) : NaN
+  if (Number.isFinite(at)) {
+    const ago = el('span', 'rg-ago', formatAgo(Date.now() - at))
+    ago.title = `Encerrada em ${new Date(at).toLocaleString('pt-BR')}`
+    r.append(ago)
+  }
+  r.append(acts([MENU_ACT]))
+  return r
 }
 
 function attnDot(): HTMLElement {
@@ -402,7 +451,7 @@ function attnDot(): HTMLElement {
   return d
 }
 
-/** "Fechadas" and "Sistema": their places, shown and off (they come in a later slice). */
+/** "Sistema": its place, shown and off (it comes in a later slice). */
 export function paintReserved(host: HTMLElement): void {
   const place = (iconName: string, label: string, place: string): HTMLElement => {
     const b = el('div', 'rg-reserved-row')
@@ -412,5 +461,5 @@ export function paintReserved(host: HTMLElement): void {
     b.append(glyph(iconName, label), el('span', '', label))
     return b
   }
-  host.replaceChildren(place('clock-counter-clockwise', 'Fechadas', 'closed'), place('gear-six', 'Sistema', 'system'))
+  host.replaceChildren(place('gear-six', 'Sistema', 'system'))
 }

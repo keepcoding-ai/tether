@@ -210,8 +210,30 @@
 .rg[data-tier="mobile"] .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -8px; padding: 0 8px; }
 .rg[data-tier="mobile"] .rg-chip { height: 44px; padding: 0 14px; font-size: 12.5px; }
 
+/* "Fechadas", the tree's last group: the head folds; each ended session is one line (identity, title, how long ago). */
+.rg-cl-head, .rg-cl { position: relative; display: flex; align-items: center; gap: 6px; margin: 0 6px; padding: 4px 6px; border-radius: 6px; min-height: 28px; min-width: 0; cursor: pointer; }
+.rg-cl-head { margin-top: 8px; font-weight: 600; color: var(--fg-dim); border-top: 1px solid var(--border); border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 6px; }
+.rg-cl-head.rg-cl-off { cursor: default; opacity: .7; }
+.rg-cl { padding-left: 26px; }
+.rg-cl-head:hover, .rg-cl:hover { background: var(--bg-hover); }
+.rg-cl-head.rg-cl-off:hover { background: none; }
+.rg-cl .aid-view { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
+.rg-cl .aid-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-cl { color: var(--fg-dim); }
+.rg-ago { flex: none; font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.rg-cl-empty { padding-left: 26px; }
+:is(.rg-cl):is(:hover, :focus-within, :focus) > .rg-acts:not(:empty) { display: inline-flex; }
+.rg:not([data-tier="mobile"]) .rg-cl:is(:hover, :focus-within, :focus) > .rg-ago { visibility: hidden; }
+.rg[data-tier="mobile"] :is(.rg-cl-head, .rg-cl) { min-height: 44px; }
+/* The row of a session just reopened: a brief glow (reduced motion: the same highlight, still). */
+.rg-fresh { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .rg-fresh { animation: rg-fresh 2.2s ease-out; }
+}
+@keyframes rg-fresh { from { background: color-mix(in srgb, var(--accent) 45%, transparent); } to { background: color-mix(in srgb, var(--accent) 0%, transparent); } }
+
 /* The reserved places: shown, off. */
-.rg-reserved { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; border-top: 1px solid var(--border); background: var(--bg-2); flex: none; }
+.rg-reserved { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr; gap: 3px; padding: 6px; border-top: 1px solid var(--border); background: var(--bg-2); flex: none; }
 .rg-reserved-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--fg-dim); opacity: .55; cursor: default; font-size: 12px; }
 .tether-tab.regency .rg-pin { color: var(--fg-dim); }
 .tether-tab.regency .rg-pin svg { width: 12px; height: 12px; }

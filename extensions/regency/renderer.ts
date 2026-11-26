@@ -10,7 +10,7 @@ import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
 import type { Ownership } from '../for-agents/rules.ts'
 import { CMD, DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
 import {
-  regencyModelOf, stateCounts, type AgentRef, type OwnerRef, type RegencyInput, type RegencyModel, type StateCounts, type Target,
+  CLOSED_ID, regencyModelOf, stateCounts, type AgentRef, type ClosedInput, type OwnerRef, type RegencyInput, type RegencyModel, type StateCounts, type Target,
   type TreeFilter,
 } from './model.ts'
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
@@ -23,6 +23,10 @@ export { manifest }
 const SCREEN_TYPES = new Set(['settings', 'keybindings'])
 /** The pill menu's own row that puts a desk to sleep (main.ts, deskMenuEntries): the moon button runs it. */
 const HIBERNATE_DESK_LABEL = 'Hibernar mesa'
+/** The menu of an ended session's row, and the picker's value for the desk that does not exist yet. */
+const REOPEN_LABEL = 'Reabrir em…'
+const FORGET_LABEL = 'Esquecer…'
+const NEW_DESK = '\u0000new-desk'
 
 export function activate(ui: TetherUi): Disposable[] {
   const panes = new Set<RegencyPane>()
@@ -45,6 +49,14 @@ export function activate(ui: TetherUi): Disposable[] {
     const emblem = ui.panes.personEmblem(a.paneId)
     return { id: a.paneId, kind: a.kind, name: a.name, ...(emblem ? { emblem: { name: emblem.name, color: emblem.color, icon: emblem.icon } } : {}) }
   })
+
+  /** The ended sessions of the core's list, read again only when it says it changed (the core scans the slots to make it). */
+  let closedCache: ClosedInput[] | undefined
+  const closedList = (): ClosedInput[] => closedCache ??= ui.sessions.closed().map(c => ({
+    slotId: c.slotId, kind: c.kind, name: c.name,
+    ...(c.title !== undefined ? { title: c.title } : {}),
+    ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}),
+  }))
 
   /** Keeps `since` in step with who waits now: a newcomer gets its time (the slot's own for an agent), a leaver is dropped. */
   const trackSince = (input: Omit<RegencyInput, 'since'>): void => {
@@ -86,7 +98,7 @@ export function activate(ui: TetherUi): Disposable[] {
     const channels = [...channelEmbeds.list()]
     const channelMarks: RegencyInput['channelMarks'] = {}
     for (const c of channels) channelMarks[c.id] = channelEmbeds.marksOf(c.id)
-    const base = { desks, owners, channels, channelMarks, agents: agentRefs(), collapsed: [...collapsed], selfDeskId: DESK_ID }
+    const base = { desks, owners, channels, channelMarks, agents: agentRefs(), closed: closedList(), collapsed: [...collapsed], selfDeskId: DESK_ID }
     trackSince(base)
     return { ...base, since: Object.fromEntries(since), ...narrow }
   }
@@ -223,6 +235,51 @@ export function activate(ui: TetherUi): Disposable[] {
     else refuse(`${name} não pode dormir agora`, 'A última mesa acordada fica acordada, e uma mesa que já dorme não dorme de novo.')
   }
 
+  const closedName = (slotId: string): string => closedList().find(c => c.slotId === slotId)?.name ?? slotId
+
+  /**
+   * "Reabrir em…": the awake desks of the queue, then "Nova mesa". The session is born there and starts; the person stays on
+   * the Regency, whose tree shows the new row with a brief highlight. `where` is a desk id or NEW_DESK.
+   */
+  const reopenOn = (slotId: string, where: string): boolean => {
+    const deskId = where === NEW_DESK ? ui.sessions.reopenInNewDesk(slotId) : (ui.sessions.reopen(slotId, where) ? where : undefined)
+    if (!deskId) {
+      refuse('A sessão não foi reaberta', 'Ela já não está encerrada (ou já tem guia), ou a mesa escolhida não existe mais. Nada foi alterado.')
+      return false
+    }
+    livePane()?.announce(slotId, deskId)
+    return true
+  }
+
+  const reopenIn = async (slotId: string): Promise<void> => {
+    const desks = ui.desks.list().filter(d => !d.asleep)
+    const where = await ui.pick.list<string>({
+      title: `Reabrir ${closedName(slotId)} em…`,
+      placeholder: 'Nome da mesa',
+      items: [
+        ...desks.map(d => ({ value: d.id, label: d.name, icon: 'cards', detail: `${d.panes.length} guia${d.panes.length === 1 ? '' : 's'}` })),
+        { value: NEW_DESK, label: 'Nova mesa', icon: 'plus', detail: 'Cria uma mesa depois da última' },
+      ],
+      emptyText: 'Nenhuma mesa acordada',
+    })
+    if (where) reopenOn(slotId, where)
+  }
+
+  /** "Esquecer…": asks (it cannot be undone), then the core's forget; a refusal is said, never silent. */
+  const forgetClosed = async (slotId: string): Promise<void> => {
+    const name = closedName(slotId)
+    const r = await ui.dialogs.ask({
+      situation: 'regency.forget-session', tone: 'danger', icon: 'trash',
+      title: `Esquecer a sessão de ${name}?`,
+      message: 'O tether deixa de guardar esta sessão encerrada. Isso não pode ser desfeito.',
+      choices: [{ id: 'forget', icon: 'trash', label: 'Esquecer', consequence: 'A sessão sai de "Fechadas" e não volta.', tone: 'destructive' }],
+      cancelLabel: 'Cancelar',
+    })
+    if (r.choice !== 'forget') return
+    const why = await ui.sessions.forget(slotId)
+    if (why) refuse('A sessão não foi esquecida', why)
+  }
+
   /** The row menus asked so far (the E2E reads them). */
   const menuAsks: Array<{ target: Target; anchor: string }> = []
 
@@ -243,6 +300,16 @@ export function activate(ui: TetherUi): Disposable[] {
     if (menuAsks.length > 20) menuAsks.shift()
     const box = anchor.getBoundingClientRect()
     const { x, y } = at ?? { x: Math.round(box.left + 24), y: Math.round(box.bottom) }
+    if (target.kind === 'session') {
+      if (target.id === CLOSED_ID) return
+      const id = target.id
+      ui.menus.context(x, y, [
+        { icon: 'arrow-clockwise', label: REOPEN_LABEL, run: () => { void reopenIn(id) } },
+        'sep',
+        { icon: 'trash', label: FORGET_LABEL, danger: true, run: () => { void forgetClosed(id) } },
+      ])
+      return
+    }
     if (target.kind === 'desk') {
       const desk = ui.desks.tree().desks.find(d => d.id === target.id)
       if (!desk) return
@@ -308,7 +375,7 @@ export function activate(ui: TetherUi): Disposable[] {
     immersionKey: () => { try { return ui.keybindings.table().hint(CMD.immersion) } catch { return '' } },
   }
 
-  ui.test.expose('model', (): RegencyModel => modelOf(livePane()?.state.collapsed ?? []))
+  ui.test.expose('model', (): RegencyModel => modelOf(livePane()?.modelFolds ?? []))
   ui.test.expose('layout', (): RegencyLayout | undefined => livePane()?.state)
   ui.test.expose('select', (channelId: string): void => { livePane()?.select(channelId) })
   ui.test.expose('close', (): void => { ui.panes.close(REGENCY_PANE_ID) })
@@ -316,7 +383,7 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('mode', (): string | undefined => livePane()?.state.mode)
   ui.test.expose('tier', (): string | undefined => livePane()?.tier)
   /** The model and counts the screen shows now (the pane's folds, filter and search). */
-  ui.test.expose('shown', () => { const p = livePane(); return p ? viewOf({ collapsed: p.state.collapsed, filter: p.state.filter, query: p.searchText }) : undefined })
+  ui.test.expose('shown', () => { const p = livePane(); return p ? viewOf({ collapsed: p.modelFolds, filter: p.state.filter, query: p.searchText }) : undefined })
   ui.test.expose('view', (v: 'desk' | 'agent'): void => { livePane()?.setView(v) })
   ui.test.expose('filter', (f: TreeFilter): void => { livePane()?.setFilter(f) })
   ui.test.expose('search', (q: string): void => { livePane()?.setQuery(q) })
@@ -353,6 +420,7 @@ export function activate(ui: TetherUi): Disposable[] {
       for (const p of panes) p.setShown(e.active)
       if (e.active) { ensurePane(); schedule() }
     }),
+    ui.sessions.onDidChange(() => { closedCache = undefined; schedule() }),
     ui.agents.onDidChange(schedule),
     ui.panes.onDidChangeMarks(schedule),
     ownerBoard.onDidChange(schedule),

@@ -10,7 +10,7 @@ import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embed.ts'
 import type { RegencyModel, StateCounts, Target, TreeFilter } from '../model.ts'
-import { TREE_FILTERS, modelSignature } from '../model.ts'
+import { CLOSED_ID, TREE_FILTERS, modelSignature } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import {
   DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setFilter, setNarrowTab, setView, tierOf, toggleCollapsed,
@@ -61,6 +61,15 @@ export interface RegencyHost {
   /** The immersion's key as the key table shows it ('' when the person unbound it). */
   immersionKey(): string
 }
+
+/**
+ * "Fechadas" starts folded, but the model folds by what `collapsed` holds: the layout keeps the opposite for it (this id in
+ * `collapsed` means "open"), so a layout with no entry, an old one included, has it folded.
+ */
+const CLOSED_OPEN = 'closed:open'
+/** How long a reopened session's new row stays in the highlight's wait, and how long the highlight lasts. */
+const FRESH_WAIT_MS = 10_000
+const FRESH_SHOWN_MS = 2_200
 
 /** The phone's three places, in the bottom bar's order. */
 const NARROW_PLACES: readonly { tab: NarrowTab; label: string; icon: string }[] = [
@@ -136,6 +145,8 @@ export class RegencyPane implements IContentRenderer {
   private embed: EmbeddedChannel | undefined
   private embedSub: { dispose(): void } | undefined
   private closedOpen = false
+  /** A session just reopened from "Fechadas": its new row gets a brief highlight once the tree draws it. */
+  private fresh: { id: string; until: number } | undefined
   private signature = ''
   private ro: ResizeObserver | undefined
   private disposed = false
@@ -251,7 +262,7 @@ export class RegencyPane implements IContentRenderer {
   paint(): void {
     if (this.disposed || !this.api) return
     this.syncCenter()
-    const { model, counts } = this.host.view({ collapsed: this.state.collapsed, filter: this.state.filter, query: this.query })
+    const { model, counts } = this.host.view({ collapsed: this.modelFolds, filter: this.state.filter, query: this.query })
     const ctx = this.context()
     if (!this.opened && !ctx.loading) {
       this.opened = true
@@ -260,7 +271,9 @@ export class RegencyPane implements IContentRenderer {
     }
     this.paintTools(counts)
     const view = this.state.view
-    const sig = `${modelSignature(model)}|${this.state.channelId ?? ''}|${this.closedOpen}|${ctx.loading}|${view}`
+    // The minute is in the signature while "Fechadas" shows lines: their "há 5 min" ages.
+    const minute = model.closed.rows.length > 0 ? Math.floor(Date.now() / 60_000) : 0
+    const sig = `${modelSignature(model)}|${this.state.channelId ?? ''}|${this.closedOpen}|${ctx.loading}|${view}|${minute}`
     if (sig === this.signature) return
     this.signature = sig
     this.paints++
@@ -278,9 +291,48 @@ export class RegencyPane implements IContentRenderer {
       this.rows = flatRows(model, view)
     })
     this.paintRoving()
+    this.showFresh()
     const ch = this.state.channelId ? this.host.channel(this.state.channelId) : undefined
     this.closedBar.hidden = !(ch?.closed)
     this.paintVoid()
+  }
+
+  /** What the model folds: the layout's folds, plus "Fechadas" unless the layout says it is open. */
+  get modelFolds(): readonly string[] {
+    const open = this.state.collapsed.includes(CLOSED_OPEN)
+    return open ? this.state.collapsed : [...this.state.collapsed, CLOSED_ID]
+  }
+
+  /** "Fechadas" opened or folded, kept in the layout. */
+  setClosedOpen(open: boolean): void {
+    if (this.state.collapsed.includes(CLOSED_OPEN) === open) return
+    this.setLayout(toggleCollapsed(this.state, CLOSED_OPEN))
+    this.repaint()
+  }
+
+  /**
+   * A session was reopened on `deskId` from "Fechadas": the person stays where she is, and the tree shows the new row (its desk
+   * and agent group open if they were folded) with a brief highlight. Nothing takes the keyboard.
+   */
+  announce(slotId: string, deskId: string): void {
+    let next = this.state
+    for (const id of [deskId, slotId]) if (next.collapsed.includes(id)) next = toggleCollapsed(next, id)
+    if (next !== this.state) this.setLayout(next)
+    this.fresh = { id: slotId, until: Date.now() + FRESH_WAIT_MS }
+    this.repaint()
+  }
+
+  /** The reopened session's row, once it is in the tree: highlighted for a moment (the style honours reduced motion). */
+  private showFresh(): void {
+    const f = this.fresh
+    if (!f) return
+    if (Date.now() > f.until) { this.fresh = undefined; return }
+    const row = [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')].find(r => r.dataset.target === `agent:${f.id}` || r.dataset.target === `pane:${f.id}`)
+    if (!row) return
+    this.fresh = undefined
+    row.classList.add('rg-fresh')
+    row.scrollIntoView({ block: 'nearest' })
+    setTimeout(() => row.classList.remove('rg-fresh'), FRESH_SHOWN_MS)
   }
 
   /**
@@ -505,6 +557,8 @@ export class RegencyPane implements IContentRenderer {
    * only then: nothing else is taken) goes to the row by its key, or to the row now at its place.
    */
   openMenu(target: Target, row: HTMLElement, at?: { x: number; y: number }): void {
+    // The head of "Fechadas" has no menu (it folds).
+    if (target.kind === 'session' && target.id === CLOSED_ID) return
     const key = row.dataset.key
     this.host.rowMenu(target, row, at)
     this.menuWatch?.disconnect()
@@ -541,6 +595,7 @@ export class RegencyPane implements IContentRenderer {
 
   /** Opens or folds a desk or a group (`open` is the state asked for). */
   private fold(foldId: string, open: boolean): void {
+    if (foldId === CLOSED_ID) { this.setClosedOpen(open); return }
     if (this.state.collapsed.includes(foldId) === !open) return
     this.setLayout(toggleCollapsed(this.state, foldId))
     this.repaint()
@@ -799,6 +854,7 @@ export class RegencyPane implements IContentRenderer {
   private activate(row: HTMLElement, onCaret = false): void {
     if (row.dataset.key) this.focusKey = row.dataset.key
     // A desk or "Você" folds; an agent's line goes to its pane and folds only by its caret.
+    if (row.dataset.row === 'closed-head') { this.setClosedOpen(row.getAttribute('aria-expanded') !== 'true'); return }
     const folds = row.dataset.row === 'desk' || row.dataset.row === 'group' || (row.dataset.row === 'agent' && onCaret)
     if (folds && row.dataset.fold) {
       this.setLayout(toggleCollapsed(this.state, row.dataset.fold))
@@ -813,6 +869,8 @@ export class RegencyPane implements IContentRenderer {
       if (this.tier === 'mobile') this.setTab('conversation')
     }
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
+    // An ended session has nowhere to go: its row opens its menu (reopen, forget).
+    else if (target.kind === 'session') this.openMenu(target, row)
     else this.host.go(target)
   }
 }
