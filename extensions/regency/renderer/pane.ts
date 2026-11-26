@@ -95,7 +95,7 @@ const FRESH_SHOWN_MS = 2_200
 
 /** The phone's three places, in the bottom bar's order. */
 const NARROW_PLACES: readonly { tab: NarrowTab; label: string; icon: string }[] = [
-  { tab: 'waiting', label: 'Chama você', icon: 'bell' },
+  { tab: 'waiting', label: 'Esperam você', icon: 'bell' },
   { tab: 'conversation', label: 'Conversa', icon: 'chats-circle' },
   { tab: 'tether', label: 'Tether', icon: 'tree-view' },
 ]
@@ -109,6 +109,7 @@ const FILTERS: Record<TreeFilter, { label: string; tip: string }> = {
   all: { label: 'Todos', tip: 'Mostrar todas as guias' },
   waiting: { label: 'Esperam você', tip: 'Só as guias que esperam você' },
   busy: { label: 'Trabalhando', tip: 'Só as guias que estão trabalhando' },
+  idle: { label: 'Livre', tip: 'Só as guias livres: nada pede você nem trabalha (as que terminaram e as encerradas também)' },
   asleep: { label: 'Dormindo', tip: 'Só as guias e mesas que dormem' },
 }
 
@@ -150,11 +151,17 @@ export class RegencyPane implements IContentRenderer {
   /** The visible switch between "Gerir" and "Imersão" (it moves to the right edge in immersion). */
   private readonly modeBtn = el('button', 'rg-mode')
   private readonly treeHd = el('div', 'rg-hd')
-  /** The phone's bottom bar: "Chama você", "Conversa", "Tether". */
+  /** The phone's bottom bar: "Esperam você", "Conversa", "Tether". */
   private readonly tabBar = el('nav', 'rg-tabbar')
   /** "Por mesa · Por agente", the search and the state chips: built once, only updated (a repaint never replaces them). */
   private readonly viewSeg = el('div', 'rg-seg')
   private readonly tools = el('div', 'rg-tools')
+  /** The search lives behind an icon in the heading: the field shows while open or while it holds text. */
+  private readonly searchBtn = el('button', 'rg-search-open')
+  private readonly searchBox = el('div', 'rg-search')
+  private searchOpen = false
+  /** On the phone "Conversas" sits over the conversation and folds (open until a conversation is chosen there). */
+  private convsOpen = true
   private readonly searchInput = el('input', 'rg-search-in')
   private readonly searchClear = el('button', 'rg-search-x')
   private readonly chips = el('div', 'rg-chips')
@@ -226,7 +233,7 @@ export class RegencyPane implements IContentRenderer {
     const plus = glyph('plus', 'Novo')
     plus.setAttribute('aria-hidden', 'true')
     this.newBtn.append(plus, el('span', '', 'Novo'))
-    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), this.newBtn, el('span', 'rg-sp'), this.viewSeg)
+    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), this.newBtn, el('span', 'rg-sp'), this.searchBtn, this.viewSeg)
     this.buildTools()
     this.treeHost.setAttribute('role', 'tree')
     this.treeHost.setAttribute('aria-label', 'Tether: mesas e guias')
@@ -262,6 +269,7 @@ export class RegencyPane implements IContentRenderer {
     this.ro = new ResizeObserver(() => {
       const w = this.element.clientWidth
       if (w > 0) this.element.dataset.tier = tierOf(w)
+      this.placeConversations()
     })
     this.ro.observe(this.element)
     this.paintMode()
@@ -643,10 +651,17 @@ export class RegencyPane implements IContentRenderer {
       b.setAttribute('role', 'radio')
       this.viewSeg.append(b)
     }
-    const search = el('div', 'rg-search')
+    this.searchBtn.type = 'button'
+    this.searchBtn.dataset.action = 'search'
+    this.searchBtn.title = 'Filtrar mesas e guias (Ctrl+F na árvore)'
+    this.searchBtn.setAttribute('aria-label', 'Filtrar mesas e guias')
+    const lens = glyph('magnifying-glass', 'Filtrar')
+    lens.setAttribute('aria-hidden', 'true')
+    this.searchBtn.append(lens)
+    const search = this.searchBox
     this.searchInput.type = 'search'
-    this.searchInput.placeholder = 'Buscar guia, agente ou mesa…'
-    this.searchInput.setAttribute('aria-label', 'Buscar no Tether')
+    this.searchInput.placeholder = 'Filtrar mesas e guias…'
+    this.searchInput.setAttribute('aria-label', 'Filtrar mesas e guias')
     this.searchInput.spellcheck = false
     this.searchInput.autocomplete = 'off'
     this.searchInput.addEventListener('input', () => {
@@ -679,6 +694,10 @@ export class RegencyPane implements IContentRenderer {
   private paintTools(counts?: StateCounts): void {
     for (const b of this.viewSeg.querySelectorAll<HTMLElement>('.rg-seg-b')) b.setAttribute('aria-checked', String(b.dataset.view === this.state.view))
     this.searchClear.hidden = this.query === ''
+    const shown = this.searchOpen || this.query !== ''
+    this.searchBox.hidden = !shown
+    this.searchBtn.setAttribute('aria-expanded', String(shown))
+    this.searchBtn.classList.toggle('on', this.query !== '')
     for (const c of this.chips.querySelectorAll<HTMLElement>('.rg-chip')) {
       const f = c.dataset.filter as TreeFilter
       c.setAttribute('aria-checked', String(f === this.state.filter))
@@ -812,7 +831,7 @@ export class RegencyPane implements IContentRenderer {
     this.edgeLeft.classList.toggle('lit', n > 0)
     this.edgeLeft.setAttribute('aria-label', n > 0 ? `${n} esperam você · voltar a Gerir` : 'Ninguém espera você · voltar a Gerir')
     const cnt = this.tabBar.querySelector<HTMLElement>('.rg-tab-cnt')
-    if (cnt) { cnt.textContent = text; cnt.hidden = n === 0; cnt.title = `${n} esperando você` }
+    if (cnt) { cnt.textContent = text; cnt.hidden = n === 0; cnt.title = n === 1 ? '1 espera você' : `${n} esperam você` }
   }
 
   private context(): ColumnsContext {
@@ -822,7 +841,20 @@ export class RegencyPane implements IContentRenderer {
       selected: this.state.channelId,
       closedOpen: this.closedOpen,
       loading: this.host.loading(),
+      ...(this.tier === 'mobile' ? { convsOpen: this.convsOpen || !this.state.channelId } : {}),
     }
+  }
+
+  /**
+   * The phone keeps "Esperam você" for who waits: "Conversas" moves over the conversation (the tab "Conversa"), and back to
+   * the left column on a wider pane.
+   */
+  private placeConversations(): void {
+    const phone = this.tier === 'mobile'
+    if (phone && this.convHost.parentElement !== this.center) this.center.prepend(this.convHost)
+    else if (!phone && this.convHost.parentElement !== this.left) this.waitHost.after(this.convHost)
+    else return
+    this.repaint()
   }
 
   private setLayout(next: RegencyLayout): void {
@@ -921,11 +953,18 @@ export class RegencyPane implements IContentRenderer {
 
   private onClick(ev: MouseEvent): void {
     const t = ev.target instanceof Element ? ev.target : null
-    if (!t || t.closest('.rg-center') && !t.closest('[data-action="choose"]')) return
+    // The centre is the conversation's own; on the phone "Conversas" sits in it and stays the Regency's.
+    if (!t || t.closest('.rg-center') && !t.closest('[data-action="choose"]') && !t.closest('.rg-convs')) return
     if (t.closest('.rg-members-host') || t.closest('.rg-rename')) return
     const button = t.closest<HTMLElement>('[data-action]')
     const action = button?.dataset.action
     if (button && action?.startsWith('row-')) { this.rowAct(action, button); return }
+    // An empty Browser or drawer on the shelf: its desk's menu ("Ir até a mesa"…).
+    if (button && action?.startsWith('shelf:')) {
+      const r = button.getBoundingClientRect()
+      this.host.rowMenu({ kind: 'desk', id: action.slice(6) }, button, { x: Math.round(r.left), y: Math.round(r.bottom + 2) })
+      return
+    }
     if (action) { this.act(action); return }
     const row = t.closest<HTMLElement>('[data-target]')
     // The second click of a double click is the dblclick's (it goes to the tab): it must not close the card the first opened.
@@ -935,7 +974,7 @@ export class RegencyPane implements IContentRenderer {
 
   private onKey(ev: KeyboardEvent): void {
     const t = ev.target instanceof HTMLElement ? ev.target : null
-    if (!t || t.closest('.rg-center')) return
+    if (!t || t.closest('.rg-center') && !t.closest('.rg-convs')) return
     if (t === this.searchInput) { this.onSearchKey(ev); return }
     if (t.dataset.key && this.treeHost.contains(t)) { this.onTreeKey(ev, t); return }
     if (ev.key !== 'Enter' && ev.key !== ' ') return
@@ -958,14 +997,31 @@ export class RegencyPane implements IContentRenderer {
       case 'menu': this.openMenu(step.target, row); break
       case 'clear-search': this.setQuery(''); break
       case 'clear-filter': this.setFilter('all'); break
+      case 'search': this.openSearch(); break
     }
   }
 
-  /** In the field: Esc clears it (empty, the filter); Down and Enter go into the tree. */
+  /** The field behind the heading's icon: shown and given the keyboard (the icon, and Ctrl+F in the tree). */
+  openSearch(): void {
+    this.searchOpen = true
+    this.paintTools()
+    this.searchInput.focus({ preventScroll: true })
+    this.searchInput.select()
+  }
+
+  /** The field folds back into its icon (only when empty), the keyboard to the icon. */
+  private closeSearch(): void {
+    this.searchOpen = false
+    this.paintTools()
+    if (this.searchBtn.isConnected) this.searchBtn.focus({ preventScroll: true })
+  }
+
+  /** In the field: Esc clears it, then folds it back into its icon; Down and Enter go into the tree. */
   private onSearchKey(ev: KeyboardEvent): void {
     if (ev.ctrlKey || ev.altKey || ev.metaKey) return
     if (ev.key === 'Escape') {
       if (this.query !== '') this.setQuery('')
+      else if (this.searchOpen) this.closeSearch()
       else if (this.state.filter !== 'all') this.setFilter('all')
       else return
       ev.preventDefault()
@@ -1007,6 +1063,9 @@ export class RegencyPane implements IContentRenderer {
 
   private act(action: string): void {
     if (action === 'new') { this.openCreate({}); return }
+    if (action.startsWith('new-in:')) { this.openCreate({ deskId: action.slice(7) }); return }
+    if (action === 'search') { if (this.searchOpen && this.query === '') this.closeSearch(); else this.openSearch(); return }
+    if (action === 'convs') { this.convsOpen = !this.convsOpen; this.repaint(); return }
     if (action.startsWith('tab:')) { this.setTab(action.slice(4) as NarrowTab); return }
     if (action === 'mode') { this.toggleMode(); return }
     if (action === 'system') { this.openSystemColumn(); return }
@@ -1050,9 +1109,11 @@ export class RegencyPane implements IContentRenderer {
     const target = targetOf(row.dataset.target)
     if (!target) return
     if (target.kind === 'channel') {
+      // On the phone, choosing a conversation takes the person to it, the list folded over it.
+      const phone = this.tier === 'mobile'
+      if (phone) { this.convsOpen = false; this.setTab('conversation') }
       this.select(target.id)
-      // On the phone, choosing a conversation takes the person to it.
-      if (this.tier === 'mobile') this.setTab('conversation')
+      if (phone) this.repaint()
     }
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
     // An ended session has nowhere to go: its row opens its menu (reopen, forget).

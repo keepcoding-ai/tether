@@ -75,8 +75,8 @@ export function selectChannel(l: RegencyLayout, channelId: string | undefined): 
 export const setNarrowTab = (l: RegencyLayout, narrowTab: NarrowTab): RegencyLayout => ({ ...l, narrowTab })
 
 /**
- * The phone's tab when the pane opens: "Chama você" when someone waits (it is what unblocks the work); otherwise the
- * conversation, unless the person had left it on "Tether" (a kept "Chama você" with nobody waiting falls to the conversation).
+ * The phone's tab when the pane opens: "Esperam você" when someone waits (it is what unblocks the work); otherwise the
+ * conversation, unless the person had left it on "Tether" (a kept "Esperam você" with nobody waiting falls to the conversation).
  */
 export function openingTab(saved: NarrowTab, waiting: number): NarrowTab {
   if (waiting > 0) return 'waiting'

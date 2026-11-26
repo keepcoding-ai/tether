@@ -82,6 +82,16 @@ button.peek-back .label { white-space: nowrap; overflow: hidden; text-overflow: 
 .qv-head .ext-emblems[hidden] { display: none; }
 .peek-state.asleep .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-dim); }
 .peek-state.asleep { font-style: italic; }
+/* The desk's colour beside its name is a small square: the round dot is the state's alone. */
+.qv-where .qv-dot { border-radius: 2px; }
+/* A sleeping pane or desk: a strip across the card under its header, the sentence and "Acordar" side by side. */
+.qv-head:has(> .qv-band:not([hidden])) { flex-wrap: wrap; row-gap: 6px; padding-bottom: 0; }
+.qv-band { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; margin: 0 -8px 0 -14px; padding: 6px 8px 6px 14px; border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 6%, var(--bg-2)); color: var(--fg); font-size: 12.5px; }
+.qv-band[hidden] { display: none; }
+.qv-band > .ph { width: 15px; height: 15px; flex: none; color: var(--fg-dim); }
+.qv-band-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qv-band button.qv-wake { margin-left: auto; }
 button.qv-close { width: 30px; padding: 0; justify-content: center; font-weight: 400; flex: none; }
 .qv-foot { display: flex; align-items: center; gap: 8px; flex: none; min-height: 38px; padding: 4px 8px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--fg-dim); }
 .qv-foot .qv-sp { flex: 1; }

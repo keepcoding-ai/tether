@@ -1751,7 +1751,9 @@ function quickFactsOf(paneId: string): PeekPaneFacts | undefined {
   const desk = paneDeskOf(paneId)
   return {
     title: facts.title, typeId: facts.type, agent: !!s && s.kind !== 'shell', place: describePane(paneId)?.place, color: desk?.color,
-    ...(s ? { slot: peekHeader(s, Date.now()), slotKind: s.kind } : {}),
+    // The state from the same facts as the desk tree (the Regency's line and filter read them): one state, said alike.
+    ...(s ? { slotKind: s.kind } : {}),
+    ...(facts.attention ? { attention: facts.attention } : {}), busy: facts.busy === true, exited: facts.exited === true,
     asleep: facts.asleep === true, deskAsleep: desk?.asleep === true, icon: facts.icon as IconName, emblems: door.emblemsOf(paneId),
   }
 }

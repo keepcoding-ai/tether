@@ -9,6 +9,7 @@ import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import type { CommandContext } from './commands.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { escAction, type EscAction, type EscInput } from './drawer-rules.ts'
+import { PANE_STATE_TEXT, paneStateOf, stateShown, type PaneState } from '../shared/pane-state.ts'
 import { GO_PANE_LABEL } from './manager-menu-rules.ts'
 import type { LendPlan, LendRefusal } from './pane-loan-rules.ts'
 import { sessionRows, type SessionSlot, type TurnState } from './sessions-rules.ts'
@@ -399,8 +400,12 @@ export interface PaneCardFacts {
   place?: string | undefined
   /** The colour of its desk (a hue name of the palette), for the dot before the place. */
   color?: string | undefined
-  /** A slot's turn line (peekHeader), for a pane with a slot. */
-  slot?: PeekHeader | undefined
+  /** The pane's attention (the terminal's merged with the extensions' seals), as the desk tree has it. */
+  attention?: 'done' | 'waiting' | undefined
+  /** A turn is in progress. */
+  busy?: boolean | undefined
+  /** Its process ended (the tab stays). */
+  exited?: boolean | undefined
   /** The pane sleeps by itself (its slot hibernated). */
   asleep: boolean
   /** Its desk sleeps. */
@@ -416,24 +421,34 @@ export interface PaneCardHead {
   /** "em <mesa>", or nothing when the place is unknown. */
   where: string | undefined
   color: string | undefined
-  /** The state at the header's right: asleep wins over the turn; a pane without a slot and awake has none. */
+  /** The pane's one state at the header's right (app/shared/pane-state.ts); a free pane that is not an agent's has none. */
   state: { text: string; tone: PaneStateTone } | undefined
   /** The card's accessible name. */
   label: string
 }
 
-export const ASLEEP_TEXT = 'dormindo'
+export const ASLEEP_TEXT = PANE_STATE_TEXT.asleep
 
+const TONE: Record<PaneState, PaneStateTone> = { waiting: 'attention', busy: 'busy', idle: 'idle', asleep: 'asleep' }
+
+/**
+ * The header. Its state is the pane's one state (app/shared/pane-state.ts), the same words the Regency's tree and filter
+ * say for the same pane: "espera você", "trabalhando", "dormindo", "livre", "terminou", "encerrado".
+ */
 export function paneCardHead(f: PaneCardFacts): PaneCardHead {
-  const state = f.asleep || f.deskAsleep ? { text: ASLEEP_TEXT, tone: 'asleep' as const } : f.slot ? { text: f.slot.text, tone: f.slot.state } : undefined
+  const v = paneStateOf({ attention: f.attention, busy: f.busy, exited: f.exited, asleep: f.asleep, deskAsleep: f.deskAsleep })
+  const state = stateShown(v, f.agent) ? { text: v.text, tone: v.mark === 'ended' ? 'ended' as const : TONE[v.state] } : undefined
   return { title: f.title, kind: paneKindLabel(f.typeId, f.agent), where: f.place ? `em ${f.place}` : undefined, color: f.color, state, label: peekLabel(f.title) }
 }
 
 export const WAKE_LABEL = 'Acordar'
 
 export interface PaneCardFoot {
-  /** "Acordar": only while the pane or its desk sleeps; `what` says which one wakes (the desk wakes whole). */
-  wake: { label: string; title: string; what: 'desk' | 'pane' } | undefined
+  /**
+   * "Acordar": only while the pane or its desk sleeps; `what` says which one wakes (the desk wakes whole). `band` is the
+   * sentence of the strip over the content, beside the button: what is shown is not running.
+   */
+  wake: { label: string; title: string; what: 'desk' | 'pane'; band: string } | undefined
   /** "Ir até a guia": the card closes, the tab comes forward with the keyboard. "Abrir guia" (bring it to the desk the person is on) is the same for a tab that already lives on a desk, so only this one shows. */
   go: { label: string; title: string }
   /** How to close, in one short line ("Esc aqui fecha · Ctrl+Shift+O"). */
@@ -442,8 +457,8 @@ export interface PaneCardFoot {
 
 export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'place'>, hints: readonly string[]): PaneCardFoot {
   const wake = f.deskAsleep
-    ? { label: WAKE_LABEL, title: `Acordar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const }
-    : f.asleep ? { label: WAKE_LABEL, title: 'Acordar a guia: o processo dela volta a rodar', what: 'pane' as const } : undefined
+    ? { label: WAKE_LABEL, title: `Acordar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const, band: 'Mesa dormindo: o que você vê não está rodando' }
+    : f.asleep ? { label: WAKE_LABEL, title: 'Acordar a guia: o processo dela volta a rodar', what: 'pane' as const, band: 'Guia dormindo: o que você vê não está rodando' } : undefined
   return {
     wake,
     go: { label: GO_PANE_LABEL, title: 'Ir até a guia: fecha o cartão, devolve a guia ao lugar dela e mostra a guia' },

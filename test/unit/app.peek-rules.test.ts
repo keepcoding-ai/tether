@@ -221,11 +221,18 @@ describe('the quick view of a pane', () => {
     assert.equal(paneCardHead(facts({ typeId: 'something-new' })).kind, 'guia', 'a type of the future still has a tag')
     assert.equal(paneCardHead(facts({ place: undefined })).where, undefined)
   })
-  test('the state: a slot\'s turn line; asleep (the pane or its desk) wins; a pane without a slot has none', () => {
-    const slot = { title: 'conferente', state: 'busy' as const, text: 'trabalhando agora' }
-    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot })).state, { text: 'trabalhando agora', tone: 'busy' })
-    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot, asleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+  test('the state: the pane\'s one state, the words of the Regency\'s tree; a free pane that is not an agent\'s has none', () => {
+    const agent = (over: Partial<PaneCardFacts>) => paneCardHead(facts({ typeId: 'terminal', agent: true, ...over })).state
+    assert.deepEqual(agent({ busy: true }), { text: 'trabalhando', tone: 'busy' })
+    assert.deepEqual(agent({ busy: true, asleep: true }), { text: 'dormindo', tone: 'asleep' })
     assert.deepEqual(paneCardHead(facts({ deskAsleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+    // the capture r3-cartao-regencia-terminal: a turn just done said "pede atenção" here and nothing waited in the tree
+    assert.deepEqual(agent({ attention: 'done' }), { text: 'terminou', tone: 'idle' })
+    assert.deepEqual(agent({ attention: 'waiting' }), { text: 'espera você', tone: 'attention' })
+    assert.deepEqual(agent({}), { text: 'livre', tone: 'idle' })
+    assert.deepEqual(agent({ exited: true }), { text: 'encerrado', tone: 'ended' })
+    assert.equal(paneCardHead(facts()).state, undefined, 'a note at rest says nothing')
+    assert.deepEqual(paneCardHead(facts({ attention: 'waiting' })).state, { text: 'espera você', tone: 'attention' }, 'a seal waits on any pane')
   })
   test('the foot: "Ir até a guia" always; "Acordar" only while it sleeps (the desk wakes whole); how to close in one line', () => {
     const awake = paneCardFoot(facts(), ['Ctrl+Shift+O'])
@@ -238,6 +245,8 @@ describe('the quick view of a pane', () => {
     assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.what, 'pane')
     assert.equal(paneCardFoot(facts({ asleep: true, deskAsleep: true }), [])!.wake?.what, 'desk')
     assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.label, 'Acordar')
+    assert.equal(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.band, 'Mesa dormindo: o que você vê não está rodando')
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.band, 'Guia dormindo: o que você vê não está rodando')
   })
   test('a refusal says why in a sentence', () => {
     assert.equal(paneRefusalText('none'), 'Ainda não dá para espiar este tipo de guia.')

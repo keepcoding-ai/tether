@@ -208,6 +208,9 @@ export class PeekCard {
   private readonly qvHint = make('span', 'qv-hint')
   private readonly qvNote = make('span', 'qv-note')
   private readonly qvWake = make('button', 'qv-wake')
+  /** The strip over the content while the pane or its desk sleeps: what is shown is not running, and "Acordar" beside it. */
+  private readonly qvBand = make('div', 'qv-band')
+  private readonly qvBandText = make('span', 'qv-band-t')
   private readonly qvGo = make('button', 'qv-go')
   /** What the card shows on top. */
   private current: SlotView | ScreenView | PaneView | undefined
@@ -315,7 +318,10 @@ export class PeekCard {
     this.qvState.setAttribute('aria-live', 'polite')
     id.append(this.qvKind, this.qvMark, this.qvTitle, this.qvType, this.qvWhere, this.qvEmblems)
     this.qvClose.addEventListener('click', () => this.dismiss())
-    this.qvHead.append(id, this.qvState, this.qvClose)
+    this.qvBand.hidden = true
+    this.qvBand.setAttribute('role', 'status')
+    this.qvBand.append(icon('moon'), this.qvBandText, this.qvWake)
+    this.qvHead.append(id, this.qvState, this.qvClose, this.qvBand)
     this.qvMenu.setAttribute('aria-haspopup', 'menu')
     this.qvMenu.addEventListener('click', () => {
       const cur = this.current
@@ -330,7 +336,7 @@ export class PeekCard {
     this.qvWake.addEventListener('click', () => this.wake())
     this.qvGo.type = 'button'
     this.qvGo.addEventListener('click', () => this.goToPane())
-    this.qvFoot.append(this.qvMenu, this.qvHint, this.qvNote, make('span', 'qv-sp'), this.qvWake, this.qvGo)
+    this.qvFoot.append(this.qvMenu, this.qvHint, this.qvNote, make('span', 'qv-sp'), this.qvGo)
   }
 
   get isOpen(): boolean { return this.current !== undefined }
@@ -725,6 +731,8 @@ export class PeekCard {
     this.qvNote.hidden = !v.note
     setText(this.qvNote, v.note ?? '')
     this.qvWake.hidden = !foot.wake
+    this.qvBand.hidden = !foot.wake
+    setText(this.qvBandText, foot.wake?.band ?? '')
     if (foot.wake) {
       this.qvWake.dataset.what = foot.wake.what
       this.qvWake.title = foot.wake.title

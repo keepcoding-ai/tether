@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   agentTreeOf, CLOSED_ID, CLOSED_LIMIT, closedOf, conversationsOf, filterModel, foldText, modelSignature, regencyModelOf, stateCounts, treeOf,
-  waitingOf, YOU_ID, NAME_SHOWN_MAX, safeName,
+  waitingOf, YOU_ID, NAME_SHOWN_MAX, safeName, TREE_FILTERS,
   type RegencyInput,
 } from '../../extensions/regency/model.ts'
+import { paneStateOf, stateShown } from '../../app/shared/pane-state.ts'
+import { paneCardHead } from '../../app/renderer/peek-rules.ts'
 import { deskRowKey, flatRows, groupRowKey, paneRowKey } from '../../extensions/regency/renderer/tree-keys.ts'
 import type { DeskTree, TreePane } from '../../app/renderer/ext-api.ts'
 import type { ChannelSummary } from '../../extensions/channels/daemon/requests.ts'
@@ -88,8 +90,10 @@ describe('waiting', () => {
 
 describe('tree by desk', () => {
   test('leaves the Regency out, keeps queue, system and drawer order, flags and identity', () => {
-    const t = treeOf(input({ desks: { desks: [...tree().desks, { id: 's2', name: 'Browser', color: 'blue', kind: 'system', asleep: false, panes: [] }] } }))
+    const t = treeOf(input({ desks: { desks: [...tree().desks, { id: 's2', name: 'Browser', color: 'blue', kind: 'system', asleep: false, panes: [pane('w1', { type: 'browser' })] }] } }))
     assert.deepEqual(t.map(d => d.target.id), ['d1', 'd2', 'drawer', 's2'])
+    // empty, the Browser goes to the shelf at the tree's foot (see "the empty desks")
+    assert.deepEqual(treeOf(input({ desks: { desks: [...tree().desks, { id: 's2', name: 'Browser', color: 'blue', kind: 'system', asleep: false, panes: [] }] } })).map(d => d.target.id), ['d1', 'd2', 'drawer'])
     const a2 = t[0]!.panes.find(p => p.target.id === 'a2')!
     assert.equal(a2.busy, true)
     assert.equal(a2.attention, 'done')
@@ -210,17 +214,34 @@ describe('conversations', () => {
 })
 
 describe('state counts and filter', () => {
-  test('counts the panes by state, before any filter, with the Regency left out', () => {
-    assert.deepEqual(stateCounts(input()), { all: 5, waiting: 2, busy: 1, asleep: 1 })
-    assert.deepEqual(stateCounts(input({ filter: 'waiting', query: 'obra' })), { all: 5, waiting: 2, busy: 1, asleep: 1 })
+  test('counts the panes by state, before any filter, with the Regency left out: each pane in one state, all covered', () => {
+    // a1 waits; a2 works; n1 and g1 are free; b1 waits even in its sleeping desk (the orange means "needs the person")
+    assert.deepEqual(stateCounts(input()), { all: 5, waiting: 2, busy: 1, idle: 2, asleep: 0 })
+    assert.deepEqual(stateCounts(input({ filter: 'waiting', query: 'obra' })), { all: 5, waiting: 2, busy: 1, idle: 2, asleep: 0 })
+    const c = stateCounts(input())
+    assert.equal(c.waiting + c.busy + c.idle + c.asleep, c.all)
   })
 
   test('"asleep" counts a hibernated pane and every pane of a sleeping desk', () => {
     const d = tree()
     d.desks[0]!.panes[2] = pane('n1', { asleep: true })
+    d.desks[1]!.panes.push(pane('b2', { type: 'browser', title: 'outro', busy: true }))
     assert.equal(stateCounts(input({ desks: d })).asleep, 2)
     const t = treeOf(input({ desks: d, filter: 'asleep' }))
-    assert.deepEqual(t.map(x => [x.target.id, x.panes.map(p => p.target.id)]), [['d1', ['n1']], ['d2', ['b1']]])
+    assert.deepEqual(t.map(x => [x.target.id, x.panes.map(p => p.target.id)]), [['d1', ['n1']], ['d2', ['b2']]])
+  })
+
+  test('"idle" ("Livre") keeps the free panes, the done and the ended among them, each with its mark', () => {
+    const d = tree()
+    d.desks[0]!.panes.push(pane('a3', { type: 'agent', title: 'fim', exited: true }))
+    const t = treeOf(input({ desks: d, filter: 'idle', agents: [...input().agents, { id: 'a3', kind: 'claude', name: 'fim' }] }))
+    assert.deepEqual(t.map(x => [x.target.id, x.panes.map(p => [p.target.id, p.state, p.mark ?? ''])]), [
+      ['d1', [['n1', 'idle', ''], ['a3', 'idle', 'ended']]],
+      ['drawer', [['g1', 'idle', '']]],
+    ])
+    const done = tree()
+    done.desks[0]!.panes[1] = pane('a2', { type: 'agent', title: 'soul · bancada', attention: 'done' })
+    assert.deepEqual(treeOf(input({ desks: done, filter: 'idle' }))[0]!.panes.map(p => [p.target.id, p.mark]), [['a2', 'done'], ['n1', undefined]])
   })
 
   test('"waiting" and "busy" keep only those panes; a desk left with none goes away; counts follow the filter', () => {
@@ -232,9 +253,9 @@ describe('state counts and filter', () => {
     assert.deepEqual(g[1]!.panes.map(p => p.target.id), ['b1'])
     // by agent a leaf that does not pass goes away; one with a pane that passes stays, with its line
     assert.deepEqual(agentTreeOf(input({ filter: 'busy' })).map(x => x.target.id), ['a2'])
-    const owned = agentTreeOf(input({ filter: 'asleep', owners: { desk: { d2: { id: 'a2', name: 'bancada' } }, pane: {} } }))
-    assert.deepEqual(owned.map(x => [x.target.id, x.panes.map(p => p.target.id)]), [['a2', ['b1']]])
-    assert.equal(owned[0]!.self!.busy, true)
+    const owned = agentTreeOf(input({ filter: 'waiting', owners: { desk: { d2: { id: 'a2', name: 'bancada' } }, pane: {} } }))
+    assert.deepEqual(owned.map(x => [x.target.id, x.panes.map(p => p.target.id)]), [['a1', []], ['a2', ['b1']]])
+    assert.equal(owned[1]!.self!.busy, true)
   })
 
   test('with a filter on, the folds do not apply', () => {
@@ -250,6 +271,60 @@ describe('state counts and filter', () => {
     assert.deepEqual(filterModel(input(), { filter: 'busy' }), regencyModelOf(input({ filter: 'busy' })))
     assert.deepEqual(filterModel(input(), {}), regencyModelOf(input()))
     assert.deepEqual(filterModel(input({ filter: 'busy' }), {}), regencyModelOf(input()))
+  })
+})
+
+describe('one state for a pane (app/shared/pane-state.ts): the line, the filter, "Esperam você" and the card agree', () => {
+  test('the rule: waiting first, then sleep (pane or desk), ended, work; the rest free, with "terminou"', () => {
+    assert.deepEqual(paneStateOf({ attention: 'waiting', deskAsleep: true, busy: true }), { state: 'waiting', text: 'espera você' })
+    assert.deepEqual(paneStateOf({ asleep: true, busy: true }), { state: 'asleep', text: 'dormindo' })
+    assert.deepEqual(paneStateOf({ deskAsleep: true }), { state: 'asleep', text: 'dormindo' })
+    assert.deepEqual(paneStateOf({ exited: true, attention: 'done' }), { state: 'idle', mark: 'ended', text: 'encerrado' })
+    assert.deepEqual(paneStateOf({ busy: true, attention: 'done' }), { state: 'busy', text: 'trabalhando' })
+    assert.deepEqual(paneStateOf({ attention: 'done' }), { state: 'idle', mark: 'done', text: 'terminou' })
+    assert.deepEqual(paneStateOf({}), { state: 'idle', text: 'livre' })
+    assert.equal(stateShown(paneStateOf({}), false), false, 'a note at rest says nothing')
+    assert.equal(stateShown(paneStateOf({ exited: true }), false), true)
+  })
+
+  test('every pane: its row\'s state is the chip it passes, it is in "Esperam você" exactly when waiting, and the card says the same', () => {
+    const d = tree()
+    d.desks[0]!.panes.push(pane('a3', { type: 'agent', title: 'fim', exited: true }), pane('a4', { type: 'agent', title: 'pronto', attention: 'done' }))
+    const inp = input({ desks: d })
+    const m = regencyModelOf(inp)
+    const waiting = new Set(m.waiting.map(w => w.target.id))
+    for (const desk of m.tree) {
+      for (const p of desk.panes) {
+        const chips = TREE_FILTERS.filter(f => f !== 'all' && treeOf({ ...inp, filter: f }).some(x => x.panes.some(q => q.target.id === p.target.id)))
+        assert.deepEqual(chips, [p.state], `${p.target.id} passes only its own chip`)
+        assert.equal(waiting.has(p.target.id), p.state === 'waiting', `${p.target.id}: "Esperam você" agrees`)
+        const card = paneCardHead({ title: p.title, typeId: p.type, agent: p.identity !== undefined, asleep: p.asleep === true, deskAsleep: desk.asleep,
+          attention: p.attention, busy: p.busy === true, exited: p.exited === true })
+        const words = paneStateOf({ ...p, deskAsleep: desk.asleep })
+        assert.equal(card.state?.text, stateShown(words, p.identity !== undefined) ? words.text : undefined, `${p.target.id}: the card agrees`)
+      }
+    }
+  })
+})
+
+describe('the core\'s empty pane and the empty desks', () => {
+  test('the core\'s empty placeholder is not a pane: its desk is an empty desk (0 panes), and it is in no count', () => {
+    const d = tree()
+    d.desks.splice(1, 0, { id: 'd3', name: 'nova', color: 'red', kind: 'queue', asleep: false, panes: [pane('empty:1', { type: 'empty', title: 'Vazio' })] })
+    const row = treeOf(input({ desks: d })).find(x => x.target.id === 'd3')!
+    assert.deepEqual([row.paneCount, row.panes], [0, []])
+    assert.equal(stateCounts(input({ desks: d })).all, 5)
+  })
+
+  test('an empty Browser or drawer goes to the shelf (not a desk row) unless a filter or a search narrows the tree', () => {
+    const d = tree()
+    d.desks.push({ id: 'browser', name: 'Browser', color: 'blue', kind: 'system', asleep: false, icon: 'globe', panes: [] })
+    d.desks[3]!.panes = []
+    const m = regencyModelOf(input({ desks: d }))
+    assert.deepEqual(m.tree.map(x => x.target.id), ['d1', 'd2'])
+    assert.deepEqual(m.shelf.map(s => [s.target.id, s.kind, s.icon ?? '']), [['drawer', 'drawer', ''], ['browser', 'system', 'globe']])
+    assert.deepEqual(regencyModelOf(input({ desks: d, query: 'brow' })).shelf, [])
+    assert.deepEqual(regencyModelOf(input({ desks: d, query: 'brow' })).tree.map(x => x.target.id), ['browser'])
   })
 })
 

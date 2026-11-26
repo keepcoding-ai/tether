@@ -19,7 +19,7 @@ describe('readLayout', () => {
   test('the filter: default "all", invalid falls to it, valid is kept, and it round trips; the search is not kept', () => {
     assert.equal(DEFAULT_LAYOUT.filter, 'all')
     for (const bad of ['', 'nope', 3, null, 'WAITING']) assert.equal(readLayout({ filter: bad }).filter, 'all')
-    for (const f of ['all', 'waiting', 'busy', 'asleep'] as const) assert.equal(readLayout({ filter: f }).filter, f)
+    for (const f of ['all', 'waiting', 'busy', 'idle', 'asleep'] as const) assert.equal(readLayout({ filter: f }).filter, f)
     const l = setFilter(setView(DEFAULT_LAYOUT, 'agent'), 'asleep')
     assert.deepEqual(readLayout(JSON.parse(JSON.stringify(layoutParams(l)))), l)
     assert.equal('query' in layoutParams(readLayout({ filter: 'busy', query: 'obra' })), false)
@@ -58,7 +58,7 @@ describe('toggles', () => {
 })
 
 describe('openingTab', () => {
-  test('someone waiting opens "Chama você", whatever was kept', () => {
+  test('someone waiting opens "Esperam você", whatever was kept', () => {
     for (const saved of ['waiting', 'conversation', 'tether'] as const) assert.equal(openingTab(saved, 2), 'waiting')
   })
 

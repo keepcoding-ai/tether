@@ -5,6 +5,7 @@ import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import { identityMark, identityOf, identityView, type IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { MemberRow } from '../../channels/renderer/view-model.ts'
 import { formatAgo } from '../../../app/renderer/sessions-rules.ts'
+import { PANE_MARK_TEXT, PANE_STATE_TEXT, stateShown } from '../../../app/shared/pane-state.ts'
 import { CLOSED_ID, type AgentGroupRow, type AgentPaneRow, type ClosedRow, type ConvRow, type RegencyModel, type Target, type TreeDeskRow, type TreePaneRow, type WaitingItem } from '../model.ts'
 import { CLOSED_HEAD_KEY, closedRowKey, deskRowKey, groupRowKey, paneRowKey } from './tree-keys.ts'
 
@@ -19,6 +20,8 @@ export interface ColumnsContext {
   closedOpen: boolean
   /** The channels' list has not come yet. */
   loading: boolean
+  /** On the phone the list sits over the conversation and folds: whether it is open (absent: it does not fold). */
+  convsOpen?: boolean | undefined
 }
 
 /** What the tree is drawn by: the view, and whether a filter or a search narrows it (for the empty state). */
@@ -68,7 +71,7 @@ function heading(text: string, count?: number): HTMLElement {
   hd.append(el('span', 'rg-hd-t', text))
   if (count !== undefined && count > 0) {
     const c = el('span', 'cnt', String(count))
-    c.title = `${count} esperando você`
+    c.title = count === 1 ? '1 espera você' : `${count} esperam você`
     hd.append(c)
   }
   return hd
@@ -127,11 +130,15 @@ function acts(list: readonly RowAct[] = []): HTMLElement {
   return a
 }
 
+/** The seal's own word for the terminal's wait (seal-rules.ts attentionLines): the Regency says its state "espera você" instead. */
+const CORE_WAITING_LINE = 'Esperando você'
+
 function reasonText(item: WaitingItem, ctx: ColumnsContext): string {
   const n = item.count ?? 1
+  const said = (): string | undefined => ctx.lines(item.target.id)?.find(l => l !== CORE_WAITING_LINE)
   switch (item.reason) {
-    case 'agent-waiting': return ctx.lines(item.target.id)?.[0] ?? 'espera sua resposta'
-    case 'seal': return ctx.lines(item.target.id)?.[0] ?? 'pede sua atenção'
+    case 'agent-waiting': return said() ?? PANE_STATE_TEXT.waiting
+    case 'seal': return said() ?? PANE_STATE_TEXT.waiting
     case 'to-you': return n === 1 ? '1 fala para você' : `${n} falas para você`
     case 'reaction-asks': return n === 1 ? 'reação pede você' : `${n} reações pedem você`
     case 'poll-owed': return n === 1 ? 'enquete espera seu voto' : `${n} enquetes esperam seu voto`
@@ -199,7 +206,8 @@ function reasonsOf(c: ConvRow): string {
 
 export function paintConversations(host: HTMLElement, model: RegencyModel, ctx: ColumnsContext): void {
   const { open, closed } = model.conversations
-  const out: HTMLElement[] = [heading('Conversas')]
+  if (ctx.convsOpen !== undefined && !ctx.convsOpen) { host.replaceChildren(convsToggle(model, ctx)); return }
+  const out: HTMLElement[] = [ctx.convsOpen !== undefined ? convsToggle(model, ctx) : heading('Conversas')]
   if (ctx.loading && open.length === 0 && closed.length === 0) out.push(el('p', 'rg-empty', 'Carregando…'))
   else if (open.length === 0) out.push(el('p', 'rg-empty', 'Nenhuma conversa aberta'))
   for (const c of open) out.push(convRow(c, ctx))
@@ -215,6 +223,20 @@ export function paintConversations(host: HTMLElement, model: RegencyModel, ctx: 
   host.replaceChildren(...out)
 }
 
+/** The phone's head of "Conversas": it folds the list over the conversation; folded, it names the conversation shown. */
+function convsToggle(model: RegencyModel, ctx: ColumnsContext): HTMLElement {
+  const { open, closed } = model.conversations
+  const on = ctx.convsOpen === true
+  const tg = el('button', 'rg-tg rg-convs-tg')
+  tg.type = 'button'
+  tg.dataset.action = 'convs'
+  tg.setAttribute('aria-expanded', String(on))
+  tg.append(glyph(on ? 'caret-down' : 'caret-right', on ? 'Recolher as conversas' : 'Mostrar as conversas'), el('span', '', `Conversas · ${open.length}`))
+  const chosen = [...open, ...closed].find(c => c.target.id === ctx.selected)
+  if (chosen && !on) tg.append(el('span', 'rg-convs-now', `#${chosen.name}`))
+  return tg
+}
+
 /** The faces of "Neste canal" (folded): the agents' marks, each with its name as tooltip. */
 export function paintFaces(host: HTMLElement, members: readonly MemberRow[], ctx: ColumnsContext): void {
   host.replaceChildren(...members.map(m => {
@@ -227,16 +249,18 @@ export function paintFaces(host: HTMLElement, members: readonly MemberRow[], ctx
   }))
 }
 
-interface PaneState { text: string; cls: string }
+interface StateText { text: string; cls: string }
 
-/** The pane's state in the tree: the ended, the asleep, who waits for the person, who works; an agent at rest "parado". */
-export function paneStateOf(p: TreePaneRow): PaneState | undefined {
-  if (p.exited) return { text: 'encerrado', cls: 'off' }
-  if (p.asleep) return { text: 'dormindo', cls: 'zz' }
-  if (p.attention === 'waiting') return { text: 'espera você', cls: 'wait' }
-  if (p.busy) return { text: 'trabalhando', cls: 'work' }
-  if (p.identity) return { text: p.attention === 'done' ? 'terminou' : 'parado', cls: 'idle' }
-  return undefined
+const STATE_CLASS: Record<TreePaneRow['state'], string> = { waiting: 'wait', busy: 'work', idle: 'idle', asleep: 'zz' }
+
+/**
+ * The words of the pane's one state (the model's `state` and `mark`, app/shared/pane-state.ts): the same the filter reads and
+ * the quick view's card says. A free pane that is not an agent's says nothing (a note is not "livre"), unless its process ended.
+ */
+export function paneStateOf(p: TreePaneRow): StateText | undefined {
+  if (!stateShown(p, p.identity !== undefined)) return undefined
+  const text = p.mark ? PANE_MARK_TEXT[p.mark] : PANE_STATE_TEXT[p.state]
+  return { text, cls: p.mark === 'ended' ? 'off' : STATE_CLASS[p.state] }
 }
 
 const DESK_KIND: Record<TreeDeskRow['kind'], { icon: string; tip: string }> = {
@@ -260,11 +284,9 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   if (d.asleep) r.classList.add('zz')
   r.style.setProperty('--rg-desk', `var(--x-${d.color}, var(--accent))`)
   const kind = DESK_KIND[d.kind]
-  const dot = el('span', 'rg-dot')
-  dot.title = `Cor da mesa: ${d.color}`
   r.append(
     glyph(d.collapsed ? 'caret-right' : 'caret-down', d.collapsed ? 'Mostrar as guias' : 'Recolher as guias'),
-    dot,
+    swatch(d.color),
     glyph(d.icon ?? kind.icon, kind.tip),
     el('span', 'rg-dn', d.name),
   )
@@ -280,12 +302,23 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   return r
 }
 
+/**
+ * A desk's colour: a small square (the round dot is only ever a state). It reads the `--rg-desk` of the element it sits in.
+ */
+function swatch(color: string): HTMLElement {
+  const s = el('span', 'rg-swatch')
+  s.title = `Cor da mesa: ${color}`
+  return s
+}
+
 /** The desk's badge on a pane of the by-agent view: its colour and its name. */
 function deskBadge(name: string, color: string): HTMLElement {
   const b = el('span', 'rg-dsk')
   b.title = `Na mesa ${name}`
   b.style.setProperty('--rg-desk', `var(--x-${color}, var(--accent))`)
-  b.append(el('span', 'rg-dot'), el('span', '', name))
+  const s = swatch(color)
+  s.removeAttribute('title')
+  b.append(s, el('span', '', name))
   return b
 }
 
@@ -307,7 +340,7 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   }
   const state = paneStateOf(p)
   if (state) r.dataset.state = state.cls
-  if (p.asleep || p.exited) r.classList.add('zz')
+  if (p.state === 'asleep' || p.mark === 'ended') r.classList.add('zz')
   if (p.identity) {
     const who = ctx.identity(p.target.id) ?? { kind: p.identity.kind, name: p.identity.name, seed: p.target.id, emblem: p.identity.emblem as IdentityInput['emblem'] }
     r.append(identityView(who))
@@ -333,7 +366,7 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   }
   // "Falar com" only reaches a live agent: a sleeping or ended one would be brought forward instead of peeked.
   const name = p.identity?.name ?? p.title
-  const talk: RowAct[] = p.target.kind === 'agent' && !p.asleep && !p.exited ? [{ action: 'row-talk', icon: 'chats-circle', tip: `Falar com ${name}` }] : []
+  const talk: RowAct[] = p.target.kind === 'agent' && p.state !== 'asleep' && p.mark !== 'ended' ?[{ action: 'row-talk', icon: 'chats-circle', tip: `Falar com ${name}` }] : []
   r.append(acts([...talk, MENU_ACT]))
   return r
 }
@@ -354,6 +387,49 @@ function groupRow(g: AgentGroupRow, ctx: ColumnsContext): HTMLElement {
   }
   r.append(el('span', 'rg-n2', `${g.paneCount} guia${g.paneCount === 1 ? '' : 's'}`), el('span', 'rg-sp'), acts())
   return r
+}
+
+/**
+ * Under a desk with no pane: the quiet "mesa vazia" (not a line that looks like a pane) and, on an awake desk, "+ nova guia"
+ * at its right (the "+ Novo" card with the desk fixed).
+ */
+function emptyDesk(d: TreeDeskRow): HTMLElement {
+  const line = el('div', 'rg-vazia')
+  line.setAttribute('role', 'none')
+  line.append(el('span', 'rg-vazia-t', 'mesa vazia'))
+  if (!d.asleep) {
+    const add = el('button', 'rg-vazia-b')
+    add.type = 'button'
+    add.tabIndex = -1
+    add.dataset.action = `new-in:${d.target.id}`
+    add.title = `Nova guia na mesa ${d.name}`
+    const plus = glyph('plus', 'Nova guia')
+    plus.setAttribute('aria-hidden', 'true')
+    add.append(plus, el('span', '', 'nova guia'))
+    line.append(add)
+  }
+  return line
+}
+
+/** The empty Browser and drawer, folded into one quiet line at the tree's foot; each opens its desk's menu. */
+function shelf(model: RegencyModel): HTMLElement {
+  const box = el('div', 'rg-shelf')
+  box.setAttribute('role', 'none')
+  box.append(el('span', 'rg-shelf-t', 'Vazias:'))
+  for (const s of model.shelf) {
+    const b = el('button', 'rg-shelf-b')
+    b.type = 'button'
+    b.dataset.action = `shelf:${s.target.id}`
+    b.dataset.target = targetKey(s.target)
+    b.title = `${s.name}: vazia (menu da mesa)`
+    b.style.setProperty('--rg-desk', `var(--x-${s.color}, var(--accent))`)
+    const kind = DESK_KIND[s.kind]
+    const g = glyph(s.icon ?? kind.icon, kind.tip)
+    g.setAttribute('aria-hidden', 'true')
+    b.append(g, el('span', '', s.name))
+    box.append(b)
+  }
+  return box
 }
 
 /** "Nada com esse filtro": the sentence and the way out. */
@@ -380,8 +456,10 @@ export function paintTree(host: HTMLElement, model: RegencyModel, ctx: TreeConte
       // Folded or not, the desk says when someone in it waits for the person.
       if (model.waiting.some(w => w.desk?.id === d.target.id)) group.querySelector('.rg-sp')?.after(attnDot())
       for (const p of d.panes) group.append(paneRow(p, ctx))
+      if (d.paneCount === 0 && d.kind === 'queue' && !ctx.narrowed) group.append(emptyDesk(d))
       out.push(group)
     }
+    if (model.shelf.length > 0) out.push(shelf(model))
   } else {
     for (const g of model.byAgent) {
       const group = el('div', 'rg-group')
