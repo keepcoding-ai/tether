@@ -153,6 +153,15 @@ export function lentNotice(name: string): LentNotice {
   }
 }
 
+/** What any tab lent to the quick view shows in its place (pane-shell.ts), by its title; the terminal keeps `lentNotice`. */
+export function paneLentNotice(title: string): LentNotice {
+  return {
+    title: 'Esta guia está sendo espiada',
+    text: `${title} está no cartão aberto na tela. Quando você fechar o cartão, a guia volta para cá.`,
+    tip: 'Sendo espiada: a guia está no cartão aberto na tela',
+  }
+}
+
 /** The accessible name of the card. */
 export function peekLabel(title: string): string {
   return `Espiando ${title}`

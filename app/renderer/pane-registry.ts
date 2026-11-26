@@ -12,6 +12,7 @@
 import type { AddPanelOptions, IContentRenderer, ITabRenderer } from 'dockview-core'
 import { toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 import type { Chord, KeyLike } from './shortcuts.ts'
+import type { PeekMode } from './pane-loan-rules.ts'
 
 export type Disposable = IDisposable
 
@@ -84,6 +85,14 @@ export interface PaneType extends PaneLayout {
   /** Whether the pane's own editor takes the second key of a two-key chord, and runs it. */
   editorChord?(id: string, first: Chord, second: KeyLike): boolean
   runEditorChord?(id: string, first: Chord, second: KeyLike): void
+  /**
+   * The quick view (pane-loan-rules.ts): 'lend' (default) lends the live pane to the card, the whole content moving out
+   * of its shell; 'fresh' builds a second instance there instead (the tab stays as is); 'none' only reveals the tab.
+   */
+  peek?: PeekMode
+  /** A type that lends a part of itself instead of its whole content (the terminal keeps its status bar in the tab): both or neither. */
+  lend?(id: string, notice: HTMLElement, lost: () => void): HTMLElement
+  takeBack?(id: string): void
 }
 
 export class PaneRegistry<T extends PaneLayout = PaneType> {

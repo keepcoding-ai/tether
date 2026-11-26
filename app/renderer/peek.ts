@@ -26,6 +26,7 @@ import { identityOf, markOf } from './agent-identity.ts'
 import { emblemOfPanel } from './tab-emblems.ts'
 import type { TerminalPanel } from './panel.ts'
 import { backButton, closeTip, lentNotice, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type PeekMenuItem, type PeekOpenButton, type PeekTop } from './peek-rules.ts'
+import { lentNoticeElement } from './pane-shell.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
 import { OPEN_ELSEWHERE_LABEL } from './sessions-rules.ts'
 
@@ -409,14 +410,7 @@ export class PeekCard {
 
   /** What the tab shows in place of its terminal while the card has it (screen 6 of the preview). */
   private noticeFor(slotId: string): HTMLElement {
-    const n = lentNotice(this.nameOf(slotId))
-    // (The card sits over it: a button here could not be reached, so the notice is the icon, the title and the sentence.)
-    const root = document.createElement('div'); root.className = 'peek-lent'; root.setAttribute('role', 'status')
-    const ill = document.createElement('span'); ill.className = 'ill'; ill.append(icon('eye'))
-    const t = document.createElement('p'); t.className = 't'; t.textContent = n.title
-    const p = document.createElement('p'); p.className = 'mut'; p.textContent = n.text
-    root.append(ill, t, p)
-    return root
+    return lentNoticeElement(lentNotice(this.nameOf(slotId)))
   }
 
   /** Gives back everything the card holds: the screen on top (disposed), and every slot view (see releaseSlot). */

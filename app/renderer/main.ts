@@ -64,6 +64,8 @@ import { detailsLabel, detailsOpen, withDetails } from './pane-details.ts'
 import { hintOf, QueueOrder, sameHint, type PaneHint } from './loading.ts'
 import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
+import { lendRefusal, paneLendPlan, type LendRefusal, type LoanState } from './pane-loan-rules.ts'
+import { lentNoticeElement, PaneShell, type ShellLoan } from './pane-shell.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
@@ -104,7 +106,7 @@ import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { lentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
+import { lentNotice, paneLentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -178,6 +180,8 @@ const empties = new Map<string, EmptyPanel>()
 const extensionsPanels = new Map<string, ExtensionsPanel>()
 /** Every kind of pane (F9): the registry main.ts and the extensions register into (see "pane types" below). */
 const paneTypes = new PaneRegistry<PaneType>()
+/** The shell around every dockview pane's content, by pane id (pane-shell.ts: what lends a pane to the quick view). */
+const paneShells = new Map<string, PaneShell>()
 /** What extensions follow through TetherUi.theme: every theme applied, every terminal appearance painted. */
 const themeListeners = new Set<(scheme: ThemeState['scheme']) => void>()
 const appearanceListeners = new Set<(a: TerminalAppearance) => void>()
@@ -514,7 +518,9 @@ function deskHost(scope: 'desk' | 'drawer' | FramesPad = 'desk'): DeskHost {
       createComponent: ({ name }) => {
         const type = paneTypes.byComponent(name)
         if (!type) throw new Error(`tipo de painel desconhecido: ${name}`)
-        return type.create()
+        // Every pane's content goes in a shell, the part dockview holds, so it can be lent alive (lendPane).
+        const shell: PaneShell = tracked(new PaneShell(type.create()), paneShells, () => shell.id)
+        return shell
       },
       createTabComponent: ({ name }) => {
         const type = paneTypes.byTab(name)
@@ -1902,6 +1908,35 @@ function peekYieldsTo(panel: TerminalPanel): TerminalPanel {
     init(params)
   }
   return panel
+}
+
+/**
+ * Lends any pane's live content to `host`, a place outside dockview (the quick view's card; pane-shell.ts): the same
+ * instance moves, with its state, and the tab shows "sendo espiada" in its place until `giveBack`. The plan comes from the
+ * pane's type (pane-loan-rules.ts): by default the whole content moves; a type with `lend`/`takeBack` moves its own part
+ * (the terminal: its body, the status bar stays); `peek: 'fresh' | 'none'` is refused. `lost` runs if the pane goes away
+ * while lent (closed, moved to another desk): its content has left the host then, and nothing comes back. A desk that
+ * hibernates keeps its panes mounted, so the loan goes on. Only the test hook calls it for now (the card is the next slice).
+ */
+function lendPane(paneId: string, host: HTMLElement, lost: () => void): ShellLoan | LendRefusal {
+  const shell = paneShells.get(paneId)
+  const type = liveTypeOf(paneTypes, paneId)
+  const plan = paneLendPlan(type)
+  const refusal = lendRefusal(shell?.loanState, plan)
+  if (refusal) return refusal
+  if (!shell || !type) return 'unknown'
+  const hooks = plan === 'custom' && type.lend && type.takeBack
+    ? { lend: (notice: HTMLElement, gone: () => void) => type.lend!(paneId, notice, gone), takeBack: () => type.takeBack!(paneId) }
+    : undefined
+  const notice = lentNoticeElement(paneLentNotice(findPanel(paneId)?.api.title ?? paneId))
+  // A terminal whose body the peek card holds already refuses (TerminalPanel.lend throws): it counts as lent.
+  try { return shell.lend({ host, notice, lost, hooks }) ?? 'lent' } catch { return 'lent' }
+}
+
+/** The tab's own terminal of a slot (its shell's content), not the peek card's (which is in `panels` while the slot has no tab). */
+function tabTerminal(paneId: string): TerminalPanel | undefined {
+  const content = paneShells.get(paneId)?.content
+  return content instanceof TerminalPanel ? content : undefined
 }
 
 // Moving work between the desks and the drawer: a pane (or its whole frame) is removed from one and added to the
@@ -4692,6 +4727,15 @@ declare global {
       /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
       peek(slotId: string): void
       peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; screen?: string; screenType?: string; under?: string; underRouted?: boolean }
+      /** The quick view's lending (lendPane) into a test host fixed over the window (`.pane-loan-test-host`): 'lent' or why not. */
+      lendPane(paneId: string): 'lent' | LendRefusal
+      /** Gives back a pane the hook lent; false when the hook holds no loan of it. */
+      giveBackPane(paneId: string): boolean
+      /** A pane's loan: its shell's state (absent = no shell), whether the hook holds it, how many times its loan was lost. */
+      paneLoan(paneId: string): { state?: LoanState; held: boolean; lost: number }
+      /** "Hibernar mesa" without the dialog (the desk's agents stop, its panes stay mounted); "Acordar". */
+      hibernateDesk(id: string): Promise<void>
+      wakeDesk(id: string): string[]
       /** The palette: open or not, its mode, the ids on screen in order, the field's text. */
       palette(): { open: boolean; mode?: PaletteMode; shown: string[]; input: string }
       /** Opens the palette as the chord does. */
@@ -4713,6 +4757,10 @@ declare global {
     }
   }
 }
+
+/** The loans the test hook `lendPane` holds, and how many times a pane's loan was lost (closed while lent). */
+const testLoans = new Map<string, { loan: ShellLoan; done(): void }>()
+const testLost = new Map<string, number>()
 
 function setupTestHooks(): void {
   window.__tether = {
@@ -4893,6 +4941,31 @@ function setupTestHooks(): void {
         ...(screen ? { screen, screenType: peekCard!.screenType! } : {}), ...(under ? { under, underRouted: !!panels.get(under) } : {}),
       }
     },
+    lendPane: paneId => {
+      const host = document.createElement('div')
+      host.className = 'pane-loan-test-host'
+      host.dataset.pane = paneId
+      host.style.cssText = 'position:fixed;left:24px;top:24px;width:640px;height:420px;z-index:90;background:var(--frame-bg);'
+      document.body.append(host)
+      const done = (): void => { host.remove(); testLoans.delete(paneId) }
+      const loan = lendPane(paneId, host, () => { done(); testLost.set(paneId, (testLost.get(paneId) ?? 0) + 1) })
+      if (typeof loan === 'string') { host.remove(); return loan }
+      testLoans.set(paneId, { loan, done })
+      return 'lent'
+    },
+    giveBackPane: paneId => {
+      const held = testLoans.get(paneId)
+      if (!held) return false
+      held.loan.giveBack()
+      held.done()
+      return true
+    },
+    paneLoan: paneId => {
+      const state = paneShells.get(paneId)?.loanState
+      return { ...(state ? { state } : {}), held: testLoans.has(paneId), lost: testLost.get(paneId) ?? 0 }
+    },
+    hibernateDesk: id => hibernateDesk(id, false),
+    wakeDesk: id => wakeDesk(id),
     palette: () => ({ open: palette.open, mode: palette.mode, shown: palette.shown(), input: $<HTMLInputElement>('palette-input').value }),
     showPalette: (mode = 'commands') => palette.show(mode),
     pill: () => pill.snapshot(),
@@ -4951,6 +5024,13 @@ function registerCorePaneTypes(): void {
     cwdOf: id => slots.get(id)?.cwd,
     // Reopening a slot resumes it, as the closed-slots menu does; it makes sense while the slot exists without a pane.
     closedEntry: id => slots.has(id) ? { key: `slot:${id}`, reopen: () => { if (!slots.has(id) || findPanel(id)) return false; openSlot(id); return true } } : undefined,
+    // Lent to the quick view, the terminal moves only its body (TerminalPanel.lend, as the peek card does): the status bar stays.
+    lend: (id, notice, lost) => {
+      const p = tabTerminal(id)
+      if (!p) throw new Error(`no tab terminal for ${id}`)
+      return p.lend(notice, lost)
+    },
+    takeBack: id => tabTerminal(id)?.takeBack(),
   }))
 }
 
