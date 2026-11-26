@@ -8,6 +8,8 @@
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { escAction, type EscAction, type EscInput } from './drawer-rules.ts'
+import { GO_PANE_LABEL } from './manager-menu-rules.ts'
+import type { LendPlan, LendRefusal } from './pane-loan-rules.ts'
 import { sessionRows, type SessionSlot, type TurnState } from './sessions-rules.ts'
 
 /** The command that closes the card (palette, chord, the ✕ hint). */
@@ -249,4 +251,154 @@ export function backButton(name: string): { label: string; title: string; aria: 
 export function screenFoot(hints: readonly string[], back?: string): string {
   const way = hints.length ? `pelo botão, pela margem ou por ${hints.join(' ou ')}` : 'pelo botão ou pela margem'
   return back ? `Feche ${way} para voltar a ${back}.` : `Feche ${way}.`
+}
+
+// ---------- the quick view of a pane (one card for a tab of any type) ----------
+// A tab of any type comes to the card alive (main.ts lendPane, pane-shell.ts): only its content, under a header and over a
+// foot that are the card's and the same for every type. Outside the Regency the card is modal (the window behind dims and
+// goes inert, as before); over the Regency it is docked on the conversation without a veil, and what is around it stays usable.
+
+/**
+ *   lend    the tab is not in view: its content comes to the card (the tab shows "sendo espiada" meanwhile);
+ *   reveal  the tab is in view right now: only the keyboard goes there (lending it would leave a hole where the person looks);
+ *   refuse  its type does not lend (`peek: 'none' | 'fresh'`): the card opens with the reason and "Ir até a guia";
+ *   slot    no tab, a live slot: the agent's own card, the way it always opened (a terminal built for the card);
+ *   none    no tab and nothing live behind the id.
+ */
+export type PaneRoute = 'lend' | 'reveal' | 'refuse' | 'slot' | 'none'
+
+export interface PaneRouteInput {
+  hasTab: boolean
+  /** The tab is in view (tabInView); ignored without a tab. */
+  inView: boolean
+  /** The slot behind the id, when there is one. */
+  slot?: Pick<SlotState, 'status'> | undefined
+  /** The type's lending plan (pane-loan-rules.ts paneLendPlan). */
+  plan: LendPlan
+}
+
+export function paneRoute(i: PaneRouteInput): PaneRoute {
+  if (!i.hasTab) return peekRoute(i.slot, false) === 'card' ? 'slot' : 'none'
+  if (i.inView) return 'reveal'
+  return i.plan === 'none' || i.plan === 'fresh' ? 'refuse' : 'lend'
+}
+
+/** What the header says the pane is, by its type id (an agent's terminal is "agente", a plain one "terminal"). */
+const PANE_KIND_LABELS: Readonly<Record<string, string>> = {
+  terminal: 'terminal', note: 'nota', 'md-preview': 'prévia', 'image-preview': 'imagem', 'html-preview': 'prévia HTML', web: 'navegador',
+  channel: 'canal', process: 'processo', settings: 'sistema', keybindings: 'sistema', extensions: 'sistema', empty: 'guia vazia',
+}
+
+export function paneKindLabel(typeId: string, agent: boolean): string {
+  if (agent) return 'agente'
+  return PANE_KIND_LABELS[typeId] ?? 'guia'
+}
+
+/** What the card reads of a pane at the instant it paints (main.ts builds it). */
+export interface PaneCardFacts {
+  /** The tab's title (a slot's as its tab shows it). */
+  title: string
+  typeId: string
+  /** An AI agent's pane (a slot whose kind is not 'shell'). */
+  agent: boolean
+  /** Where it lives: the desk's name, "Gaveta", or the pad's title. */
+  place?: string | undefined
+  /** The colour of its desk (a hue name of the palette), for the dot before the place. */
+  color?: string | undefined
+  /** A slot's turn line (peekHeader), for a pane with a slot. */
+  slot?: PeekHeader | undefined
+  /** The pane sleeps by itself (its slot hibernated). */
+  asleep: boolean
+  /** Its desk sleeps. */
+  deskAsleep: boolean
+}
+
+export type PaneStateTone = TurnState | 'asleep'
+
+export interface PaneCardHead {
+  title: string
+  /** The type's tag ("nota", "canal", "agente"…). */
+  kind: string
+  /** "em <mesa>", or nothing when the place is unknown. */
+  where: string | undefined
+  color: string | undefined
+  /** The state at the header's right: asleep wins over the turn; a pane without a slot and awake has none. */
+  state: { text: string; tone: PaneStateTone } | undefined
+  /** The card's accessible name. */
+  label: string
+}
+
+export const ASLEEP_TEXT = 'dormindo'
+
+export function paneCardHead(f: PaneCardFacts): PaneCardHead {
+  const state = f.asleep || f.deskAsleep ? { text: ASLEEP_TEXT, tone: 'asleep' as const } : f.slot ? { text: f.slot.text, tone: f.slot.state } : undefined
+  return { title: f.title, kind: paneKindLabel(f.typeId, f.agent), where: f.place ? `em ${f.place}` : undefined, color: f.color, state, label: peekLabel(f.title) }
+}
+
+export const WAKE_LABEL = 'Acordar'
+
+export interface PaneCardFoot {
+  /** "Acordar": only while the pane or its desk sleeps; `what` says which one wakes (the desk wakes whole). */
+  wake: { label: string; title: string; what: 'desk' | 'pane' } | undefined
+  /** "Ir até a guia": the card closes, the tab comes forward with the keyboard. "Abrir guia" (bring it to the desk the person is on) is the same for a tab that already lives on a desk, so only this one shows. */
+  go: { label: string; title: string }
+  /** How to close, in one short line ("Esc aqui fecha · Ctrl+Shift+O"). */
+  hint: string
+}
+
+export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'place'>, hints: readonly string[]): PaneCardFoot {
+  const wake = f.deskAsleep
+    ? { label: WAKE_LABEL, title: `Acordar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const }
+    : f.asleep ? { label: WAKE_LABEL, title: 'Acordar a guia: o processo dela volta a rodar', what: 'pane' as const } : undefined
+  return {
+    wake,
+    go: { label: GO_PANE_LABEL, title: 'Ir até a guia: fecha o cartão, devolve a guia ao lugar dela e mostra a guia' },
+    hint: hints.length ? `Esc aqui fecha · ${hints.join(' ou ')}` : 'Esc aqui fecha',
+  }
+}
+
+/** The sentence in the card's body when the pane could not come (its type does not lend yet, it is gone, or held elsewhere). */
+export function paneRefusalText(why: LendRefusal): string {
+  switch (why) {
+    case 'none': case 'fresh': return 'Ainda não dá para espiar este tipo de guia.'
+    case 'lent': return 'Esta guia já está sendo espiada em outro lugar.'
+    case 'unknown': return 'Esta guia não existe mais.'
+  }
+}
+
+/** Where an Esc lands while the card shows a pane: in its content, its header or foot, the element that opened it, or elsewhere. */
+export type QuickEscPlace = 'content' | 'chrome' | 'opener' | 'outside'
+
+/**
+ * Whether that Esc closes the card. In the content it is always the content's (the agent interrupts with it, the editor
+ * closes its widgets). Modal, everything else of the window is behind the veil: it closes. Docked (non-modal), only the
+ * card's own header and foot close it, and the row that opened it (Space opens, Esc closes); an Esc in the conversation or
+ * anywhere else stays theirs.
+ */
+export function quickEscCloses(modal: boolean, at: QuickEscPlace): boolean {
+  if (at === 'content') return false
+  return modal || at === 'chrome' || at === 'opener'
+}
+
+export interface Box { left: number; top: number; width: number; height: number }
+
+/** The docked card's size: a share of what it sits over, within these bounds; it keeps this much of the bottom free (the box of speech). */
+export const DOCK_MARGIN = 12
+export const DOCK_MIN_WIDTH = 360
+export const DOCK_MAX_WIDTH = 640
+export const DOCK_WIDTH_SHARE = 0.62
+export const DOCK_MIN_HEIGHT = 240
+export const DOCK_MAX_HEIGHT = 540
+export const DOCK_KEEP_BELOW = 170
+
+/**
+ * Where the docked card sits over `over` (the Regency's conversation): at its top right, a share of its width, tall enough
+ * for a terminal and short enough to leave the bottom (the latest lines and the box of speech) in view. Never outside `over`.
+ */
+export function dockedBox(over: Box): Box {
+  const roomW = Math.max(0, over.width - 2 * DOCK_MARGIN)
+  const roomH = Math.max(0, over.height - 2 * DOCK_MARGIN)
+  const width = Math.round(Math.min(roomW, DOCK_MAX_WIDTH, Math.max(DOCK_MIN_WIDTH, over.width * DOCK_WIDTH_SHARE)))
+  const height = Math.round(Math.min(roomH, Math.max(Math.min(DOCK_MIN_HEIGHT, roomH), Math.min(DOCK_MAX_HEIGHT, roomH - DOCK_KEEP_BELOW))))
+  return { left: Math.round(over.left + over.width - DOCK_MARGIN - width), top: Math.round(over.top + DOCK_MARGIN), width, height }
 }

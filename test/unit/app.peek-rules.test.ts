@@ -2,7 +2,11 @@
 // foot texts; and the chord that closes the card.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { backButton, closeTip, lentNotice, PEEK_CLOSE_COMMAND, PEEK_SCREEN_COMMANDS, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan, peekOpenButton, peekRoute, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView } from '../../app/renderer/peek-rules.ts'
+import {
+  backButton, closeTip, DOCK_KEEP_BELOW, DOCK_MARGIN, DOCK_MAX_HEIGHT, DOCK_MAX_WIDTH, DOCK_MIN_HEIGHT, DOCK_MIN_WIDTH, DOCK_WIDTH_SHARE, dockedBox, lentNotice, PEEK_CLOSE_COMMAND,
+  PEEK_SCREEN_COMMANDS, paneCardFoot, paneCardHead, paneRefusalText, paneRoute, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan,
+  peekOpenButton, peekRoute, quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView, type PaneCardFacts,
+} from '../../app/renderer/peek-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 
 describe('where a peek goes', () => {
@@ -187,5 +191,79 @@ describe('the chord', () => {
   test('Ctrl+Shift+O closes the card (⇧⌘O on the Mac)', () => {
     assert.equal(shortcutHint(PEEK_CLOSE_COMMAND, false), 'Ctrl+Shift+O')
     assert.equal(shortcutHint(PEEK_CLOSE_COMMAND, true), '⇧⌘O')
+  })
+})
+
+describe('the quick view of a pane', () => {
+  const facts = (over: Partial<PaneCardFacts> = {}): PaneCardFacts => ({ title: 'plano.md', typeId: 'note', agent: false, place: 'Mesa 2', color: 'teal', asleep: false, deskAsleep: false, ...over })
+
+  test('a tab out of view is lent; in view it only gets the keyboard; a type that does not lend is refused with its reason', () => {
+    for (const plan of ['move', 'custom'] as const) assert.equal(paneRoute({ hasTab: true, inView: false, plan }), 'lend', plan)
+    for (const plan of ['move', 'custom', 'none', 'fresh'] as const) assert.equal(paneRoute({ hasTab: true, inView: true, plan }), 'reveal', plan)
+    for (const plan of ['none', 'fresh'] as const) assert.equal(paneRoute({ hasTab: true, inView: false, plan }), 'refuse', plan)
+  })
+  test('without a tab: a live slot keeps the agent\'s own card; anything else goes nowhere', () => {
+    assert.equal(paneRoute({ hasTab: false, inView: false, slot: { status: 'running' }, plan: 'none' }), 'slot')
+    assert.equal(paneRoute({ hasTab: false, inView: true, slot: { status: 'queued' }, plan: 'none' }), 'slot')
+    assert.equal(paneRoute({ hasTab: false, inView: false, slot: { status: 'exited' }, plan: 'none' }), 'none')
+    assert.equal(paneRoute({ hasTab: false, inView: false, plan: 'move' }), 'none')
+  })
+  test('the header is the same for every type: title, the type\'s tag, "em <mesa>" with its colour', () => {
+    assert.deepEqual(paneCardHead(facts()), { title: 'plano.md', kind: 'nota', where: 'em Mesa 2', color: 'teal', state: undefined, label: 'Espiando plano.md' })
+    assert.equal(paneCardHead(facts({ typeId: 'channel', title: '#obra' })).kind, 'canal')
+    assert.equal(paneCardHead(facts({ typeId: 'md-preview' })).kind, 'prévia')
+    assert.equal(paneCardHead(facts({ typeId: 'process' })).kind, 'processo')
+    assert.equal(paneCardHead(facts({ typeId: 'terminal' })).kind, 'terminal')
+    assert.equal(paneCardHead(facts({ typeId: 'terminal', agent: true })).kind, 'agente')
+    assert.equal(paneCardHead(facts({ typeId: 'something-new' })).kind, 'guia', 'a type of the future still has a tag')
+    assert.equal(paneCardHead(facts({ place: undefined })).where, undefined)
+  })
+  test('the state: a slot\'s turn line; asleep (the pane or its desk) wins; a pane without a slot has none', () => {
+    const slot = { title: 'conferente', state: 'busy' as const, text: 'trabalhando agora' }
+    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot })).state, { text: 'trabalhando agora', tone: 'busy' })
+    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot, asleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+    assert.deepEqual(paneCardHead(facts({ deskAsleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+  })
+  test('the foot: "Ir até a guia" always; "Acordar" only while it sleeps (the desk wakes whole); how to close in one line', () => {
+    const awake = paneCardFoot(facts(), ['Ctrl+Shift+O'])
+    assert.equal(awake.wake, undefined)
+    assert.equal(awake.go.label, 'Ir até a guia')
+    assert.equal(awake.hint, 'Esc aqui fecha · Ctrl+Shift+O')
+    assert.equal(paneCardFoot(facts(), []).hint, 'Esc aqui fecha')
+    assert.equal(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.what, 'desk')
+    assert.match(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.title ?? '', /Mesa 2/)
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.what, 'pane')
+    assert.equal(paneCardFoot(facts({ asleep: true, deskAsleep: true }), [])!.wake?.what, 'desk')
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.label, 'Acordar')
+  })
+  test('a refusal says why in a sentence', () => {
+    assert.equal(paneRefusalText('none'), 'Ainda não dá para espiar este tipo de guia.')
+    assert.equal(paneRefusalText('fresh'), 'Ainda não dá para espiar este tipo de guia.')
+    assert.equal(paneRefusalText('unknown'), 'Esta guia não existe mais.')
+    assert.match(paneRefusalText('lent'), /sendo espiada/)
+  })
+  test('Esc: the content keeps it; modal, the rest closes; docked, only the header, the foot and the row that opened it', () => {
+    assert.equal(quickEscCloses(true, 'content'), false)
+    assert.equal(quickEscCloses(false, 'content'), false)
+    for (const at of ['chrome', 'opener', 'outside'] as const) assert.equal(quickEscCloses(true, at), true, at)
+    assert.equal(quickEscCloses(false, 'chrome'), true)
+    assert.equal(quickEscCloses(false, 'opener'), true)
+    assert.equal(quickEscCloses(false, 'outside'), false, 'an Esc in the conversation stays the conversation\'s')
+  })
+  test('docked: at the top right of what it sits over, never outside it, the bottom left free', () => {
+    const over = { left: 300, top: 40, width: 760, height: 840 }
+    const b = dockedBox(over)
+    assert.equal(b.top, 40 + DOCK_MARGIN)
+    assert.equal(b.left + b.width, 300 + 760 - DOCK_MARGIN, 'flush with the right edge, a margin in')
+    assert.equal(b.width, Math.round(760 * DOCK_WIDTH_SHARE))
+    assert.equal(b.height, DOCK_MAX_HEIGHT)
+    assert.ok(over.top + over.height - (b.top + b.height) >= DOCK_KEEP_BELOW, 'the box of speech stays in view')
+    // Wide: the width stops at the ceiling; narrow: the floor, but never wider than the room.
+    assert.equal(dockedBox({ left: 0, top: 0, width: 1600, height: 900 }).width, DOCK_MAX_WIDTH)
+    assert.equal(dockedBox({ left: 0, top: 0, width: 500, height: 900 }).width, DOCK_MIN_WIDTH)
+    const tiny = dockedBox({ left: 10, top: 10, width: 300, height: 300 })
+    assert.equal(tiny.width, 300 - 2 * DOCK_MARGIN)
+    assert.ok(tiny.left >= 10 && tiny.top >= 10 && tiny.left + tiny.width <= 310 && tiny.top + tiny.height <= 310, JSON.stringify(tiny))
+    assert.equal(tiny.height, DOCK_MIN_HEIGHT, 'short: the floor height, the box of speech may be covered')
   })
 })
