@@ -14,6 +14,7 @@ import { pickEmblems } from './pick-emblems.ts'
 import { pickGroups } from './pick-groups.ts'
 import { picks } from './picks.ts'
 import { sealStates } from './seal-states.ts'
+import { system } from './system.ts'
 import { tabLine } from './tab-line.ts'
 
 export { manifest }
@@ -32,5 +33,6 @@ export function activate(ui: TetherUi): IDisposable[] {
     ...pickGroups(ui),
     ...pickEmblems(ui),
     ...extRequests(ui),
+    ...system(ui),
   ]
 }
