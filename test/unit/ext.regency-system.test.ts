@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  forceReasonError, inUseRefusal, procStateText, refusalText, spanWords, systemDot, systemModelOf, systemSignature,
+  dotText, forceReasonError, inUseRefusal, portsWords, procStateText, refusalText, spanWords, systemDot, systemModelOf, systemSignature,
   type SystemAgentInput, type SystemInput, type SystemProcInput,
 } from '../../extensions/regency/system-rules.ts'
 import {
@@ -43,7 +43,11 @@ describe('Processos', () => {
     }))
     const r = m.processes[0]!
     assert.equal(r.pid, 100)
-    assert.equal(r.portsText, '3000 ouvindo · 5173 parada')
+    // Beside "Rodando" a port says only whether it answers yet, never "parada" (it would read as the process's state).
+    assert.equal(r.portsText, 'portas 3000 e 5173 (5173 ainda sem resposta)')
+    assert.equal(portsWords([{ port: 53365, listening: true }], 'running'), 'porta 53365')
+    assert.equal(portsWords([{ port: 53365, listening: false }], 'running'), 'porta 53365 ainda sem resposta')
+    assert.equal(portsWords([{ port: 53365, listening: false }], 'stopped'), 'porta 53365')
     assert.equal(r.startedByText, 'Iniciado por Maria')
     assert.equal(r.uses.length, 2, 'an expired use is not shown')
     assert.equal(r.uses[0]!.text, 'Maria usa até daqui a 12 min, para: rodar a prova')
@@ -82,13 +86,23 @@ describe('Processos', () => {
 
 describe('systemDot', () => {
   test('red only with a mark; the tooltip names it; foot and edge, never the pill', () => {
-    assert.deepEqual(systemDot({ procs: [proc('a'), proc('b', { attention: false })] }), { show: false, count: 0, tooltip: '', places: [] })
+    assert.deepEqual(systemDot({ procs: [proc('a'), proc('b', { attention: false })] }), { show: false, count: 0, text: '', tooltip: '', places: [] })
     const one = systemDot({ procs: [proc('web', { attention: true })] })
-    assert.deepEqual(one, { show: true, count: 1, tooltip: 'O processo "web" pede atenção', places: ['foot', 'edge'] })
+    assert.deepEqual(one, { show: true, count: 1, text: '1 processo pede atenção', tooltip: 'O processo "web" pede atenção', places: ['foot', 'edge'] })
     const two = systemDot({ procs: [proc('a', { attention: true }), proc('b', { attention: true }), proc('c')] })
     assert.equal(two.count, 2)
     assert.equal(two.tooltip, '2 processos pedem atenção')
     assert.equal((one.places as string[]).includes('pill'), false)
+  })
+
+  test('a process that fell is said so beside the dot: "1 processo caiu", the same words in the foot of Processos', () => {
+    const fell = proc('web', { status: 'exited', attention: true, exit: { code: 1, at: at(-2), cause: 'own' } })
+    const d = systemDot({ procs: [fell] })
+    assert.equal(d.text, '1 processo caiu')
+    assert.equal(d.tooltip, 'O processo "web" caiu')
+    assert.equal(dotText([{ status: 'exited' }, { status: 'failed' }]), '2 processos caíram')
+    assert.equal(dotText([{ status: 'exited' }, { status: 'running' }]), '2 processos pedem atenção')
+    assert.equal(systemModelOf(input({ procs: [fell] })).procFoot, '1 processo caiu')
   })
 
   test('the Processos row of the ruler carries it', () => {
@@ -140,6 +154,9 @@ describe('Perfis', () => {
     assert.equal(m.profiles[0]!.usersText, '1 agente usa')
     assert.equal(m.profiles[1]!.usersText, '2 agentes usam')
     assert.equal(m.profiles[2]!.usersText, 'Nenhum agente usa')
+    // When no profile is used, "Nenhum agente usa" would be said of all of them: no line says it.
+    const none = systemModelOf(input({ profiles: [{ id: 'sh', name: 'PowerShell', agent: 'shell' }, { id: 'c1', name: 'Claude', agent: 'claude' }] }))
+    assert.deepEqual(none.profiles.map(p => p.usersText), ['', ''])
     assert.deepEqual(m.profiles[1]!.envNames, ['API_URL', 'ZED'])
     assert.equal(m.profiles[1]!.engine, 'Claude')
     assert.equal(m.profiles[2]!.engine, 'Terminal')

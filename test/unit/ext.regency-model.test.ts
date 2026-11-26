@@ -86,6 +86,16 @@ describe('waiting', () => {
     }))
     assert.deepEqual(w, [])
   })
+
+  test('a channel\'s card carries what is asked first (the speech\'s first line), on the item of that kind only', () => {
+    const w = waitingOf(input({
+      desks: { desks: [] },
+      channels: [channel('c1')],
+      channelMarks: { c1: { unread: 2, toMe: 1, asks: 0, owed: 1, first: { why: 'to-you', text: 'conferente: Posso seguir?' } } },
+    }))
+    assert.equal(w.find(i => i.reason === 'to-you')?.said, 'conferente: Posso seguir?')
+    assert.equal(w.find(i => i.reason === 'poll-owed')?.said, undefined)
+  })
 })
 
 describe('tree by desk', () => {

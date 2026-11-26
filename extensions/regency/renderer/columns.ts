@@ -5,6 +5,7 @@ import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import { identityMark, identityOf, identityView, type IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { MemberRow } from '../../channels/renderer/view-model.ts'
 import { formatAgo } from '../../../app/renderer/sessions-rules.ts'
+import { HUE_LABELS } from '../../../app/renderer/emblem-rules.ts'
 import { PANE_MARK_TEXT, PANE_STATE_TEXT, stateShown } from '../../../app/shared/pane-state.ts'
 import { CLOSED_ID, type AgentGroupRow, type AgentPaneRow, type ClosedRow, type ConvRow, type RegencyModel, type Target, type TreeDeskRow, type TreePaneRow, type WaitingItem } from '../model.ts'
 import { CLOSED_HEAD_KEY, closedRowKey, deskRowKey, groupRowKey, paneRowKey } from './tree-keys.ts'
@@ -162,12 +163,15 @@ export function paintWaiting(host: HTMLElement, model: RegencyModel, ctx: Column
   if (items.length === 0) out.push(el('p', 'rg-empty', 'Ninguém espera você'))
   for (const item of items) {
     const reason = reasonText(item, ctx)
-    const r = row('rg-wait', item.target, `${item.label}: ${reason}`)
+    // What is asked comes first (the speech's first line, the poll's question); the count of the kind goes to the tooltip.
+    const line = item.said ?? reason
+    const whole = item.said ? `${item.said} · ${reason}` : reason
+    const r = row('rg-wait', item.target, `${item.label}: ${whole}`)
     r.dataset.reason = item.reason
     const name = el('span', 'rg-w1', item.label)
     name.title = item.label
-    const why = el('span', 'rg-w2', reason)
-    why.title = reason
+    const why = el('span', 'rg-w2', line)
+    why.title = whole
     r.append(waitingMark(item, ctx, paneIcon), name, why)
     out.push(r)
   }
@@ -271,7 +275,9 @@ const DESK_KIND: Record<TreeDeskRow['kind'], { icon: string; tip: string }> = {
 
 function ownerSeal(name: string, what: string): HTMLElement {
   const s = el('span', 'rg-own')
-  s.title = `Dono ${what}: ${name}`
+  // The crown alone says "owner": the tooltip and the screen reader say whose ("de conferente").
+  s.title = `de ${name} · dono ${what}`
+  s.setAttribute('aria-label', s.title)
   s.append(icon('crown-simple'), el('span', '', name))
   return s
 }
@@ -307,7 +313,11 @@ function deskRow(d: TreeDeskRow): HTMLElement {
  */
 function swatch(color: string): HTMLElement {
   const s = el('span', 'rg-swatch')
-  s.title = `Cor da mesa: ${color}`
+  // The colour's name in Portuguese (one of the 12), for the tooltip and the screen reader.
+  const name = HUE_LABELS[color as keyof typeof HUE_LABELS] ?? color
+  s.title = `Cor da mesa: ${name}`
+  s.setAttribute('role', 'img')
+  s.setAttribute('aria-label', s.title)
   return s
 }
 

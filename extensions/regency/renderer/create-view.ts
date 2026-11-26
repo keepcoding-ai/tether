@@ -118,6 +118,8 @@ export class CreateCard {
     this.focusFirst()
     // A project's "Agente aqui…" / "Terminal aqui…": the tile is taken at once (the profile picker for an agent), the folder stays.
     if (fixed.cwd !== undefined && (what === 'agent' || what === 'terminal')) void this.pickTile(what)
+    // The empty centre's "Criar canal": straight to the channel's details.
+    else if (what === 'channel') void this.pickTile(what)
   }
 
   /** Closes the card; the keyboard goes back to where it came from (`restore`). */

@@ -77,7 +77,8 @@ export interface RegencyHost {
    * "+ Novo" (no desk) or a desk row's "+" (`deskId`): the card of steps. `restore` gives the keyboard back to where it was
    * when the card closes with nothing made.
    */
-  create(fixed: CreateFixed, restore: () => void): void
+  /** `what`: a tile already chosen (the empty centre's "Criar canal" opens the card on the channel). */
+  create(fixed: CreateFixed, restore: () => void, what?: 'channel'): void
   /** "Sistema": its model and its acts. */
   system: SystemViewHost
 }
@@ -136,6 +137,8 @@ export class RegencyPane implements IContentRenderer {
   /** "Sistema" at the column's foot (it swaps the right column), with the red dot of a process that fell. */
   private readonly sysBtn = el('button', 'rg-sys-open')
   private readonly sysDot = el('span', 'rg-sys-dot')
+  /** The dot's words beside it on the foot ("1 processo caiu"), in the same red. */
+  private readonly sysDotText = el('span', 'rg-sys-dot-t')
   /** The same on the immersion's right edge. */
   private readonly edgeSys = el('button', 'rg-edge-b rg-edge-sys')
   private readonly edgeSysDot = el('span', 'rg-sys-dot')
@@ -247,7 +250,8 @@ export class RegencyPane implements IContentRenderer {
     this.sysDot.hidden = true
     const gear = glyph('gear-six', 'Sistema')
     gear.setAttribute('aria-hidden', 'true')
-    this.sysBtn.append(gear, el('span', 'rg-sys-open-t', 'Sistema'), this.sysDot)
+    this.sysDotText.hidden = true
+    this.sysBtn.append(gear, el('span', 'rg-sys-open-t', 'Sistema'), this.sysDot, this.sysDotText)
     this.reservedHost.append(this.sysBtn)
     this.paintColumn()
     this.element.addEventListener('click', ev => this.onClick(ev))
@@ -490,6 +494,8 @@ export class RegencyPane implements IContentRenderer {
       d.title = dot.tooltip
       if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip) }
     }
+    this.sysDotText.hidden = !dot.show
+    if (this.sysDotText.textContent !== dot.text) this.sysDotText.textContent = dot.text
     if (rightColumnOf(this.state) === 'system') this.sysView.paint(systemSectionOf(this.state), model)
   }
 
@@ -611,9 +617,13 @@ export class RegencyPane implements IContentRenderer {
     this.edgeLeft.type = 'button'
     this.edgeLeft.dataset.action = 'manage'
     this.edgeLeft.title = 'Esperam você · voltar a Gerir'
+    // The bell with the number; the words are the tooltip's (no vertical text on a 42 px edge).
+    const bell = glyph('bell', 'Esperam você')
+    bell.setAttribute('aria-hidden', 'true')
+    bell.removeAttribute('title')
     const pill = el('span', 'rg-edge-pill')
-    pill.append(this.edgeCount, el('span', 'rg-edge-pt', 'esperam você'))
-    this.edgeLeft.append(glyph('bell', 'Esperam você'), pill)
+    pill.append(this.edgeCount)
+    this.edgeLeft.append(bell, pill)
     this.edgeRight.dataset.action = 'manage'
     this.edgeRight.title = 'Voltar a Gerir'
     const to = (action: string, name: string, tip: string): HTMLButtonElement => {
@@ -829,7 +839,9 @@ export class RegencyPane implements IContentRenderer {
     const text = n > 0 ? String(n) : ''
     this.edgeCount.textContent = text
     this.edgeLeft.classList.toggle('lit', n > 0)
-    this.edgeLeft.setAttribute('aria-label', n > 0 ? `${n} esperam você · voltar a Gerir` : 'Ninguém espera você · voltar a Gerir')
+    const said = n > 0 ? `${n === 1 ? '1 espera você' : `${n} esperam você`} · voltar a Gerir` : 'Ninguém espera você · voltar a Gerir'
+    this.edgeLeft.setAttribute('aria-label', said)
+    this.edgeLeft.title = said
     const cnt = this.tabBar.querySelector<HTMLElement>('.rg-tab-cnt')
     if (cnt) { cnt.textContent = text; cnt.hidden = n === 0; cnt.title = n === 1 ? '1 espera você' : `${n} esperam você` }
   }
@@ -901,7 +913,14 @@ export class RegencyPane implements IContentRenderer {
     } else {
       box.push(el('p', 'rg-void-t', this.host.loading() ? 'Carregando as conversas…' : 'Nenhuma conversa ainda.'))
     }
-    box.push(el('p', 'rg-void-s', 'Para criar um canal, use "+ Novo" no Tether ou "Canais: Criar canal…" na paleta de comandos.'))
+    // The way to make one is a button here ("+ Novo" opened on the channel), not a sentence about where else to look.
+    const make = el('button', open.length > 0 ? 'rg-btn rg-btn-q' : 'rg-btn')
+    make.type = 'button'
+    make.dataset.action = 'create-channel'
+    make.title = 'Criar um canal: o nome e com quem'
+    make.append(glyph('plus', 'Criar canal'), el('span', '', 'Criar canal'))
+    make.querySelector('.rg-ic')?.setAttribute('aria-hidden', 'true')
+    box.push(make)
     this.voidBox.replaceChildren(...box)
   }
 
@@ -1093,6 +1112,10 @@ export class RegencyPane implements IContentRenderer {
     if (action === 'closed') { this.closedOpen = !this.closedOpen; this.signature = ''; this.paint() }
     else if (action === 'members') { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
     else if (action === 'choose') void this.host.pickChannel().then(id => { if (id) this.select(id) })
+    else if (action === 'create-channel') {
+      const back = this.voidBox.querySelector<HTMLElement>('[data-action="create-channel"]')
+      this.host.create({}, () => { if (back?.isConnected) back.focus({ preventScroll: true }); else this.focus() }, 'channel')
+    }
   }
 
   /** A click (or Space) on a row; `byEnter`: Enter, which goes to the target where a click on "Esperam você" only spies it. */

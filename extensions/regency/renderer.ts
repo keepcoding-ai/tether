@@ -492,7 +492,7 @@ export function activate(ui: TetherUi): Disposable[] {
   const card = new CreateCard(cardHost)
 
   /** Opens the card; an open quick view closes first (one card over the conversation at a time). */
-  const openCreate = (fixed: CreateFixed, restore: () => void, what?: 'agent' | 'terminal'): void => {
+  const openCreate = (fixed: CreateFixed, restore: () => void, what?: 'agent' | 'terminal' | 'channel'): void => {
     if (peekOpen()) { void ui.commands.run('peek.close').then(() => card.open(fixed, restore, what)); return }
     card.open(fixed, restore, what)
   }
@@ -551,7 +551,8 @@ export function activate(ui: TetherUi): Disposable[] {
         case 'release': return processEmbeds.release(name)
       }
     },
-    peekLog: name => processEmbeds.peekOutput(name),
+    // Docked over the conversation, as every quick view the Regency opens (the record is a pane like the others).
+    peekLog: name => { const over = livePane()?.quickAnchor(); return processEmbeds.peekOutput(name, over ? { over } : undefined) },
     logOnDesk,
     seen: name => { void ui.procs.seen(name).catch(() => {}) },
     setRonda: (id, change) => ui.agents.setRonda(id, change),

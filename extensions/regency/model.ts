@@ -29,7 +29,11 @@ export const CLOSED_LIMIT = 50
 export interface ClosedInput { slotId: string; kind: string; name: string; title?: string; endedAt?: string }
 
 /** The marks of one channel, as counts (same shape as the channels feed). */
-export interface ChannelMarksInput { unread: number; toMe: number; asks: number; owed: number }
+export interface ChannelMarksInput {
+  unread: number; toMe: number; asks: number; owed: number
+  /** The oldest call not yet answered, in one line ("conferente: Posso seguir?"), and which kind it is. */
+  first?: { why: 'to-you' | 'reaction-asks' | 'poll-owed'; text: string }
+}
 
 /** Who owns a desk or a pane: the agent's id (its pane id) and the name to show. */
 export interface OwnerRef { id: string; name: string }
@@ -78,6 +82,8 @@ export interface WaitingItem {
   label: string
   /** How many (lines, reactions, polls) for the channel reasons. */
   count?: number
+  /** What is asked, in one line (a channel's oldest call of this kind: "conferente: Posso seguir?"). */
+  said?: string
   since?: number
   /** The desk of a pane. */
   desk?: Target
@@ -269,7 +275,8 @@ export function waitingOf(input: RegencyInput): WaitingItem[] {
     const since = input.since[key(target)]
     const add = (reason: WaitingReason, count: number): void => {
       if (count <= 0) return
-      items.push({ key: `${key(target)}:${reason}`, target, reason, label: `#${ch.name}`, count, ...(since !== undefined ? { since } : {}) })
+      const said = marks.first?.why === reason ? marks.first.text : undefined
+      items.push({ key: `${key(target)}:${reason}`, target, reason, label: `#${ch.name}`, count, ...(said ? { said } : {}), ...(since !== undefined ? { since } : {}) })
     }
     add('to-you', marks.toMe)
     add('reaction-asks', marks.asks)
