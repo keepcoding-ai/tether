@@ -198,7 +198,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.waitForSelector('#ctx-menu li')
     const moreLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
     // G4: the plan's rows in the plan's order (two lines of information first; nobody is muted yet, so no "Devolver a voz…").
-    const MENU_ROWS = ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Abrir enquete…', 'Copiar link do painel', 'Copiar link do canal', 'Mover…', 'Fechar painel', 'Encerrar canal…']
+    const MENU_ROWS = ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Abrir enquete…', 'Copiar link do painel', 'Copiar link do canal', 'Mover…', 'Fechar painel', 'Encerrar canal…', 'Espiar\nAlt+clique']
     // (The "Emblema…" row the core adds is not the channel's; a channel tab is never offered to an agent.)
     assert.ok(!moreLabels.includes('Dar esta guia a um agente…'))
     const own = moreLabels.filter(t => t !== '' && t !== 'Emblema…')
