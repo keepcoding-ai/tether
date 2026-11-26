@@ -150,6 +150,8 @@ export function activateRemote(main: TetherMain, opts: { idleMs?: number; quitGr
   /** What the person's action needs the process for, whatever the tabs: a channel that works on state only the process has. */
   const needsProcess = (channel: string, args: unknown[]): boolean => {
     if (channel === 'reopenClosed' || channel === 'clearClosed' || channel === 'logoutAll' || channel === 'showDownload') return true
+    // These open a tab: the process starts on demand, like the neighbouring tab-opening channels.
+    if (channel === 'openForPerson' || channel === 'openForAgent') return true
     if (channel === 'restore') {
       const id = (args[0] as { tabId?: unknown } | null)?.tabId
       const known = typeof id === 'string' ? tabs.get(id) : undefined

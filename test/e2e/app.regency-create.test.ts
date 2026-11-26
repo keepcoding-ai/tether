@@ -79,8 +79,6 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
   env.TETHER_PIPE = pipe
   env.TETHER_HOME = home
   env.TETHER_E2E_HIDDEN = '1'
-  // The browser's process up from the start: the feed's new tab does not start it by itself (reported to the regency).
-  env.TETHER_BROWSER_EAGER = '1'
   const app = await _electron.launch({ executablePath: electronPath, args: [mainPath], env })
   const page = await app.firstWindow()
   page.setDefaultTimeout(15_000)
