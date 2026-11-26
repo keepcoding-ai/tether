@@ -86,10 +86,16 @@ export function activate(ui: TetherUi): Disposable[] {
 
   const modelOf = (collapsed: readonly string[]): RegencyModel => regencyModelOf(inputOf(collapsed))
 
+  // The tree is heard from the first frame on, not from `activate`: the core draws its desk strip while it builds the dock,
+  // before the drawer exists, and a tree listener there would read a drawer that is not there yet.
+  let treeSub: Disposable | undefined
   const flush = (): void => {
     frame = 0
+    treeSub ??= ui.desks.onDidChangeTree(() => { ensurePane(); schedule() })
     // Hidden, the Regency paints nothing; it only keeps the times of who began to wait.
-    if (!visible()) { if (panes.size > 0) inputOf([]); return }
+    const shown = visible()
+    for (const p of panes) p.setShown(shown)
+    if (!shown) { if (panes.size > 0) inputOf([]); return }
     for (const p of panes) p.paint()
   }
   const schedule = (): void => {
@@ -145,6 +151,7 @@ export function activate(ui: TetherUi): Disposable[] {
       emptyText: 'Nenhuma conversa aberta',
     }),
     saved: () => ui.layout.scheduleSave(),
+    visible,
     gone: pane => { panes.delete(pane); lastLayout = pane.state },
   }
 
@@ -164,8 +171,12 @@ export function activate(ui: TetherUi): Disposable[] {
       focus: () => livePane()?.focus(),
       tabMenu: (_id, x, y) => ui.menus.context(x, y, [{ icon: 'push-pin', label: 'A Regência é uma guia fixa', disabled: true, run: () => {} }]),
     }),
-    ui.desks.onDidChangeTree(() => { ensurePane(); schedule() }),
-    ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) { ensurePane(); schedule() } }),
+    { dispose: () => { treeSub?.dispose(); treeSub = undefined } },
+    ui.systemDesks.onDidChangeActive(e => {
+      if (e.id !== DESK_ID) return
+      for (const p of panes) p.setShown(e.active)
+      if (e.active) { ensurePane(); schedule() }
+    }),
     ui.agents.onDidChange(schedule),
     ui.panes.onDidChangeMarks(schedule),
     ownerBoard.onDidChange(schedule),

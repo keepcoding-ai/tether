@@ -34,6 +34,8 @@ export interface RegencyHost {
   pickChannel(): Promise<string | undefined>
   /** The layout changed: save it with the window's layout. */
   saved(): void
+  /** The Regency is the visible desk. */
+  visible(): boolean
   /** The pane went (dockview disposed it). */
   gone(pane: RegencyPane): void
 }
@@ -74,6 +76,7 @@ export class RegencyPane implements IContentRenderer {
   init(p: GroupPanelPartInitParameters): void {
     this.api = p.api
     this.state = readLayout(p.params)
+    this.setShown(this.host.visible())
     const left = el('aside', 'rg-col rg-left')
     left.setAttribute('aria-label', 'Esperam você e conversas')
     left.append(this.waitHost, this.convHost)
@@ -119,6 +122,14 @@ export class RegencyPane implements IContentRenderer {
     const ch = this.state.channelId ? this.host.channel(this.state.channelId) : undefined
     this.closedBar.hidden = !(ch?.closed)
     this.paintVoid()
+  }
+
+  /**
+   * The desk shown or not. The hidden desk's layer keeps its size, so the embedded view would take a line as read while
+   * nobody sees it: hidden, the centre is out of the layout (its view has no height and marks nothing as seen).
+   */
+  setShown(on: boolean): void {
+    this.element.classList.toggle('off', !on)
   }
 
   /** Chooses the channel in the centre (undefined clears it). */

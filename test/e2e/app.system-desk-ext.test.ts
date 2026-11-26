@@ -75,9 +75,9 @@ async function launch(home: string): Promise<{ app: ElectronApplication; page: P
 const h = {
   active: (page: Page) => page.evaluate(() => window.__tether.activeDesk()),
   deskIds: (page: Page) => page.evaluate(() => window.__tether.desks().map(d => d.id)),
-  // The product's own system desk (browser.desk) is left out: these pills are the probe's and the test's.
+  // The product's own system desks (browser.desk, regency.main) are left out: these pills are the probe's and the test's.
   pills: (page: Page) => page.evaluate(() => {
-    const own = (e: Sib | null): boolean => e?.getAttribute('data-system') === 'browser.desk'
+    const own = (e: Sib | null): boolean => e?.getAttribute('data-system') === 'browser.desk' || e?.getAttribute('data-system') === 'regency.main'
     return [...document.querySelectorAll('#desk-switch .seg.sys')].filter(el => !own(el as unknown as Sib)).map(el => {
       let prev = el.previousElementSibling as unknown as Sib | null
       while (own(prev)) prev = prev!.previousElementSibling
@@ -128,7 +128,7 @@ test('systemDesks: contribution point, undeclare, extension off and on', { timeo
     console.log('step 1')
     assert.deepEqual(await h.pills(page), [{ id: SYS, text: 'Prova', pressed: 'false', after: 'btn-drawer' }])
     assert.ok(await page.evaluate(id => window.__tether.commands().some(c => c.id === `desk.system.${id}` && c.title === 'Ir para Prova'), SYS))
-    assert.deepEqual(await page.evaluate(() => Object.keys(window.__tether.layout().systemDesks).filter(k => k !== 'browser.desk')), [SYS])
+    assert.deepEqual(await page.evaluate(() => Object.keys(window.__tether.layout().systemDesks).filter(k => k !== 'browser.desk' && k !== 'regency.main')), [SYS])
     assert.deepEqual(await h.deskIds(page), [d1], 'the queue does not list it')
     const queueLine = await h.line(page)
     assert.equal(await probe(page, 'isActive'), false)
