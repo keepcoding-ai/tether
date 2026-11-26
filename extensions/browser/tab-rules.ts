@@ -85,10 +85,21 @@ export const isPersonOwned = (ownerSlotId: string | undefined): boolean => owner
 export function giveVerdict(tab: { ownerSlotId: string } | undefined, to: unknown, agent: { alive: boolean } | undefined, toTabs: number): 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full' {
   if (!tab) return 'no-tab'
   if (!isPersonOwned(tab.ownerSlotId)) return 'not-hers'
+  return bornForAgentVerdict(to, agent, toTabs)
+}
+
+/**
+ * May a tab be born the agent `to`'s ("Navegador" for an agent, from the Regency's "+ Novo")? Only for a live agent (a slot id,
+ * never the person), only while it is under its ceiling of tabs. The give above asks the same of its target.
+ */
+export function bornForAgentVerdict(to: unknown, agent: { alive: boolean } | undefined, toTabs: number): 'ok' | 'no-agent' | 'full' {
   if (!isId(to) || isPersonOwned(to) || !agent?.alive) return 'no-agent'
   if (toTabs >= TABS_PER_OWNER) return 'full'
   return 'ok'
 }
+
+/** Is she under the ceiling of tabs of her own? (A tab opened with a name given by the interface skips the registry's own count.) */
+export const personTabRoom = (personTabs: number): boolean => personTabs < TABS_PER_OWNER
 
 /** The longest address the person may type in the bar. */
 export const TYPED_URL_MAX = 8192

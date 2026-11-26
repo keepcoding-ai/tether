@@ -28,7 +28,7 @@ import { type ActionKind, hostOf } from './pad-rules.ts'
 import { cookieEncryptionInForce, createTabSession, type TabSession } from './session.ts'
 import { prepareDiskPartition } from './disk-partition.ts'
 import { scrubLogLine } from './log-scrub.ts'
-import { giveVerdict, isId, isNavigable, isPersonOwned, isWebUrl, PERSON_OWNER, type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
+import { bornForAgentVerdict, giveVerdict, isId, isNavigable, isPersonOwned, isWebUrl, personTabRoom, PERSON_OWNER,type SavedTab, savedTabOf, typedUrl } from './tab-rules.ts'
 import { type TabBlocked, TabRegistry } from './tabs.ts'
 import { PersonPage } from './person-page.ts'
 
@@ -240,6 +240,28 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     registry.close(tabId)
     control.closed(tabId)
   }
+  /**
+   * A tab born the agent's at `url`: loaded, its blank entry cleared (no way back), its shield up and checked (the surface is
+   * shielded as it is added, asynchronously, so the caller waits here). Any failure closes the new tab and throws: no tab, no
+   * give. `afterLoad` lets a give check that her tab is still there.
+   */
+  const bornForAgent = async (slotId: string, url: string, newTabId: string, title?: string, afterLoad?: () => void): Promise<void> => {
+    try {
+      await registry.create(slotId, url, { tabId: newTabId, ...(title ? { title } : {}), ticket: 'granted' })
+      await registry.loaded(newTabId, GIVE_LOAD_MS)
+      afterLoad?.()
+      const wc = registry.webContents(newTabId)
+      if (wc && !wc.isDestroyed()) wc.navigationHistory.clear()
+      const surface = registry.surface(newTabId)
+      if (!surface) throw new Error('a guia nova fechou')
+      const shielded = control.control(newTabId) === 'agent'
+      await surface.setInputShield(shielded)
+      if (shielded && !surface.state().shield) throw new Error('o escudo da guia nova não subiu')
+    } catch (e) {
+      closeQuietly(newTabId)
+      throw e
+    }
+  }
   // The closed history (closed-history.ts), next to the agents' tab ids; its expiry follows the setting at every read.
   const closedReady = ClosedHistory.open({ file: join(main.home, 'browser', CLOSED_HISTORY_FILE), keep: () => keepOf(main.settings.get('closedHistory')), log })
   /**
@@ -353,11 +375,24 @@ export function activateLocal(main: TetherMain): IDisposable[] {
     ipc.handle('forward', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'forward') }),
     ipc.handle('reload', tabId => { if (typeof tabId === 'string' && control.control(tabId) === 'user') void registry.navigate(tabId, 'reload') }),
     // The person's own tab: her gesture (palette, the pad's "+", Ctrl+T) is the consent a local address needs, as on "Reabrir".
-    ipc.handle('openForPerson', async url => {
+    ipc.handle('openForPerson', async (url, tabId) => {
       // No address arrives as undefined here, or as null across the browser process's wire: the blank page.
       const target = url === undefined || url === null || url === '' ? 'about:blank' : typedUrl(url)
       if (!target) return null
-      return registry.create(PERSON_OWNER, target, { ticket: 'granted' }).catch(e => { log(`guia da pessoa não abriu (${(e as Error).message})`); return null })
+      // A name given by the interface (a tab drawn on another desk) skips the registry's own ceiling: it is checked here.
+      const named = tabId === undefined || tabId === null ? undefined : tabId
+      if (named !== undefined && (!isId(named) || registry.get(named) || !personTabRoom(registry.countOf(PERSON_OWNER)))) return null
+      return registry.create(PERSON_OWNER, target, { ticket: 'granted', ...(named ? { tabId: named } : {}) }).catch(e => { log(`guia da pessoa não abriu (${(e as Error).message})`); return null })
+    }),
+    // A tab born an agent's, on the blank page: same rules as the new tab of a give (loaded, history cleared, shield up and checked);
+    // failing at any point closes what opened.
+    ipc.handle('openForAgent', async (slotId, newTabId) => {
+      if (typeof slotId !== 'string') return 'no-agent'
+      const verdict = bornForAgentVerdict(slotId, main.agents.get(slotId), registry.countOf(slotId))
+      if (verdict !== 'ok') return verdict
+      if (!isId(newTabId) || registry.get(newTabId)) return 'failed'
+      try { await bornForAgent(slotId, 'about:blank', newTabId) } catch (e) { log(`guia do agente ${slotId} não abriu (${(e as Error).message})`); return 'failed' }
+      return 'ok'
     }),
     // The address she typed: only on a tab she holds (hers, or an agent's she took); the address is checked in the registry.
     ipc.handle('go', async (tabId, raw) => {
@@ -379,24 +414,7 @@ export function activateLocal(main: TetherMain): IDisposable[] {
       const handOver = async (): Promise<void> => {
         const from = registry.get(tabId)
         if (!from) throw new Error('a guia dela fechou')
-        try {
-          await registry.create(slotId, isNavigable(from.url) ? from.url : 'about:blank', { tabId: newTabId, ...(from.title ? { title: from.title } : {}), ticket: 'granted' })
-          await registry.loaded(newTabId, GIVE_LOAD_MS)
-          if (!registry.get(tabId)) throw new Error('a guia dela fechou')
-          // The blank page the surface was born on stays behind as an entry: the agent's tab starts with no way back.
-          const wc = registry.webContents(newTabId)
-          if (wc && !wc.isDestroyed()) wc.navigationHistory.clear()
-          // The shield went up when the tab was added, but asynchronously (its view loads first): her tab closes, and the new pane
-          // comes to the front, only once it is up, so she never clicks into a page the agent drives. No shield: no give.
-          const surface = registry.surface(newTabId)
-          if (!surface) throw new Error('a guia nova fechou')
-          const shielded = control.control(newTabId) === 'agent'
-          await surface.setInputShield(shielded)
-          if (shielded && !surface.state().shield) throw new Error('o escudo da guia nova não subiu')
-        } catch (e) {
-          closeQuietly(newTabId)
-          throw e
-        }
+        await bornForAgent(slotId, isNavigable(from.url) ? from.url : 'about:blank', newTabId, from.title, () => { if (!registry.get(tabId)) throw new Error('a guia dela fechou') })
       }
       if (!await control.give(tabId, handOver)) return 'failed'
       closeQuietly(tabId)

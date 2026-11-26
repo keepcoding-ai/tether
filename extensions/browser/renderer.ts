@@ -59,6 +59,7 @@ import { type ClosedTab, closedByText, closedGroups, PAD_CLEAR_CLOSED, PAD_CLOSE
 import { DESK_ID, NEW_TAB_COMMAND_ID, PAD_ID, WEB_COMPONENT, WEB_PANE_PREFIX, WEB_TAB, manifest } from './manifest.ts'
 import { BAD_ADDRESS, EDIT_ADDRESS, EDIT_ADDRESS_HINT, NEW_TAB, PAD_MINE, PERSON_NAME, PERSON_TITLE } from './rules.ts'
 import { BACK, CRASH_BROWSER, CRASH_GONE, CRASH_HUNG, CRASH_PAUSED, CRED_NOT_KEPT, debugOn, displayUrl, EMPTY_HELP, EMPTY_TITLE, FORWARD, LOADING, NOT_LOADED, OFF_ACTION, offHelpFor, ownerChip, ownerHue, PROFILE_ACTION, PROFILE_OPEN, SETTINGS_ENTRY, PROFILE_OPTION, PROFILE_OPTION_HINT, PROFILE_OPTION_LABEL, READ_ONLY_ADDRESS, RELOAD, REOPEN, serveModeOf, shortName, type ServeMode, TAB_FACTS, TAB_INFO_BUTTON, TAB_INFO_NONE, TAB_INFO_TITLE, type TabFactId } from './rules.ts'
+import { browserEmbeds, type NewTabOutcome } from './renderer/embed.ts'
 import { insertIndex, isPersonOwned, savedOf, savedTabOf, type SavedTab, type TabInfo } from './tab-rules.ts'
 import { PAGE_DIALOG_CANCEL, PAGE_DIALOG_FIELD, PAGE_DIALOG_OK, type PageDialogAsk, pageDialogHead } from './page-rules.ts'
 import {
@@ -1343,6 +1344,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   /** A new tab: a pane in the Browser desk, behind, next to its owner's tabs (each agent's tabs together, in order of arrival). */
   /** The pane a link's "Abrir ao lado" was clicked in, until the person's tab it asked for is drawn. */
   let sideOrigin: string | undefined
+  /** The pane id of a tab asked for on a given desk -> that desk, until main answered. */
+  const wantDesk = new Map<string, string>()
   const openTab = (info: TabInfo): void => {
     const paneId = paneIdOf(info.tabId)
     if (ui.panes.find(paneId)) return
@@ -1357,6 +1360,12 @@ export function activate(ui: TetherUi): IDisposable[] {
         ui.panes.open(options, { target: { level: 'pane', placement: 'within' } as Target, reference: old.id })
         ui.panes.reveal(old.id)
       }
+      return
+    }
+    // Asked for a given desk (the Regency's "+ Novo"): drawn there, behind, the person where she is.
+    const wanted = wantDesk.get(paneId)
+    if (wanted) {
+      ui.panes.openOnDesk({ id: paneId, component: WEB_COMPONENT, tabComponent: WEB_TAB, title: info.title || 'Guia', params: { ...savedOf(info) } }, wanted)
       return
     }
     // "Abrir ao lado" of a link: the person's new tab goes beside the pane the link was clicked in, not to the Browser desk.
@@ -1393,6 +1402,35 @@ export function activate(ui: TetherUi): IDisposable[] {
     }
     show(60)
     return info.tabId
+  }
+  const newTabId = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')
+  /** A tab drawn: on its desk, or not (the desk does not exist: the tab main opened is closed, no orphan). */
+  const settleOnDesk = async (tabId: string): Promise<NewTabOutcome> => {
+    if (ui.panes.find(paneIdOf(tabId))) return { ok: true, tabId }
+    await ipc.invoke('close', tabId, 'cleanup').catch(() => {})
+    return { ok: false, why: 'no-desk' }
+  }
+  /**
+   * The Regency's gestures: a tab on `deskId` with no desk switch, no reveal and no keyboard move. Hers (the address optional), or
+   * born an agent's (main raises its shield before anything navigates; refused or failed, nothing is left open).
+   */
+  const newTabOnDesk = async (url: string | undefined, deskId: string): Promise<NewTabOutcome> => {
+    const tabId = newTabId()
+    wantDesk.set(paneIdOf(tabId), deskId)
+    try {
+      const info = await ipc.invoke('openForPerson', url, tabId).catch(() => null)
+      if (!info) return { ok: false, why: 'failed' }
+      return await settleOnDesk(info.tabId)
+    } finally { wantDesk.delete(paneIdOf(tabId)) }
+  }
+  const newTabForAgent = async (slotId: string, deskId: string): Promise<NewTabOutcome> => {
+    const tabId = newTabId()
+    wantDesk.set(paneIdOf(tabId), deskId)
+    try {
+      const outcome = await ipc.invoke('openForAgent', slotId, tabId).catch(() => 'failed' as const)
+      if (outcome !== 'ok') return { ok: false, why: outcome }
+      return await settleOnDesk(tabId)
+    } finally { wantDesk.delete(paneIdOf(tabId)) }
   }
   /** The active pane when it is a tab's (Ctrl+L focuses its address). */
   let activeWebPane: string | undefined
@@ -1581,6 +1619,8 @@ export function activate(ui: TetherUi): IDisposable[] {
   }))
   /** The person's "Nova guia", as the palette runs it: the new tab's id. */
   ui.test.expose('browserNewTab', (url?: string) => newTab(url))
+  ui.test.expose('browserNewTabOn', (url: string | undefined, deskId: string) => browserEmbeds.newTab({ ...(url ? { url } : {}), deskId }))
+  ui.test.expose('browserNewTabFor', (slotId: string, deskId: string) => browserEmbeds.newTabFor(slotId, { deskId }))
   /** The pane's tab strip element as the person sees it. */
   const tabInfoOf = (paneId: string): { title: string; owner: string; ownerHue: string; ownerEnded: boolean; icon: boolean; activity: string } | undefined => {
     const t = [...tabs].find(x => x.element.isConnected && x.paneId === paneId)
@@ -1699,7 +1739,17 @@ export function activate(ui: TetherUi): IDisposable[] {
     }),
     // A move re-creates the pane (init above), but the desk a pane is in also changes with the desk coming and going.
     ui.panes.onDidChangeActive(info => { activeWebPane = info && panels.has(info.id) ? info.id : undefined; refreshPad() }),
-    ui.commands.registerCommand(NEW_TAB_COMMAND_ID, () => { void newTab() }),
+    // Run with no argument (palette, chord): the tab of hers that comes to the front. With `{ url?, deskId? }`: on that desk, behind.
+    ui.commands.registerCommand(NEW_TAB_COMMAND_ID, (_source, arg) => {
+      const a = (arg && typeof arg === 'object' ? arg : {}) as { url?: unknown; deskId?: unknown }
+      const url = typeof a.url === 'string' && a.url !== '' ? a.url : undefined
+      if (typeof a.deskId === 'string') void newTabOnDesk(url, a.deskId)
+      else void newTab(url)
+    }),
+    browserEmbeds.publish({
+      newTab: ({ url, deskId }) => newTabOnDesk(url, deskId),
+      newTabFor: (slotId, { deskId }) => newTabForAgent(slotId, deskId),
+    }),
     { dispose: () => document.removeEventListener('keydown', onKey) },
     ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) goToOldestAsk(); refreshPad() }),
     ui.agents.tabMenu(slotId => {

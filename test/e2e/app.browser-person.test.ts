@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import type { ElectronApplication, Page } from 'playwright-core'
 import { claim, killOwned, type Owned } from '../kill.ts'
 import { killElectron } from './electron.ts'
-import { daemonMain, inBrowser, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
+import { FAKE_SOUL_CMD as FAKE_SOUL, daemonMain, inBrowser, launchHidden, pidAlive, rawCdp, root, sleep } from './browser-kit.ts'
 
 type Pane = {
   id: string; tabId?: string; owner?: string; url: string; control: string; controlText: string; tone: string; chip: string; person: boolean; own: boolean
@@ -37,7 +37,15 @@ declare const window: {
     browserPad(): { mine: PadRow[]; mineHead: string; sections: string[] } | undefined
     browserPadOpen(): void
     browserReveal(id: string): void
+    browserNewTabOn(url: string | undefined, deskId: string): Promise<{ ok: boolean; tabId?: string; why?: string }>
+    browserNewTabFor(slotId: string, deskId: string): Promise<{ ok: boolean; tabId?: string; why?: string }>
+    slots(): { slotId: string; status: string }[]
+    openSlot(id: string): Promise<void>
+    activeDesk(): string
+    switchDesk(id: string): void
+    desks(): { id: string; panes: string[] }[]
   }
+  tether: { request(r: unknown): Promise<{ slot?: { slotId: string } }> }
 }
 type Tabs = {
   registry: { list(): { tabId: string; ownerSlotId: string; url: string }[]; surface(id: string): { debugger: { send(m: string): Promise<unknown> } } | undefined }
@@ -91,6 +99,7 @@ test('browser: the person opens, types and closes a tab of her own; no agent see
   const keysDir = join(home, 'browser', 'keys')
   mkdirSync(keysDir, { recursive: true })
   writeFileSync(join(keysDir, 'agent-a.key'), KEY_A)
+  process.env.TETHER_SOUL_CMD = FAKE_SOUL
   const daemons: Owned[] = []
   let app: ElectronApplication | undefined
   try {
@@ -189,6 +198,41 @@ test('browser: the person opens, types and closes a tab of her own; no agent see
       return box?.querySelector('.br-pad-dagent')?.textContent ?? ''
     }))
     assert.equal(closedOwner, 'Você')
+
+    // ---- 6. the Regency's feed: a tab on ANOTHER desk, hers or an agent's, with no desk switch ----
+    const here = await win.evaluate(() => window.__tether.activeDesk())
+    await win.keyboard.press('Control+Shift+N')
+    await win.waitForFunction(h => window.__tether.activeDesk() !== h, here)
+    const other = await win.evaluate(() => window.__tether.activeDesk())
+    await win.evaluate(h => window.__tether.switchDesk(h), here)
+    await win.waitForFunction(h => window.__tether.activeDesk() === h, here)
+    const panesOf = (deskId: string): Promise<string[]> => win.evaluate(d => window.__tether.desks().find(x => x.id === d)?.panes ?? [], deskId)
+    const hersOn = await win.evaluate(async d => window.__tether.browserNewTabOn(undefined, d), other)
+    assert.equal(hersOn.ok, true, `her tab on the other desk (${hersOn.why ?? ''})`)
+    assert.equal((await tabs()).find(t => t.tabId === hersOn.tabId)?.ownerSlotId, 'person')
+    assert.ok((await panesOf(other)).some(id => id.includes(hersOn.tabId!)), 'its pane is on the other desk')
+    assert.equal(await win.evaluate(() => window.__tether.activeDesk()), here, 'the person was not moved')
+    assert.equal((await inBrowser(T, (_e, id) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.control.view(id), hersOn.tabId!)).holder, 'user')
+    // For an agent: born its own, the shield up.
+    const sonda = await win.evaluate(async cwd => {
+      const r = await window.tether.request({ t: 'create', kind: 'soul', cwd, name: 'Sonda', start: true })
+      await window.__tether.openSlot(r.slot!.slotId)
+      return r.slot!.slotId
+    }, home)
+    await until('Sonda runs', async () => (await win.evaluate(() => window.__tether.slots())).find(s => s.slotId === sonda)?.status === 'running', 20_000)
+    const forAgent = await win.evaluate(async a => window.__tether.browserNewTabFor(a.s, a.d), { s: sonda, d: other })
+    assert.equal(forAgent.ok, true, `the agent's tab (${forAgent.why ?? ''})`)
+    assert.equal((await tabs()).find(t => t.tabId === forAgent.tabId)?.ownerSlotId, sonda, 'born the agent\'s')
+    const agentView = await inBrowser(T, (_e, id) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.control.view(id), forAgent.tabId!)
+    assert.equal(agentView.holder, 'agent')
+    assert.equal(await inBrowser(T, (_e, id) => (globalThis as unknown as { __browserTabs: Tabs }).__browserTabs.shield(id), forAgent.tabId!), true, 'the shield is up')
+    assert.ok((await panesOf(other)).some(id => id.includes(forAgent.tabId!)), 'its pane is on the other desk')
+    assert.equal(await win.evaluate(() => window.__tether.activeDesk()), here, 'still where she was')
+    // An agent that is not there: refused, nothing left open.
+    const count = (await tabs()).length
+    const ghost = await win.evaluate(async d => window.__tether.browserNewTabFor('deadbeef', d), other)
+    assert.deepEqual([ghost.ok, ghost.why], [false, 'no-agent'])
+    assert.equal((await tabs()).length, count, 'no tab left behind')
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     for (const d of daemons) await killOwned(d, { tree: true })

@@ -17,7 +17,9 @@ export interface BrowserStatus {
 export type GoOutcome = 'ok' | 'bad-url' | 'not-held' | 'no-tab'
 
 /** What `give` did: tab-rules.ts `giveVerdict`'s refusals, or 'failed' (the agent's new tab did not open or load; hers stays hers). */
-export type GiveOutcome = 'ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full' | 'failed'
+/** What `openForAgent` did: the agent is gone or full, or 'failed' (the tab did not open or its shield did not rise; it was closed). */
+export type OpenForAgentOutcome = 'ok' | 'no-agent' | 'full' | 'failed'
+export type GiveOutcome ='ok' | 'no-tab' | 'not-hers' | 'no-agent' | 'full' | 'failed'
 
 export interface BrowserChannels {
   invoke: {
@@ -61,7 +63,13 @@ export interface BrowserChannels {
      * The person opens a tab of her own (owner PERSON_OWNER, held by her from birth): the address she gave, or the blank page.
      * Her gesture is the consent a local address needs. Null when it could not open (bad address, the owner's ceiling).
      */
-    openForPerson: (url?: string) => TabInfo | null
+    openForPerson: (url?: string, tabId?: string) => TabInfo | null
+    /**
+     * A tab born the agent `slotId`'s (the Regency's "+ Novo" > Navegador for an agent): `newTabId` is named by the interface so
+     * its pane is drawn where it was asked for. Born on the blank page under the agent's rules (shield up and checked, no way
+     * back); anything failing closes what opened ('failed'): no half-made tab.
+     */
+    openForAgent: (slotId: string, newTabId: string) => OpenForAgentOutcome
     /**
      * The person typed an address in the bar of a tab she holds (hers, or an agent's she took) and pressed Enter. Validated in
      * main (http/https only; `https://` added without a scheme); typing it is the consent a local address needs.
@@ -132,7 +140,7 @@ export interface BrowserChannels {
 export const BROWSER_INVOKES = [
   'list', 'get', 'restore', 'close', 'reopen', 'status', 'localNetworkOpen', 'localNetworkAnswer', 'controls', 'take', 'giveBack', 'decline',
   'cleanReload', 'pause', 'resume', 'back', 'forward', 'reload', 'pauseTabs', 'resumeTabs', 'agents', 'logoutAll', 'downloads',
-  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'go', 'give',
+  'showDownload', 'uploadOpen', 'uploadAnswer', 'closedList', 'reopenClosed', 'clearClosed', 'openForPerson', 'openForAgent', 'go', 'give',
   'pageDialogOpen', 'pageDialogAnswer',
 ] as const satisfies readonly (keyof BrowserChannels['invoke'])[]
 type Missing = Exclude<keyof BrowserChannels['invoke'], (typeof BROWSER_INVOKES)[number]>
