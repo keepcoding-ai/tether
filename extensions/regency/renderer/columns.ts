@@ -232,6 +232,7 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   const r = treeRow('rg-desk', d.target, `${d.name}, ${d.paneCount} guias`, deskRowKey(d.target.id), 'desk', 1)
   r.dataset.fold = d.target.id
   if (d.paneCount > 0) r.setAttribute('aria-expanded', String(!d.collapsed))
+  else r.classList.add('rg-nofold')
   if (d.asleep) r.classList.add('zz')
   r.style.setProperty('--rg-desk', `var(--x-${d.color}, var(--accent))`)
   const kind = DESK_KIND[d.kind]
@@ -287,6 +288,7 @@ function groupRow(g: AgentGroupRow, ctx: ColumnsContext): HTMLElement {
   const r = treeRow('rg-agent', g.target, `${g.name}, ${g.paneCount} guias`, groupRowKey(g.target.id), 'group', 1)
   r.dataset.fold = g.target.id
   if (g.paneCount > 0) r.setAttribute('aria-expanded', String(!g.collapsed))
+  else r.classList.add('rg-nofold')
   r.append(glyph(g.collapsed ? 'caret-right' : 'caret-down', g.collapsed ? 'Mostrar as guias' : 'Recolher as guias'))
   if (g.you) {
     const me = el('span', 'aid-letter rg-me', 'V')

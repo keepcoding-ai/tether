@@ -154,10 +154,13 @@
 .rg-search-x:hover { background: var(--bg-hover); color: var(--fg); }
 .rg .rg-search-x .rg-ic { color: inherit; }
 .rg-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.rg-chip { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--fg-dim); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.rg-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 22px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--fg-dim); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .rg-chip:hover { color: var(--fg); background: var(--bg-hover); }
-.rg-chip[aria-checked="true"] { background: var(--bg-3); color: var(--fg); border-color: color-mix(in srgb, var(--fg-dim) 45%, var(--border)); }
+.rg-chip[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--fg); font-weight: 600; border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .rg-chip.al { color: var(--alert-text, var(--x-alert)); border-color: color-mix(in srgb, var(--x-alert) 45%, var(--border)); }
+.rg-chip.al[aria-checked="true"] { background: color-mix(in srgb, var(--x-alert) 18%, transparent); border-color: var(--x-alert); }
+/* A desk or group with nothing inside keeps its caret's place, without the caret. */
+.rg-nofold > .rg-ic:first-child { visibility: hidden; }
 .rg-chip-n { font-weight: 600; font-variant-numeric: tabular-nums; }
 .rg-chip-n:empty { display: none; }
 .rg-seg-b:focus-visible, .rg-chip:focus-visible, .rg-search-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -176,11 +179,11 @@
 
 /* The phone: the tools are 44 px targets; the chips scroll sideways in one line. */
 .rg[data-tier="mobile"] .rg-agent { min-height: 44px; }
-.rg[data-tier="mobile"] .rg-seg-b { height: 40px; padding: 0 12px; font-size: 12.5px; }
-.rg[data-tier="mobile"] .rg-seg { padding: 1px; }
-.rg[data-tier="mobile"] .rg-search { height: 44px; }
+.rg[data-tier="mobile"] .rg-seg-b { height: 44px; padding: 0 12px; font-size: 12.5px; }
+.rg[data-tier="mobile"] .rg-seg { padding: 0; }
+.rg[data-tier="mobile"] .rg-search { height: 46px; padding-right: 0; }
 .rg[data-tier="mobile"] .rg-search-in { font-size: 14px; }
-.rg[data-tier="mobile"] .rg-search-x { width: 40px; height: 40px; }
+.rg[data-tier="mobile"] .rg-search-x { width: 44px; height: 44px; }
 .rg[data-tier="mobile"] .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -8px; padding: 0 8px; }
 .rg[data-tier="mobile"] .rg-chip { height: 44px; padding: 0 14px; font-size: 12.5px; }
 

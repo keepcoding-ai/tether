@@ -195,7 +195,8 @@ export function activate(ui: TetherUi): Disposable[] {
       items: channelEmbeds.list().filter(c => !c.closed).map(c => ({ value: c.id, label: `#${c.name}`, ...(c.title && c.title !== c.name ? { detail: c.title } : {}) })),
       emptyText: 'Nenhuma conversa aberta',
     }),
-    saved: () => ui.layout.scheduleSave(),
+    // The pane that replaces a closed one starts from the last layout saved (the new pane may come before the old one's dispose).
+    saved: () => { const p = livePane(); if (p) lastLayout = p.state; ui.layout.scheduleSave() },
     visible,
     gone: pane => { panes.delete(pane); lastLayout = pane.state },
     immersionKey: () => { try { return ui.keybindings.table().hint(CMD.immersion) } catch { return '' } },
