@@ -400,6 +400,8 @@ export interface TetherUi {
     focus(id: string): void
     /** Brings a pane to the front wherever it lives (its desk comes forward, the drawer or its pad opens, its tab is activated) and focuses it. */
     reveal(id: string): void
+    /** Moves a pane to a queue desk, as the "Mover…" dialog does; false when refused (unknown pane or desk, same desk, the add failed). */
+    moveToDesk(paneId: string, deskId: string): boolean
     /**
      * Peeks a slot without leaving where the person is: a live slot no tab shows opens in the peek card (its live terminal
      * over everything, the drawer included); a slot with a tab is revealed there. An unknown or ended slot without a tab: nothing.

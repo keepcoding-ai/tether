@@ -243,6 +243,12 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(await page.locator(`.ch-pane[data-channel="${obra}"]`).count(), 2, 'one tab and one embedded view')
     assert.deepEqual((await page.evaluate(() => window.__tether.systemDesks())).find(d => d.id === DESK)!.panes, [PANE], 'the tab did not land in the Regency')
 
+    // A tab dropped on the Regency's desk goes back to the desk it came from; the Regency stays alone.
+    await page.evaluate(([p, d]) => window.__tether.movePaneToDesk(p!, d!), [`channel:${obra}`, DESK] as const)
+    await page.waitForFunction(([p, d]) => window.__tether.deskOf(p!) !== d, [`channel:${obra}`, DESK] as const)
+    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), `channel:${obra}`), queueDesk, 'the tab went back to its desk')
+    assert.deepEqual((await page.evaluate(() => window.__tether.systemDesks())).find(d => d.id === DESK)!.panes, [PANE], 'the Regency is alone again')
+
     // A second queue desk with the other agent: the tree shows two desks with agents.
     const desk2 = await page.evaluate(q => window.__tether.createDesk('after', q), queueDesk)
     await page.evaluate(([p, d]) => window.__tether.movePaneToDesk(p!, d!), [b, desk2] as const)

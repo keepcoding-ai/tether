@@ -86,12 +86,36 @@ export function activate(ui: TetherUi): Disposable[] {
 
   const modelOf = (collapsed: readonly string[]): RegencyModel => regencyModelOf(inputOf(collapsed))
 
-  // The tree is heard from the first frame on, not from `activate`: the core draws its desk strip while it builds the dock,
-  // before the drawer exists, and a tree listener there would read a drawer that is not there yet.
-  let treeSub: Disposable | undefined
+  /** The queue desk each foreign pane was last seen in, and the queue desk the person used last. */
+  const home = new Map<string, string>()
+  let lastQueue: string | undefined
+  /** Panes whose way back was refused: left where they are, never tried again. */
+  const refused = new Set<string>()
+
+  /** The Regency keeps `regency:main` alone: any other tab that shows up on its desk goes back to the queue. */
+  const sweepStrangers = (): void => {
+    const tree = ui.desks.tree()
+    const queue = tree.desks.filter(d => d.kind === 'queue')
+    const active = ui.desks.activeId()
+    if (queue.some(d => d.id === active)) lastQueue = active
+    const here = tree.desks.find(d => d.id === DESK_ID)
+    let moved = false
+    for (const p of here?.panes ?? []) {
+      if (p.id === REGENCY_PANE_ID || refused.has(p.id)) continue
+      const from = home.get(p.id)
+      const to = (from && queue.some(d => d.id === from) ? from : undefined) ?? (lastQueue && queue.some(d => d.id === lastQueue) ? lastQueue : queue[0]?.id)
+      if (!to || !ui.panes.moveToDesk(p.id, to)) refused.add(p.id)
+      else moved = true
+    }
+    // The stranger had made its own tab the active one of the Regency's frame: the Regency's pane is shown again.
+    if (moved) requestAnimationFrame(() => ui.panes.find(REGENCY_PANE_ID)?.api.setActive())
+    home.clear()
+    for (const d of queue) for (const p of d.panes) home.set(p.id, d.id)
+    for (const id of [...refused]) if (!here?.panes.some(p => p.id === id)) refused.delete(id)
+  }
+
   const flush = (): void => {
     frame = 0
-    treeSub ??= ui.desks.onDidChangeTree(() => { ensurePane(); schedule() })
     // Hidden, the Regency paints nothing; it only keeps the times of who began to wait.
     const shown = visible()
     for (const p of panes) p.setShown(shown)
@@ -171,7 +195,7 @@ export function activate(ui: TetherUi): Disposable[] {
       focus: () => livePane()?.focus(),
       tabMenu: (_id, x, y) => ui.menus.context(x, y, [{ icon: 'push-pin', label: 'A Regência é uma guia fixa', disabled: true, run: () => {} }]),
     }),
-    { dispose: () => { treeSub?.dispose(); treeSub = undefined } },
+    ui.desks.onDidChangeTree(() => { sweepStrangers(); ensurePane(); schedule() }),
     ui.systemDesks.onDidChangeActive(e => {
       if (e.id !== DESK_ID) return
       for (const p of panes) p.setShown(e.active)

@@ -1295,11 +1295,12 @@ function treeFactsOf(id: string): TreePaneFacts | undefined {
 /** The queue desks, the system desks and the drawer with their panes (TetherUi.desks.tree). */
 function deskTree(): DeskTree {
   const source = (d: DeskInfo, icon?: string) => ({ id: d.id, name: d.name, color: d.color, ...(d.asleep ? { asleep: true } : {}), ...(icon ? { icon } : {}), panes: deskPanes(d.id).map(p => p.id) })
-  const meta = drawer.desk.meta
+  // The drawer does not exist while the first desk is built: an extension may read the tree from its `activate`.
+  const meta = drawer?.desk.meta
   return deskTreeOf({
     queue: desks.desks.map(d => source(d)),
     system: desks.systemDesks.map(d => source(d, systemIcons.get(d.id))),
-    drawer: { id: meta.id, name: meta.name, color: meta.color, panes: drawer.desk.panels.map(p => p.id) },
+    drawer: meta ? { id: meta.id, name: meta.name, color: meta.color, panes: drawer.desk.panels.map(p => p.id) } : undefined,
     pane: treeFactsOf,
   })
 }
@@ -1307,8 +1308,10 @@ function deskTree(): DeskTree {
 /** Where the extensions' group goes in a desk pill's menu: before the first of these that is there. */
 const DESK_MENU_ANCHORS = ['Hibernar mesa', 'Fechar mesa…']
 
-function movePaneToDesk(slotId: string, to: string): void {
-  if (desks.movePanel(slotId, to)) { refreshSessions(); renderStrip() }
+function movePaneToDesk(slotId: string, to: string): boolean {
+  if (!desks.movePanel(slotId, to)) return false
+  refreshSessions(); renderStrip()
+  return true
 }
 
 function moveFrameToDesk(slotId: string, to: string): void {
@@ -4937,6 +4940,7 @@ function activateRendererExtensions(): void {
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
+        moveToDesk: (paneId, deskId) => movePaneToDesk(paneId, deskId),
         peek: slotId => peek(slotId),
         peekScreen: typeId => peekScreen(typeId),
         peekedScreen: () => peekCard?.screenId,
