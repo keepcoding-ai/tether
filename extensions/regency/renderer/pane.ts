@@ -973,7 +973,7 @@ export class RegencyPane implements IContentRenderer {
   private onClick(ev: MouseEvent): void {
     const t = ev.target instanceof Element ? ev.target : null
     // The centre is the conversation's own; on the phone "Conversas" sits in it and stays the Regency's.
-    if (!t || t.closest('.rg-center') && !t.closest('[data-action="choose"]') && !t.closest('.rg-convs')) return
+    if (!t || t.closest('.rg-center') && !t.closest('.rg-void [data-action]') && !t.closest('.rg-convs')) return
     if (t.closest('.rg-members-host') || t.closest('.rg-rename')) return
     const button = t.closest<HTMLElement>('[data-action]')
     const action = button?.dataset.action

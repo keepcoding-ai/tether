@@ -53,6 +53,7 @@ type Hooks = {
       layout(): RegencyLayout | undefined
       tier(): string | undefined
       quickView(t: { kind: string; id: string }): void
+      select(channelId: string | undefined): void
       menu(key: string): boolean
       createView(): CreateViewSnapshot
       lastRun(): { acts: string[]; ok: boolean; done: number; text?: string; made: { deskId?: string; paneId?: string; channelId?: string } } | undefined
@@ -93,7 +94,7 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
 test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
-  mkdirSync(SHOTS, { recursive: true })
+  mkdirSync(join(SHOTS, 'r6'), { recursive: true })
   const home = tempHome()
   const pipe = uniquePipe(home)
   const logs: string[] = []
@@ -184,12 +185,19 @@ test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000
 
     // ---- 1. a terminal in desk 2, chosen in "Onde" ----
     console.log('step 1')
+    // A conversation chosen before: making something keeps it in the centre (R6, H).
+    await page.evaluate(i => window.__tether.ext.regency.select(i), obra)
+    await until('#obra in the centre', async () => (await page.evaluate(() => window.__tether.ext.regency.layout()))?.channelId === obra)
     await page.click('.rg-new')
     await page.waitForSelector(CARD)
     assert.deepEqual((await view()).steps, ['what', 'where', 'details'])
     assert.equal(await page.locator(`${CARD} [data-do="tile"]`).count(), 6, 'six tiles: four in a desk, two in the tether')
+    // R6, I: the tiles say what each thing is, in people's words.
+    const hints = await page.locator(`${CARD} [data-do="tile"] small`).allTextContents()
+    assert.deepEqual(hints, ['uma IA para trabalhar', 'um terminal numa pasta', 'uma anotação', 'uma página da web', 'uma mesa para organizar', 'uma conversa com agentes'])
     await page.waitForTimeout(250)
     await page.screenshot({ path: join(SHOTS, 'r4-novo-o-que.png') })
+    await page.screenshot({ path: join(SHOTS, 'r6', 'novo-o-que.png') })
     await page.click(`${CARD} [data-do="tile"][data-arg="terminal"]`)
     await until('on "Onde"', async () => (await view()).step === 'where')
     await next()
@@ -200,6 +208,11 @@ test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000
     await until('on "Detalhes"', async () => (await view()).step === 'details')
     const norm = (p: string | undefined): string => (p ?? '').replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
     assert.equal(norm((await view()).draft.cwd), norm(home), 'the folder comes ready (the project of the agents)')
+    // "Ir até a guia depois de criar", unticked; the name field shows the name it will get.
+    assert.equal(await page.locator(`${CARD} input[data-f="go"]`).isChecked(), false)
+    assert.match(await page.locator(`${CARD} .rg-cr-ck:has(input[data-f="go"])`).innerText(), /^Ir até a guia depois de criar$/)
+    assert.equal(await page.locator(`${CARD} input[data-f="front"]`).count(), 0, 'no "Trazer a guia para a frente"')
+    assert.match((await page.locator(`${CARD} input[data-f="name"]`).getAttribute('placeholder')) ?? '', /^Terminal \d+$/)
     await next()
     await page.waitForSelector(CARD, { state: 'detached' })
     let run = await lastRun()
@@ -208,7 +221,21 @@ test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000
     assert.equal(await deskOf(term), desk2, 'born in desk 2')
     await stays('terminal')
     await lit(await rowTarget(term), 'terminal')
+    // R6, H: a legible name (not the folder's), a brief notice with "Espiar", read by a screen reader; the centre kept #obra.
+    const termTitle = (await model()).tree.flatMap(d => d.panes).find(p => p.target.id === term)?.title ?? ''
+    assert.match(termTitle, /^Terminal \d+$/, `the default name (${termTitle})`)
+    const desk2Name = (await model()).tree.find(d => d.target.id === desk2)!.name
+    assert.deepEqual(await page.evaluate(() => (window.__tether.ext.regency as unknown as { toast(): unknown }).toast()), { text: `Terminal criado em ${desk2Name}`, actions: ['Espiar', '×'] })
+    assert.equal(await page.locator('.rg-toast').getAttribute('role'), 'status')
+    assert.equal((await page.evaluate(() => window.__tether.ext.regency.layout()))?.channelId, obra, 'the centre keeps its conversation')
+    assert.equal(await page.locator('.rg-void:not([hidden])').count(), 0, 'no "Escolha uma conversa" in the centre')
     await page.screenshot({ path: join(SHOTS, 'r4-depois-de-criar.png') })
+    await page.screenshot({ path: join(SHOTS, 'r6', 'depois-de-criar.png') })
+    await page.locator('.rg-toast .rg-toast-b').click()
+    await until('"Espiar" opens the new tab\'s quick view', async () => page.locator('#peek[data-open="true"]').isVisible())
+    assert.equal(await page.locator('.rg-toast').isVisible(), false, 'the notice went with the click')
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
 
     // ---- 2. an agent in "Mesa nova…", joining #obra, all by the keyboard; Esc goes back ----
     console.log('step 2')
@@ -244,6 +271,8 @@ test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000
     await page.keyboard.press('ArrowDown')
     await until('#obra chosen', async () => (await view()).draft.joinChannel === obra)
     await page.screenshot({ path: join(SHOTS, 'r4-novo-detalhes-agente.png') })
+    assert.equal(await page.locator(`${CARD} [data-field="what"] .rg-cr-lb`).innerText(), 'Qual agente')
+    assert.doesNotMatch(await page.locator(CARD).innerText(), /Trazer a guia para a frente/)
     await page.keyboard.press('Enter')
     await page.waitForSelector(CARD, { state: 'detached' })
     run = await lastRun()
@@ -316,6 +345,15 @@ test('regency: "+ Novo" creates without leaving the Regency', { timeout: 480_000
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes(`channel:${revisao}`), 'no channel tab was born')
     assert.ok(ch.store.get(revisao)?.members[a] !== undefined, 'conferente is in it')
     await stays('channel')
+    // R6, Q: the empty centre has "Criar canal", which opens "+ Novo" straight on the channel's details.
+    await page.evaluate(() => window.__tether.ext.regency.select(undefined))
+    await page.locator('.rg-void [data-action="create-channel"]').click()
+    await page.waitForSelector(CARD)
+    await until('on the channel\'s details', async () => { const v = await view(); return v.draft.what === 'channel' && v.step === 'details' })
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(CARD, { state: 'detached' })
+    await page.evaluate(i => window.__tether.ext.regency.select(i), revisao)
 
     // ---- 5. a browser tab for an agent, on desk 2: born the agent's, shield up ----
     console.log('step 5')
