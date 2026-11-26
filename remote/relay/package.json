@@ -1,0 +1,21 @@
+{
+  "name": "tether-remote-relay",
+  "version": "0.1.0",
+  "description": "Blind relay of the remote wire: proves houses and devices, routes opaque binary frames, keeps nothing on disk.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "serve": "node src/main.ts serve",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "ws": "8.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2"
+  }
+}
