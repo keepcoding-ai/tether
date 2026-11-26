@@ -35,6 +35,7 @@ import type { AgentPane } from './agent-panes.ts'
 import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
 import type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 import type { Reply } from '../../src/daemon/protocol.ts'
+import type { ClosedSession } from './closed-sessions-rules.ts'
 import type { ProcState } from '../../src/daemon/procs.ts'
 
 /** Why a panel frame became loose: the person closed its panel, or the panel went by itself. */
@@ -757,6 +758,16 @@ export interface TetherUi {
      * how many it spared); stopping it by hand asks first. Called when the menu draws: keep it cheap.
      */
     hold(provider: (slotId: string) => string | undefined): IDisposable
+    /** Ended sessions with no tab, most recently ended first, at most `limit` (default and cap 50). Notes and previews are not here. */
+    closed(limit?: number): readonly ClosedSession[]
+    /** The list of `closed()` changed (a session ended, got a tab, or was forgotten). Event-driven: no timer behind it. */
+    onDidChange(listener: () => void): IDisposable
+    /** Reopens an ended session on a queue desk WITHOUT switching to it: the tab is born there and the session starts. False when it is not an ended tab-less session or the desk is unknown. */
+    reopen(slotId: string, deskId: string): boolean
+    /** The same on a new desk, created after the last one without switching to it. Returns the new desk's id (undefined: nothing reopened). */
+    reopenInNewDesk(slotId: string): string | undefined
+    /** "Esquecer": the tetherd forgets an ended session with no tab; it cannot be undone (the caller asks first). Resolves with the refusal's text, or undefined when done. */
+    forget(slotId: string): Promise<string | undefined>
   }
   /**
    * The background processes tetherd keeps (tether proc): the core holds the live list, the extension draws it. Each act

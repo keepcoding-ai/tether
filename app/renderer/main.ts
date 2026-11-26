@@ -38,7 +38,8 @@ import { Drawer } from './drawer.ts'
 import { FramesPad } from './frames-pad.ts'
 import { CLOSED, closeDrawer, countAttention, escAction, focusAfterClose, openDrawer, quickCwd, type DrawerState } from './drawer-rules.ts'
 import type { PauseBatch } from '../../src/daemon/pause.ts'
-import { bulkCloseSituation, forgetEndedSituation, stopHeldSituation } from './sessions-rules.ts'
+import { bulkCloseSituation, forgetEndedSituation, stopHeldSituation, turnState } from './sessions-rules.ts'
+import { closedSessionsOf, closedSignature, type ClosedSession } from './closed-sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { setupToolbarOverflow } from './toolbar-overflow.ts'
 import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-menu-basics.ts'
@@ -2751,7 +2752,50 @@ function sessionHeldOf(slotId: string): string | undefined {
 }
 
 /** Re-renders the Sessões menu and its icon (counter, tooltip, glyph). Safe before the menu exists. */
-function refreshSessions(): void { sessionsMenu?.refresh() }
+function refreshSessions(): void {
+  sessionsMenu?.refresh()
+  notifyClosedSessions()
+}
+
+// "Fechadas" for a manager: no timer, no scan of its own. It is heard from refreshSessions (every slot change), and the
+// listeners fire only when the ids or their order changed.
+const closedListeners = new Set<() => void>()
+let closedSeen = ''
+function closedSessions(limit?: number): readonly ClosedSession[] {
+  return closedSessionsOf(slots.values(), id => findPanel(id) !== undefined, limit)
+}
+function notifyClosedSessions(): void {
+  if (closedListeners.size === 0) return
+  const now = closedSignature(closedSessions())
+  if (now === closedSeen) return
+  closedSeen = now
+  for (const l of [...closedListeners]) { try { l() } catch (err) { console.error('sessions.onDidChange', err) } }
+}
+
+/** Reopens an ended session with no tab on a queue desk, without switching to it. False when it is not such a session or the desk is unknown. */
+function reopenEndedOnDesk(slotId: string, deskId: string): boolean {
+  const s = slots.get(slotId)
+  if (!s || turnState(s) !== 'ended' || findPanel(slotId) || !desks.desk(deskId)) return false
+  openSlotOnDesk(slotId, deskId)
+  return true
+}
+
+/** The same on a new desk (after the last one, not activated). Returns the new desk's id, or undefined when nothing was reopened. */
+function reopenClosedInNewDesk(slotId: string): string | undefined {
+  const s = slots.get(slotId)
+  if (!s || turnState(s) !== 'ended' || findPanel(slotId)) return undefined
+  const created = desks.create('after', desks.desks.at(-1)?.id, { activate: false })
+  openSlotOnDesk(slotId, created)
+  return created
+}
+
+/** "Esquecer": the tetherd forgets an ended session with no tab. Resolves with the refusal's text, or undefined when done. */
+async function forgetClosed(slotId: string): Promise<string | undefined> {
+  const s = slots.get(slotId)
+  if (!s || turnState(s) !== 'ended' || findPanel(slotId)) return 'A sessão não está encerrada ou ainda tem guia.'
+  const reply = await window.tether.request({ t: 'forget', slotId })
+  return reply.t === 'error' ? reply.message : undefined
+}
 
 function setupSessionsMenu(): void {
   sessionsMenu = createSessionsMenu({
@@ -5187,6 +5231,11 @@ function activateRendererExtensions(): void {
       },
       sessions: {
         hold: provider => { sessionHolds.add(provider); refreshSessions(); return add(toDisposable(() => { sessionHolds.delete(provider); refreshSessions() })) },
+        closed: limit => closedSessions(limit),
+        onDidChange: listener => { closedListeners.add(listener); closedSeen = closedSignature(closedSessions()); return add(toDisposable(() => { closedListeners.delete(listener) })) },
+        reopen: (slotId, deskId) => reopenEndedOnDesk(slotId, deskId),
+        reopenInNewDesk: slotId => reopenClosedInNewDesk(slotId),
+        forget: slotId => forgetClosed(slotId),
       },
       procs: {
         list: () => procsStore.list(),
