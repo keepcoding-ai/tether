@@ -95,8 +95,9 @@ export const noticeGlyph = (type: LineEventType | undefined): NoticeGlyph => {
   }
 }
 
-export type SpeakerRole = 'dono' | 'membro' | 'moderador'
-const ROLE_TEXT: Record<'owner' | 'member' | 'moderator', SpeakerRole> = { owner: 'dono', member: 'membro', moderator: 'moderador' }
+/** The tag shown beside a speaker: only what departs from the default ("dono"); an agent's "membro" and the person's "moderador" are empty. */
+export type SpeakerRole = 'dono' | ''
+const ROLE_TEXT: Record<'owner' | 'member' | 'moderator', SpeakerRole> = { owner: 'dono', member: '', moderator: '' }
 
 export interface Addressee { name: string; hue?: number; you: boolean }
 
@@ -269,7 +270,7 @@ export interface MemberRow {
   id: string
   name: string
   hue: number
-  role: 'dono' | 'membro'
+  role: 'dono' | ''
   crown: boolean
   muted: boolean
   route: MemberInfo['path']
@@ -317,7 +318,7 @@ export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader, noDes
     const noDesk = noDeskOf?.(m.id) === true
     const hint = m.path === 'wait' && noDesk ? NO_DESK_WAIT_HINT : route.hint
     return {
-      id: m.id, name: m.name, hue: agentHue(m.id), role: m.id === ownerId ? 'dono' : 'membro', crown: m.id === ownerId,
+      id: m.id, name: m.name, hue: agentHue(m.id), role: m.id === ownerId ? 'dono' : '', crown: m.id === ownerId,
       muted: m.muted, route: m.path, state: route.state, tone: route.tone, ...(hint !== undefined ? { hint } : {}),
       fromDesk: m.by === 'desk', ...(emblem ? { emblem } : {}), noDesk,
     }
@@ -327,11 +328,11 @@ export function memberRows(answer: MembersAnswer, emblemOf?: EmblemReader, noDes
 
 /** The whole sentence of a member's row for a screen reader: who, the role, "calado" when muted, how it hears ("claude · conferente, membro, calado, ouvindo"). */
 export function memberAria(m: Pick<MemberRow, 'name' | 'role' | 'muted' | 'state'>): string {
-  return [m.name, m.role, ...(m.muted ? ['calado'] : []), m.state].join(', ')
+  return [m.name, ...(m.role ? [m.role] : []), ...(m.muted ? ['calado'] : []), m.state].join(', ')
 }
 
 /** The person's own row in the list. */
-export const MODERATOR_ARIA = 'Você, moderador, lê tudo e fala em qualquer canal'
+export const MODERATOR_ARIA = 'Você lê tudo e fala em qualquer canal'
 
 export const membersCount = (n: number): string => (n === 1 ? '1 membro' : `${n} membros`)
 

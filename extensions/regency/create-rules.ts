@@ -317,7 +317,7 @@ export function planOf(state: CreateState, ctx: CreateContext = {}): CreateAct[]
     acts.push({ act: 'channel', runs: 'tetherd', name, doing: `criar o canal #${name}`, done: `criei o canal #${name}` })
     const members = draft.channel?.members ?? []
     if (members.length > 0) {
-      acts.push({ act: 'join', runs: 'tetherd', channel: REF_CHANNEL, agents: [...members], optional: true, doing: 'juntar os agentes ao canal', done: 'juntei os agentes ao canal' })
+      acts.push({ act: 'join', runs: 'tetherd', channel: REF_CHANNEL, agents: [...members], optional: true, doing: 'chamar os agentes ao canal', done: 'chamei os agentes ao canal' })
     }
     acts.push({ act: 'show', runs: 'renderer', channel: REF_CHANNEL, optional: true, doing: 'abrir o canal no centro', done: 'abri o canal no centro' })
     return acts
@@ -338,7 +338,7 @@ export function planOf(state: CreateState, ctx: CreateContext = {}): CreateAct[]
     // the desk's own channel is joined by the desk (F1): asking again would answer "already"
     const own = deskId === REF_DESK ? undefined : deskChannelOf(deskId, ctx.channels ?? [])
     if (agent && draft.joinChannel !== undefined && own?.id !== draft.joinChannel) {
-      acts.push({ act: 'join', runs: 'tetherd', channel: draft.joinChannel, agents: [REF_PANE], optional: true, doing: 'juntar o agente ao canal', done: 'juntei o agente ao canal' })
+      acts.push({ act: 'join', runs: 'tetherd', channel: draft.joinChannel, agents: [REF_PANE], optional: true, doing: 'chamar o agente ao canal', done: 'chamei o agente ao canal' })
     }
   } else if (draft.what === 'note') {
     acts.push({

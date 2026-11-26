@@ -202,9 +202,9 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
 
     // ---- 2. the bar: the pins of the menu, per state ----
     const pinned = (c: Card): string[] => c.bar.filter(b => !b.hidden).map(b => `${b.pin}:${b.label}`)
-    assert.deepEqual(pinned(c1).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Ir para Atrium', 'icon:Tomar e responder eu', 'icon:Pausar Atrium nesta guia'], 'C1: "Ir para", Tomar and Pausar as icons')
+    assert.deepEqual(pinned(c1).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Ir para Atrium', 'icon:Assumir o comando e responder eu', 'icon:Pausar Atrium nesta guia'], 'C1: "Ir para", Assumir o comando and Pausar as icons')
     assert.deepEqual(pinned(c1).filter(l => !l.startsWith('icon:')), ['primary:Focar guia', 'primary:Fechar guia'], 'C1: with no highlight the bar keeps its two primaries, as today')
-    assert.deepEqual(pinned(g).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Tomar', 'icon:Pausar Kai nesta guia', 'icon:Ir para Kai'], 'G: the same, in their quiet words')
+    assert.deepEqual(pinned(g).filter(l => l.startsWith('icon:')).slice(0, 3), ['icon:Assumir o comando', 'icon:Pausar Kai nesta guia', 'icon:Ir para Kai'], 'G: the same, in their quiet words')
     assert.deepEqual(pinned(t1).filter(l => !l.startsWith('icon:')), ['highlight:Devolver a Atrium', 'primary:Focar guia'], 'T1: "Devolver a Atrium" is the one with text and accent, and takes the place of "Fechar guia"')
     const hl = page.locator(`${card(T1)} .pf-act.pin-highlight`), ic = page.locator(`${card(T1)} .pf-act.pin-icon`).first()
     assert.notEqual(await hl.evaluate(b => getComputedStyle(b).color), await ic.evaluate(b => getComputedStyle(b).color), 'the highlight has the accent colour')
@@ -249,7 +249,7 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     const at = m5.findIndex(r => r.startsWith('# Espera Atrium: pediu permissão às '))
     assert.ok(at >= 0, `(5) the line that says what it waits for: ${JSON.stringify(m5)}`)
     assert.match(m5[at]!, /^# Espera Atrium: pediu permissão às \d\d:\d\d$/)
-    assert.deepEqual(m5.slice(at + 1, at + 3), ['Ir para Atrium', 'Tomar e responder eu'], '(5) "Ir para" and "Tomar e responder eu" first')
+    assert.deepEqual(m5.slice(at + 1, at + 3), ['Ir para Atrium', 'Assumir o comando e responder eu'], '(5) "Ir para" and "Assumir o comando e responder eu" first')
     await shotMenu('menu-estado-5')
     await closeMenu()
 
@@ -325,7 +325,7 @@ test('for-agents in "Painéis da mesa": the card shows the marks, the bar the pi
     for (const id of guides) assert.equal(bare.get(id)!.emblems.length, 0, `${id}: no emblem without the extension`)
     for (const id of guides.filter(id => id !== C1)) assert.equal(bare.get(id)!.line, '', `${id}: no line of the status bar without the extension`)
     assert.ok(!/ · Atrium · /.test(bare.get(C1)!.line) && !bare.get(C1)!.line.includes('enviou pedido'), `C1: the line keeps only the folder (the diamond's own, kept while tetherd routes): ${bare.get(C1)!.line}`)
-    assert.equal(bare.get(C1)!.bar.some(b => /Tomar|Pausar|Devolver/.test(b.label)), false, 'back to the pane own bar')
+    assert.equal(bare.get(C1)!.bar.some(b => /Assumir o comando|Pausar|Devolver/.test(b.label)), false, 'back to the pane own bar')
     for (const id of guides) assert.deepEqual(bare.get(id)!.bar.filter(b => b.pin !== 'icon').map(b => [b.pin, b.label]), [['primary', 'Focar guia'], ['primary', 'Fechar guia']], `${id}: with no extension that pins a highlight the bar is today's`)
     for (const id of guides) assert.equal(bare.get(id)!.underline, null, `${id}: no underline without the extension`)
     assert.deepEqual(bare.get(PLAIN)!.bar.map(b => [b.pin, b.label]), (await cards()).get(PLAIN)!.bar.map(b => [b.pin, b.label]))

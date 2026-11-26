@@ -823,7 +823,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     console.log(`desk menu: ${JSON.stringify(deskLabels)}`)
     assert.equal(deskLabels.at(-1), 'Ir até a mesa', '"Ir até a mesa" last')
     for (const l of ['Renomear', 'Cor…', 'Mudar de lugar', 'Nova mesa antes', 'Nova mesa depois', 'Hibernar mesa', 'Fechar mesa…']) assert.ok(deskLabels.includes(l), `"${l}" in the desk menu`)
-    assert.ok(deskLabels.some(l => /^(Dar|Tomar|Revogar|Pausar)/.test(l)), 'the for-agents rows come along')
+    assert.ok(deskLabels.some(l => /^(Dar|Assumir|Tirar a mesa|Revogar|Pausar)/.test(l)), 'the for-agents rows come along')
     await page.screenshot({ path: join(SHOTS, 'menu-mesa.png') })
     assert.equal(await focusedKey(), null, 'the menu has the keyboard')
     await page.screenshot({ path: join(SHOTS, 'r2-menu-mesa.png') })

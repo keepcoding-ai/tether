@@ -82,7 +82,7 @@ test('rows: a say and a system notice are drawn apart; a day separator opens the
   assert.deepEqual([owner.name, owner.role, owner.crown, owner.mine, owner.hue], ['Atrium', 'dono', true, false, agentHue('a1')])
   assert.deepEqual(owner.to, [{ name: 'claude · conferente', you: false, hue: agentHue('b2') }])
   const me = rows[4] as SayRow
-  assert.deepEqual([me.name, me.role, me.mine, me.crown, me.hue], ['Você', 'moderador', true, false, undefined])
+  assert.deepEqual([me.name, me.role, me.mine, me.crown, me.hue], ['Você', '', true, false, undefined])
 })
 
 test('rows: "para todos" has no addressee, "usuário" in `to` reads "você"; same author, same addressees: one header', () => {
@@ -98,7 +98,7 @@ test('rows: "para todos" has no addressee, "usuário" in `to` reads "você"; sam
   assert.deepEqual(says.map(s => s.continued), [false, true, false, false, false], 'a notice or another author breaks the group')
   assert.deepEqual(says[0]!.to, [])
   assert.deepEqual(says[2]!.to, [{ name: 'você', you: true }])
-  assert.equal(says[0]!.role, 'membro')
+  assert.equal(says[0]!.role, '')
 })
 
 test('rows: a day change opens a separator; ontem and a date', () => {
@@ -145,7 +145,7 @@ test('timeline: the newest page over what is held fills the end; a page that doe
 test('members: the owner first, the state of each, muted marked', () => {
   const rows = memberRows(answer())
   assert.deepEqual(rows.map(r => r.name), ['Atrium', 'claude · conferente', 'codex · conferência'])
-  assert.deepEqual(rows.map(r => r.role), ['dono', 'membro', 'membro'])
+  assert.deepEqual(rows.map(r => r.role), ['dono', '', ''])
   assert.deepEqual(rows.map(r => r.crown), [true, false, false])
   assert.deepEqual(rows.map(r => r.muted), [false, false, true])
   assert.deepEqual(rows.map(r => r.tone), ['on', 'on', 'wait'])
@@ -270,9 +270,9 @@ test('rows: "novas para você · hora" goes right before the first unseen line t
 test('memberAria: one sentence per row (who, role, muted, how it hears); the dot is never the only source', () => {
   const rows = memberRows(answer())
   const by = (name: string) => rows.find(r => r.name === name)!
-  assert.equal(memberAria(by('claude · conferente')), 'claude · conferente, membro, ouvindo')
+  assert.equal(memberAria(by('claude · conferente')), 'claude · conferente, ouvindo')
   assert.equal(memberAria(by('Atrium')), 'Atrium, dono, ouvindo')
-  assert.equal(memberAria(by('codex · conferência')), 'codex · conferência, membro, calado, não ouve agora · falas em espera')
+  assert.equal(memberAria(by('codex · conferência')), 'codex · conferência, calado, não ouve agora · falas em espera')
 })
 
 test('an agent name is a tether://tab link by its pane id; the person and the tether have none', () => {

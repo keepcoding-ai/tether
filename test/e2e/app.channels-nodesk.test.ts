@@ -150,7 +150,7 @@ test('channels: an agent with no guia joins a channel (picker "Sem mesa", name p
     console.log('step 3')
     await pane.locator(`.ch-mrow[data-member="${n}"] button.ch-agent`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
-    assert.deepEqual(await menuRows(), [`${nameN} · membro`, 'Espiar Clique', `Falar com ${nameN}`, 'Calar', 'Tirar do canal'])
+    assert.deepEqual(await menuRows(), [nameN, 'Espiar Clique', `Falar com ${nameN}`, 'Calar', 'Tirar do canal'])
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
     await pane.locator(`.ch-mrow[data-member="${n}"] button.ch-agent`).click()

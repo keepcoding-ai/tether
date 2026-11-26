@@ -169,7 +169,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
 
   const SCOPE_TEXT = { join: PICK.join, remove: PICK.remove, mute: PICK.mute, unmute: PICK.unmute } as const
   const AGENT_TEXT = { join: PICK.agentJoin, remove: PICK.agentRemove, mute: PICK.agentMute, unmute: PICK.agentUnmute } as const
-  const WHAT = { join: 'Juntar agente', remove: 'Tirar agente', mute: 'Calar agente', unmute: 'Devolver a voz' } as const
+  const WHAT = { join: 'Chamar agente', remove: 'Tirar agente', mute: 'Calar agente', unmute: 'Devolver a voz' } as const
 
   const agentSpec = (kind: keyof typeof AGENT_TEXT, channel: ChannelSummary): PickSpec<string> => {
     const text = kind === 'join' ? PICK.agentJoin(channel.name, ui.agents.list().length === 0) : AGENT_TEXT[kind](channel.name)
@@ -204,7 +204,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
           channel = list.find(c => c.id === id)
           if (!channel) return
         }
-        const chosen = await ui.pick.many({ ...agentSpec('join', channel), confirmLabel: 'Juntar', confirmHint: 'junta' })
+        const chosen = await ui.pick.many({ ...agentSpec('join', channel), confirmLabel: 'Chamar', confirmHint: 'chama' })
         if (chosen) { await joinAll(channel, chosen); return }
         if (!asked) return
         channel = undefined
@@ -246,7 +246,7 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
     }
     const failed = outcomes.filter(o => o.code !== undefined)
     if (failed.length === 1 && outcomes.length === 1) {
-      await ui.dialogs.ask(failedDialog('Juntar agente', failed[0]!.code!, failed[0]!.reason)).catch(() => undefined)
+      await ui.dialogs.ask(failedDialog('Chamar agente', failed[0]!.code!, failed[0]!.reason)).catch(() => undefined)
     } else if (failed.length > 0) {
       await ui.dialogs.ask(joinResultDialog(outcomes)).catch(() => undefined)
     }

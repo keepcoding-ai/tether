@@ -100,7 +100,7 @@ export function deskMenu(f: MenuFacts, deskId: string): Row[] {
   const takeIt = item('hand-grabbing', L.takeDesk, { do: 'take', target: t })
   const inventory = item('sliders-horizontal', L.inventoryDesk(n), { do: 'inventory', target: t })
   const passIt = item('swap', L.giveDeskOther, { do: 'give', target: t })
-  const revoke = item('link-break', L.revokeDesk, { do: 'revoke', target: t }, { danger: true })
+  const revoke = item('link-break', L.revokeDesk(n),{ do: 'revoke', target: t }, { danger: true })
 
   if (hand?.why === 'taken') {
     return [{ kind: 'info', text: INFO.deskTaken(n) }, item('arrow-u-up-left', L.returnDesk(n), { do: 'resume', target: t }), inventory, revoke]

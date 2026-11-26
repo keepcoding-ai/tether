@@ -8,9 +8,9 @@ export const plural = (n: number, one: string, many: string): string => `${n} ${
 // ---- labels of the rows ----------------------------------------------------------------------------------------------
 export const L = {
   goTo: (o: string) => `Ir para ${o}`,
-  take: 'Tomar',
-  takeDesk: 'Tomar a mesa',
-  takeAndAnswer: 'Tomar e responder eu',
+  take: 'Assumir o comando',
+  takeDesk: 'Assumir o comando da mesa',
+  takeAndAnswer: 'Assumir o comando e responder eu',
   pausePane: (o: string) => `Pausar ${o} nesta guia`,
   pauseSelf: (o: string) => `Pausar ${o} em si mesmo`,
   pauseDesk: (o: string) => `Pausar ${o} nesta mesa`,
@@ -31,7 +31,7 @@ export const L = {
   giveDeskOther: 'Dar a mesa a outro agente…',
   backToDesk: (o: string) => `Voltar para a mesa (revoga ${o})`,
   revokeSelf: 'Revogar (volta para a mesa)',
-  revokeDesk: 'Revogar a mesa…',
+  revokeDesk: (o: string) => `Tirar a mesa ${o ? `de ${o}` : 'do agente'}…`,
   returnToDesk: (o: string) => `Devolver à mesa (${o})`,
   keepPane: 'Ficar com a guia (tira a marca)',
   keepDesk: 'Ficar com a mesa (tira o selo)',
@@ -130,7 +130,7 @@ export function giveDeskDialog(t: GiveDeskText): DialogSpec {
     ...(lines.length > 0 ? { context: { icon: 'robot', name: t.to, lines } } : {}),
     choices: [
       { id: 'back', icon: 'arrow-u-up-left', label: 'Voltar', consequence: 'Escolher outro agente.', tone: 'safe' },
-      { id: 'give', icon: passing ? 'swap' : 'robot', label: passing ? 'Passar a mesa' : 'Dar a mesa', consequence: `${t.to} passa a comandar; você pode tomar ou revogar quando quiser.`, tone: 'neutral' },
+      { id: 'give', icon: passing ? 'swap' : 'robot', label: passing ? 'Passar a mesa' : 'Dar a mesa', consequence: `${t.to} passa a comandar; você pode assumir o comando ou tirar a mesa quando quiser.`, tone: 'neutral' },
     ],
     defaultChoice: 'give',
     cancelLabel: 'Cancelar',
@@ -179,7 +179,7 @@ export function givePaneDialog(t: GivePaneText): DialogSpec {
     context: { icon: 'robot', name: t.to, lines: ['Tudo começa ligado, igual à mesa.'] },
     choices: [
       { id: 'back', icon: 'arrow-u-up-left', label: 'Voltar', consequence: 'Escolher outro agente.', tone: 'safe' },
-      { id: 'give', icon: 'robot', label: 'Dar a guia', consequence: `${t.to} passa a comandar; você pode tomar ou revogar quando quiser.`, tone: 'neutral' },
+      { id: 'give', icon: 'robot', label: 'Dar a guia', consequence: `${t.to} passa a comandar; você pode assumir o comando ou tirar a guia quando quiser.`, tone: 'neutral' },
     ],
     defaultChoice: 'give',
     cancelLabel: 'Cancelar',
@@ -209,10 +209,10 @@ export function revokeDeskDialog(t: RevokeDeskText): DialogSpec {
     situation: 'for-agents.revoke-desk',
     tone: 'danger',
     icon: 'link-break',
-    title: `Revogar a mesa ${t.desk} de ${t.owner}`,
+    title: `Tirar a mesa ${t.desk} de ${t.owner}`,
     message: message.join(' '),
     choices: [
-      { id: 'revoke', icon: 'link-break', label: 'Revogar', consequence: `${t.owner} deixa de comandar esta mesa; você pode dá-la de novo quando quiser.`, tone: 'destructive' },
+      { id: 'revoke', icon: 'link-break', label: 'Tirar a mesa', consequence: `${t.owner} deixa de comandar esta mesa; você pode dá-la de novo quando quiser.`, tone: 'destructive' },
     ],
     cancelLabel: 'Cancelar',
   }

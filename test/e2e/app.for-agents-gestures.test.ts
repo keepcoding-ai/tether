@@ -161,7 +161,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     // ---- 1. give the desk by the pill: picker, dialog, "Voltar", picker again, dialog, "Dar a mesa" ----
     const common = await openPill(D1)
     assert.ok(common.includes('Dar a mesa a um agente…'), `the common desk offers giving (${common.join(' | ')})`)
-    assert.ok(!common.some(l => /Pausar|Tomar|Revogar/.test(l)), 'and nothing else of ownership')
+    assert.ok(!common.some(l => /Pausar|Assumir o comando|Tirar a mesa|Revogar/.test(l)), 'and nothing else of ownership')
     await shot('pilula-mesa-comum', '#ctx-menu', pillStrip)
     const noView = await state()
     await choose('Dar a mesa a um agente…')
@@ -195,26 +195,26 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
 
     // ---- 2. the pill menu, state by state, and the gestures of the desk ----
     const active = await openPill(D1)
-    const activeRows = ['# Dono: Atrium · comanda 4 guias', 'Ir para Atrium', 'Pausar Atrium nesta mesa', 'Tomar a mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Revogar a mesa…']
+    const activeRows = ['# Dono: Atrium · comanda 4 guias', 'Ir para Atrium', 'Pausar Atrium nesta mesa', 'Assumir o comando da mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Tirar a mesa de Atrium…']
     assert.deepEqual(sliceAt(active, activeRows), activeRows)
-    assert.ok(active.indexOf('Revogar a mesa…') < Math.max(active.indexOf('Hibernar mesa'), 0) || !active.includes('Hibernar mesa'), 'the group comes before "Hibernar mesa"')
+    assert.ok(active.indexOf('Tirar a mesa de Atrium…') < Math.max(active.indexOf('Hibernar mesa'), 0) || !active.includes('Hibernar mesa'), 'the group comes before "Hibernar mesa"')
     await shot('pilula-ativa', '#ctx-menu', pillStrip)
     await choose('Pausar Atrium nesta mesa')
     await until(() => obj<{ why: string; by: string }>('desk', D1, 'hand')?.why === 'paused', 'desk paused')
     assert.equal(obj<{ by: string }>('desk', D1, 'hand')!.by, 'gesture')
     await until(() => [C1, C2, G, K].every(id => heldBy(id) === undefined && !routeOf(id)), 'paused: nothing held, nothing routed (a pause does not interrupt the turn: that is a gesture apart)')
     const paused = await openPill(D1)
-    const pausedRows = ['# Dono: Atrium · pausada nesta mesa desde', 'Retomar Atrium nesta mesa', 'Ir para Atrium', 'Tomar a mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Revogar a mesa…']
+    const pausedRows = ['# Dono: Atrium · pausada nesta mesa desde', 'Retomar Atrium nesta mesa', 'Ir para Atrium', 'Assumir o comando da mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Tirar a mesa de Atrium…']
     assert.match(paused.find(l => l.startsWith('# Dono'))!, /^# Dono: Atrium · pausada nesta mesa desde \d\d:\d\d$/)
     assert.deepEqual(sliceAt(paused, pausedRows.map(l => (l.startsWith('# Dono') ? paused.find(p => p.startsWith('# Dono'))! : l))).slice(1), pausedRows.slice(1))
     await shot('pilula-pausada', '#ctx-menu', pillStrip)
     await choose('Retomar Atrium nesta mesa')
     await until(() => obj('desk', D1, 'hand') === undefined && [C1, C2, G, K].every(id => heldBy(id) === byA), 'resumed: held again')
     await openPill(D1)
-    await choose('Tomar a mesa')
+    await choose('Assumir o comando da mesa')
     await until(() => obj<{ why: string }>('desk', D1, 'hand')?.why === 'taken' && [C1, C2, G, K].every(id => heldBy(id) === undefined), 'desk taken')
     const taken = await openPill(D1)
-    const takenRows = ['# Dono: Atrium · a mesa está com você', 'Devolver a mesa a Atrium', 'O que Atrium pode aqui…', 'Revogar a mesa…']
+    const takenRows = ['# Dono: Atrium · a mesa está com você', 'Devolver a mesa a Atrium', 'O que Atrium pode aqui…', 'Tirar a mesa de Atrium…']
     assert.deepEqual(sliceAt(taken, takenRows), takenRows)
     await shot('pilula-tomada', '#ctx-menu', pillStrip)
     await choose('Devolver a mesa a Atrium')
@@ -224,7 +224,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
 
     // ---- 3. the tab menu, state by state ----
     const commanded = await openTab(C1)
-    const commandedRows = ['# Comandada por Atrium, pela mesa', 'Tomar', 'Pausar Atrium nesta guia', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…']
+    const commandedRows = ['# Comandada por Atrium, pela mesa', 'Assumir o comando', 'Pausar Atrium nesta guia', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…']
     assert.deepEqual(commanded.slice(0, 5), commandedRows)
     await shot('aba-comandada', '#ctx-menu', `.tether-tab[data-slot="${C1}"]`)
     await closeMenu()
@@ -248,7 +248,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     await until(() => heldBy(G) === byK && routeOf(G) === K, 'the pane given to Kai is held by Kai and routed to Kai')
     assert.equal(heldBy(C1), byA, 'the others stay with Atrium')
     const givenMenu = await openTab(G)
-    const givenRows = ['# Dada a Kai · Atrium vê', 'Tomar', 'Pausar Kai nesta guia', 'Ir para Kai', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…']
+    const givenRows = ['# Dada a Kai · Atrium vê', 'Assumir o comando', 'Pausar Kai nesta guia', 'Ir para Kai', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…']
     assert.deepEqual(givenMenu.slice(0, 7), givenRows)
     await shot('aba-dada', '#ctx-menu', `.tether-tab[data-slot="${G}"]`)
     await choose('Voltar para a mesa (revoga Kai)')
@@ -260,7 +260,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     await until(() => heldBy(G) === byK, 'given again')
 
     // F7: taking the desk takes what the desk commands, not the pane that is Kai's.
-    await openPill(D1); await choose('Tomar a mesa')
+    await openPill(D1); await choose('Assumir o comando da mesa')
     await until(() => [C1, C2, K].every(id => heldBy(id) === undefined) && heldBy(G) === byK, 'taking the desk leaves Kai\'s pane alone')
     await openPill(D1); await choose('Devolver a mesa a Atrium')
     await until(() => [C1, C2, K].every(id => heldBy(id) === byA), 'given back')
@@ -285,7 +285,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     await closeMenu()
 
     // Take, give back, pause, resume on a pane.
-    await openTab(C1); await choose('Tomar')
+    await openTab(C1); await choose('Assumir o comando')
     await until(() => obj<{ why: string }>('pane', C1, 'hand')?.why === 'taken' && heldBy(C1) === undefined && !routeOf(C1), 'pane taken')
     const takenPane = await openTab(C1)
     assert.deepEqual(takenPane.slice(0, 4), ['# Com você · antes: Atrium, pela mesa', 'Devolver a Atrium', 'Dar a outro agente…', 'O que Atrium pode nesta guia…'])
@@ -349,16 +349,16 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
 
     // ---- 6. revoking the desk: the declared dialog, cancel changes nothing ----
     await openPill(D1)
-    await choose('Revogar a mesa…')
+    await choose('Tirar a mesa de Atrium…')
     const rd = askDialog('for-agents.revoke-desk')
     await rd.waitFor()
-    assert.equal(await rd.locator('h2, .ask-title').first().innerText(), 'Revogar a mesa kai-aware de Atrium')
+    assert.equal(await rd.locator('h2, .ask-title').first().innerText(), 'Tirar a mesa kai-aware de Atrium')
     assert.match(await rd.innerText(), /As 2 guias que Atrium comanda voltam para você\. As 2 guias de outros agentes continuam deles\./)
     await shot('dialogo-revogar-a-mesa', 'dialog.ask[open]')
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !document.querySelector('dialog.ask[open]'))
     assert.ok(obj('desk', D1, 'owner') !== undefined, 'cancel revokes nothing')
-    await openPill(D1); await choose('Revogar a mesa…')
+    await openPill(D1); await choose('Tirar a mesa de Atrium…')
     await rd.waitFor()
     await answer('for-agents.revoke-desk', 'revoke')
     await until(() => obj('desk', D1, 'owner') === undefined && [C1, C2].every(id => heldBy(id) === undefined) && heldBy(G) === byK, 'revoked: the desk\'s panes go back to the person, Kai\'s stay')

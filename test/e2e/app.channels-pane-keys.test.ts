@@ -227,9 +227,9 @@ test('channel pane: the whole management by keyboard, with the attributes of the
     assert.equal(v1.aria.list.label, 'Membros')
     assert.deepEqual(v1.aria.list.items.map(i => i.role), ['listitem', 'listitem', 'listitem'])
     const labels = v1.aria.list.items.map(i => i.label)
-    assert.ok(labels.includes(`${nameA}, membro, ouvindo`), labels.join(' | '))
-    assert.ok(labels.includes(`${nameB}, membro, ouvindo`), labels.join(' | '))
-    assert.ok(labels.includes('Você, moderador, lê tudo e fala em qualquer canal'), labels.join(' | '))
+    assert.ok(labels.includes(`${nameA}, ouvindo`), labels.join(' | '))
+    assert.ok(labels.includes(`${nameB}, ouvindo`), labels.join(' | '))
+    assert.ok(labels.includes('Você lê tudo e fala em qualquer canal'), labels.join(' | '))
     assert.equal(v1.composer?.label, 'Mensagem para o canal')
     assert.equal(v1.composer?.note, '')
     assert.deepEqual(v1.aria.tabs, ['toolbar', 'members', 'log', 'composer'], 'the DOM order is the Tab order')
@@ -256,7 +256,7 @@ test('channel pane: the whole management by keyboard, with the attributes of the
     await tabTo('name of A', w => w.region === 'members' && w.member === a && w.cls.includes('ch-link'))
     await page.keyboard.press('Shift+F10')
     await page.waitForSelector('#ctx-menu li')
-    assert.match((await page.locator('#ctx-menu li').first().innerText()).trim(), /membro/)
+    assert.match((await page.locator('#ctx-menu li').first().innerText()).trim(), new RegExp(nameA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     assert.equal((await where()).region, 'menu')
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
@@ -299,7 +299,7 @@ test('channel pane: the whole management by keyboard, with the attributes of the
       const e = document.activeElement as HTMLElement | null
       return e?.dataset.act === 'unmute' && e.closest<HTMLElement>('.ch-mrow')?.dataset.member === id
     }, [b])
-    assert.equal((await view(hz)).aria.list.items.some(i => i.label === `${nameB}, membro, calado, ouvindo`), true)
+    assert.equal((await view(hz)).aria.list.items.some(i => i.label === `${nameB}, calado, ouvindo`), true)
 
     // ---- 6. devolver a voz (no question), by keys ----
     console.log('step 6: devolver a voz')
@@ -385,7 +385,7 @@ test('channel pane: the whole management by keyboard, with the attributes of the
     assert.equal(await lbl.isVisible(), true)
     assert.equal(await lbl.innerText(), 'não ouve')
     assert.equal(await lbl.getAttribute('aria-hidden'), 'true')
-    assert.equal(await deafRow.getAttribute('aria-label'), `${ch.nameOf(s)}, membro, não ouve agora · falas em espera`)
+    assert.equal(await deafRow.getAttribute('aria-label'), `${ch.nameOf(s)}, não ouve agora · falas em espera`)
     // On one line, in the warning tone, beside the dot; the row of a member that hears has no label.
     assert.ok((await deafRow.boundingBox())!.height < 36, 'one-line row')
     const dotBox = (await deafRow.locator('.ch-dot').boundingBox())!

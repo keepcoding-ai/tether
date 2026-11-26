@@ -1,4 +1,4 @@
-// The speaking box of the channel's pane (slice U1b): "falar como moderador · para [todos ▾]", a text field, Enter sends,
+// The speaking box of the channel's pane (slice U1b): "para [todos ▾]", a text field, Enter sends,
 // Shift+Enter breaks the line. The recipient is an address, not a lock (P8): everyone hears, `to` only marks who it speaks to.
 // The line comes back through the channel's `line` event; this file only asks `say` and keeps the text when the ask fails.
 import { engineOf } from '../../../app/renderer/agent-ui.ts'
@@ -52,7 +52,7 @@ export const SAY_PLACEHOLDER_FILES = 'Escreva para o canal… (opcional com anex
 export const SAY_PLACEHOLDER = { on: 'Escreva para o canal…', off: 'Escreva para o canal… ninguém ouve ainda' } as const
 /** The field's accessible name, and what is announced when it goes off (a disabled field cannot take the focus to say it itself). */
 export const SAY_LABEL = { on: 'Mensagem para o canal', off: 'Mensagem para o canal, desligada: ninguém ouve ainda' } as const
-export const SAY_OFF_NOTE = 'A caixa de fala está desligada: ninguém ouve ainda. Junte um agente para falar.'
+export const SAY_OFF_NOTE = 'A caixa de fala está desligada: ninguém ouve ainda. Chame um agente para falar.'
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag)
@@ -166,8 +166,7 @@ export function createComposer(opts: ComposerOptions): Composer {
   const sendBtn = el('button', 'ch-send')
   sendBtn.type = 'button'
   sendBtn.append(glyph('paper-plane-tilt'), document.createTextNode('Enviar'))
-  const who = el('span', 'ch-role mod', 'moderador')
-  head.append('falar como ', who, ' · para ', pick)
+  head.append('para ', pick)
   // The poll: a button next to "Enviar" and the form pinned above the whole box. The box and its draft are not touched by it.
   const pollBtn = el('button', 'ch-pollbtn')
   pollBtn.type = 'button'

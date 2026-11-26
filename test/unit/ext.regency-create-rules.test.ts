@@ -161,7 +161,7 @@ describe('planOf', () => {
   test('agent already in a channel: slot, then join with the new pane', () => {
     const a = acts({ what: 'agent', kind: 'claude', deskId: 'd3', cwd: 'C:/p', joinChannel: 'geral' })
     assert.deepEqual(kinds(a), ['slot', 'join'])
-    assert.deepEqual(a[1], { act: 'join', runs: 'tetherd', channel: 'geral', agents: [REF_PANE], optional: true, doing: 'juntar o agente ao canal', done: 'juntei o agente ao canal' })
+    assert.deepEqual(a[1], { act: 'join', runs: 'tetherd', channel: 'geral', agents: [REF_PANE], optional: true, doing: 'chamar o agente ao canal', done: 'chamei o agente ao canal' })
   })
   test('the desk\'s own channel is not joined again (F1 joins by desk)', () => {
     assert.deepEqual(kinds(acts({ what: 'agent', kind: 'claude', deskId: 'd1', cwd: 'C:/p', joinChannel: 'obra' })), ['slot'])
@@ -276,8 +276,8 @@ describe('runPlan and the failure in the middle', () => {
     const run = await runPlan(acts({ what: 'agent', kind: 'claude', deskId: 'd3', cwd: 'C:/p', joinChannel: 'geral' }), async (act): Promise<ActResult> =>
       act.act === 'join' ? { ok: false, error: 'canal fechado' } : { ok: true, paneId: 'p1', deskId: 'd3' })
     assert.equal(run.ok, true)
-    assert.deepEqual(run.warnings, ['Não consegui juntar o agente ao canal: canal fechado.'])
-    assert.equal(run.text, 'Não consegui juntar o agente ao canal: canal fechado.')
+    assert.deepEqual(run.warnings, ['Não consegui chamar o agente ao canal: canal fechado.'])
+    assert.equal(run.text, 'Não consegui chamar o agente ao canal: canal fechado.')
     assert.deepEqual(run.announce, { paneId: 'p1', deskId: 'd3' })
   })
   test('the channel plan: the centre shows the channel made; refused members are a warning', async () => {

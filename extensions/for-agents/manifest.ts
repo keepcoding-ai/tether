@@ -21,7 +21,7 @@ export const manifest: ExtensionManifest = {
     // owner everywhere), and with none they act on the active pane. `for-agents.inventory` opens the inventory pad.
     commands: [
       { command: 'for-agents.give', title: 'Dar a guia ativa a um agente…', category: CATEGORY, icon: 'robot' },
-      { command: 'for-agents.take', title: 'Tomar a guia ativa do agente', category: CATEGORY, icon: 'hand-grabbing' },
+      { command: 'for-agents.take', title: 'Assumir o comando da guia ativa do agente', category: CATEGORY, icon: 'hand-grabbing' },
       { command: 'for-agents.return', title: 'Devolver a guia ativa ao agente', category: CATEGORY, icon: 'arrow-u-up-left' },
       { command: 'for-agents.revoke', title: 'Revogar o dono da guia ativa', category: CATEGORY, icon: 'link-break' },
       { command: 'for-agents.pause', title: 'Pausar o agente na guia ativa', category: CATEGORY, icon: 'pause' },

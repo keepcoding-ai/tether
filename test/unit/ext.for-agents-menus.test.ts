@@ -70,15 +70,15 @@ describe('the pill menu (section 3)', () => {
   test('a common desk: only "Dar a mesa a um agente…"', () => {
     assert.deepEqual(labels(deskMenu(facts(base), 'd2')), ['Dar a mesa a um agente…'])
   })
-  test('active: the line with the counts, then the six rows, "Revogar a mesa…" in danger', () => {
+  test('active: the line with the counts, then the six rows, "Tirar a mesa de Atrium…" in danger', () => {
     // c1, c2 are commanded by A; g is K's and A sees it; K is K's own pane and A sees it too (the owner's own pane is not counted).
     assert.deepEqual(labels(deskMenu(facts(base), 'd1')), [
-      '# Dono: Atrium · comanda 2 guias, vê 2', 'Ir para Atrium', 'Pausar Atrium nesta mesa', 'Tomar a mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Revogar a mesa… !',
+      '# Dono: Atrium · comanda 2 guias, vê 2', 'Ir para Atrium', 'Pausar Atrium nesta mesa', 'Assumir o comando da mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Tirar a mesa de Atrium… !',
     ])
   })
   test('paused here: the way back first, then the rest', () => {
     assert.deepEqual(labels(deskMenu(facts(withBase({ deskHand: { d1: hand('paused') } })), 'd1')), [
-      '# Dono: Atrium · pausada nesta mesa desde 14:10', 'Retomar Atrium nesta mesa', 'Ir para Atrium', 'Tomar a mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Revogar a mesa… !',
+      '# Dono: Atrium · pausada nesta mesa desde 14:10', 'Retomar Atrium nesta mesa', 'Ir para Atrium', 'Assumir o comando da mesa', 'O que Atrium pode aqui…', 'Dar a mesa a outro agente…', 'Tirar a mesa de Atrium… !',
     ])
   })
   test('paused everywhere (the owner is frozen): "Retomar … em tudo"', () => {
@@ -86,7 +86,7 @@ describe('the pill menu (section 3)', () => {
   })
   test('taken by the person: "Devolver a mesa a Atrium", the inventory and the revoke', () => {
     assert.deepEqual(labels(deskMenu(facts(withBase({ deskHand: { d1: hand('taken') } })), 'd1')), [
-      '# Dono: Atrium · a mesa está com você', 'Devolver a mesa a Atrium', 'O que Atrium pode aqui…', 'Revogar a mesa… !',
+      '# Dono: Atrium · a mesa está com você', 'Devolver a mesa a Atrium', 'O que Atrium pode aqui…', 'Tirar a mesa de Atrium… !',
     ])
   })
   test('the owner ended: the line, give again, keep the desk; "Fechar as guias que … abriu (3)…" when the count is known', () => {
@@ -102,12 +102,12 @@ describe('the pill menu (section 3)', () => {
 describe('the tab menu (section 3)', () => {
   test('(2) commanded by the desk: Tomar and Pausar pinned as icons', () => {
     assert.deepEqual(labels(paneMenu(facts(base), 'c1')), [
-      '# Comandada por Atrium, pela mesa', 'Tomar [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
+      '# Comandada por Atrium, pela mesa', 'Assumir o comando [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
     ])
   })
   test('(3) given to another: Atrium sees', () => {
     assert.deepEqual(labels(paneMenu(facts(base), 'g')), [
-      '# Dada a Kai · Atrium vê', 'Tomar [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai [icon]', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…',
+      '# Dada a Kai · Atrium vê', 'Assumir o comando [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai [icon]', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…',
     ])
   })
   test('(4) the agent\'s own pane that also owns another: the owner\'s section, then the pane\'s own rows', () => {
@@ -123,10 +123,10 @@ describe('the tab menu (section 3)', () => {
   test('(5) waiting for the owner: "Ir para" and "Tomar e responder eu" first', () => {
     const w = { c1: { kind: 'waiting' as const, at: '2026-11-21T14:05:00' } }
     assert.deepEqual(labels(paneMenu(facts({ ...base, waiting: w }), 'c1')), [
-      '# Espera Atrium: pediu permissão às 14:05', 'Ir para Atrium [icon]', 'Tomar e responder eu [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
+      '# Espera Atrium: pediu permissão às 14:05', 'Ir para Atrium [icon]', 'Assumir o comando e responder eu [icon]', 'Pausar Atrium nesta guia [icon]', 'Dar esta guia a outro agente…', 'O que Atrium pode nesta guia…',
     ])
     assert.deepEqual(labels(paneMenu(facts({ ...base, waiting: { g: { kind: 'waiting', at: '2026-11-21T14:05:00' } } }), 'g')).slice(0, 4), [
-      '# Espera Kai: pediu permissão às 14:05', 'Ir para Kai [icon]', 'Tomar e responder eu [icon]', 'Pausar Kai nesta guia [icon]',
+      '# Espera Kai: pediu permissão às 14:05', 'Ir para Kai [icon]', 'Assumir o comando e responder eu [icon]', 'Pausar Kai nesta guia [icon]',
     ])
   })
   test('(6) waiting for the person: the owner ended, the pane came back', () => {
@@ -182,7 +182,7 @@ describe('the tab menu (section 3)', () => {
     const rows = toRows(paneMenu(facts(base), 'g'), a => { picked.push(a.do) })
     assert.deepEqual(rows[0], { heading: 'Dada a Kai · Atrium vê' })
     const take = rows[1] as { label: string; pin: string; run(): void }
-    assert.deepEqual([take.label, take.pin], ['Tomar', 'icon'])
+    assert.deepEqual([take.label, take.pin], ['Assumir o comando', 'icon'])
     take.run()
     assert.deepEqual(picked, ['take'])
   })
@@ -268,9 +268,9 @@ describe('the dialogs\' words', () => {
   })
   test('revoking a desk', () => {
     const d = revokeDeskDialog({ desk: 'kai-aware', owner: 'Atrium', commands: 4, keptByOthers: [{ owner: 'Kai' }], waiting: 1 })
-    assert.equal(d.title, 'Revogar a mesa kai-aware de Atrium')
+    assert.equal(d.title, 'Tirar a mesa kai-aware de Atrium')
     assert.equal(d.message, 'As 4 guias que Atrium comanda voltam para você. Pedidos que esperavam Atrium (1) passam a esperar você. A guia de Kai continua de Kai.')
-    assert.deepEqual(d.choices.map(c => [c.label, c.tone]), [['Revogar', 'destructive']])
+    assert.deepEqual(d.choices.map(c => [c.label, c.tone]), [['Tirar a mesa', 'destructive']])
     assert.equal(d.tone, 'danger')
   })
 })

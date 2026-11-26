@@ -180,7 +180,7 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     assert.equal(says.length, 50, 'the first page is 50 lines')
     assert.equal(says.at(-1)!.text, `fala ${SEEDED}`)
     assert.ok(v.rows.every(r => r.kind !== 'notice') || v.rows.some(r => r.kind === 'notice'))
-    assert.deepEqual(v.members.map(m => [m.name, m.role, m.muted]).sort(), [[nameA, 'membro', false], [nameB, 'membro', true]].sort())
+    assert.deepEqual(v.members.map(m => [m.name, m.role, m.muted]).sort(), [[nameA, '', false], [nameB, '', true]].sort())
     assert.ok(v.members.every(m => m.tone === 'on' && m.state === 'ouvindo'), 'both hear from inside')
     assert.match(v.muteBar, /1 calado neste canal/)
     assert.equal(v.hasComposerSlot, true)
@@ -321,7 +321,7 @@ test('channel pane: history, members, new lines, the place kept', { timeout: 420
     await waitView('the moderator line came back', x => x.rows.some(r => r.text === 'primeira\nsegunda'))
     let mine = await lastSay()
     assert.equal(mine.mine, true)
-    assert.equal(mine.role, 'moderador')
+    assert.equal(mine.role, '')
     assert.deepEqual(mine.to, [], 'no recipient: for everyone')
     assert.equal((await view())!.composer!.text, '', 'the box emptied')
     const seg = nameA.split(/[^\p{L}\p{N}_-]+/u).filter(Boolean).at(-1)!

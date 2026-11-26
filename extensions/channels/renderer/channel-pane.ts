@@ -421,7 +421,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (this.isClosed()) { this.toast(DROP_CLOSED); return }
       if (!this.answer || !this.composerSlot.contains(this.composer.element)) { this.toast('O canal ainda está carregando. Solte de novo em instantes.'); return }
       const r = this.composer.drop(dt)
-      if (r === 'off') this.toast('Ninguém ouve ainda: junte um agente ao canal para anexar arquivos.')
+      if (r === 'off') this.toast('Ninguém ouve ainda: chame um agente ao canal para anexar arquivos.')
       else if (r === 'no-file') this.toast(DROP_NO_FILE)
     }
 
@@ -1725,7 +1725,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (!r.continued) {
         const who = el('div', 'ch-who')
         const em = this.authorLead(r)
-        const role = el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role)
+        const role = r.role ? el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role) : undefined
         const dest = el('span', 'ch-dest')
         dest.append(glyph('arrow-bend-down-right'))
         if (r.to.length === 0) dest.append('para todos')
@@ -1738,7 +1738,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
             dest.append(n)
           })
         }
-        who.append(...em, this.agentName(r.authorId, 'ch-author', r.name), role, dest, el('time', '', r.time))
+        who.append(...em, this.agentName(r.authorId, 'ch-author', r.name), ...(role ? [role] : []), dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
       if (r.body.trim() !== '' || !r.files?.length) e.append(this.speech(r.body))
@@ -1776,7 +1776,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       hueStyle(e, r.hue)
       e.tabIndex = -1
       const who = el('div', 'ch-who')
-      who.append(...this.authorLead(r), this.agentName(r.authorId, 'ch-author', r.name), el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role), el('time', '', r.time))
+      who.append(...this.authorLead(r), this.agentName(r.authorId, 'ch-author', r.name), ...(r.role ? [el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role)] : []), el('time', '', r.time))
       e.append(who)
       const card = this.cardFor(r.seq)
       if (card) { e.append(this.pollCardEl(card)); this.nameRow(e, card) }
@@ -2493,7 +2493,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         l1.append(em, markCell(ident), name)
         // The narrow row is one line: the role, the muted mark and the state as a dot ride on it (the second line is away there).
         const nrole = el('span', 'ch-nrole')
-        nrole.append(el('span', 'ch-role', m.role))
+        if (m.role) nrole.append(el('span', 'ch-role', m.role))
         if (m.muted) {
           const mute = el('span', 'ch-role mute')
           mute.append(glyph('speaker-slash'), 'calado')
@@ -2551,7 +2551,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           })
         }
         const l2 = el('div', 'ch-l2')
-        l2.append(el('span', 'ch-role', m.role))
+        if (m.role) l2.append(el('span', 'ch-role', m.role))
         if (m.muted) {
           const mute = el('span', 'ch-role mute')
           mute.append(glyph('speaker-slash'), 'calado')
@@ -2572,7 +2572,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       em.append(glyph('user'))
       l1.append(em, el('span', 'ch-author', 'Você'))
       const l2 = el('div', 'ch-l2')
-      l2.append(el('span', 'ch-role mod', 'moderador'), el('span', 'ch-state', 'lê tudo, fala em qualquer canal'))
+      l2.append(el('span', 'ch-state', 'lê tudo, fala em qualquer canal'))
       me.append(l1, l2)
       list.append(me)
       if (held) this.returnFocus()

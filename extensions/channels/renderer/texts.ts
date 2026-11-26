@@ -17,14 +17,14 @@ export const ICON = {
 /** What each command asks in its pickers. */
 export const PICK = {
   open: { title: 'Abrir canal', placeholder: 'Buscar canal', empty: 'Não há canais ainda.' },
-  join: { title: 'Juntar agente a que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
+  join: { title: 'Chamar agente a que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
   remove: { title: 'Tirar agente de que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
   mute: { title: 'Calar agente em que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
   unmute: { title: 'Devolver a voz em que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos.' },
   close: { title: 'Encerrar que canal?', placeholder: 'Buscar canal', empty: 'Não há canais abertos para encerrar.' },
   reopen: { title: 'Reabrir que canal?', placeholder: 'Buscar canal', empty: 'Não há canais encerrados para reabrir.' },
   agentJoin: (channel: string, noAgents = false) => ({
-    title: `Juntar a #${channel}`, placeholder: 'Buscar agente',
+    title: `Chamar para #${channel}`, placeholder: 'Buscar agente',
     empty: noAgents ? 'Não há guia de agente aberta. Abra um agente numa mesa e ele aparece aqui.' : 'Nenhum agente fora do canal.',
   }),
   agentRemove: (channel: string) => ({ title: `Tirar de #${channel}`, placeholder: 'Buscar membro', empty: 'Não há ninguém para tirar.' }),
@@ -180,7 +180,7 @@ export function memberItems(members: readonly MemberInfo[], ownerId: string | un
   const ordered = [...kept.filter(m => m.id === ownerId), ...kept.filter(m => m.id !== ownerId)]
   return ordered.map(m => ({
     value: m.id, label: m.name, letter: m.name.charAt(0).toUpperCase() || '?', hue: agentHue(m.id),
-    detail: [m.id === ownerId ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.by === 'desk' ? ['da mesa'] : [])].join(' · '),
+    detail: [...(m.id === ownerId ? ['dono'] : []), ...(m.muted ? ['calado'] : []), ...(m.by === 'desk' ? ['da mesa'] : [])].join(' · '),
     ...emblemField(m.id, emblemOf), ...engineField(m.id, kindOf),
   }))
 }
@@ -196,13 +196,13 @@ export function removeDialog(t: MemberText): DialogSpec {
   if (t.isOwner) {
     message.push(t.desk
       ? 'Ele é o dono da mesa. O canal segue com você até a mesa trocar de dono.'
-      : 'Ele é o dono deste canal. Ao sair deixa de ser dono, e o canal passa para você. Se for juntado de novo, volta como membro.')
+      : 'Ele é o dono deste canal. Ao sair deixa de ser dono, e o canal passa para você. Se for chamado de novo, volta como os demais.')
   }
-  if (t.fromDesk) message.push('Ele é membro da mesa, mas pode sair do canal mesmo assim. Fica de fora até ser juntado de novo, ou até sair da mesa e voltar.')
+  if (t.fromDesk) message.push('Ele é da mesa, mas pode sair do canal mesmo assim. Fica de fora até ser chamado de novo, ou até sair da mesa e voltar.')
   return {
     situation: 'channels.remove', tone: 'danger', icon: ICON.remove,
     title: `Tirar ${t.member} de #${t.channel}?`, message: message.join(' '),
-    choices: [{ id: 'remove', icon: ICON.remove, label: 'Tirar do canal', consequence: `${t.member} deixa de ouvir #${t.channel} até ser juntado de novo.`, tone: 'destructive' }],
+    choices: [{ id: 'remove', icon: ICON.remove, label: 'Tirar do canal', consequence: `${t.member} deixa de ouvir #${t.channel} até ser chamado de novo.`, tone: 'destructive' }],
     cancelLabel: 'Cancelar',
   }
 }
@@ -253,7 +253,7 @@ const REFUSALS: Record<string, string> = {
   closed: 'O canal está encerrado.',
   'not-closed': 'O canal já está aberto.',
   desk: 'O canal da mesa segue a mesa: ele se encerra e reabre sozinho com o dono dela.',
-  removed: 'Esse agente foi tirado do canal e só volta se for juntado de novo.',
+  removed: 'Esse agente foi tirado do canal e só volta se for chamado de novo.',
   'unknown-agent': 'Esse agente não existe mais.',
   'unknown-channel': 'Esse canal não existe mais.',
   'name-taken': 'Já há um canal aberto com esse nome.',
@@ -298,7 +298,7 @@ export function joinResultDialog(outcomes: readonly JoinOutcome[]): DialogSpec {
   }
   return {
     situation: 'channels.failed', tone: 'warn', icon: 'shield-warning',
-    title: 'Juntar agentes',
+    title: 'Chamar agentes',
     message: `${entered.length > 0 ? `Entraram: ${entered.join(', ')}. ` : ''}Não entrou: ${failed.map(why).join('; ')}.`,
     choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: entered.length > 0 ? 'Quem entrou segue no canal.' : 'Nada foi alterado.', tone: 'safe' }],
   }
@@ -324,15 +324,15 @@ export function createRow(query: string): PickItem<string> | undefined {
 
 /** The gestures drawn in the channel's own pane (header, members column, empty state, member rows). */
 export const PANE_TEXT = {
-  join: 'Juntar agente',
-  joinMenu: 'Juntar agente…',
+  join: 'Chamar agente',
+  joinMenu: 'Chamar agente…',
   reopen: 'Reabrir canal',
   more: 'Mais',
   members: 'Membros',
   toEnd: 'Ir para o fim',
   /** The empty channel: the title, the explanation and (below it) the button "Juntar agente…". */
   noMembers: 'Ninguém aqui ainda.',
-  noMembersHelp: 'Junte um agente para a conversa começar. Você lê tudo e pode falar a qualquer momento.',
+  noMembersHelp: 'Chame um agente para a conversa começar. Você lê tudo e pode falar a qualquer momento.',
   mute: 'Calar',
   unmute: 'Devolver a voz',
   remove: 'Tirar do canal',
@@ -388,7 +388,7 @@ export interface MemberMenuInput { name: string; owner: boolean; muted: boolean;
  * talk to, mute or give the voice back, take out. The owner has the same rows: taking him out is allowed and the dialog tells what follows.
  */
 export function memberMenu(m: MemberMenuInput): MemberMenuEntry[] {
-  const info = [m.name, m.owner ? 'dono' : 'membro', ...(m.muted ? ['calado'] : []), ...(m.fromDesk ? ['da mesa'] : [])].join(' · ')
+  const info = [m.name, ...(m.owner ? ['dono'] : []), ...(m.muted ? ['calado'] : []), ...(m.fromDesk ? ['da mesa'] : [])].join(' · ')
   return [
     { heading: info },
     ...goRows(m.noDesk === true),
@@ -424,9 +424,9 @@ export function channelMenu(c: ChannelSummary, answer: MembersAnswer | undefined
   const closed = c.closed !== undefined
   const desk = c.desk !== undefined
   const info = [`Dono: ${ownerName(c)}`, membersCount(count), ...(muted > 0 ? [muted === 1 ? '1 calado' : `${muted} calados`] : [])].join(' · ')
-  const kind = desk ? `canal da mesa · segue a mesa: encerra e reabre com o dono dela${closed ? ' · encerrado' : ''}` : closed ? 'canal avulso · encerrado' : 'canal avulso'
+  const kind = desk ? `canal da mesa · segue a mesa: encerra e reabre com o dono dela${closed ? ' · encerrado' : ''}` : closed ? 'encerrado' : undefined
   const nobody = count === 0
-  const rows: ChannelMenuEntry[] = [{ heading: info }, { heading: kind }]
+  const rows: ChannelMenuEntry[] = [{ heading: info }, ...(kind !== undefined ? [{ heading: kind }] : [])]
   if (!closed) rows.push({ id: 'join', icon: ICON.join, label: PANE_TEXT.joinMenu })
   if (count > 0) rows.push({ id: 'members', icon: 'sidebar-simple', label: PANE_TEXT.members, checked: view.membersOpen })
   rows.push({ id: 'toEnd', icon: 'arrow-line-down', label: PANE_TEXT.toEnd })

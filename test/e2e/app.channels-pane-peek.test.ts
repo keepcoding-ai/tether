@@ -162,7 +162,7 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     await authorA.click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
     assert.deepEqual(await menuRows(), [
-      `${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', `Falar com ${nameA}`, 'Calar', 'Tirar do canal',
+      nameA, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', `Falar com ${nameA}`, 'Calar', 'Tirar do canal',
     ])
     await page.screenshot({ path: join(SHOTS, 'e3-menu-nome.png') })
     await page.keyboard.press('Escape')
@@ -170,7 +170,7 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     // The member's row opens the very same menu from its name.
     await pane(hz).locator(`.ch-mrow[data-member="${a}"] button.ch-agent`).click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
-    assert.deepEqual((await menuRows()).slice(0, 4), [`${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…'])
+    assert.deepEqual((await menuRows()).slice(0, 4), [nameA, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…'])
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
 

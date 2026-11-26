@@ -21,8 +21,8 @@ const LIST = [CONF, OLD, OBRA]
 
 test('joinResultDialog: tells who came in and who did not, each refusal in plain words', () => {
   const d = joinResultDialog([{ name: 'ana' }, { name: 'bia', code: 'removed' }, { name: 'caio', code: 'unknown-agent' }])
-  assert.equal(d.title, 'Juntar agentes')
-  assert.equal(d.message, 'Entraram: ana. Não entrou: bia (Esse agente foi tirado do canal e só volta se for juntado de novo); caio (Esse agente não existe mais).')
+  assert.equal(d.title, 'Chamar agentes')
+  assert.equal(d.message, 'Entraram: ana. Não entrou: bia (Esse agente foi tirado do canal e só volta se for chamado de novo); caio (Esse agente não existe mais).')
   const none = joinResultDialog([{ name: 'bia', code: 'closed' }, { name: 'caio', code: 'closed' }])
   assert.equal(none.message, 'Não entrou: bia (O canal está encerrado); caio (O canal está encerrado).')
 })
@@ -122,14 +122,14 @@ test('joinItems: a live agent with no pane goes to "Sem mesa" after the drawer a
 
 test('memberMenu: a member with no pane has "Espiar" first and no "Ir para a guia"', () => {
   const ids = (m: ReturnType<typeof memberMenu>): string[] => m.map(e => (e === 'sep' ? '-' : 'heading' in e ? `# ${e.heading}` : e.id))
-  assert.deepEqual(ids(memberMenu({ name: 'x', owner: false, muted: false, fromDesk: false, noDesk: true })), ['# x · membro', 'peek', '-', 'talk', 'mute', 'remove'])
+  assert.deepEqual(ids(memberMenu({ name: 'x', owner: false, muted: false, fromDesk: false, noDesk: true })), ['# x', 'peek', '-', 'talk', 'mute', 'remove'])
   assert.deepEqual(ids(agentNameMenu('x', true)), ['# x', 'peek', '-', 'copy'])
 })
 
 test('PICK.agentJoin: the empty texts tell nobody outside the channel from no agent pane at all', () => {
   assert.equal(PICK.agentJoin('obra').empty, 'Nenhum agente fora do canal.')
   assert.equal(PICK.agentJoin('obra', true).empty, 'Não há guia de agente aberta. Abra um agente numa mesa e ele aparece aqui.')
-  assert.equal(PICK.agentJoin('obra').title, 'Juntar a #obra')
+  assert.equal(PICK.agentJoin('obra').title, 'Chamar para #obra')
 })
 
 test('memberItems: the owner first; mute offers the ones who speak, unmute the muted, remove everyone', () => {
@@ -139,7 +139,7 @@ test('memberItems: the owner first; mute offers the ones who speak, unmute the m
   assert.deepEqual(memberItems(members, 'a', 'mute').map(i => i.value), ['a', 'c'])
   assert.deepEqual(memberItems(members, 'a', 'unmute').map(i => i.value), ['b'])
   assert.equal(memberItems(members, 'a', 'remove')[0]!.detail, 'dono · da mesa')
-  assert.equal(memberItems(members, 'a', 'remove')[1]!.detail, 'membro · calado')
+  assert.equal(memberItems(members, 'a', 'remove')[1]!.detail, 'calado')
 })
 
 test('agent rows carry the engine: the join list from the pane\'s kind, the member list from the reader (none when it does not know)', () => {
@@ -206,7 +206,7 @@ test('removeDialog: three variants of the consequence (member, owner of a common
   const plain = removeDialog({ channel: 'obra', member: 'x', fromDesk: false, isOwner: false, desk: false }).message!
   assert.doesNotMatch(plain, /dono/)
   const own = removeDialog({ channel: 'obra', member: 'Atrium', fromDesk: false, isOwner: true, desk: false }).message!
-  assert.match(own, /Ele é o dono deste canal\. Ao sair deixa de ser dono, e o canal passa para você\. Se for juntado de novo, volta como membro\./)
+  assert.match(own, /Ele é o dono deste canal\. Ao sair deixa de ser dono, e o canal passa para você\. Se for chamado de novo, volta como os demais\./)
   const desk = removeDialog({ channel: 'obra', member: 'Atrium', fromDesk: true, isOwner: true, desk: true }).message!
   assert.match(desk, /Ele é o dono da mesa\. O canal segue com você até a mesa trocar de dono\./)
   assert.doesNotMatch(desk, /passa para você/)
@@ -215,9 +215,9 @@ test('removeDialog: three variants of the consequence (member, owner of a common
 test('memberMenu: member, muted, owner and desk member; the rows and their order', () => {
   const ids = (m: ReturnType<typeof memberMenu>): string[] => m.map(e => (e === 'sep' ? '-' : 'heading' in e ? `# ${e.heading}` : e.id))
   assert.deepEqual(ids(memberMenu({ name: 'claude · conferente', owner: false, muted: false, fromDesk: false })),
-    ['# claude · conferente · membro', 'go', 'peek', 'emblem', '-', 'talk', 'mute', 'remove'])
+    ['# claude · conferente', 'go', 'peek', 'emblem', '-', 'talk', 'mute', 'remove'])
   assert.deepEqual(ids(memberMenu({ name: 'codex · conferência', owner: false, muted: true, fromDesk: false })),
-    ['# codex · conferência · membro · calado', 'go', 'peek', 'emblem', '-', 'talk', 'unmute', 'remove'])
+    ['# codex · conferência · calado', 'go', 'peek', 'emblem', '-', 'talk', 'unmute', 'remove'])
   // The way to the pane comes first and names its gestures; a name that is no longer a member has only the way and the link.
   const way = memberMenu({ name: 'x', owner: false, muted: false, fromDesk: false }).filter((e): e is Exclude<typeof e, 'sep' | { heading: string }> => e !== 'sep' && 'id' in e)
   assert.deepEqual(way.slice(0, 2).map(e => [e.label, e.hint]), [['Ir para a guia', 'Clique'], ['Espiar', 'Alt+clique']])
@@ -242,7 +242,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
   // Open, loose, nobody muted: no "Devolver a voz…"; "Encerrar canal…" last.
   const open = ans(CONF, [member('a', false), member('b', false)])
   assert.deepEqual(ids(channelMenu(CONF, open)),
-    ['# Dono: Você · 2 membros', '# canal avulso', 'join', 'members', 'toEnd', 'mute', 'remove', 'poll', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'close'])
+    ['# Dono: Você · 2 membros', 'join', 'members', 'toEnd', 'mute', 'remove', 'poll', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'close'])
   const close = channelMenu(CONF, open).at(-1) as { label: string; danger?: boolean }
   assert.deepEqual([close.label, close.danger], ['Encerrar canal…', true])
 
@@ -250,7 +250,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
   const muted = ans(CONF, [member('a', false), member('b', true)])
   const withMuted = channelMenu(CONF, muted, { membersOpen: true })
   assert.equal((withMuted[0] as { heading: string }).heading, 'Dono: Você · 2 membros · 1 calado')
-  assert.deepEqual(ids(withMuted).slice(5, 8), ['mute', 'unmute', 'remove'])
+  assert.deepEqual(ids(withMuted).slice(4, 7), ['mute', 'unmute', 'remove'])
   assert.equal((withMuted.find(e => e !== 'sep' && 'id' in e && e.id === 'unmute') as { label: string }).label, 'Devolver a voz…')
   assert.equal((withMuted.find(e => e !== 'sep' && 'id' in e && e.id === 'members') as { checked?: boolean }).checked, true)
 
@@ -264,7 +264,7 @@ test('channelMenu: open channel, with a muted member, desk channel and closed ch
 
   // Closed loose channel: the gestures go, reading stays, "Reabrir canal" takes the last place.
   const closed = channelMenu(OLD, ans(OLD, [member('a', true)]))
-  assert.deepEqual(ids(closed), ['# Dono: Você · 1 membro · 1 calado', '# canal avulso · encerrado', 'members', 'toEnd', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'reopen'])
+  assert.deepEqual(ids(closed), ['# Dono: Você · 1 membro · 1 calado', '# encerrado', 'members', 'toEnd', '-', 'link', 'channelLink', 'move', 'closePane', '-', 'reopen'])
 
   // Empty open channel: nothing to mute or take out (disabled), no "Membros" (no column).
   const empty = channelMenu(CONF, ans(CONF, []))
@@ -290,7 +290,7 @@ test('failedDialog: the daemon\'s own message is told with the words', () => {
 
 test('failedDialog: a refusal in plain words, an unknown code still says something', () => {
   assert.match(failedDialog('Encerrar canal', 'desk').message!, /segue a mesa/)
-  assert.match(failedDialog('Juntar agente', 'removed').message!, /foi tirado do canal/)
-  assert.match(failedDialog('Juntar agente', 'weird').message!, /\(weird\)/)
+  assert.match(failedDialog('Chamar agente', 'removed').message!, /foi tirado do canal/)
+  assert.match(failedDialog('Chamar agente', 'weird').message!, /\(weird\)/)
   assert.equal(failedDialog('x', 'closed').choices[0]!.id, 'ok')
 })

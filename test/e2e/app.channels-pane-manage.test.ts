@@ -155,8 +155,8 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     assert.equal(await pane(hz).locator('.ch-composer-slot textarea').isDisabled(), true)
     assert.equal(await pane(hz).locator('.ch-composer-slot .ch-send').isDisabled(), true)
     assert.equal(await pane(hz).locator('.ch-bar button[aria-label="Membros"]').isVisible(), false)
-    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('aria-label'), 'Juntar agente…')
-    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('title'), 'Juntar agente…')
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('aria-label'), 'Chamar agente…')
+    assert.equal(await pane(hz).locator('.ch-bar .ch-join').getAttribute('title'), 'Chamar agente…')
     // The empty state says the words once, in the body: the accent of the bar is only an icon here, and the column has no "+".
     assert.deepEqual((await view(hz))!.actions, { primary: 'join', labeled: false, more: true, toEnd: !(await isNarrow(hz)) })
     assert.equal(await pane(hz).locator('.ch-bar .ch-join .ch-lbl').isVisible(), false)
@@ -167,12 +167,12 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     console.log('step 2')
     await pane(hz).locator('.ch-join-empty').click()
     await picker.waitFor()
-    assert.equal(await pickTitle(), 'Juntar a #horizontes')
+    assert.equal(await pickTitle(), 'Chamar para #horizontes')
     await page.keyboard.press('Escape')
     await picker.waitFor({ state: 'detached' })
     await pane(hz).locator('.ch-bar .ch-join').click()
     await picker.waitFor()
-    assert.equal(await pickTitle(), 'Juntar a #horizontes')
+    assert.equal(await pickTitle(), 'Chamar para #horizontes')
     await page.locator('dialog.picker li.pk-item', { hasText: nameA }).click() // a click marks in the many box
     await page.keyboard.press('Enter')
     await waitUntil(() => a in members(hz), 10_000, 'a joined by the header button')
@@ -198,13 +198,12 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.waitForSelector('#ctx-menu li')
     const moreLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
     // G4: the plan's rows in the plan's order (two lines of information first; nobody is muted yet, so no "Devolver a voz…").
-    const MENU_ROWS = ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Abrir enquete…', 'Copiar link do painel', 'Copiar link do canal', 'Mover…', 'Espiar\nAlt+clique', 'Fechar painel', 'Encerrar canal…']
+    const MENU_ROWS = ['Chamar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Tirar agente…', 'Abrir enquete…', 'Copiar link do painel', 'Copiar link do canal', 'Mover…', 'Espiar\nAlt+clique', 'Fechar painel', 'Encerrar canal…']
     // (The "Emblema…" row the core adds is not the channel's; a channel tab is never offered to an agent.)
     assert.ok(!moreLabels.includes('Dar esta guia a um agente…'))
     const own = moreLabels.filter(t => t !== '' && t !== 'Emblema…')
     assert.match(own[0]!, /^Dono: .+ · 1 membro$/)
-    assert.equal(own[1], 'canal avulso')
-    assert.deepEqual(own.slice(2), MENU_ROWS, `more menu: ${moreLabels.join(' | ')}`)
+    assert.deepEqual(own.slice(1), MENU_ROWS, `more menu: ${moreLabels.join(' | ')}`)
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
     // The tab's right click draws the very same rows (one place builds both).
@@ -235,7 +234,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.waitForSelector('#ctx-menu li')
     const memberLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '')
     // The way to the guia (with its hints) comes first, as in the menu of the name anywhere (app.channels-pane-peek.test.ts).
-    assert.deepEqual(memberLabels.map(t => t.replace(/\s+/g, ' ')), [`${nameA} · membro`, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', `Falar com ${nameA}`, 'Calar', 'Tirar do canal'])
+    assert.deepEqual(memberLabels.map(t => t.replace(/\s+/g, ' ')), [nameA, 'Ir para a guia Clique', 'Espiar Alt+clique', 'Emblema…', `Falar com ${nameA}`, 'Calar', 'Tirar do canal'])
     await page.screenshot({ path: join(SHOTS, 'g3-menu.png') })
     await page.locator('#ctx-menu li', { hasText: /^Calar$/ }).click()
     await ask('channels.mute').waitFor()
@@ -252,7 +251,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.waitForSelector('#ctx-menu li')
     const mutedMenu = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim()).filter(t => t !== '')
     assert.match(mutedMenu[0]!, /^Dono: .+ · 1 membro · 1 calado$/)
-    assert.deepEqual(mutedMenu.slice(2, 8), ['Juntar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Devolver a voz…', 'Tirar agente…'])
+    assert.deepEqual(mutedMenu.slice(1, 7), ['Chamar agente…', 'Membros', 'Ir para o fim', 'Calar agente…', 'Devolver a voz…', 'Tirar agente…'])
     await page.screenshot({ path: join(SHOTS, 'g4-menu.png') })
     await page.keyboard.press('Escape')
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
@@ -278,10 +277,10 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await page.locator('.ch-tab', { hasText: '#horizontes' }).first().click({ button: 'right' })
     await page.waitForSelector('#ctx-menu li')
     const labels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.trim())
-    assert.ok(labels.includes('Juntar agente…') && labels.includes('Encerrar canal…'), `tab menu: ${labels.join(' | ')}`)
-    await page.locator('#ctx-menu li', { hasText: 'Juntar agente…' }).click()
+    assert.ok(labels.includes('Chamar agente…') && labels.includes('Encerrar canal…'), `tab menu: ${labels.join(' | ')}`)
+    await page.locator('#ctx-menu li', { hasText: 'Chamar agente…' }).click()
     await picker.waitFor()
-    assert.equal(await pickTitle(), 'Juntar a #horizontes')
+    assert.equal(await pickTitle(), 'Chamar para #horizontes')
     await page.keyboard.press('Escape')
     await picker.waitFor({ state: 'detached' })
 
