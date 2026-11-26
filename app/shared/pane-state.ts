@@ -28,7 +28,7 @@ export interface PaneStateView {
 }
 
 export const PANE_STATE_TEXT: Readonly<Record<PaneState, string>> = {
-  waiting: 'espera você', busy: 'trabalhando', idle: 'livre', asleep: 'dormindo',
+  waiting: 'espera você', busy: 'trabalhando', idle: 'livre', asleep: 'hibernando',
 }
 export const PANE_MARK_TEXT: Readonly<Record<PaneMark, string>> = { done: 'terminou', ended: 'encerrado' }
 

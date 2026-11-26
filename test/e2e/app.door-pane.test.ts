@@ -132,7 +132,7 @@ test('door pane: a pane the daemon asks for', { timeout: 300_000 }, async () => 
       await waitUntil(() => !slotState(made.slotId)?.paneRequest, 20_000, 'the daemon cleared the remote request')
       // A desk that sleeps is refused with a reason, and no slot is born.
       const count = slots.list().length
-      await assert.rejects(remote.request({ t: 'create', kind: 'shell', cwd, desk: 'desk-3' }), /dormindo/)
+      await assert.rejects(remote.request({ t: 'create', kind: 'shell', cwd, desk: 'desk-3' }), /hibernando/)
       assert.equal(slots.list().length, count)
     } finally {
       remote.close()

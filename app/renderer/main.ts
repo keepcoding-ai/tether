@@ -625,7 +625,7 @@ function setupDock(): void {
     rename: (id, name) => desks.rename(id, name),
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
-    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, [{ heading: 'Mesas hibernadas' }, ...entries.map(e => ({ icon: 'sun' as const, label: `Acordar ${e.name}`, run: () => wake(e.id) }))], opener),
+    sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, [{ heading: 'Mesas hibernadas' }, ...entries.map(e => ({ icon: 'sun' as const, label: `Despertar ${e.name}`, run: () => wake(e.id) }))], opener),
     overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
@@ -1766,7 +1766,7 @@ function paneDeskOf(paneId: string): { id: string; color: string; asleep?: boole
   return id ? desks.desks.find(d => d.id === id) ?? desks.systemDesks.find(d => d.id === id) : undefined
 }
 
-/** "Acordar" in the quick view: the desk wakes whole, or the pane alone; the answer is the refusal's sentence, or nothing. */
+/** "Despertar" in the quick view: the desk wakes whole, or the pane alone; the answer is the refusal's sentence, or nothing. */
 function wakeQuickPane(paneId: string, what: 'desk' | 'pane'): Promise<string | undefined> {
   const said = (a: WakeAnswer): string | undefined => a.ok ? undefined : a.why === 'unconfirmed' ? 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' : a.message
   const deskId = paneDeskOf(paneId)?.id
@@ -3889,7 +3889,7 @@ function notifyCreateItems(): void {
 function createTargetRefusal(deskId: string): string | undefined {
   const d = desks.desks.find(x => x.id === deskId)
   if (!d) return desks.systemDesks.some(x => x.id === deskId) ? 'Uma mesa de sistema não recebe guias novas.' : 'Essa mesa não existe mais.'
-  if (d.asleep) return 'A mesa está dormindo: acorde-a antes de criar nela.'
+  if (d.asleep) return 'A mesa está hibernando: desperte-a antes de criar nela.'
   return undefined
 }
 
@@ -5042,7 +5042,7 @@ declare global {
       giveBackPane(paneId: string): boolean
       /** A pane's loan: its shell's state (absent = no shell), whether the hook holds it, how many times its loan was lost. */
       paneLoan(paneId: string): { state?: LoanState; held: boolean; lost: number }
-      /** "Hibernar mesa" without the dialog (the desk's agents stop, its panes stay mounted); "Acordar". */
+      /** "Hibernar mesa" without the dialog (the desk's agents stop, its panes stay mounted); "Despertar". */
       hibernateDesk(id: string): Promise<void>
       wakeDesk(id: string): string[]
       /** The palette: open or not, its mode, the ids on screen in order, the field's text. */

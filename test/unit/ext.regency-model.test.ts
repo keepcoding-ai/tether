@@ -287,8 +287,8 @@ describe('state counts and filter', () => {
 describe('one state for a pane (app/shared/pane-state.ts): the line, the filter, "Esperam você" and the card agree', () => {
   test('the rule: waiting first, then sleep (pane or desk), ended, work; the rest free, with "terminou"', () => {
     assert.deepEqual(paneStateOf({ attention: 'waiting', deskAsleep: true, busy: true }), { state: 'waiting', text: 'espera você' })
-    assert.deepEqual(paneStateOf({ asleep: true, busy: true }), { state: 'asleep', text: 'dormindo' })
-    assert.deepEqual(paneStateOf({ deskAsleep: true }), { state: 'asleep', text: 'dormindo' })
+    assert.deepEqual(paneStateOf({ asleep: true, busy: true }), { state: 'asleep', text: 'hibernando' })
+    assert.deepEqual(paneStateOf({ deskAsleep: true }), { state: 'asleep', text: 'hibernando' })
     assert.deepEqual(paneStateOf({ exited: true, attention: 'done' }), { state: 'idle', mark: 'ended', text: 'encerrado' })
     assert.deepEqual(paneStateOf({ busy: true, attention: 'done' }), { state: 'busy', text: 'trabalhando' })
     assert.deepEqual(paneStateOf({ attention: 'done' }), { state: 'idle', mark: 'done', text: 'terminou' })

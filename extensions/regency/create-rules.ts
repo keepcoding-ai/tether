@@ -169,7 +169,7 @@ function deskProblem(deskId: string, ctx: CreateContext): string | undefined {
   if (ctx.desks === undefined) return undefined
   const desk = queueDesk(deskId, ctx)
   if (desk === undefined) return 'Essa mesa não existe mais.'
-  if (desk.asleep) return 'Essa mesa está dormindo: acorde-a antes de criar nela.'
+  if (desk.asleep) return 'Essa mesa está hibernando: desperte-a antes de criar nela.'
   return undefined
 }
 

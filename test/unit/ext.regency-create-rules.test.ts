@@ -107,12 +107,12 @@ describe('validation, in Portuguese', () => {
     assert.equal(err({ what: 'terminal' })?.error, 'Escolha a mesa.')
     assert.equal(err({ what: 'terminal', deskId: NEW_DESK })?.error, 'Dê um nome à mesa nova.')
     assert.equal(err({ what: 'terminal', deskId: NEW_DESK, newDesk: { name: 'x'.repeat(41) } })?.error, 'O nome da mesa tem até 40 letras.')
-    assert.equal(err({ what: 'terminal', deskId: 'd2' })?.error, 'Essa mesa está dormindo: acorde-a antes de criar nela.')
+    assert.equal(err({ what: 'terminal', deskId: 'd2' })?.error, 'Essa mesa está hibernando: desperte-a antes de criar nela.')
     assert.equal(err({ what: 'terminal', deskId: 'zz' })?.error, 'Essa mesa não existe mais.')
     assert.equal(err({ what: 'terminal', deskId: 'regency.main' })?.error, 'Essa mesa não existe mais.')
   })
   test('a fixed desk that sleeps is refused in details', () => {
-    assert.deepEqual(err({ what: 'note', deskId: 'd2', cwd: 'C:/p' }, { deskId: 'd2' }), { step: 'details', error: 'Essa mesa está dormindo: acorde-a antes de criar nela.' })
+    assert.deepEqual(err({ what: 'note', deskId: 'd2', cwd: 'C:/p' }, { deskId: 'd2' }), { step: 'details', error: 'Essa mesa está hibernando: desperte-a antes de criar nela.' })
   })
   test('details: folder, channel to join, url, channel name, desk name', () => {
     assert.deepEqual(err({ what: 'agent', kind: 'claude', deskId: 'd1' }), { step: 'details', error: 'Escolha a pasta de trabalho.' })

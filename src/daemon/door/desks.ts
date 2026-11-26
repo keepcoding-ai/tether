@@ -133,7 +133,7 @@ export class DeskService implements DoorDesks {
     // that is its own, by the same rule `agents open` applies; the person (no asker) gets any ordinary desk.
     if (desk.kind === 'system') throw new DoorError('bad-request', `a mesa "${desk.name}" é de sistema`)
     if (asker !== undefined && !(this.ownership?.(asker, desk.id) ?? false)) throw new DoorError('door-denied', `a mesa ${desk.name} não é sua`)
-    if (desk.asleep) throw new DoorError('bad-request', `a mesa "${desk.name}" está dormindo`)
+    if (desk.asleep) throw new DoorError('bad-request', `a mesa "${desk.name}" está hibernando`)
     return { deskId: desk.id }
   }
 

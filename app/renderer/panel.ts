@@ -209,7 +209,7 @@ function asleepOverlay(s: SlotState): OverlaySpec {
     icon: 'eye-closed', title: 'Guia hibernada', tone: 'info',
     text: s.kind === 'shell' ? 'O shell foi parado para poupar a máquina.' : `O ${KIND_LABEL[s.kind]} foi parado para poupar a máquina. A conversa está salva e volta de onde parou.`,
     choices: [
-      { id: 'start', icon: 'sun', label: 'Acordar', consequence: s.kind === 'shell' ? 'Abre um shell novo na mesma pasta.' : 'Retoma a conversa de onde parou.', tone: 'safe' },
+      { id: 'start', icon: 'sun', label: 'Despertar', consequence: s.kind === 'shell' ? 'Abre um shell novo na mesma pasta.' : 'Retoma a conversa de onde parou.', tone: 'safe' },
       CLOSE,
     ],
   }

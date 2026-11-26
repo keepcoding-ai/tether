@@ -233,7 +233,7 @@ export function activate(ui: TetherUi): Disposable[] {
     const unconfirmed = a.why === 'unconfirmed'
     void ui.dialogs.ask({
       situation: 'regency.wake-refused', tone: 'warn', icon: 'shield-warning',
-      title: unconfirmed ? `${name} não acordou` : `${name} não pôde acordar`,
+      title: unconfirmed ? `${name} não despertou` : `${name} não pôde despertar`,
       message: unconfirmed ? 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' : a.message,
       choices: [
         { id: 'go', icon: 'arrow-right', label: 'Ir até a guia', consequence: 'Leva você à guia.', tone: 'safe' },
@@ -256,7 +256,7 @@ export function activate(ui: TetherUi): Disposable[] {
     if (t.kind !== 'agent') return
     const p = treePane(t.id)
     const name = nameOf(t.id)
-    if (p?.asleep) { refuse(`${name} está dormindo`, 'Acorde a guia (menu da linha, "Acordar guia") para falar com o agente.'); return }
+    if (p?.asleep) { refuse(`${name} está hibernando`, 'Desperte a guia (menu da linha, "Despertar guia") para falar com o agente.'); return }
     if (p?.exited) { refuse(`${name} está encerrado`, 'A sessão terminou: reinicie o agente para falar com ele.'); return }
     openQuickView(t, true)
   }
@@ -267,8 +267,8 @@ export function activate(ui: TetherUi): Disposable[] {
     const row = ui.desks.menuEntries(deskId, { from: 'manager', onWake: woke }).find((e): e is ContextMenuItem => e !== 'sep' && e.label === label)
     if (row && !row.disabled) { row.run(); return }
     const name = ui.desks.list().find(d => d.id === deskId)?.name ?? 'A mesa'
-    if (wake) refuse(`${name} não está dormindo`, 'A mesa já está acordada.')
-    else refuse(`${name} não pode dormir agora`, 'A última mesa acordada fica acordada, e uma mesa que já dorme não dorme de novo.')
+    if (wake) refuse(`${name} não está hibernando`, 'A mesa já está desperta.')
+    else refuse(`${name} não pode hibernar agora`, 'A última mesa desperta fica desperta, e uma mesa que já hibernou não hiberna de novo.')
   }
 
   const closedName = (slotId: string): string => closedList().find(c => c.slotId === slotId)?.name ?? slotId
@@ -296,7 +296,7 @@ export function activate(ui: TetherUi): Disposable[] {
         ...desks.map(d => ({ value: d.id, label: d.name, icon: 'cards', detail: `${d.panes.length} guia${d.panes.length === 1 ? '' : 's'}` })),
         { value: NEW_DESK, label: 'Nova mesa', icon: 'plus', detail: 'Cria uma mesa depois da última' },
       ],
-      emptyText: 'Nenhuma mesa acordada',
+      emptyText: 'Nenhuma mesa desperta',
     })
     if (where) reopenOn(slotId, where)
   }
@@ -368,7 +368,7 @@ export function activate(ui: TetherUi): Disposable[] {
       const name = nameOf(id)
       const p = treePane(id)
       // Asleep or ended there is no terminal to talk to: the row says so, off.
-      const off = p?.asleep ? 'dormindo' : p?.exited ? 'encerrado' : undefined
+      const off = p?.asleep ? 'hibernando' : p?.exited ? 'encerrado' : undefined
       extra.push(
         off
           ? { icon: 'chats-circle', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
@@ -530,7 +530,7 @@ export function activate(ui: TetherUi): Disposable[] {
       title: `Abrir o registro de ${name} numa mesa`,
       placeholder: 'Nome da mesa',
       items: desks.map(d => ({ value: d.id, label: d.name, icon: 'cards', detail: `${d.panes.length} guia${d.panes.length === 1 ? '' : 's'}` })),
-      emptyText: 'Nenhuma mesa acordada',
+      emptyText: 'Nenhuma mesa desperta',
     })
     return deskId ? processEmbeds.output(name, { deskId }) : undefined
   }

@@ -7,8 +7,8 @@ export const DESK_MOVE_LABELS: readonly string[] = ['Mover para a esquerda', 'Mo
 export const DESK_PLACE_LABEL = 'Mudar de lugar'
 export const GO_DESK_LABEL = 'Ir até a mesa'
 export const GO_PANE_LABEL = 'Ir até a guia'
-export const WAKE_DESK_LABEL = 'Acordar mesa'
-export const WAKE_PANE_LABEL = 'Acordar guia'
+export const WAKE_DESK_LABEL = 'Despertar mesa'
+export const WAKE_PANE_LABEL = 'Despertar guia'
 export const EMBLEM_LABEL = 'Emblema…'
 /** The rename row of the pill ("Renomear") and of the tab ("Renomear…"). */
 export const RENAME_LABELS: readonly string[] = ['Renomear', 'Renomear…']
@@ -132,7 +132,7 @@ export const AGENT_ROWS: readonly RegExp[] = [
 ]
 /** The tab block's order: these first, by rank; the pane type's own rows after them, as its menu has them. */
 const PANE_ROWS: readonly RegExp[] = [
-  /^Espiar$/, /^Renomear/, /^Mover…$/, /^Emblema…$/, /^(Hibernar|Acordar) guia$/, /^Marcar como /, /^Copiar link do painel$/,
+  /^Espiar$/, /^Renomear/, /^Mover…$/, /^Emblema…$/, /^(Hibernar|Despertar) guia$/, /^Marcar como /, /^Copiar link do painel$/,
 ]
 /** The ownership block's line that says only what its title says ("Comandada por X, pela mesa"): left out. */
 const SAME_AS_TITLE: readonly RegExp[] = [/^Comandada por [^·]+$/]

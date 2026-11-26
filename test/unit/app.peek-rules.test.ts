@@ -224,8 +224,8 @@ describe('the quick view of a pane', () => {
   test('the state: the pane\'s one state, the words of the Regency\'s tree; a free pane that is not an agent\'s has none', () => {
     const agent = (over: Partial<PaneCardFacts>) => paneCardHead(facts({ typeId: 'terminal', agent: true, ...over })).state
     assert.deepEqual(agent({ busy: true }), { text: 'trabalhando', tone: 'busy' })
-    assert.deepEqual(agent({ busy: true, asleep: true }), { text: 'dormindo', tone: 'asleep' })
-    assert.deepEqual(paneCardHead(facts({ deskAsleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+    assert.deepEqual(agent({ busy: true, asleep: true }), { text: 'hibernando', tone: 'asleep' })
+    assert.deepEqual(paneCardHead(facts({ deskAsleep: true })).state, { text: 'hibernando', tone: 'asleep' })
     // the capture r3-cartao-regencia-terminal: a turn just done said "pede atenção" here and nothing waited in the tree
     assert.deepEqual(agent({ attention: 'done' }), { text: 'terminou', tone: 'idle' })
     assert.deepEqual(agent({ attention: 'waiting' }), { text: 'espera você', tone: 'attention' })
@@ -234,7 +234,7 @@ describe('the quick view of a pane', () => {
     assert.equal(paneCardHead(facts()).state, undefined, 'a note at rest says nothing')
     assert.deepEqual(paneCardHead(facts({ attention: 'waiting' })).state, { text: 'espera você', tone: 'attention' }, 'a seal waits on any pane')
   })
-  test('the foot: "Ir até a guia" always; "Acordar" only while it sleeps (the desk wakes whole); how to close in one line', () => {
+  test('the foot: "Ir até a guia" always; "Despertar" only while it sleeps (the desk wakes whole); how to close in one line', () => {
     const awake = paneCardFoot(facts(), ['Ctrl+Shift+O'])
     assert.equal(awake.wake, undefined)
     assert.equal(awake.go.label, 'Ir até a guia')
@@ -244,9 +244,9 @@ describe('the quick view of a pane', () => {
     assert.match(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.title ?? '', /Mesa 2/)
     assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.what, 'pane')
     assert.equal(paneCardFoot(facts({ asleep: true, deskAsleep: true }), [])!.wake?.what, 'desk')
-    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.label, 'Acordar')
-    assert.equal(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.band, 'Mesa dormindo: o que você vê não está rodando')
-    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.band, 'Guia dormindo: o que você vê não está rodando')
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.label, 'Despertar')
+    assert.equal(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.band, 'Mesa hibernando: o que você vê não está rodando')
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.band, 'Guia hibernando: o que você vê não está rodando')
   })
   test('a refusal says why in a sentence', () => {
     assert.equal(paneRefusalText('none'), 'Ainda não dá para espiar este tipo de guia.')

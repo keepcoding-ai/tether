@@ -441,7 +441,7 @@ export function paneCardHead(f: PaneCardFacts): PaneCardHead {
   return { title: f.title, kind: paneKindLabel(f.typeId, f.agent), where: f.place ? `em ${f.place}` : undefined, color: f.color, state, label: peekLabel(f.title) }
 }
 
-export const WAKE_LABEL = 'Acordar'
+export const WAKE_LABEL = 'Despertar'
 
 export interface PaneCardFoot {
   /**
@@ -457,8 +457,8 @@ export interface PaneCardFoot {
 
 export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'place'>, hints: readonly string[]): PaneCardFoot {
   const wake = f.deskAsleep
-    ? { label: WAKE_LABEL, title: `Acordar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const, band: 'Mesa dormindo: o que você vê não está rodando' }
-    : f.asleep ? { label: WAKE_LABEL, title: 'Acordar a guia: o processo dela volta a rodar', what: 'pane' as const, band: 'Guia dormindo: o que você vê não está rodando' } : undefined
+    ? { label: WAKE_LABEL, title: `Despertar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const, band: 'Mesa hibernando: o que você vê não está rodando' }
+    : f.asleep ? { label: WAKE_LABEL, title: 'Despertar a guia: o processo dela volta a rodar', what: 'pane' as const, band: 'Guia hibernando: o que você vê não está rodando' } : undefined
   return {
     wake,
     go: { label: GO_PANE_LABEL, title: 'Ir até a guia: fecha o cartão, devolve a guia ao lugar dela e mostra a guia' },

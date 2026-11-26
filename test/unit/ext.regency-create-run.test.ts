@@ -112,7 +112,7 @@ describe('regency: the executor of "+ Novo"', () => {
   test('the field a sentence of validation goes beside', () => {
     assert.equal(errorField('Escolha o agente: o motor e o perfil.'), 'what')
     assert.equal(errorField('Dê um nome à mesa nova.'), 'desk-name')
-    assert.equal(errorField('Essa mesa está dormindo: acorde-a antes de criar nela.'), 'desk')
+    assert.equal(errorField('Essa mesa está hibernando: desperte-a antes de criar nela.'), 'desk')
     assert.equal(errorField('Escolha a pasta de trabalho.'), 'cwd')
     assert.equal(errorField('Esse canal não está mais aberto.'), 'join')
     assert.equal(errorField('Já existe um canal aberto com esse nome.'), 'channel-name')

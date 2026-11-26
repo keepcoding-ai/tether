@@ -43,7 +43,7 @@ export const USAGE = `uso: tether <comando> [opções]
                                       cria um slot e abre o agente nele (--profile: perfil de
                                       lançamento, pelo nome ou id; dispensa o agente; --desk: a
                                       mesa, pelo id ou nome, onde a guia nasce sem tirar a pessoa
-                                      da mesa dela; a mesa precisa existir e estar acordada)
+                                      da mesa dela; a mesa precisa existir e estar desperta)
   open <slot> [--new|--resume-anyway] [--here]
                                       retoma o slot (--new: nova sessão)
   attach <slot>                       anexa este terminal ao slot (Ctrl+] solta)

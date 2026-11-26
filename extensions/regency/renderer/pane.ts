@@ -114,7 +114,7 @@ const FILTERS: Record<TreeFilter, { label: string; tip: string }> = {
   waiting: { label: 'Esperam você', tip: 'Só as guias que esperam você' },
   busy: { label: 'Trabalhando', tip: 'Só as guias que estão trabalhando' },
   idle: { label: 'Livre', tip: 'Só as guias livres: nada pede você nem trabalha (as que terminaram e as encerradas também)' },
-  asleep: { label: 'Dormindo', tip: 'Só as guias e mesas que dormem' },
+  asleep: { label: 'Hibernando', tip: 'Só as guias e mesas hibernando' },
 }
 
 export class RegencyPane implements IContentRenderer {

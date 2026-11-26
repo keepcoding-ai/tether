@@ -406,7 +406,7 @@ export function hibernateSituation(where: string, busy: SlotState[]): DialogSpec
     title: busy.length === 1 ? `Um agente ${where} está trabalhando` : `${busy.length} agentes ${where} estão trabalhando`,
     context: { icon: 'moon', name: where.replace(/^d[aeo] /, ''), lines: shown, status: { label: 'em andamento', tone: 'ok' } },
     choices: [
-      { id: 'hibernate', icon: 'moon', label: 'Hibernar mesmo assim', consequence: 'Os processos param agora, no meio do turno. As conversas ficam salvas e retomam ao acordar.', tone: 'destructive' },
+      { id: 'hibernate', icon: 'moon', label: 'Hibernar mesmo assim', consequence: 'Os processos param agora, no meio do turno. As conversas ficam salvas e retomam ao despertar.', tone: 'destructive' },
     ],
     cancelLabel: 'Cancelar',
   }

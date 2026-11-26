@@ -297,11 +297,11 @@ function deskRow(d: TreeDeskRow): HTMLElement {
     el('span', 'rg-dn', d.name),
   )
   if (d.owner) r.append(ownerSeal(d.owner, 'da mesa'))
-  const n = el('span', 'rg-n2', `${d.paneCount} guia${d.paneCount === 1 ? '' : 's'}${d.asleep ? ' · dormindo' : ''}`)
+  const n = el('span', 'rg-n2', `${d.paneCount} guia${d.paneCount === 1 ? '' : 's'}${d.asleep ? ' · hibernando' : ''}`)
   // Only a desk of the queue sleeps; Browser and the drawer have the menu alone ("Ir até a mesa").
   const sleep: RowAct[] = d.kind !== 'queue' ? [] : d.asleep
-    ? [{ action: 'row-wake', icon: 'sun', tip: `Acordar a mesa ${d.name}` }]
-    : [{ action: 'row-sleep', icon: 'moon', tip: `Pôr a mesa ${d.name} para dormir` }]
+    ? [{ action: 'row-wake', icon: 'sun', tip: `Despertar a mesa ${d.name}` }]
+    : [{ action: 'row-sleep', icon: 'moon', tip: `Hibernar a mesa ${d.name}` }]
   // "+": a new pane in this desk (the "+ Novo" card with the desk fixed); only an awake desk of the queue takes one.
   const add: RowAct[] = d.kind === 'queue' && !d.asleep ? [{ action: 'row-new', icon: 'plus', tip: `Nova guia na mesa ${d.name}` }] : []
   r.append(n, el('span', 'rg-sp'), acts([...add, ...sleep, MENU_ACT]))

@@ -16,7 +16,7 @@
 //      menu at the foot is the manager's ("Ir até a guia" last); Esc on the foot closes, the note back whole;
 //   7. a CHANNEL and a MARKDOWN PREVIEW: the same header and foot; a line shows alive; another pane takes the card's place
 //      and the first goes back to its tab (screenshot r3-cartao-modal-canal);
-//   8. a pane of a SLEEPING desk: "dormindo" and "Acordar", the desk not woken by the peek; "Acordar" wakes it (r3-cartao-dormindo);
+//   8. a pane of a SLEEPING desk: "hibernando" and "Despertar", the desk not woken by the peek; "Despertar" wakes it (r3-cartao-dormindo);
 //   9. the pane CLOSED while in the card: the card closes, nothing left;
 //  10. a tab IN VIEW only gets the keyboard (no card).
 // The keyboard in the card (V3): the card's tab is the target of its commands and chords:
@@ -363,7 +363,7 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     assert.equal(await text('#peek .qv-head .qv-type'), 'nota')
     assert.equal(await text('#peek .qv-head .qv-where-t'), `em ${otherName}`)
     assert.equal(await text('#peek .qv-foot .qv-go'), 'Ir até a guia')
-    assert.equal(await page.locator('#peek .qv-wake').isVisible(), false, 'awake: no "Acordar"')
+    assert.equal(await page.locator('#peek .qv-wake').isVisible(), false, 'awake: no "Despertar"')
     assert.equal(await page.locator('#peek .qv-band').isVisible(), false, 'awake: no strip')
     assert.equal(await page.locator('#peek .qv-foot .qv-menu').isVisible(), true, 'the tab\'s menu at the foot')
     assert.equal(await count('#peek .peek-head:not(.qv-head)'), 0, 'the slot\'s header is not in the card')
@@ -475,17 +475,17 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     await closeCard()
     assert.equal(await count(`${shellOf(preview)} > .preview-panel`), 1, 'the preview is back in its tab')
 
-    // ---- 8. a pane of a sleeping desk: "dormindo" and "Acordar", never woken by the peek ----
+    // ---- 8. a pane of a sleeping desk: "hibernando" and "Despertar", never woken by the peek ----
     console.log('step 8')
     await page.evaluate(d => window.__tether.hibernateDesk(d), otherDesk)
     await page.waitForFunction(d => window.__tether.desks().find(x => x.id === d)?.asleep === true, otherDesk)
     await peekPane(note2)
     await page.waitForSelector(`${PANE} > .note-panel`)
-    assert.equal(await text('#peek .qv-head .peek-state'), 'dormindo')
-    // The strip under the header: what is shown is not running, and "Acordar" beside the sentence.
+    assert.equal(await text('#peek .qv-head .peek-state'), 'hibernando')
+    // The strip under the header: what is shown is not running, and "Despertar" beside the sentence.
     await page.locator('#peek .qv-band .qv-wake').waitFor()
-    assert.equal(await text('#peek .qv-band .qv-band-t'), 'Mesa dormindo: o que você vê não está rodando')
-    assert.equal(await text('#peek .qv-band .qv-wake'), 'Acordar')
+    assert.equal(await text('#peek .qv-band .qv-band-t'), 'Mesa hibernando: o que você vê não está rodando')
+    assert.equal(await text('#peek .qv-band .qv-wake'), 'Despertar')
     await page.waitForTimeout(400)
     assert.equal(await page.evaluate(d => window.__tether.desks().find(x => x.id === d)?.asleep, otherDesk), true, 'the peek did not wake the desk')
     await page.mouse.move(700, 420)

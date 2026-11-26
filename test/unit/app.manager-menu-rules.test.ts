@@ -44,7 +44,7 @@ describe('managerDeskItems', () => {
     assert.equal(out.filter(e => labelOf(e) === 'Renomear').length, 1)
   })
 
-  test('a sleeping desk: "Acordar mesa" before "Fechar mesa…" (the pill menu has no "Hibernar mesa" then)', () => {
+  test('a sleeping desk: "Despertar mesa" before "Fechar mesa…" (the pill menu has no "Hibernar mesa" then)', () => {
     const asleep = DESK().filter(e => labelOf(e) !== 'Hibernar mesa')
     const out = labels(managerDeskItems(asleep, { place, wake: it(WAKE_DESK_LABEL) }, labelOf))
     assert.deepEqual(out.slice(-2), [WAKE_DESK_LABEL, 'Fechar mesa…'])
@@ -95,7 +95,7 @@ describe('managerPaneEntries', () => {
     assert.equal(ls.filter(l => l === 'Fechar guia').length, 1)
   })
 
-  test('goLast: "Acordar guia" after the name-and-process group, "Emblema…" before the last group', () => {
+  test('goLast: "Despertar guia" after the name-and-process group, "Emblema…" before the last group', () => {
     const ls = labels(managerPaneEntries(PANE(), TOP(), { extra: [], goLast: full({ wake: it(WAKE_PANE_LABEL), emblem: it(EMBLEM_LABEL) }) }, SEP, labelOf))
     assert.equal(ls[ls.indexOf('Reiniciar agente') + 1], WAKE_PANE_LABEL)
     // The pane's own last group is "Fechar painel…": the emblem comes before its separator, as on the tab.

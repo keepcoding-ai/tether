@@ -124,7 +124,7 @@ export interface JoinContext {
 }
 
 export const JOIN_GROUP = { drawer: 'Gaveta e blocos', noDesk: 'Sem mesa', stopped: 'Parados' } as const
-export const JOIN_MARK = { removed: 'tirado deste canal', stopped: 'parado', asleep: 'mesa dormindo', noDesk: 'sem mesa' } as const
+export const JOIN_MARK = { removed: 'tirado deste canal', stopped: 'parado', asleep: 'mesa hibernando', noDesk: 'sem mesa' } as const
 
 /**
  * The join's list (G5): every agent pane outside the channel. Groups in order: the active desk ("Nesta mesa · nome"), the

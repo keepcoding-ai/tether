@@ -326,7 +326,7 @@ export function votersText(tally: readonly PollTally[]): string {
 }
 
 export const MISSING_TEXT: Record<PollMissingWhy, string> = {
-  'no-answer': 'não respondeu', stopped: 'parado', asleep: 'mesa dormindo', 'with-user': 'com a pessoa', left: 'saiu do canal',
+  'no-answer': 'não respondeu', stopped: 'parado', asleep: 'mesa hibernando', 'with-user': 'com a pessoa', left: 'saiu do canal',
 }
 
 /** `sem resposta 2: bancada (parado), nic (não respondeu)`, '' when nobody is missing. */

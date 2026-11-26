@@ -156,7 +156,7 @@ describe('poll delivery: the fan-out over the real store', () => {
     try { r = await pollVerb.run({ api, channels: ch }, caller, { canal: 'obra', question: 'Posso subir a ata?', timeout: '10m' }) } catch (e) { r = failOf(e) }
     assert.equal(r.isError, undefined, r.text)
     const seq = (r.data as { seq: number }).seq
-    assert.match(r.text, /Chamou bravo, charlie, parado, dorme, wanda \(parado: parado; dorme: mesa dormindo; wanda: com a pessoa; não ouve agora, recebe ao voltar se ainda estiver aberta\)\. Fecha às \d\d:\d\d \(em 10 min\)\. O resultado chega a você quando fechar; não fique esperando\.$/)
+    assert.match(r.text, /Chamou bravo, charlie, parado, dorme, wanda \(parado: parado; dorme: mesa hibernando; wanda: com a pessoa; não ouve agora, recebe ao voltar se ainda estiver aberta\)\. Fecha às \d\d:\d\d \(em 10 min\)\. O resultado chega a você quando fechar; não fique esperando\.$/)
     assert.doesNotMatch(r.text, /Ninguém é avisado/)
     const mine = sent.slice(before)
     assert.deepEqual(mine.map((x) => x.slot).sort(), ['B', 'C', 'W'])
@@ -189,7 +189,7 @@ describe('poll delivery: the fan-out over the real store', () => {
     assert.equal(mine[0]!.slot, 'A')
     assert.equal(mine[0]!.msg.kind, 'notice')
     assert.deepEqual(mine[0]!.msg.poll, { poll: `obra#${seq}`, closedBy: 'timeout', tally: 'ok 1 · não ok 1' })
-    assert.equal(mine[0]!.msg.body, `Enquete obra#${seq} fechou: o prazo venceu.\nok 1: bravo · não ok 1: charlie ("falta o risco") · sem resposta 3: parado (parado), dorme (mesa dormindo), wanda (com a pessoa)`)
+    assert.equal(mine[0]!.msg.body, `Enquete obra#${seq} fechou: o prazo venceu.\nok 1: bravo · não ok 1: charlie ("falta o risco") · sem resposta 3: parado (parado), dorme (mesa hibernando), wanda (com a pessoa)`)
     assert.ok(cancelled.includes(wReceipt), 'the request still waiting for the person\'s pane is taken out of the queue')
     assert.equal((queues.get('W') ?? []).some((q) => q.msg.kind === 'request'), false)
   })

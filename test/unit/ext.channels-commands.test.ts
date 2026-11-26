@@ -102,8 +102,8 @@ test('joinItems: removed, stopped and sleeping-desk marks; the sleeping desk\'s 
   assert.deepEqual(items.map(i => [i.value, i.group, i.detail]), [
     ['s2', 'Nesta mesa · obra', undefined],
     ['s1', 'Mesa · geral', 'tirado deste canal'],
-    ['s5', 'Parados', 'mesa dormindo'],
-    ['s7', 'Parados', 'parado · mesa dormindo'],
+    ['s5', 'Parados', 'mesa hibernando'],
+    ['s7', 'Parados', 'parado · mesa hibernando'],
     ['s6', 'Parados', 'tirado deste canal · parado'],
   ])
   assert.deepEqual(joinItems([], new Set(), 'desk-1'), [])

@@ -65,7 +65,7 @@ describe('pipe create with a target desk (R4b)', () => {
   test('refused with a reason: unknown desk, sleeping desk, ambiguous name, bad value; no slot is born', async () => {
     const before = ((await rec.client.request({ t: 'list' })).slots ?? []).length
     await assert.rejects(create({ desk: 'nao-existe' }), (e: unknown) => refused(e) && /não existe/.test((e as Error).message))
-    await assert.rejects(create({ desk: 'd2' }), (e: unknown) => refused(e) && /dormindo/.test((e as Error).message))
+    await assert.rejects(create({ desk: 'd2' }), (e: unknown) => refused(e) && /hibernando/.test((e as Error).message))
     await assert.rejects(create({ desk: 'Repetida' }), (e: unknown) => refused(e) && /mais de uma/.test((e as Error).message))
     await assert.rejects(create({ desk: '' }), refused)
     await assert.rejects(create({ desk: 7 }), refused)

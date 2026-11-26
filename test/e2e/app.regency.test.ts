@@ -574,7 +574,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const counts0 = (await shown()).counts
     assert.ok(counts0.waiting >= 2, `a and b wait (${JSON.stringify(counts0)})`)
     assert.equal(counts0.waiting + counts0.busy + counts0.idle + counts0.asleep, counts0.all, 'the four chips cover every pane, each once')
-    assert.deepEqual(await page.locator('.rg-chip .rg-chip-t').allTextContents(), ['Todos', 'Esperam você', 'Trabalhando', 'Livre', 'Dormindo'])
+    assert.deepEqual(await page.locator('.rg-chip .rg-chip-t').allTextContents(), ['Todos', 'Esperam você', 'Trabalhando', 'Livre', 'Hibernando'])
     assert.match((await page.locator('.rg-chip[data-filter="waiting"]').getAttribute('class')) ?? '', /\bal\b/, 'orange: someone waits')
     assert.doesNotMatch((await page.locator('.rg-chip[data-filter="busy"]').getAttribute('class')) ?? '', /\bal\b/, 'the orange only on "Esperam você"')
     await page.click('.rg-chip[data-filter="waiting"]')
@@ -765,14 +765,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     // A row has one button on the phone, its "⋯": the rest are in its menu.
     assert.deepEqual([...new Set(await page.locator('.rg-tree .rg-act').evaluateAll(es => es.filter(e => (e as unknown as { getClientRects(): ArrayLike<unknown> }).getClientRects().length > 0)
       .map(e => (e as unknown as { dataset: { action: string } }).dataset.action)))], ['row-menu'], 'only the "⋯" shows on a row')
-    // The chips: one line that scrolls sideways, its scrollbar shown; the last one ("Dormindo") is reached whole.
+    // The chips: one line that scrolls sideways, its scrollbar shown; the last one ("Hibernando") is reached whole.
     const chipsBox = page.locator('.rg-chips')
     const chipsStyle = await chipsBox.evaluate(e => { const s = (globalThis as unknown as { getComputedStyle(x: unknown): { overflowX: string; scrollbarWidth: string } }).getComputedStyle(e); return [s.overflowX, s.scrollbarWidth] })
     assert.deepEqual(chipsStyle, ['auto', 'thin'], 'scrolls sideways with a visible scrollbar')
     await page.locator('.rg-chip[data-filter="asleep"]').scrollIntoViewIfNeeded()
     const lastAt = await page.locator('.rg-chip[data-filter="asleep"]').boundingBox()
     const rowAt = await chipsBox.boundingBox()
-    assert.ok(lastAt && rowAt && lastAt.x + lastAt.width <= rowAt.x + rowAt.width + 1, `"Dormindo" whole once scrolled to (${JSON.stringify({ lastAt, rowAt })})`)
+    assert.ok(lastAt && rowAt && lastAt.x + lastAt.width <= rowAt.x + rowAt.width + 1, `"Hibernando" whole once scrolled to (${JSON.stringify({ lastAt, rowAt })})`)
     await chipsBox.evaluate(e => { (e as unknown as { scrollLeft: number }).scrollLeft = 0 })
     assert.ok(await right.evaluate(e => { const r = e as unknown as { scrollWidth: number; clientWidth: number }; return r.scrollWidth <= r.clientWidth }), 'no sideways scroll of the column')
     await page.screenshot({ path: join(SHOTS, 'celular-tether.png') })
@@ -885,8 +885,8 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await desk3Row.focus()
     await page.keyboard.press('Shift+F10')
     await menu.waitFor()
-    assert.ok((await labels()).includes('Acordar mesa') && !(await labels()).includes('Hibernar mesa'), '"Acordar mesa" in place of "Hibernar mesa"')
-    await pick('Acordar mesa')
+    assert.ok((await labels()).includes('Despertar mesa') && !(await labels()).includes('Hibernar mesa'), '"Despertar mesa" in place of "Hibernar mesa"')
+    await pick('Despertar mesa')
     await until('desk3 awake by the menu', async () => (await treeDesk(desk3))?.asleep === false)
     await stays('wake by the menu')
     // The moon and the sun of the row (the buttons follow the state).
@@ -896,7 +896,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await desk3Row.hover()
     const sun = desk3Row.locator('[data-action="row-wake"]')
     assert.equal(await sun.isVisible(), true, 'the sun shows on hover')
-    assert.match((await sun.getAttribute('aria-label')) ?? '', /^Acordar a mesa /)
+    assert.match((await sun.getAttribute('aria-label')) ?? '', /^Despertar a mesa /)
     await sun.click()
     await until('awake by the sun', async () => (await treeDesk(desk3))?.asleep === false)
     await stays('wake by the sun')
@@ -1020,7 +1020,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await page.click('#mv-go')
     await page.waitForFunction(([p, d]) => window.__tether.deskOf(p!) === d, [`channel:${obra}`, desk2] as const)
     assert.equal((await state()).desk, DESK, 'moving stays in the Regency')
-    // "Hibernar guia", then "Acordar guia"; asleep, "Falar com" is off and says why, and the row has no "Falar com" button.
+    // "Hibernar guia", then "Despertar guia"; asleep, "Falar com" is off and says why, and the row has no "Falar com" button.
     await bRow.click({ button: 'right' })
     await menu.waitFor()
     await pick('Hibernar guia')
@@ -1030,12 +1030,12 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await bRow.click({ button: 'right' })
     await menu.waitFor()
     const asleepLabels = await labels()
-    assert.ok(asleepLabels.includes('Acordar guia') && !asleepLabels.includes('Hibernar guia'), '"Acordar guia" in place of "Hibernar guia"')
-    assert.ok(asleepLabels.some(l => /^Falar com .* \(dormindo\)$/.test(l)), 'asleep, "Falar com" says why')
+    assert.ok(asleepLabels.includes('Despertar guia') && !asleepLabels.includes('Hibernar guia'), '"Despertar guia" in place of "Hibernar guia"')
+    assert.ok(asleepLabels.some(l => /^Falar com .* \(hibernando\)$/.test(l)), 'asleep, "Falar com" says why')
     // The fake agent never reports its session: the start is refused 'unconfirmed' and the pane asks the person (the
     // tether's own question, the same as for-agents-flow step 9 meets). The refusal is not silent: the Regency says it in
     // a notice, and "Ir até a guia" takes the person to the pane, where the choice is asked.
-    await pick('Acordar guia')
+    await pick('Despertar guia')
     const wakeNotice = page.locator('dialog[open]', { hasText: 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' })
     await wakeNotice.waitFor({ timeout: 10_000 })
     assert.equal((await state()).desk, DESK, 'pane wake: the Regency stays in view while the notice asks')

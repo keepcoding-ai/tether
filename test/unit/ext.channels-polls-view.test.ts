@@ -80,7 +80,7 @@ test('cardOf: a closed poll: winner, reasons, "sem resposta" with the reason of 
   const c = cardOf(l, { seq: 57, result, closedAt: '2026-11-24T13:42:00.000Z' }, ctx)!
   assert.equal(c.state, 'closed')
   assert.deepEqual(c.options.map((o) => o.winner), [true, false])
-  assert.deepEqual(c.missing.map((m) => [m.name, m.why]), [['conf', 'mesa dormindo'], ['soul', 'saiu do canal']])
+  assert.deepEqual(c.missing.map((m) => [m.name, m.why]), [['conf', 'mesa hibernando'], ['soul', 'saiu do canal']])
   assert.equal(c.progressText, '3 de 4 votaram', 'who left does not count')
   assert.match(c.clock, /^o prazo venceu às \d\d:\d\d$/)
   assert.deepEqual([c.canVote, c.canClose], [false, false])
