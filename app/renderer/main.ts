@@ -66,6 +66,7 @@ import { TabStripActions } from './tab-strip.ts'
 import { liveTypeOf, PaneRegistry, type ClosedEntry, type PaneLayout, type PaneType } from './pane-registry.ts'
 import { lendRefusal, paneLendPlan, type LendRefusal, type LoanState } from './pane-loan-rules.ts'
 import { lentNoticeElement, PaneShell, type ShellLoan } from './pane-shell.ts'
+import { lendFresh } from './pane-fresh.ts'
 import { emptyLayout as emptyPaneLayout, extensionsLayout, terminalLayout, TERMINAL_COMPONENT, TERMINAL_TAB } from './core-pane-layouts.ts'
 import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
@@ -85,7 +86,7 @@ import { installMonacoLinks } from './monaco-links.ts'
 import { openChannelLink, setChannelSource } from './channel-links.ts'
 import { IS_MAC, openLink, setLinkHandler, type LinkOrigin } from './link-open.ts'
 import { bridgeOpener, type LinkMenuAct, setBridgeOpener, setBrowserOpener, setLinkMenuHandler, setLinkMenuRowsProvider, showLinkMenu, tetherBrowserOpener } from './link-menu.ts'
-import { type LinkMenuAction, type LinkMenuFacts, linkCopyText, linkMenuPlan, paneOfLink, peekKey, relativeCopyText } from './link-menu-rules.ts'
+import { type LinkMenuAction, type LinkMenuFacts, linkCopyText, isPeekClick, linkMenuPlan, paneOfLink, peekKey, relativeCopyText } from './link-menu-rules.ts'
 import type { LinkTarget } from '../shared/links.ts'
 import { ConfigurationRegistry, readExtensionsSettings, withSetting, writeExtensionsSettings, type ExtensionsSettings, type SettingValue } from '../shared/vscode-configuration-registry.ts'
 import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/vscode-menu-registry.ts'
@@ -106,7 +107,7 @@ import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost, type PeekPaneFacts, type PeekPaneOptions } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { cardHoldsKeys, commandAim, lentNotice, paneLentNotice, paneOwns, paneRoute, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type CardKeyboard, type TabPlace } from './peek-rules.ts'
+import { cardHoldsKeys, commandAim, lentNotice, paneKindLabel, paneLentNotice, paneOwns, paneRoute, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type CardKeyboard, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -1810,19 +1811,34 @@ function tabPlaceOf(slotId: string, panel: IDockviewPanel): TabPlace {
 /** `peek.close`: closes what the card shows (a screen over an agent goes back to the agent; else the card closes). */
 function closePeek(): void { peekCard?.dismiss() }
 
-/** "Espiar agente…": the live agents the card can show (no tab, or a tab out of view), in the shared picker; the pick opens in the card. */
+/**
+ * "Espiar guia…": every tab, grouped by where it lives (a desk, the drawer), with the type's icon and an agent's identity,
+ * plus the live agents no tab shows ("Sem guia", the agent's own card); the pick opens in the card (peekPane).
+ */
 function pickPeek(): void {
   const now = Date.now()
   const items: PickItem<string>[] = []
+  for (const panel of allPanels()) {
+    const id = panel.id
+    const facts = treeFactsOf(id)
+    if (!facts) continue
+    const s = slots.get(id)
+    const group = describePane(id)?.place ?? 'Guias'
+    if (s && s.kind !== 'shell') {
+      const h = peekHeader(s, now)
+      const emblem = emblemOfPanel(id)
+      items.push({ value: id, label: facts.title, detail: h.text, group, engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: letterOf(facts.title), ...(emblem ? { emblem } : {}), hue: agentHue(id) })
+    } else {
+      items.push({ value: id, label: facts.title, detail: paneKindLabel(facts.type, false), group, icon: facts.icon })
+    }
+  }
   for (const s of slots.values()) {
-    const tab = findPanel(s.slotId)
-    const route = peekRoute(s, tab !== undefined, tab ? tabInView(tabPlaceOf(s.slotId, tab)) : true)
-    if (route !== 'card' && route !== 'lend') continue
+    if (findPanel(s.slotId) || peekRoute(s, false) !== 'card') continue
     const h = peekHeader(s, now)
     const emblem = emblemOfPanel(s.slotId)
-    items.push({ value: s.slotId, label: h.title, detail: h.text, engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: letterOf(h.title), ...(emblem ? { emblem } : {}), hue: agentHue(s.slotId) })
+    items.push({ value: s.slotId, label: h.title, detail: h.text, group: 'Sem guia', engine: s.kind, icon: KIND_ICON[s.kind] ?? 'terminal-window', letter: letterOf(h.title), ...(emblem ? { emblem } : {}), hue: agentHue(s.slotId) })
   }
-  void door.pickList<string>({ title: 'Espiar agente', placeholder: 'Buscar agente…', items, emptyText: 'Nenhum agente vivo fora da tela.' }).then(id => { if (id) peek(id) })
+  void door.pickList<string>({ title: 'Espiar guia', placeholder: 'Buscar guia…', items, emptyText: 'Nenhuma guia para espiar.' }).then(id => { if (id) peekPane(id) })
 }
 
 /** A menu a view described as data (place-menu.ts MenuSpec) as the context menu's rows. */
@@ -2028,9 +2044,10 @@ function peekYieldsTo(panel: TerminalPanel): TerminalPanel {
  * Lends any pane's live content to `host`, a place outside dockview (the quick view's card; pane-shell.ts): the same
  * instance moves, with its state, and the tab shows "sendo espiada" in its place until `giveBack`. The plan comes from the
  * pane's type (pane-loan-rules.ts): by default the whole content moves; a type with `lend`/`takeBack` moves its own part
- * (the terminal: its body, the status bar stays); `peek: 'fresh' | 'none'` is refused. `lost` runs if the pane goes away
- * while lent (closed, moved to another desk): its content has left the host then, and nothing comes back. A desk that
- * hibernates keeps its panes mounted, so the loan goes on. The quick view's card (peekPane) and a test hook call it.
+ * (the terminal: its body, the status bar stays); `peek: 'fresh'` gets a copy built by the type and the tab is left alone
+ * (pane-fresh.ts); `peek: 'none'` is refused. `lost` runs if the pane goes away while lent (closed, moved to another desk):
+ * its content has left the host then, and nothing comes back. A desk that hibernates keeps its panes mounted, so the loan
+ * goes on. The quick view's card (peekPane) and a test hook call it.
  */
 function lendPane(paneId: string, host: HTMLElement, lost: () => void): ShellLoan | LendRefusal {
   const shell = paneShells.get(paneId)
@@ -2039,6 +2056,10 @@ function lendPane(paneId: string, host: HTMLElement, lost: () => void): ShellLoa
   const refusal = lendRefusal(shell?.loanState, plan)
   if (refusal) return refusal
   if (!shell || !type) return 'unknown'
+  if (plan === 'fresh') {
+    const tab = findPanel(paneId)
+    return lendFresh({ source: { id: paneId, title: tab?.api.title, params: tab?.params }, create: () => type.create(), host, lost, whenGone: g => shell.whenGone(g) })
+  }
   const hooks = plan === 'custom' && type.lend && type.takeBack
     ? { lend: (notice: HTMLElement, gone: () => void) => type.lend!(paneId, notice, gone), takeBack: () => type.takeBack!(paneId) }
     : undefined
@@ -3552,6 +3573,11 @@ function typeMenuEntries(id: string): MenuEntry[] {
     try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
   }
   const pinned = out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+  // Every tab can be peeked at, as with Alt+click (the hint names it): the same card for any type.
+  if (!pinned.some(e => e !== SEP && 'label' in e && e.label === PEEK_LABEL)) {
+    if (pinned.length > 0) pinned.push(SEP)
+    pinned.push({ icon: 'eye', label: PEEK_LABEL, trail: Object.assign(document.createElement('kbd'), { textContent: peekKey(IS_MAC) }), run: () => peekPane(id) })
+  }
   return withTabMenuBasics<MenuEntry>(pinned, SEP, {
     link: { icon: 'link', label: LINK_LABEL, pin: 'icon', run: () => copyPaneLink(id) },
     close: { icon: 'x', label: CLOSE_LABEL, pin: 'primary', run: () => closeGuide(id) },
@@ -3849,6 +3875,7 @@ function followLink(target: LinkTarget, origin: LinkOrigin): void {
   if (target.kind === 'tether') {
     const pane = origin.peek ? paneOfLink(target) : undefined
     if (pane && slots.has(pane)) { peek(pane); return }
+    if (pane && findPanel(pane)) { peekPane(pane); return } // a pane of any other type: the same card
     void followTetherLink(target.url, origin.side === true)
     return
   }
@@ -3883,7 +3910,7 @@ function linkMenuFacts(target: LinkTarget, origin: LinkOrigin): LinkMenuFacts {
   return {
     ...(bridgeBrowser ? { bridgeBrowser } : {}),
     ...(target.kind === 'external' && tetherBrowserOpener() ? { tetherBrowser: true } : {}),
-    peekable: pane !== undefined && slots.has(pane), mac: IS_MAC, caseInsensitive: CASE_INSENSITIVE,
+    peekable: pane !== undefined && (slots.has(pane) || !!findPanel(pane)), mac: IS_MAC, caseInsensitive: CASE_INSENSITIVE,
     ...(commands.all().some(c => c.id === 'explorer.reveal') ? { explorerRoots: projectFolders.map(f => f.path) } : {}),
     ...(baseDir ? { baseDir } : {}),
   }
@@ -4674,6 +4701,20 @@ function setupUi(): void {
       }
     }
   }, true)
+  // Alt+click on the tab of any pane that is not a slot's (a slot's tab, SlotTab, has its own) opens that pane's quick view.
+  // The pointerdown is stopped from activating the tab (dockview activates unless it is already defaultPrevented); the peek runs on the click.
+  const peekTabOf = (ev: MouseEvent): string | undefined => {
+    if (!isPeekClick(ev) || !(ev.target instanceof Element)) return undefined
+    // dockview's own tab wraps every tab renderer (the core's `.tether-tab`, a channel's `.ch-tab`, an extension's own).
+    const tabEl = ev.target.closest('.dv-tab')
+    const id = tabEl ? allPanels().find(p => p.view.tab.element === tabEl || p.view.tab.element.contains(tabEl) || tabEl.contains(p.view.tab.element))?.id : undefined
+    return id && !slots.has(id) ? id : undefined
+  }
+  document.addEventListener('pointerdown', ev => { if (peekTabOf(ev)) ev.preventDefault() }, true)
+  document.addEventListener('click', ev => {
+    const id = peekTabOf(ev)
+    if (id) { ev.preventDefault(); ev.stopPropagation(); peekPane(id, { from: ev.target instanceof HTMLElement ? ev.target : undefined }) }
+  }, true)
   // Esc outside a terminal closes the drawer (the dispatcher left it alone: no chord was pending); after it, the builder
   // mode's (a lower priority: an Esc the drawer, a popup, a menu or a dialog took never leaves the builder).
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape') { if (peekCard?.isOpen) peekEscapeOutside(ev); else drawerEscapeOutside(ev) } })
@@ -5300,7 +5341,8 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
         moveToDesk: (paneId, deskId) => movePaneToDesk(paneId, deskId),
-        peek: slotId => peek(slotId),
+        // An agent with a tab opens the quick view's card of that tab; one with none, its own card.
+        peek: slotId => { if (findPanel(slotId)) peekPane(slotId); else peek(slotId) },
         peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
         peekScreen: typeId => peekScreen(typeId),
         peekedScreen: () => peekCard?.screenId,

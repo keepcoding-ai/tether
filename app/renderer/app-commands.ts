@@ -66,7 +66,7 @@ export interface CommandHost {
   quickShell(): void
   /** Closes the peek card (peek.ts); the session it shows keeps running. */
   closePeek(): void
-  /** "Espiar agente…": a picker of the live agents no tab shows on screen; the pick opens in the card. */
+  /** "Espiar guia…": a picker of every tab (and of the live agents with no tab); the pick opens in the card. */
   pickPeek(): void
   setTheme(setting: ThemeSetting): void
   toggleDeskLine(): void
@@ -203,7 +203,8 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'drawer.quick-terminal', title: 'Terminal rápido na gaveta', group: GROUP.drawer, icon: 'terminal-window', run: () => host.quickShell() },
     // ----- peek card -----
     // (There is no "Espiar o agente desta guia": the active pane is in view, and a peek at a tab in view only moves the keyboard to it.)
-    { id: 'peek.pick', title: 'Espiar agente…', group: GROUP.pane, icon: 'eye', run: () => host.pickPeek() },
+    // (The id stays "peek.pick": it was "Espiar agente…" and lists every tab now.)
+    { id: 'peek.pick', title: 'Espiar guia…', group: GROUP.pane, icon: 'eye', run: () => host.pickPeek() },
     { id: 'peek.close', title: 'Fechar o cartão de espiar', group: GROUP.pane, icon: 'x', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => !!ctx.peekOpen, run: () => host.closePeek() },
     // ----- side bars (F10); each pad's own toggle is registered from its manifest (pad.toggle.<id>) -----
     { id: 'sidebar.left.toggle', title: 'Alternar barra lateral esquerda', group: GROUP.sidebars, icon: 'sidebar-simple', ignoreRepeat: true, keepKeyWhenUnavailable: true, when: ctx => (ctx.pads ?? 0) > 0, run: () => host.toggleSideBar('left') },

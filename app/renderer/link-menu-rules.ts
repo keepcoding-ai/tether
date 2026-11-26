@@ -11,7 +11,7 @@ export interface LinkMenuRow { action: LinkMenuAction; label: string; icon: stri
 export type LinkMenuLine = LinkMenuRow | 'sep'
 
 export interface LinkMenuFacts {
-  /** The link names a pane of a slot the app knows (only then can it be peeked at). */
+  /** The link names a pane the app has live, of any type (only then can it be peeked at). */
   peekable: boolean
   mac: boolean
   /** The folders the explorer shows (agents' and pinned ones); undefined when the explorer is off. Only a file under one can be shown in its tree. */

@@ -154,12 +154,12 @@ describe('the app commands', () => {
     assert.ok(drawer.has('drawer.toggle'))
   })
 
-  test('the peek commands: "Espiar agente…" is always there; "Fechar o cartão de espiar" only with the card open', () => {
+  test('the peek commands: "Espiar guia…" is always there; "Fechar o cartão de espiar" only with the card open', () => {
     const ctx: CommandContext = { ...CTX, peekOpen: false }
     const registry = new CommandRegistry(() => ctx)
     registry.register(...list)
     const titles = (): string[] => registry.available(ctx).map(c => c.title)
-    assert.ok(titles().includes('Espiar agente…'))
+    assert.ok(titles().includes('Espiar guia…'))
     assert.ok(!titles().includes('Fechar o cartão de espiar'))
     assert.ok(!titles().some(t => /desta guia/.test(t)), 'there is no peek at the active tab: it is in view')
     ctx.peekOpen = true
