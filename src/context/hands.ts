@@ -1,6 +1,7 @@
 // Context data for one hands session, read from the slot's events file (<home>/slots/<id>.jsonl). The hands client appends
 // one `kind:"context"` line per finished turn carrying the context it measured itself (categories, memory files, skills,
-// agents, MCP tools, API usage). Only lines of the session opened by the last `start` count: a `start` with another session
+// agents, MCP tools, API usage); a `source:"open"` line measures the context on open/resume and is not a turn.
+// Only lines of the session opened by the last `start` count: a `start` with another session
 // id (switch, clear) resets. Read incrementally, at line boundaries; re-read from the start only when the file shrank.
 // Derived from the soul's reader (src/context/soul.ts) and kept apart: each program's report evolves alone.
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
@@ -145,6 +146,7 @@ export class HandsEventsReader {
     const ctx = parseHandsContext(o.context, o.sessionId, ts)
     if (!ctx) return 0
     this.ctx = ctx
+    if (o.source === 'open') return 1
     const u = isObj(o.context.apiUsage) ? o.context.apiUsage : {}
     const turn: UsageTurn = {
       id: `${o.sessionId}:${this.tot.turns + 1}`,

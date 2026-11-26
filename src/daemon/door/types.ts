@@ -64,6 +64,8 @@ export interface DoorSlots {
   userFree(slotId: string): boolean
   /** When (ms epoch) the person last typed into the slot; undefined when she never did. The agent's own keys do not count. */
   userTypedAt(slotId: string): number | undefined
+  /** When (ms epoch) the slot's screen last received output bytes, always tracked; 0 if it never painted, undefined if the slot does not exist. */
+  paintedAt(slotId: string): number | undefined
   /**
    * Before an act on the slot: when the app suspended its pane (an idle agent stopped to save resources), it is resumed and
    * this resolves once the agent is up ('running'), or the start settles without it, or a long timeout passes; then with the
@@ -246,6 +248,12 @@ export interface DoorDelivery {
    * a client that never opened its stream, or one the daemon has not seen since it started.
    */
   hasTools(slotId: string): boolean
+  /**
+   * Pure: the delivery leaves the slot's input box alone now. True only when no extension's item waits for the slot, none is
+   * being typed, the last terminal delivery settled (DOOR_SETTLE_MS), and no `unsent` text of the tether's sits in the box
+   * (cleared when the turn goes busy or the person types there). Another typist of the tether waits for it.
+   */
+  quiet(slotId: string): boolean
 }
 
 // ---- 5. rerouted attention -------------------------------------------------------------------

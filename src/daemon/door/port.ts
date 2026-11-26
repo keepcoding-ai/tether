@@ -54,6 +54,8 @@ export interface SlotPort {
   /** The ring and the PTY size, without attaching or resizing. */
   readScreen(slotId: string, since?: number): ScreenRead
   stateOf(slotId: string): SlotState | undefined
+  /** When (ms epoch) the slot's screen last received output bytes; 0 if it never painted, undefined if the slot does not exist. */
+  paintedAt(slotId: string): number | undefined
   list(): SlotState[]
   /** Spawned and not exited. */
   isAlive(slotId: string): boolean

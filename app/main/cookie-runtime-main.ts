@@ -4,9 +4,14 @@
 // same arguments and cwd, and this process exits; otherwise the reason goes to the app log and this launch goes on.
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { cookieRuntimeDir, handoffArgs, hashTree, RUNTIME_MANIFEST, runtimeExe, runtimeVerdict, wantsHandoff } from '../shared/cookie-runtime.ts'
+import { cookieRuntimeDir, handoffArgs, hashTree, type HashFs, RUNTIME_MANIFEST, runtimeExe, runtimeVerdict, wantsHandoff } from '../shared/cookie-runtime.ts'
 import { isPrivateDir } from '../../extensions/browser/private-dir.ts'
+
+// Electron's `fs` without the asar shim: `node:fs` reads `resources/default_app.asar` as a folder and the walk fails.
+// `original-fs` exists only inside Electron, hence the require.
+const originalFs = (): HashFs => createRequire(__filename)('original-fs') as HashFs
 
 const readOrUndefined = (path: string): string | undefined => { try { return readFileSync(path, 'utf8') } catch { return undefined } }
 
@@ -21,7 +26,7 @@ export function handOffToCookieRuntime(opts: { home: string, argv: readonly stri
     runningVersion: opts.electronVersion,
     // <home>/runtime protected and its owner's alone; the copy's folder owner-only (its entries inherited from it).
     privateDir: () => isPrivateDir(dirname(dir)) && isPrivateDir(dir, { inherited: true }),
-    files: () => { try { return hashTree(dir) } catch { return undefined } },
+    files: () => hashTree(dir, originalFs()),
   })
   if (!verdict.ok) {
     opts.log(`runtime com o fuse de cookies: ${verdict.reason}; seguindo no Electron de node_modules (navegador sem logins guardados). Rode npm run app:install para refazer.`)

@@ -1,6 +1,7 @@
 // Context data for one soul session, read from the slot's events file (<home>/slots/<id>.events.jsonl). The soul client
 // appends one `kind:"context"` line per finished turn carrying the context it measured itself (categories, memory files,
-// skills, agents, MCP tools, API usage). parseEvents keeps only start/rename/end, so the raw lines are read here.
+// skills, agents, MCP tools, API usage); a `source:"open"` line measures the context on open/resume and is not a turn.
+// parseEvents keeps only start/rename/end, so the raw lines are read here.
 // Only lines of the session opened by the last `start` count: a `start` with another session id (switch, clear) resets.
 // The file is read incrementally (from the last consumed byte, at line boundaries) and never re-read from the start
 // unless it shrank. Node built-ins only.
@@ -146,6 +147,7 @@ export class SoulEventsReader {
     const ctx = parseSoulContext(o.context, o.sessionId, ts)
     if (!ctx) return 0
     this.ctx = ctx
+    if (o.source === 'open') return 1
     const u = isObj(o.context.apiUsage) ? o.context.apiUsage : {}
     const turn: UsageTurn = {
       id: `${o.sessionId}:${this.tot.turns + 1}`,

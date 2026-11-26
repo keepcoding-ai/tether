@@ -62,6 +62,9 @@ export class AttentionState {
   private armed = false
   private burst = 0
   private lastOutputAt = 0
+  private paintedAt = 0
+  /** When (ms) the last non-empty output chunk arrived, armed or not; 0 when the screen never painted. Read-only for callers. */
+  get lastPaintAt(): number { return this.paintedAt }
   /** Background subagents still running (Claude: marker files its Subagent hooks keep). The turn stays busy while any runs. */
   background = 0
   /** The main turn ended (Stop) while subagents ran: the turn is kept busy for them, and the agent wakes when they end. */
@@ -152,6 +155,7 @@ export class AttentionState {
 
   /** Output from the process at `now` (ms). Returns true when the value changed (a bell). */
   output(data: string, now: number): boolean {
+    if (data.length > 0) this.paintedAt = now
     let bell = false
     for (let i = 0; i < data.length; i++) {
       const c = data.charCodeAt(i)

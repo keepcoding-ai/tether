@@ -162,6 +162,10 @@ export class DeliveryService {
   readonly presence = new UserPresence()
   /** > 0 while the delivery itself writes to a PTY: those writes are not the user's (nor the holder's). */
   private selfWriting = 0
+  /** Slots with a delivery being typed now, from the typist's start to its answer (the waits between chunks included). */
+  private readonly typing = new Set<string>()
+  /** Slots where an `unsent` delivery left text of the tether's in the box; cleared by a busy turn or the person's keys. */
+  private readonly dirtyBox = new Set<string>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private timerAt = Infinity
   private readonly streamSub: IDisposable
@@ -186,13 +190,14 @@ export class DeliveryService {
 
   /** A slot's state went out: a busy turn takes the user's draft with it; a slot with a queue is looked at. */
   stateChanged(state: SlotState): void {
-    if (state.turn === 'busy') this.presence.turnBusy(state.slotId)
+    if (state.turn === 'busy') { this.presence.turnBusy(state.slotId); this.dirtyBox.delete(state.slotId) }
     if (this.queues.has(state.slotId)) void this.kick(state.slotId)
   }
 
   /** Keystrokes reached a slot. The delivery's own writes are skipped; the user's and the holder's feed the interlock. */
   input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void {
     if (origin === 'agent' && this.selfWriting > 0) return
+    if (origin === 'user') this.dirtyBox.delete(slotId)
     if (origin === 'agent' && mark?.answer) this.presence.activity(slotId, this.now(), 'agent')
     else this.presence.input(slotId, data, this.now(), origin)
     if (this.queues.has(slotId)) this.armTimer()
@@ -204,6 +209,7 @@ export class DeliveryService {
     const items = this.queues.get(slotId) ?? []
     this.queues.delete(slotId)
     this.settleAt.delete(slotId)
+    this.dirtyBox.delete(slotId)
     this.hadStream.delete(slotId)
     this.presence.forget(slotId)
     for (const item of items) this.emit(item, 'dropped')
@@ -227,6 +233,7 @@ export class DeliveryService {
       pathOf: (slotId) => this.pathOf(slotId),
       routeOf: (slotId) => this.routeOf(slotId),
       hasTools: (slotId) => this.hasTools(slotId),
+      quiet: (slotId) => this.quiet(slotId),
       useTypist: (agent, typist) => {
         const entry = { typist }
         this.typists.set(agent, entry)
@@ -283,6 +290,15 @@ export class DeliveryService {
    */
   hasTools(slotId: string): boolean {
     return this.hadStream.has(slotId) || this.opts.mcp.connected(slotId)
+  }
+
+  /**
+   * Pure: the delivery leaves the slot's box alone now. No extension's item waits for it, none is being typed, the last
+   * terminal delivery settled, and no `unsent` text of the tether's sits in the box. Another typist of the tether checks it.
+   */
+  quiet(slotId: string): boolean {
+    if (this.queues.has(slotId) || this.typing.has(slotId) || this.dirtyBox.has(slotId)) return false
+    return this.now() >= (this.settleAt.get(slotId) ?? 0)
   }
 
   /** Stops the silence timer and the stream subscription (tests, teardown). */
@@ -448,16 +464,21 @@ export class DeliveryService {
       },
     }
     let answer: 'sent' | 'unsent'
+    this.typing.add(slotId)
     try {
       answer = await typist.type(ctx, terminalText(item.msg, item.ext, item.id))
     } catch (e) {
       this.opts.log(`door: entrega ${item.id}: o digitador de ${agent} falhou: ${message(e)}`)
       answer = 'unsent'
+    } finally {
+      this.typing.delete(slotId)
     }
     over = true
     if (!written) return 'held-back'
     this.settleAt.set(slotId, this.now() + DOOR_SETTLE_MS)
-    return answer === 'sent' && !refused ? 'sent' : 'unsent'
+    const outcome = answer === 'sent' && !refused ? 'sent' : 'unsent'
+    if (outcome === 'unsent') this.dirtyBox.add(slotId)
+    return outcome
   }
 
   /** The engine's typing as a typist: its chunks in one write (the behaviour before the typists). */

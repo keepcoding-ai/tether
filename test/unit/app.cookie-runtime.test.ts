@@ -41,6 +41,8 @@ test('cookie runtime: the launch verdict (absent, invalid, other version, not pr
   assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: () => false, files: h(FILES) }), { ok: false, reason: 'pasta não privada' })
   assert.equal(hashed, 0, 'no hash before the cheap checks pass')
   assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: h(undefined) }), { ok: false, reason: 'ausente' })
+  assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: () => { throw new Error("ENOENT: no such file or directory, scandir 'x/resources/default_app.asar'") } }), { ok: false, reason: "leitura falhou: ENOENT: no such file or directory, scandir 'x/resources/default_app.asar'" }, 'a read error is the reason, not "ausente"')
+  assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: () => { throw 'boom' } }), { ok: false, reason: 'leitura falhou: boom' })
   assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: h({ ...FILES, 'tether.exe': sha('other') }) }), { ok: false, reason: 'executável alterado' })
   assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: h({ ...FILES, 'ffmpeg.dll': sha('planted') }) }), { ok: false, reason: 'arquivos alterados' })
   assert.deepEqual(runtimeVerdict({ manifestText: manifest(), runningVersion: '45.1.0', privateDir: mine, files: h({ ...FILES, 'version.dll': sha('planted') }) }), { ok: false, reason: 'arquivos alterados' }, 'a file added next to the executable')

@@ -287,6 +287,26 @@ describe('attention: soul idle heuristic', () => {
   })
 })
 
+describe('attention: lastPaintAt', () => {
+  test('advances on every non-empty chunk, armed or not; empty chunks do not', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    assert.equal(a.lastPaintAt, 0)
+    a.output('abc', 100)
+    assert.equal(a.lastPaintAt, 100, 'unarmed')
+    a.output('', 200)
+    assert.equal(a.lastPaintAt, 100, 'empty chunk')
+    a.input('go\r')
+    a.output('x', 300)
+    assert.equal(a.lastPaintAt, 300, 'armed')
+  })
+  test('the idle heuristic is unchanged', () => {
+    const a = new AttentionState(attentionOptions('soul'))
+    a.input('\r')
+    a.output('x'.repeat(BURST_BYTES), 2000)
+    assert.equal(a.dueAt(), 2000 + IDLE_MS)
+  })
+})
+
 describe('attention report', () => {
   test('parse: valid, unknown kind, garbage', () => {
     assert.deepEqual(parseAttentionReport('{"ts":"2026-10-30T10:00:00.000Z","kind":"done","sessionId":"s"}'), { ts: '2026-10-30T10:00:00.000Z', kind: 'done', sessionId: 's' })
