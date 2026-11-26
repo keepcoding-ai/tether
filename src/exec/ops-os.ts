@@ -5,7 +5,10 @@
 // coordinator never imports this file. Operations may return a promise (the worker awaits it), which lets several kills overlap.
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import type { Socket } from 'node:net'
-import { ensurePrivateDir } from '../../extensions/browser/private-dir.ts'
+import { chmod, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { checkDacl, ensurePrivateDir, sidMemory, system32 } from '../../extensions/browser/private-dir.ts'
 import { parseProcessTable, type ProcRow } from '../daemon/memory.ts'
 import { planFor } from '../daemon/proc-launch-sync.ts'
 import { parseLsof, parseNetstat, type Listener } from '../daemon/ports.ts'
@@ -312,6 +315,50 @@ export async function identifyProcess(pid: number): Promise<ProcessInfo | null> 
   } catch { return null }
 }
 
+// ---- the pipe keys (src/daemon/pipe-key.ts) ----
+
+/** The current user's SID (whoami from System32), remembered like private-dir's. */
+async function userSid(): Promise<string> {
+  if (sidMemory.sid) return sidMemory.sid
+  const m = /"(S-1-[\d-]+)"/.exec(await runFile(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh']))
+  if (!m) throw new Error('não consegui ler o SID do usuário atual')
+  sidMemory.sid = m[1]!
+  return sidMemory.sid
+}
+
+/** A key file readable by its user only: Windows, a protected DACL with the user and SYSTEM; elsewhere mode 0600. Throws when it cannot. */
+async function restrictKeyFile(path: string): Promise<null> {
+  if (process.platform !== 'win32') { await chmod(path, 0o600); return null }
+  await runFile(system32('icacls.exe'), [path, '/inheritance:r', '/grant:r', `*${await userSid()}:(F)`, '*S-1-5-18:(F)', '/q'])
+  return null
+}
+
+/** Besides the user, who may hold access to a folder that still counts as private: SYSTEM, Administrators, CREATOR OWNER (SDDL names or SIDs). */
+const PRIVATE_FOLDER_TRUSTED = new Set(['SY', 'S-1-5-18', 'BA', 'S-1-5-32-544', 'CO', 'S-1-3-0'])
+
+/**
+ * Whether only the user (and SYSTEM / Administrators) can reach the folder, changing nothing. Windows: every allow entry of its
+ * DACL, read as SDDL (`icacls /save`, the same in every system language), is the user or one of PRIVATE_FOLDER_TRUSTED;
+ * elsewhere no group/other permission bit. Anything that cannot be read counts as not private.
+ */
+async function isPrivateFolder(dir: string): Promise<boolean> {
+  try {
+    if (process.platform !== 'win32') return ((await stat(dir)).mode & 0o077) === 0
+    const tmp = await mkdtemp(join(tmpdir(), 'tether-acl-'))
+    try {
+      const file = join(tmp, 'acl')
+      await runFile(system32('icacls.exe'), [dir, '/save', file, '/q'])
+      const sddl = (await readFile(file)).toString('utf16le').replace(/^﻿/, '').split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith('D:'))
+      if (!sddl) return false
+      return checkDacl(sddl, await userSid()).others.every((who) => PRIVATE_FOLDER_TRUSTED.has(who))
+    } finally {
+      await rm(tmp, { recursive: true, force: true })
+    }
+  } catch {
+    return false
+  }
+}
+
 /** The pid listening on `port` (TCP), or null when nothing is or the OS will not say. */
 export async function listeningOwner(port: number): Promise<number | null> {
   try {
@@ -337,4 +384,6 @@ export const osOps = {
   procPlan,
   identifyProcess,
   listeningOwner,
+  restrictKeyFile,
+  isPrivateFolder,
 }

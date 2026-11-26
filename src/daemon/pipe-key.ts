@@ -12,10 +12,10 @@
 //
 // The two labels keep one side's answer from ever serving as the other's. The key is a secret: it never goes into a log
 // line, an error message, a reply or stdout; only its path does.
-import { execFile } from 'node:child_process'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { chmod, open, readFile, stat, writeFile } from 'node:fs/promises'
+import { open, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { agentExecutor } from '../agents/agent-exec.ts'
 
 export const PIPE_KEY_FILE = 'tetherd.key'
 const NONCE_BYTES = 32
@@ -99,56 +99,25 @@ export function readPipeKey(home: string): Promise<Buffer | undefined> {
   return readKeyFile(pipeKeyPath(home))
 }
 
-function run(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { encoding: 'utf8', windowsHide: true, timeout: 15_000 }, (err, stdout, stderr) => {
-      if (err) reject(new Error((stderr || err.message).trim()))
-      else resolve(stdout)
-    })
-  })
-}
-
-const system32 = (): string => join(process.env.SystemRoot || process.env.windir || 'C:\\Windows', 'System32')
-
-/** The SID of the user this process runs as (whoami.exe from System32, never one found on the PATH). */
-async function ownSid(): Promise<string> {
-  const out = await run(join(system32(), 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'])
-  const sid = /"(S-1-[0-9-]+)"/.exec(out)?.[1]
-  if (!sid) throw new Error('whoami não deu o SID do usuário')
-  return sid
-}
+// The whoami / icacls children are created by the executor (restrictKeyFile and isPrivateFolder in src/exec/ops-os.ts):
+// CreateProcess runs on the calling thread, so tetherd's loop never does it (test/unit/arch.sync-ratchet.test.ts). tetherd
+// registers its worker executor; the hosts (tether-procd, tether-ptyd) use the inline fallback, as they do for killTree.
 
 /** Bench only: TETHER_TEST_KEY_ACL_FAIL=1 makes restricting the key file fail, to prove what happens then. */
 const ENV_TEST_ACL_FAIL = 'TETHER_TEST_KEY_ACL_FAIL'
 
-/** Windows: the file's DACL becomes exactly the user and SYSTEM, inheritance removed (the home may inherit "Users: read"). */
-async function restrictWindows(path: string): Promise<void> {
+/** The key file's DACL becomes the user and SYSTEM, no inheritance (the home may inherit "Users: read"); 0600 elsewhere. */
+async function restrictKeyFile(path: string): Promise<void> {
   if (process.env[ENV_TEST_ACL_FAIL] === '1') throw new Error(`falha simulada (${ENV_TEST_ACL_FAIL}=1)`)
-  const sid = await ownSid()
-  await run(join(system32(), 'icacls.exe'), [path, '/inheritance:r', '/grant:r', `*${sid}:(F)`, '*S-1-5-18:(F)'])
+  await agentExecutor().run('restrictKeyFile', [path])
 }
 
-/** SIDs that may hold access to a private folder besides the user: SYSTEM, Administrators, CREATOR OWNER (a placeholder for inheritance). */
-const TRUSTED_SIDS = new Set(['S-1-5-18', 'S-1-5-32-544', 'S-1-3-0'])
-
 /**
- * Whether only the user (and SYSTEM / Administrators) can read the folder: Windows, every Allow entry of its DACL goes to one
- * of those SIDs (read through Get-Acl, by SID, never by localized name); elsewhere, no permission bit for group or others.
- * Anything that cannot be checked counts as not private.
+ * Whether only the user (and SYSTEM / Administrators) can reach the folder: Windows, every allow entry of its DACL, read as
+ * SDDL (the same in every system language); elsewhere, no permission bit for group or others. Unreadable counts as not private.
  */
-export async function folderIsPrivate(dir: string, platform: NodeJS.Platform = process.platform): Promise<boolean> {
-  try {
-    if (platform !== 'win32') return ((await stat(dir)).mode & 0o077) === 0
-    const ps = `$a = Get-Acl -LiteralPath '${dir.replace(/'/g, "''")}'; `
-      + `$a.Access | Where-Object { $_.AccessControlType -eq 'Allow' } | ForEach-Object { 'ACE=' + $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value }; `
-      + `'ME=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value`
-    const out = await run(join(system32(), 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', ps])
-    const me = /ME=(S-1-[0-9-]+)/.exec(out)?.[1]
-    const aces = [...out.matchAll(/ACE=(S-1-[0-9-]+)/g)].map((m) => m[1]!)
-    return me !== undefined && aces.length > 0 && aces.every((sid) => sid === me || TRUSTED_SIDS.has(sid))
-  } catch {
-    return false
-  }
+export async function folderIsPrivate(dir: string): Promise<boolean> {
+  return agentExecutor().run('isPrivateFolder', [dir]).catch(() => false)
 }
 
 /** The key file could not be made private and its folder is not private either: the process refuses to serve. */
@@ -164,15 +133,14 @@ export class KeyNotPrivateError extends Error {
  * the user. When that fails, it is accepted only if the folder is private to the user already (the default home is);
  * otherwise KeyNotPrivateError, with what to do. Runs before the process serves anything, so a refusal leaves nothing behind.
  */
-export async function prepareKeyFile(home: string, path: string, log: (msg: string) => void, platform: NodeJS.Platform = process.platform): Promise<void> {
+export async function prepareKeyFile(home: string, path: string, log: (msg: string) => void): Promise<void> {
   const fh = await open(path, 'a', 0o600)
   await fh.close()
   try {
-    if (platform === 'win32') await restrictWindows(path)
-    else await chmod(path, 0o600)
+    await restrictKeyFile(path)
   } catch (e) {
     const why = (e as Error).message
-    if (!(await folderIsPrivate(home, platform))) {
+    if (!(await folderIsPrivate(home))) {
       throw new KeyNotPrivateError(`não consegui deixar ${path} legível só por você (${why}), e a pasta ${home} não é privada: `
         + 'recusei subir, porque outra conta da máquina poderia ler a chave. Corrija as permissões da pasta ou aponte TETHER_HOME para uma pasta só sua')
     }
