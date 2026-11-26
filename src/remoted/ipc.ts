@@ -1,0 +1,99 @@
+// The private channel between the `remote` extension (in tetherd) and the portal process it spawned: Node's IPC channel of
+// that child (fd 3), which no other process can open. It carries the extension's commands (pairing gestures of the app,
+// revocations, registry changes) and the portal's asks (write this device, this ticket) and notes. Nothing here goes on
+// the tetherd pipe, so no client of the pipe, greeted or not, ever sees a pairing code, a typed SAS or a ticket state.
+// The credential is NOT on this channel: it goes on stdin, once, as fio-spec 1.5 says.
+// Pure module (no node:*): both sides import it; the messages are JSON (Node's 'json' serialization).
+
+/** A device as the portal needs it: identity, state and the tickets the deny list is made of. Hex for bytes. */
+export interface PortalDevice {
+  deviceId: string
+  pubD: string
+  /** `pending`: written at the SAS, waiting for PAIR_ACK; `active`; `revoked`. */
+  state: 'pending' | 'active' | 'revoked'
+  maxVerUsed: number
+  scopes: string[]
+  tickets: TicketRow[]
+  /** keyId(pub_A) of every admission key this device ever had (E-2: a renewal never reuses one). */
+  usedKeyIds: string[]
+}
+
+export interface TicketRow { ticketId: string; exp: number; keyId: string }
+export interface DenyRow { ticketId: string; exp: number }
+
+export type PairCmd =
+  | { cmd: 'pair.begin' }
+  | { cmd: 'pair.sas'; pairId: string; digits: string }
+  | { cmd: 'pair.cancel'; pairId: string }
+  | { cmd: 'pair.state'; pairId: string }
+  | { cmd: 'status' }
+
+/** extension → portal */
+export type ToPortal =
+  | { t: 'init'; relayUrl: string; houseName: string; devices: PortalDevice[]; deny: DenyRow[] }
+  | ({ t: 'cmd'; id: number } & PairCmd)
+  | { t: 'device'; device: PortalDevice }
+  | { t: 'forget'; deviceId: string }
+  /** Revocation, after the registry was written (spec 6.1 order): close its sessions with CLOSE(0x04), deny its tickets. */
+  | { t: 'revoke'; deviceId: string; deny: DenyRow[] }
+  | { t: 'answer'; id: number; ok: boolean; error?: string }
+  | { t: 'stop' }
+
+/** What the portal asks the registry's only writer to do; the portal goes on only after `answer ok`. */
+export type PortalAsk =
+  /** The SAS matched: write the device as `pending` with its first ticket. */
+  | { ask: 'paired'; device: { deviceId: string; pubD: string; name: string; ver: number; access: 'code' | 'qr' }; ticket: TicketRow }
+  /** admit.renew: record the new ticket; refused when the device is not active (a revocation runs first) or the key was used. */
+  | { ask: 'renew'; deviceId: string; ticket: TicketRow }
+
+export type PortalNote =
+  | { note: 'acked'; deviceId: string }
+  | { note: 'erase'; deviceId: string }
+  | { note: 'seen'; deviceId: string; ver: number }
+  | { note: 'revoke-self'; deviceId: string }
+  | { note: 'link'; state: 'up' | 'down' }
+  | { note: 'sessions'; count: number }
+  /** One audit line: the kind of act, the device by id, the result. Never content (M-10). */
+  | { note: 'audit'; act: string; deviceId?: string; result: string }
+
+/** portal → extension */
+export type FromPortal =
+  /** The credential was read and the folder is private: the portal listens now and waits for `init`. */
+  | { t: 'want-init' }
+  | { t: 'ready'; pid: number }
+  | { t: 'reply'; id: number; ok: true; result: unknown }
+  | { t: 'reply'; id: number; ok: false; error: string; code?: string }
+  | ({ t: 'ask'; id: number } & PortalAsk)
+  | ({ t: 'note' } & PortalNote)
+  /** The portal refuses to serve (folder open, bad config, missing keys): the reason, then it exits. */
+  | { t: 'fatal'; reason: string }
+
+/** The pairing ticket as the screen that asked may see it. Never the expected SAS; the code only while `open`. */
+export interface PairView {
+  pairId: string
+  state: 'open' | 'revealed' | 'waiting-sas' | 'confirmed' | 'done' | 'burned'
+  expiresAt: number
+  /** While `waiting-sas`: what the device declares (sanitized) and the access it used. A declared name is no identity. */
+  device?: { declaredName: string; caps: number; access: 'code' | 'qr' }
+  triesLeft?: number
+  burnReason?: string
+}
+
+/** The answer of `pair.begin`: secret, for the connection that asked only. */
+export interface PairBegun extends PairView {
+  /** `123 456 789 012`. */
+  code: string
+  /** `#pair=<base64url>` for the PWA's URL fragment. */
+  qr: string
+  /** The house's fingerprint, to show next to the code. */
+  fingerprint: string
+}
+
+export interface PortalStatus {
+  link: 'up' | 'down'
+  sessions: number
+  houseFingerprint: string
+}
+
+/** Exit codes of the portal: why it did not serve. */
+export const PORTAL_EXIT = { ok: 0, crashed: 1, badCredential: 2, folderOpen: 3, config: 4, keys: 5, pipe: 6 } as const
