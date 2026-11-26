@@ -123,5 +123,5 @@ export interface DoorSeams {
   /** Resumes the slot when the app suspended its pane (door/suspend.ts); false when it is not suspended. */
   resumeSuspended?(slotId: string, why: string): boolean
   /** The pipe's `create` with a `desk` (id or name): the `paneRequest` to write, or a `DoorError` when the desk is unknown or asleep. Absent: the desk is taken as asked. */
-  deskRequest?(ref: string): { deskId: string }
+  deskRequest?(ref: string, asker?: { slotId: string; key?: string }): { deskId: string }
 }

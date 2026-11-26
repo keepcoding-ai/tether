@@ -37,6 +37,11 @@ export function takesByTyping(eff: Effective): boolean {
 
 const isRecord =(v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** Whether `slotId` is the live (not forgotten) owner of the desk: the one rule `agents open` and the pipe's `create { desk }` share. */
+export function ownsDesk(store: Pick<OwnershipStore, 'ownedDesks'>, slotId: string, deskId: string): boolean {
+  return store.ownedDesks().some(([id, o]) => id === deskId && o.owner === slotId && !o.ended)
+}
+
 /** What the store holds under 'owner', when it has the shape; anything else reads as no owner (the app writes the same file). */
 function asOwnership(v: unknown): Ownership | undefined {
   if (!isRecord(v) || typeof v.owner !== 'string' || !v.owner) return undefined

@@ -6,6 +6,7 @@ import { slotTitle } from '../../../../app/shared/agent-info.ts'
 import type { SlotKind, SlotState } from '../../../../src/daemon/protocol.ts'
 import { conductorRegistry, type ConductorTarget } from '../../conductor-api.ts'
 import { buildContext } from '../context.ts'
+import { ownsDesk } from '../ownership.ts'
 import { capabilityOn, OBJECT_KEYS, type Inventory } from '../../rules.ts'
 import { ok, optString, refuse, touch, wantString, type VerbDef, type VerbDeps } from './common.ts'
 import { deliverAsOwner } from './send.ts'
@@ -60,7 +61,7 @@ export const openVerb: VerbDef = {
     if (wanted) {
       const d = map?.desks.find((x) => x.id === wanted) ?? map?.desks.find((x) => x.name === wanted)
       if (!d) refuse('unknown-desk', `a mesa ${wanted} não existe`)
-      if (!mine.includes(d.id)) refuse('not-owner', `a mesa ${d.name} não é sua`)
+      if (!ownsDesk(deps.store, owner, d.id)) refuse('not-owner', `a mesa ${d.name} não é sua`)
       deskId = d.id
     } else {
       if (mine.length !== 1) refuse('no-desk', mine.length === 0 ? 'você não é dono de nenhuma mesa' : 'você tem mais de uma mesa: diga qual em `desk`')

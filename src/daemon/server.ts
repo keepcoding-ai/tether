@@ -1991,7 +1991,9 @@ class DaemonImpl implements Daemon {
         // `desk` (optional): the pane is asked into that desk; a request without it is exactly as before.
         if (req.desk === undefined) return { t: 'ok', id, slot: this.stateOf(await this.createSlot(req)) }
         if (typeof req.desk !== 'string' || !req.desk) throw new RequestError('bad-request', 'desk inválido')
-        const paneRequest = this.door.deskRequest ? this.door.deskRequest(req.desk) : { deskId: req.desk }
+        if (req.slotId !== undefined && (typeof req.slotId !== 'string' || !req.slotId || (req.key !== undefined && typeof req.key !== 'string'))) throw new RequestError('bad-request', 'identidade inválida')
+        const asker = req.slotId !== undefined ? { slotId: req.slotId, ...(req.key !== undefined ? { key: req.key } : {}) } : undefined
+        const paneRequest = this.door.deskRequest ? this.door.deskRequest(req.desk, asker) : { deskId: req.desk }
         return { t: 'ok', id, slot: this.stateOf(await this.createSlot(req, { paneRequest })) }
       }
       case 'start': {

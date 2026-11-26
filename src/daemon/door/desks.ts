@@ -118,16 +118,32 @@ export class DeskService implements DoorDesks {
    * The `paneRequest` for a remote `create { desk }`: `ref` is a desk id, or else a desk name that only one desk has. Stricter
    * than `paneRequestFor`: the person is not at the app, so a sleeping desk is refused too. With no map yet, taken as asked.
    */
-  requestForTarget(ref: string): { deskId: string } {
+  requestForTarget(ref: string, asker?: string): { deskId: string } {
     const map = this.current
-    if (!map) return { deskId: ref }
+    if (!map) {
+      if (asker !== undefined) throw new DoorError('bad-request', `a mesa ${ref} não existe`)
+      return { deskId: ref }
+    }
     const found = map.desks.find((d) => d.id === ref)
     const byName = found ? [] : map.desks.filter((d) => d.name === ref)
     if (byName.length > 1) throw new DoorError('bad-request', `há mais de uma mesa chamada "${ref}": use o id`)
     const desk = found ?? byName[0]
     if (!desk) throw new DoorError('bad-request', `a mesa ${ref} não existe`)
+    // A system desk takes no pane from the pipe. An agent asking (its pane's identity came with the request) gets only a desk
+    // that is its own, by the same rule `agents open` applies; the person (no asker) gets any ordinary desk.
+    if (desk.kind === 'system') throw new DoorError('bad-request', `a mesa "${desk.name}" é de sistema`)
+    if (asker !== undefined && !(this.ownership?.(asker, desk.id) ?? false)) throw new DoorError('door-denied', `a mesa ${desk.name} não é sua`)
     if (desk.asleep) throw new DoorError('bad-request', `a mesa "${desk.name}" está dormindo`)
     return { deskId: desk.id }
+  }
+
+  /** The ownership rule an extension registered (`DoorDesks.useOwnership`). */
+  private ownership: ((slotId: string, deskId: string) => boolean) | undefined
+
+  useOwnership(check: (slotId: string, deskId: string) => boolean): IDisposable {
+    if (this.ownership) throw new Error('a regra de posse de mesa já tem quem responda')
+    this.ownership = check
+    return toDisposable(() => { if (this.ownership === check) this.ownership = undefined })
   }
 
   // ---- the pipe's `desk-map` ---------------------------------------------------------------------

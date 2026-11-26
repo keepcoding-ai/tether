@@ -83,6 +83,11 @@ export interface DoorDesks {
   onDidChange(listener: (map: DeskMap) => void): IDisposable
   /** Asks for a terminal pane for an existing slot (`create` with `desk` does this itself). */
   requestPane(slotId: string, deskId: string): Promise<void>
+  /**
+   * Registers the rule of desk ownership: whether the slot owns the desk (live owner, the same rule `agents open` applies). The
+   * pipe's `create { desk }` from an agent's pane asks it; with none registered, no agent owns a desk. One at a time.
+   */
+  useOwnership(check: (slotId: string, deskId: string) => boolean): IDisposable
   /** Resolves once <home>/desks.json was read (at once in a satellite); `map()` before it may be undefined. */
   readonly ready: Promise<void>
 }
