@@ -188,7 +188,7 @@ describe('PendingCommands with return', () => {
     assert.equal(pending.count(PANE), 0)
     assert.equal(delivered.length, 1)
     assert.equal(delivered[0]!.owner, OWNER)
-    assert.match(delivered[0]!.msg.body, /comando /context: não rodou; a guia não ficou livre em 5 min (avisos do tether na caixa)/)
+    assert.equal(delivered[0]!.msg.body, 'comando /context: não rodou; a guia não ficou livre em 5 min') // never looked at, so no heldBy
   })
 
   test('dispose ends the live watches', async () => {
