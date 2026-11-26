@@ -44,7 +44,7 @@ import type { Marks } from './marks.ts'
 import type { EmbeddedChannel, EmbedOptions } from './embed.ts'
 import {
   agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
-  MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, waitsLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
+  MODERATOR_ARIA, muteBar, olderCursor, rowShown, rowsOf, seenProbes, seenUpTo, unreadLabel, waitsLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
 } from './view-model.ts'
 
 /** Lines asked per page (the daemon's ceiling is 200). */
@@ -525,7 +525,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       } else this.body.append(this.fold, this.side, this.conv)
       this.element.addEventListener('focusin', ev => { if (!this.side.contains(ev.target as Node)) this.memberReturn = undefined })
       this.overlays = new MutationObserver(recs => {
+        // A layer of the tether came or went (a dialog, a menu, the peek card opened or closed): what it covered may be seen now.
+        this.seenSoon()
         for (const r of recs) {
+          if (r.type !== 'childList') continue
           for (const n of r.removedNodes) {
             if (!(n instanceof HTMLElement) || !(n.id === 'ctx-menu' || n.tagName === 'DIALOG')) continue
             for (const b of this.side.querySelectorAll('[aria-haspopup][aria-expanded="true"]')) b.setAttribute('aria-expanded', 'false')
@@ -538,6 +541,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         }
       })
       this.overlays.observe(document.body, { childList: true })
+      // The peek card's layer stays in the page: its opening and closing are attribute changes.
+      const peekLayer = document.getElementById('peek')
+      if (peekLayer) this.overlays.observe(peekLayer, { attributes: true, attributeFilter: ['data-open', 'data-mode', 'hidden'] })
       this.head.append(this.titleBox, this.bar)
       // The pane's own bar: the quick view's card shows only the body, under its own header (peek.css [data-pane-bar]).
       this.head.dataset.paneBar = ''
@@ -563,6 +569,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // The person may see the end of the conversation by the window coming back to the front, with no scroll or line.
       window.addEventListener('focus', this.onWatch)
       document.addEventListener('visibilitychange', this.onWatch)
+      // A layer that only toggles `open` (a dialog kept in the page) gives the keyboard back as it closes: look again then.
+      document.addEventListener('focusin', this.onFocusMove)
       this.subs.push(marks.onDidChange(() => {
         this.paintNewBar()
         // A reaction that asks her may arrive while its speech is in view: it is seen at once.
@@ -582,11 +590,21 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     private readonly onWatch = (): void => this.checkSeen()
+    private readonly onFocusMove = (): void => this.seenSoon()
+
+    private seenPending = false
+    /** checkSeen once after the change settles (a timer, not a frame: a window in the background draws no frames). */
+    private seenSoon(): void {
+      if (this.seenPending || this.disposed) return
+      this.seenPending = true
+      setTimeout(() => { this.seenPending = false; this.checkSeen() }, 0)
+    }
 
     dispose(): void {
       this.disposed = true
       window.removeEventListener('focus', this.onWatch)
       document.removeEventListener('visibilitychange', this.onWatch)
+      document.removeEventListener('focusin', this.onFocusMove)
       if (this.membersTimer) clearTimeout(this.membersTimer)
       if (this.toastTimer) clearTimeout(this.toastTimer)
       if (this.dropTimer) clearTimeout(this.dropTimer)
@@ -614,10 +632,19 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (!document.hasFocus() || document.visibilityState !== 'visible') return
       const asks = marks.asksOf(this.channelId)
       if (this.stick) {
+        // The end is seen only as far as nothing of the tether covers it (the docked quick view, a modal): view-model.ts seenUpTo.
+        const seen = marks.of(this.channelId).seen
+        const rows: { seq: number; shown: boolean }[] = []
+        for (const row of this.msgs.querySelectorAll<HTMLElement>('.ch-msg[data-seq], .ch-sys[data-seq]')) {
+          const seq = Number(row.dataset.seq)
+          if (!(seq > seen)) continue
+          const shown = this.rowShownAt(row)
+          if (shown !== undefined) rows.push({ seq, shown })
+        }
         // A reaction newer than the last speech is no hole in the conversation: it is seen with the end only when its speech is in view.
-        let upTo = this.timeline.last
-        for (const a of asks) if (a.seq > upTo && this.onScreen(a.on)) upTo = a.seq
-        marks.viewed(this.channelId, upTo)
+        let upTo = seenUpTo(this.timeline.last, seen, rows)
+        if (upTo === this.timeline.last) for (const a of asks) if (a.seq > upTo && this.onScreen(a.on)) upTo = a.seq
+        if (upTo > seen) marks.viewed(this.channelId, upTo)
       }
       // Reading above the end: an ask whose speech is in view is seen too.
       for (const a of marks.asksOf(this.channelId)) if (this.onScreen(a.on)) marks.attended(this.channelId, a.seq)
@@ -1499,12 +1526,22 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     /** Whether the speech `seq` is held and at least partly in view of the conversation. */
+    /** A speech is on screen: in the conversation's view and not covered by anything of the tether (rowShownAt). */
     private onScreen(seq: number): boolean {
       const row = this.msgs.querySelector<HTMLElement>(`.ch-msg[data-seq="${seq}"]`)
-      if (!row) return false
+      return !!row && this.rowShownAt(row) === true
+    }
+
+    /**
+     * Whether the person sees a row: undefined when it is out of the conversation's view; else whether most of its probes
+     * (view-model.ts seenProbes) find the conversation on top, not the docked card, a modal or another layer of the tether.
+     */
+    private rowShownAt(row: HTMLElement): boolean | undefined {
       const r = row.getBoundingClientRect()
       const v = this.msgs.getBoundingClientRect()
-      return r.height > 0 && r.top < v.bottom && r.bottom > v.top
+      const probes = seenProbes({ left: r.left, top: r.top, width: r.width, height: r.height }, { left: v.left, top: v.top, width: v.width, height: v.height })
+      if (probes.length === 0) return undefined
+      return rowShown(probes.map(p => { const hit = document.elementFromPoint(p.x, p.y); return hit !== null && this.msgs.contains(hit) }))
     }
 
     private paintNewBar(): void {
@@ -2124,6 +2161,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       const box = el('div', 'ch-pick')
       box.setAttribute('role', 'dialog')
       box.setAttribute('aria-label', `Reagir à fala de ${this.authorOf(seq)}`)
+      // Open, it freezes the native pages (app/renderer/overlay-freeze.ts FREEZES_ATTR): over the docked card it would sit under one.
+      box.dataset.freezes = ''
       box.dataset.seq = String(seq)
       const choose = (emoji: string): void => { this.closePicker(true); this.reactTo(seq, emoji) }
 

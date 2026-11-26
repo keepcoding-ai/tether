@@ -11,7 +11,9 @@
 //      the pane is back in its tab whole (no reload: the page's own mark is still there), the view hidden until the Browser
 //      desk shows it, then placed in the tab again (screenshot r3-cartao-navegador);
 //   2. the same tab DOCKED over the Regency's conversation (its own quick view path): the view in the card, never over the
-//      tree nor over the box of speech; no freeze; the box takes text and sends with the card open; closed, back whole;
+//      tree nor over the box of speech; no freeze; the box takes text and sends with the card open; the "@" list opened then
+//      freezes the card's page (it would sit under the native view) and the page lives again when it closes; a line for the
+//      person under the card keeps its mark, seen once the card closes; closed, back whole;
 //   3. an HTML preview (on another desk) in the card: a COPY of it (its own id and guest, the same file), the tab untouched
 //      (no "sendo espiada", no eye, not reloaded: same guest, same load count, the page's mark kept); closing the card drops
 //      the copy (screenshot r3-cartao-previa-html).
@@ -35,6 +37,7 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import { fsIo } from '../../src/daemon/ext-io.ts'
 import { startDaemon } from '../../src/daemon/server.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
+import { MODERATOR_NAME } from '../../extensions/channels/daemon/notices.ts'
 import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
 import { USER } from '../../extensions/channels/rules.ts'
@@ -65,7 +68,7 @@ type Hooks = {
   ext: {
     note: { openPreview(side: boolean): string | undefined }
     regency: { select(channelId: string): void; quickView(t: { kind: 'pane'; id: string }, focus?: boolean): void; model(): unknown }
-    channels: { embedView(id: string): { loaded: boolean; rows: { text: string; mine?: boolean }[] } | undefined }
+    channels: { embedView(id: string): { loaded: boolean; rows: { text: string; mine?: boolean }[] } | undefined; marks(id: string): { toMe: number; unread: number } }
   }
 }
 declare const window: { __tether: Hooks }
@@ -328,8 +331,36 @@ test('quick view V4: the browser page lent alive to the card (modal and docked),
     assert.equal((await surface())?.visibility, 'shown', 'and the page with it')
     await page.waitForTimeout(300)
     await shotWithPage('r3-cartao-navegador-regencia.png')
+    // R-4: a popover of the conversation (the "@" list) opened with the card docked would open UNDER the native page: the page
+    // freezes (a picture) while it is open, and lives again when it closes.
+    const PANE_SEL = `.rg-center .ch-pane[data-channel="${obra}"]`
+    await page.locator(BOX).fill('@')
+    const listOpen = await until('the "@" list open', async () => (await count(`${PANE_SEL} .ch-mention-list:not([hidden])`)) === 1, 5_000).catch(() => false)
+    await page.waitForTimeout(400)
+    const r4 = { list: listOpen, frozen: (await freeze()).reasons.includes('popover'), page: (await surface())?.visibility }
+    await page.keyboard.press('Escape')
+    await page.locator(BOX).fill('')
+    await page.waitForTimeout(400)
+    const r4after = { frozen: (await freeze()).reasons.includes('popover'), page: (await surface())?.visibility, card: (await peekState()).open }
+    // R-1: a line for the person that sits UNDER the docked card is not seen (its mark stays); closing the card shows it, and then it is.
+    const marks = (): Promise<{ toMe: number; unread: number }> => page.evaluate(i => window.__tether.ext.channels.marks(i), obra)
+    const toHer = await ch.say(a, obra, { body: 'Preciso da sua decisão sobre o índice.', to: [MODERATOR_NAME] })
+    assert.ok(toHer.ok)
+    for (let i = 1; i <= 6; i++) assert.ok((await ch.say(a, obra, { body: `Linha de contexto ${i}.` })).ok)
+    await until('the lines shown', async () => (await page.evaluate(id => window.__tether.ext.channels.embedView(id), obra))?.rows.some(r => r.text === 'Linha de contexto 6.') === true)
+    await page.waitForTimeout(800)
+    const rowRect = (await rectOf(`${PANE_SEL} .ch-msg[data-seq="${toHer.line.seq}"]`))!
+    const cardRect = (await rectOf('#peek .peek-card'))!
+    const midY = rowRect.y + rowRect.height / 2
+    const r1 = { under: midY > cardRect.y && midY < cardRect.y + cardRect.height && rowRect.x + rowRect.width / 2 > cardRect.x, toMe: (await marks()).toMe }
+    assert.deepEqual({ r4, r4after, r1 }, {
+      r4: { list: true, frozen: true, page: 'parked' },
+      r4after: { frozen: false, page: 'shown', card: true },
+      r1: { under: true, toMe: 1 },
+    }, `${JSON.stringify({ rowRect, cardRect })}`)
     await page.click('#peek .qv-close')
     await page.waitForSelector('#peek', { state: 'hidden' })
+    await until('the line seen once the card is gone', async () => (await marks()).toMe === 0, 5_000)
     assert.equal(await count(`.pane-shell[data-pane="${webPane}"] > .br-web`), 1, 'back in its shell')
     await until('hidden with its tab', async () => (await surface())?.visibility === 'hidden')
     assert.equal(await B((t, id) => t.eval(id, 'window.__mark'), tabId), 7, 'still not reloaded')
