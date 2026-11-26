@@ -21,6 +21,13 @@
 //  13. the tree's keyboard: arrows walk, Home/End, Left/Right fold, Space peeks without leaving, Shift+F10 and the Menu key ask
 //      the row's menu, Enter goes to the pane; the focused row and the column's scroll survive a repaint by an event; one roving
 //      tab stop; the phone's "Tether" holds the tools as 44 px targets (screenshot r2-celular-tether).
+//  14. a desk's menu (right click, the Menu key, Shift+F10, the row's "⋯"): the pill's rows aimed at it, "Ir até a mesa" last;
+//      rename in the row (it survives a repaint by an event; Enter keeps, Esc does not), sleep and wake (menu, moon, sun),
+//      "Nova mesa depois"; Browser's short menu; the Regency stays in view with the keyboard (r2-menu-mesa, r2-renomear).
+//  15. a pane's and an agent's menu: "Ir até a guia" last, no "Focar guia"; rename the slot in the row, sleep and wake,
+//      "Emblema…", "Falar com" (the peek, keyboard in the terminal; the row's button too), "O que <nome> tem" (the view by
+//      agent, its group focused), "Duplicar" on the original's desk, "Mover…" to another desk, "Fechar guia" with the
+//      keyboard going to the row in its place; nothing comes forward (r2-menu-agente, r2-menu-guia, r2-por-agente again).
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.regency.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -79,6 +86,8 @@ type Hooks = {
       search(q: string): void
       paints(): number
       menuAsks(): { target: { kind: string; id: string }; anchor: string }[]
+      menu(key: string): boolean
+      renaming(): string | undefined
     }
   }
 }
@@ -493,7 +502,8 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok(!ga.panes.some(p => p.target.id === b), 'and not a child of a')
     assert.ok(byAgent[byAgent.length - 1]!.panes.every(p => p.target.kind !== 'agent'), 'no agent under "Você"')
     assert.match((await page.locator(`${headB} .rg-dsk`).textContent()) ?? '', new RegExp(desk2Name), 'the head carries the desk\'s badge')
-    assert.match((await page.locator(headB).textContent()) ?? '', /em mesa de/, 'and says whose desk')
+    assert.equal(await page.locator(`${headB} .rg-own`).textContent(), ga.name, 'and says whose desk (the crown)')
+    assert.equal(await page.locator(`${headB} .rg-own`).getAttribute('title'), `Esta guia está numa mesa de ${ga.name}`, 'whole in the tooltip')
     assert.equal(await page.locator(`${headA} .aid`).count(), 1, 'the head draws its identity')
     assert.match((await page.locator('.rg-agent[data-key="group:you"]').textContent()) ?? '', /Você/)
     assert.equal(await page.locator(`.rg-tree [data-target="agent:${a}"]`).count(), 1, 'the group is the pane: one row, one key')
@@ -627,17 +637,23 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal((await state()).desk, DESK, 'peeking does not leave the Regency')
     await page.click('#peek .peek-close')
     await page.waitForSelector('#peek', { state: 'hidden' })
-    // Shift+F10 and the Menu key ask the row's menu, anchored on the row.
+    // Shift+F10 and the Menu key open the row's menu, anchored on the row; Esc gives the keyboard back to the row.
     await page.locator(`.rg-tree [data-key="${ak}"]`).focus()
     const asks = (): Promise<{ target: { kind: string; id: string }; anchor: string }[]> => page.evaluate(() => window.__tether.ext.regency.menuAsks())
+    const menu = page.locator('#ctx-menu')
     const asked0 = (await asks()).length
     await page.keyboard.press('Shift+F10')
-    await until('Shift+F10 asks the menu', async () => (await asks()).length > asked0)
+    await menu.waitFor()
+    assert.equal((await asks()).length, asked0 + 1)
     assert.deepEqual((await asks()).at(-1), { target: { kind: 'agent', id: a }, anchor: ak })
-    const asked1 = (await asks()).length
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'detached' })
+    assert.equal(await focusedKey(), ak, 'Esc gives the keyboard back to the row')
     await page.keyboard.press('ContextMenu')
-    await until('the Menu key asks the menu', async () => (await asks()).length > asked1)
+    await menu.waitFor()
     assert.deepEqual((await asks()).at(-1), { target: { kind: 'agent', id: a }, anchor: ak })
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'detached' })
     assert.equal(await focusedKey(), ak, 'the row keeps the keyboard')
     // The focused row survives a repaint by an event, and so does the column's scroll.
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(1500, 400) })
@@ -674,6 +690,242 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await page.screenshot({ path: join(SHOTS, 'r2-celular-tether.png') })
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(1500, 900) })
     await until('the desktop tier', async () => (await tier()) === 'desktop')
+
+    // Menu helpers: the open menu's own labels (a row's text without its kbd hint or its submenu), a pick by label.
+    const items = menu.locator(':scope > li[role^=menuitem]')
+    const labels = (): Promise<string[]> => items.evaluateAll(es => es.map(e => Array.from((e as unknown as { childNodes: ArrayLike<{ nodeType: number; textContent: string | null }> }).childNodes)
+      .filter(n => n.nodeType === 3).map(n => n.textContent ?? '').join('').trim()))
+    /** `opens`: the row opens another menu in the same place (the emblem's popover), so this one is not waited out. */
+    const pick = async (label: string, opens = false): Promise<void> => {
+      const i = (await labels()).indexOf(label)
+      assert.ok(i >= 0, `"${label}" is in the menu: ${JSON.stringify(await labels())}`)
+      await items.nth(i).click()
+      if (!opens) await page.locator('#ctx-menu:not(.emb-menu)').waitFor({ state: 'detached' })
+    }
+    const closeMenu = async (): Promise<void> => { await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' }) }
+    /** The keyboard is in the Regency (nothing took it away), and the Regency is the desk in view. */
+    const stays = async (what: string): Promise<void> => {
+      assert.equal((await state()).desk, DESK, `${what}: the Regency stays in view`)
+      // The repaint the gesture caused gives the keyboard back to the row on the next frame: allow it a moment.
+      const where = async () => page.evaluate(() => {
+        const e = document.activeElement as unknown as { closest(s: string): unknown; tagName: string; id: string; className: string } | null
+        return { inside: !!e?.closest('.rg'), what: e ? `${e.tagName}#${e.id}.${String(e.className)}` : 'none' }
+      })
+      await until(`${what}: the keyboard in the Regency`, async () => (await where()).inside, 2_000)
+        .catch(async () => { assert.fail(`${what}: the keyboard stays in the Regency (it is on ${(await where()).what})`) })
+    }
+    const treeDesk = async (id: string) => (await model()).tree.find(d => d.target.id === id)
+    const treePaneOf = async (id: string) => (await model()).tree.flatMap(d => d.panes).find(p => p.target.id === id)
+    const paneCount = async (): Promise<number> => (await model()).tree.reduce((n, d) => n + d.panes.length, 0)
+
+    // ---- 14. the desk's menu: aimed at the row's desk, the Regency stays ----
+    console.log('step 14')
+    const dk2 = `desk:${desk2}`
+    const desk2Row = page.locator(`.rg-tree [data-key="${dk2}"]`)
+    // The right click.
+    await desk2Row.click({ button: 'right' })
+    await menu.waitFor()
+    const deskLabels = await labels()
+    console.log(`desk menu: ${JSON.stringify(deskLabels)}`)
+    assert.equal(deskLabels.at(-1), 'Ir até a mesa', '"Ir até a mesa" last')
+    for (const l of ['Renomear', 'Cor…', 'Mudar de lugar', 'Nova mesa antes', 'Nova mesa depois', 'Hibernar mesa', 'Fechar mesa…']) assert.ok(deskLabels.includes(l), `"${l}" in the desk menu`)
+    assert.ok(deskLabels.some(l => /^(Dar|Tomar|Revogar|Pausar)/.test(l)), 'the for-agents rows come along')
+    assert.equal(await focusedKey(), null, 'the menu has the keyboard')
+    await page.screenshot({ path: join(SHOTS, 'r2-menu-mesa.png') })
+    // "Renomear": a field in the row; a repaint by an event keeps it; Enter keeps the name; the keyboard back on the row.
+    await pick('Renomear')
+    const field2 = desk2Row.locator('.rg-rename')
+    await field2.waitFor()
+    assert.ok(await field2.evaluate(e => (e as unknown as { ownerDocument: { activeElement: unknown } }).ownerDocument.activeElement === e), 'the field has the keyboard')
+    assert.equal(await page.evaluate(() => window.__tether.ext.regency.renaming()), dk2)
+    await page.keyboard.press('Control+A')
+    await page.keyboard.type('Obra nova')
+    p0 = await paints()
+    doorApi.attention.signal(a, 'done')
+    await until('repainted by the event while renaming', async () => (await paints()) > p0)
+    assert.equal(await field2.inputValue(), 'Obra nova', 'the field survived the repaint')
+    await page.screenshot({ path: join(SHOTS, 'r2-renomear.png') })
+    await page.keyboard.press('Enter')
+    await until('the desk renamed', async () => (await treeDesk(desk2))?.name === 'Obra nova')
+    assert.equal(await page.locator('.rg-rename').count(), 0)
+    assert.equal(await focusedKey(), dk2, 'the keyboard back on the desk')
+    await stays('rename')
+    // Esc in the field keeps the old name.
+    await desk2Row.click({ button: 'right' })
+    await pick('Renomear')
+    await field2.waitFor()
+    await page.keyboard.type('zzz')
+    await page.keyboard.press('Escape')
+    await until('the field went', async () => (await page.locator('.rg-rename').count()) === 0)
+    assert.equal((await treeDesk(desk2))?.name, 'Obra nova', 'Esc keeps the name')
+    assert.equal(await focusedKey(), dk2)
+    // "Nova mesa depois" (by the row's "⋯") creates without switching.
+    const queueIds = async (): Promise<string[]> => (await model()).tree.filter(d => d.kind === 'queue').map(d => d.target.id)
+    const q0 = await queueIds()
+    await desk2Row.hover()
+    await desk2Row.locator('[data-action="row-menu"]').click()
+    await menu.waitFor()
+    await pick('Nova mesa depois')
+    await until('a new desk', async () => (await queueIds()).length === q0.length + 1)
+    await stays('new desk')
+    // Sleep and wake on the new desk (the fake agents never report their session: woken they would wait for the person's
+    // choice, which is the tether's own question, out of this test). By the keyboard: the Menu key, "Hibernar mesa".
+    const desk3 = (await queueIds()).find(id => !q0.includes(id))!
+    const dk3 = `desk:${desk3}`
+    const desk3Row = page.locator(`.rg-tree [data-key="${dk3}"]`)
+    await desk3Row.focus()
+    await page.keyboard.press('ContextMenu')
+    await menu.waitFor()
+    await pick('Hibernar mesa')
+    await until('desk3 asleep', async () => (await treeDesk(desk3))?.asleep === true)
+    await stays('sleep')
+    await desk3Row.focus()
+    await page.keyboard.press('Shift+F10')
+    await menu.waitFor()
+    assert.ok((await labels()).includes('Acordar mesa') && !(await labels()).includes('Hibernar mesa'), '"Acordar mesa" in place of "Hibernar mesa"')
+    await pick('Acordar mesa')
+    await until('desk3 awake by the menu', async () => (await treeDesk(desk3))?.asleep === false)
+    await stays('wake by the menu')
+    // The moon and the sun of the row (the buttons follow the state).
+    await desk3Row.hover()
+    await desk3Row.locator('[data-action="row-sleep"]').click()
+    await until('asleep by the moon', async () => (await treeDesk(desk3))?.asleep === true)
+    await desk3Row.hover()
+    const sun = desk3Row.locator('[data-action="row-wake"]')
+    assert.equal(await sun.isVisible(), true, 'the sun shows on hover')
+    assert.match((await sun.getAttribute('aria-label')) ?? '', /^Acordar a mesa /)
+    await sun.click()
+    await until('awake by the sun', async () => (await treeDesk(desk3))?.asleep === false)
+    await stays('wake by the sun')
+    assert.equal(await focusedKey(), dk3, 'the button left the keyboard on its row')
+    // Browser has the short menu.
+    await page.locator('.rg-tree [data-key="desk:browser.desk"]').click({ button: 'right' })
+    await menu.waitFor()
+    assert.deepEqual(await labels(), ['Ir até a mesa'])
+    await closeMenu()
+    await stays('Browser menu')
+
+    // ---- 15. the pane's and the agent's menus ----
+    console.log('step 15')
+    // The agent's pane: the tab's menu, "Ir até a guia" last, no "Focar guia" on top, the agent's rows.
+    const bk2 = `pane:agent:${b}`
+    const bRow = page.locator(`.rg-tree [data-key="${bk2}"]`)
+    await bRow.hover()
+    assert.equal(await bRow.locator('[data-action="row-talk"]').isVisible(), true, '"Falar com" shows on an agent\'s row')
+    await bRow.locator('[data-action="row-menu"]').click()
+    await menu.waitFor()
+    const agentLabels = await labels()
+    console.log(`agent menu: ${JSON.stringify(agentLabels)}`)
+    assert.equal(agentLabels.at(-1), 'Ir até a guia')
+    assert.ok(!agentLabels.includes('Focar guia'), 'no "Focar guia" on top')
+    for (const l of ['Renomear…', 'Hibernar guia', 'Fechar guia', 'Emblema…', 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…']) assert.ok(agentLabels.includes(l), `"${l}" in the agent's menu`)
+    await page.screenshot({ path: join(SHOTS, 'r2-menu-agente.png') })
+    // "Renomear…" in the row: the slot's name.
+    await pick('Renomear…')
+    const bField = bRow.locator('.rg-rename')
+    await bField.waitFor()
+    await page.keyboard.press('Control+A')
+    await page.keyboard.type('revisora')
+    await page.keyboard.press('Enter')
+    await until('the slot renamed', async () => {
+      const p = await treePaneOf(b)
+      return p?.title === 'revisora' || p?.identity?.name === 'revisora'
+    })
+    await stays('pane rename')
+    // "Emblema…" opens the tab's popover.
+    await bRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Emblema…', true)
+    await page.waitForSelector('#ctx-menu.emb-menu')
+    await closeMenu()
+    await stays('emblem')
+    // The agent a: "Falar com" peeks with the keyboard in its terminal; "O que conferente tem" turns the view.
+    const aRow = page.locator(`.rg-tree [data-key="${ak}"]`)
+    await aRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Falar com conferente')
+    await page.waitForSelector('#peek[data-open="true"]')
+    assert.equal((await state()).desk, DESK, 'talking does not leave the Regency')
+    await page.waitForFunction(() => !!(document.activeElement as unknown as { closest(s: string): unknown } | null)?.closest('#peek .xterm'))
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    // The row's "Falar com" button does the same.
+    await aRow.hover()
+    await aRow.locator('[data-action="row-talk"]').click()
+    await page.waitForSelector('#peek[data-open="true"]')
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await aRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('O que conferente tem')
+    await until('by agent', async () => (await layout())?.view === 'agent')
+    assert.equal(await focusedKey(), ak, 'the agent\'s group has the keyboard')
+    assert.ok(!(await layout())!.collapsed.includes(a), 'its group is open')
+    assert.equal(await page.locator(`.rg-agent[data-key="${bk2}"] .rg-own`).getAttribute('title'), 'Esta guia está numa mesa de conferente', 'the seal\'s tooltip has the whole text')
+    await page.screenshot({ path: join(SHOTS, 'r2-por-agente.png') })
+    await stays('what it has')
+    await page.click('.rg-seg-b[data-view="desk"]')
+    await until('by desk', async () => (await layout())?.view === 'desk')
+    // The channel's tab (a pane without a slot): its menu, "Duplicar" of the agent b lands on its desk, nothing comes forward.
+    const ck = `pane:pane:channel:${obra}`
+    const cRow = page.locator(`.rg-tree [data-key="${ck}"]`)
+    await cRow.click({ button: 'right' })
+    await menu.waitFor()
+    const paneLabels = await labels()
+    console.log(`pane menu: ${JSON.stringify(paneLabels)}`)
+    assert.equal(paneLabels.at(-1), 'Ir até a guia')
+    assert.ok(!paneLabels.includes('Focar guia'))
+    await page.screenshot({ path: join(SHOTS, 'r2-menu-guia.png') })
+    await closeMenu()
+    const n0 = await paneCount()
+    const ids0 = await page.evaluate(() => window.__tether.panelIds())
+    await bRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Duplicar painel à direita')
+    await until('the copy came', async () => (await paneCount()) === n0 + 1)
+    const copy = (await page.evaluate(() => window.__tether.panelIds())).find(id => !ids0.includes(id))!
+    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), copy), desk2, 'on the original\'s desk')
+    await page.waitForTimeout(400)
+    await stays('duplicate')
+    // "Mover…" the channel's tab to desk2.
+    await cRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Mover…')
+    await page.click(`dialog.move .mv-row.f[data-scope="${desk2}"]`)
+    await page.locator('dialog.move .mv-pn .z-tab:not([aria-disabled="true"])').first().click()
+    await page.click('#mv-go')
+    await page.waitForFunction(([p, d]) => window.__tether.deskOf(p!) === d, [`channel:${obra}`, desk2] as const)
+    assert.equal((await state()).desk, DESK, 'moving stays in the Regency')
+    // "Hibernar guia", then "Acordar guia"; asleep, "Falar com" is off and says why, and the row has no "Falar com" button.
+    await bRow.click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Hibernar guia')
+    await until('b asleep', async () => (await treePaneOf(b))?.asleep === true)
+    await stays('pane sleep')
+    await until('asleep, no "Falar com" button', async () => (await bRow.locator('[data-action="row-talk"]').count()) === 0)
+    await bRow.click({ button: 'right' })
+    await menu.waitFor()
+    const asleepLabels = await labels()
+    assert.ok(asleepLabels.includes('Acordar guia') && !asleepLabels.includes('Hibernar guia'), '"Acordar guia" in place of "Hibernar guia"')
+    assert.ok(asleepLabels.some(l => /^Falar com .* \(dormindo\)$/.test(l)), 'asleep, "Falar com" says why')
+    // The fake agent never reports its session: the start is refused 'unconfirmed' and the pane asks the person (the
+    // tether's own question, the same as for-agents-flow step 9 meets). The gesture reached the tetherd; the Regency stays.
+    await pick('Acordar guia')
+    await until('the wake reached the tetherd', async () => ['unconfirmed', 'running', 'starting'].includes(doorApi.slots.get(b)?.status ?? ''))
+    await stays('pane wake')
+    // "Fechar guia" on the copy: its row goes, the keyboard goes to the row now in its place.
+    const copyKey = (await treeKeys()).find(k => k.endsWith(`:${copy}`))!
+    const copyRow = page.locator(`.rg-tree [data-key="${copyKey}"]`)
+    await copyRow.focus()
+    await page.keyboard.press('Shift+F10')
+    await menu.waitFor()
+    await pick('Fechar guia')
+    // The process question of the pane: stop it (a duplicate of a fake agent).
+    const stop = page.locator('dialog[open] button.choice[data-choice="stop"]')
+    await stop.waitFor({ timeout: 5_000 }).then(() => stop.click(), () => {})
+    await until('the copy\'s row went', async () => !(await treeKeys()).includes(copyKey))
+    await until('the keyboard on the row in its place', async () => { const k = await focusedKey(); return k !== null && (await treeKeys()).includes(k) })
+    await stays('close')
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
