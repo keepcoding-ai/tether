@@ -287,7 +287,8 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     assert.match(web.text, new RegExp(`porta ${webPort}`))
     assert.doesNotMatch(web.text, /parada|ouvindo/, 'a port never reads as a state beside "Rodando"')
     assert.ok(web.acts.includes('stop') && web.acts.includes('restart') && web.acts.includes('hold') && web.acts.includes('log'))
-    assert.match((await sys()).view.foot, /^.*Processos novos se criam pela linha de comando\.$/s)
+    assert.match((await sys()).view.foot, /^.*Novo processo$/s, 'the foot ends with the "Novo processo" button')
+    assert.doesNotMatch((await sys()).view.foot, /linha de comando/)
     assert.doesNotMatch((await sys()).view.foot, /tether proc/, 'no command on the foot')
     // R6, M: every act of a process says its verb first, to the eye (tooltip) and to the screen reader (aria-label).
     const tips = await row('proc:web').locator('.rg-sr-h .rg-sr-a button').evaluateAll(es => es.map(e => [(e as unknown as { dataset: { sys: string } }).dataset.sys, (e as unknown as { title: string }).title, (e as unknown as { getAttribute(n: string): string | null }).getAttribute('aria-label')]))
@@ -298,7 +299,9 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     }
     assert.equal(await act('proc:web', 'hold').locator('svg').count(), 1)
     assert.equal(await act('proc:web', 'hold').getAttribute('aria-pressed'), 'false', '"Segurar" is a toggle (a lock)')
-    assert.doesNotMatch(await page.locator('.rg-sys').innerText(), /Novo processo/)
+    // "Novo processo" lives once, on the foot (R7c); the rows have no such act.
+    assert.equal(await page.locator('.rg-sys [data-sys="proc-new"]').count(), 1)
+    assert.equal(await page.locator('.rg-sys-body [data-sys="proc-new"]').count(), 0)
     await act('proc:worker', 'stop').click()
     await until('worker stopped', async () => (await proc('worker'))?.status === 'stopped')
     await until('the row says stopped', async () => { const r = await rowOf('proc:worker'); return r?.state === 'off' && r.acts.includes('start') })
