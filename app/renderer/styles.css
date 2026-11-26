@@ -639,6 +639,19 @@ body.drawer-open #pads .frame-dock { opacity: .45; filter: blur(1.5px); }
   --dv-paneview-header-border-color: var(--border);
   --dv-scrollbar-background-color: var(--bg-hover);
 }
+/* --- groups as separate cards (a frame split into two or more groups: a .dv-sash exists only then) ---
+   The frame stops being the card: its own fill becomes the window ground (--desk-bg, the icon strip's) and each group
+   is a card with its own subtle border and an 8 px radius. The gutter is --gap: half of it of padding on each leaf
+   (so two neighbours are --gap apart), and the desk-level frame loses its inset to make up for the outer half. The
+   sash stays draggable: it is widened to the gutter and centred on it, as the desk's own sashes between frames. */
+.frame-dock:has(.dv-sash) { --frame-radius: 8px; background: var(--desk-bg); }
+body:not([data-builder="true"]) .frame-dock:has(.dv-sash) { border-color: transparent; }
+.desk-grid .frame-dock:has(.dv-sash) { inset: 0; }
+.frame-dock:has(.dv-sash) .dv-split-view-container > .dv-view-container > .dv-view:has(> .dv-groupview) { padding: calc(var(--gap) / 2); }
+.frame-dock:has(.dv-sash) .dv-groupview { border: 1px solid var(--frame-border); border-radius: var(--frame-radius); overflow: hidden; }
+.frame-dock:has(.dv-sash) .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash { width: var(--gap); margin-left: calc(2px - var(--gap) / 2); }
+.frame-dock:has(.dv-sash) .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash { height: var(--gap); margin-top: calc(2px - var(--gap) / 2); }
+.frame-dock:has(.dv-sash) .dv-view::before { background-color: transparent !important; }
 /* --- builder mode (builder-mode.ts): the "+" exist only here, the content is inert and dimmed, the tabs only drag ---
    Outside the mode the "+" are in the DOM but never shown: nothing appears on hover over a tab, a scrollbar or a sash. */
 body:not([data-builder="true"]) .edge-plus { display: none; }
