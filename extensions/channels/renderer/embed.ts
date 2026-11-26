@@ -31,8 +31,21 @@ export interface EmbeddedChannel {
   dispose(): void
 }
 
+/** An act of the feed: done, or refused in plain words (pt-BR, ready to show). */
+export type EmbedAct<T = object> = ({ ok: true } & T) | { refusal: string }
+
+/** The acts the Regency's "+ Novo" asks of the channels; the same rules and requests as the channel commands. */
+export interface ChannelEmbedActs {
+  /** Creates a channel with this name (the rule of names is the daemon's); the id, or the refusal (name taken, invalid...). */
+  create(name: string): Promise<EmbedAct<{ id: string }>>
+  /** Joins an agent (slot id) to a channel. */
+  join(channelId: string, agent: string): Promise<EmbedAct>
+  /** Opens the channel as a tab on a desk, without taking the person there; refused when the desk is unknown or the channel already has a tab. */
+  openOn(channelId: string, deskId: string): EmbedAct
+}
+
 /** What the channels extension gives the feed while it is on. */
-export interface ChannelEmbedSource {
+export interface ChannelEmbedSource extends ChannelEmbedActs {
   list(): readonly ChannelSummary[]
   marksOf(channelId: string): EmbedMarks
   /** The directory or the marks changed. */
@@ -40,7 +53,7 @@ export interface ChannelEmbedSource {
   mount(host: HTMLElement, channelId: string, opts?: EmbedOptions): EmbeddedChannel | undefined
 }
 
-export interface ChannelEmbedFeed {
+export interface ChannelEmbedFeed extends ChannelEmbedActs {
   /** channels is on and publishing in this process. */
   readonly active: boolean
   /** The channels the app knows, open and closed. */
@@ -58,6 +71,7 @@ export interface ChannelEmbedPublisher extends ChannelEmbedFeed {
 }
 
 const NO_MARKS: EmbedMarks = { unread: 0, toMe: 0, asks: 0, owed: 0 }
+const OFF = { refusal: 'Os canais estão desligados.' } as const
 
 export function createChannelEmbeds(): ChannelEmbedPublisher {
   const listeners = new Set<() => void>()
@@ -80,6 +94,9 @@ export function createChannelEmbeds(): ChannelEmbedPublisher {
       return { dispose: () => { listeners.delete(listener) } }
     },
     mount: (host, channelId, opts) => source?.mount(host, channelId, opts),
+    create: async name => source ? source.create(name) : OFF,
+    join: async (channelId, agent) => source ? source.join(channelId, agent) : OFF,
+    openOn: (channelId, deskId) => source ? source.openOn(channelId, deskId) : OFF,
     publish(next) {
       unpublish()
       source = next

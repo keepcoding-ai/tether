@@ -12,6 +12,7 @@ const summary = (id: string, extra: Partial<ChannelSummary> = {}): ChannelSummar
 function fakeSource(channels: ChannelSummary[], marks: Record<string, EmbedMarks> = {}) {
   const listeners = new Set<() => void>()
   const mounts: Array<{ host: unknown; channelId: string; opts: unknown }> = []
+  const calls: string[][] = []
   const source: ChannelEmbedSource = {
     list: () => channels,
     marksOf: id => marks[id] ?? { unread: 0, toMe: 0, asks: 0, owed: 0 },
@@ -20,8 +21,20 @@ function fakeSource(channels: ChannelSummary[], marks: Record<string, EmbedMarks
       mounts.push({ host, channelId, opts })
       return { element: host, channelId, members: () => [], onDidChangeMembers: () => ({ dispose() {} }), focus() {}, dispose() {} } as EmbeddedChannel
     },
+    create: async name => {
+      calls.push(['create', name])
+      return name === 'taken' ? { refusal: 'Já há um canal aberto com esse nome.' } : { ok: true, id: `id-${name}` }
+    },
+    join: async (channelId, agent) => {
+      calls.push(['join', channelId, agent])
+      return agent === 'ghost' ? { refusal: 'Esse agente não existe mais.' } : { ok: true }
+    },
+    openOn: (channelId, deskId) => {
+      calls.push(['openOn', channelId, deskId])
+      return deskId === 'nodesk' ? { refusal: 'Não foi possível abrir o canal nessa mesa.' } : { ok: true }
+    },
   }
-  return { source, mounts, listeners, change: () => { for (const l of [...listeners]) l() } }
+  return { source, mounts, calls, listeners, change: () => { for (const l of [...listeners]) l() } }
 }
 
 const host = {} as HTMLElement
@@ -87,6 +100,35 @@ describe('channel embeds feed', () => {
     pa.dispose()
     assert.equal(feed.active, true)
     assert.deepEqual(feed.list().map(c => c.id), ['c2'])
+  })
+
+  test('acts: inactive feed refuses plainly and touches nothing', async () => {
+    const feed = createChannelEmbeds()
+    const off = { refusal: 'Os canais estão desligados.' }
+    assert.deepEqual(await feed.create('obra'), off)
+    assert.deepEqual(await feed.join('c1', 'a1'), off)
+    assert.deepEqual(feed.openOn('c1', 'd1'), off)
+  })
+
+  test('acts: create, join and openOn go to the source; refusals come back as words', async () => {
+    const feed = createChannelEmbeds()
+    const s = fakeSource([])
+    feed.publish(s.source)
+    assert.deepEqual(await feed.create('obra'), { ok: true, id: 'id-obra' })
+    assert.deepEqual(await feed.create('taken'), { refusal: 'Já há um canal aberto com esse nome.' })
+    assert.deepEqual(await feed.join('c1', 'a1'), { ok: true })
+    assert.deepEqual(await feed.join('c1', 'ghost'), { refusal: 'Esse agente não existe mais.' })
+    assert.deepEqual(feed.openOn('c1', 'd1'), { ok: true })
+    assert.equal('refusal' in feed.openOn('c1', 'nodesk'), true)
+    assert.deepEqual(s.calls, [['create', 'obra'], ['create', 'taken'], ['join', 'c1', 'a1'], ['join', 'c1', 'ghost'], ['openOn', 'c1', 'd1'], ['openOn', 'c1', 'nodesk']])
+  })
+
+  test('acts: after the feed is turned off they refuse again', async () => {
+    const feed = createChannelEmbeds()
+    const s = fakeSource([])
+    feed.publish(s.source).dispose()
+    assert.deepEqual(await feed.create('obra'), { refusal: 'Os canais estão desligados.' })
+    assert.deepEqual(s.calls, [])
   })
 
   test('a listener that throws does not stop the others', () => {

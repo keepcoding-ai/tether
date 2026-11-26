@@ -175,6 +175,8 @@ export interface ChannelPanes {
   disposables: Disposable[]
   /** Opens the channel's pane, or brings the one that exists forward (P3). */
   open(channelId: string, name?: string): void
+  /** Opens the channel as a tab on a desk out of view, without switching desks or taking the keyboard; false when refused (desk unknown, or the channel already has a tab). */
+  openOn(channelId: string, deskId: string, name?: string): boolean
   snapshot(channelId: string): PaneSnapshot | undefined
   /** The channel's view outside the dockview (the Regency's centre): the same view as the tab, with no tab of its own. */
   mountEmbed(host: HTMLElement, channelId: string, opts?: EmbedOptions): EmbeddedChannel
@@ -2642,10 +2644,16 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     dispose(): void { this.sub?.dispose() }
   }
 
+  const paneOptions = (channelId: string, name?: string) =>
+    ({ id: channelPaneId(channelId), component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB, title: `#${name ?? channelId}`, params: { channelId } })
   const open = (channelId: string, name?: string): void => {
     const id = channelPaneId(channelId)
     if (ui.panes.find(id)) { ui.panes.reveal(id); return }
-    ui.panes.open({ id, component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB, title: `#${name ?? channelId}`, params: { channelId } })
+    ui.panes.open(paneOptions(channelId, name))
+  }
+  const openOn = (channelId: string, deskId: string, name?: string): boolean => {
+    if (ui.panes.find(channelPaneId(channelId))) return false
+    return ui.panes.openOnDesk(paneOptions(channelId, name), deskId) !== undefined
   }
 
   // The palette's rows to react to the focused speech (what has a key has a menu): they act on the channel pane that is active.
@@ -2725,5 +2733,5 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   ui.test.expose('scrollTo', (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top))
   ui.test.expose('loadOlder', (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve())
 
-  return { disposables, open, snapshot: channelId => paneOf(channelId)?.snapshot(), mountEmbed }
+  return { disposables, open, openOn, snapshot: channelId => paneOf(channelId)?.snapshot(), mountEmbed }
 }

@@ -90,6 +90,20 @@ export function createDirectory(ui: TetherUi): Directory {
 
 const codeOf = (e: unknown): string => (e !== null && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : 'unknown')
 
+/** A request that was refused: the daemon's code and, when it gave one, its own message. */
+export interface Refused { code: string; reason?: string }
+const refusedOf = (e: unknown): Refused => ({ code: codeOf(e), ...(e instanceof Error ? { reason: e.message } : {}) })
+
+/** The one place a channel is created from the app: the commands and the feed both ask here. */
+export async function createChannel(ui: TetherUi, name: string, title?: string): Promise<{ channel: ChannelSummary } | Refused> {
+  try { return await ui.daemon.request<{ channel: ChannelSummary }>('create', { name, ...(title !== undefined ? { title } : {}) }) } catch (e) { return refusedOf(e) }
+}
+
+/** The one place an agent is joined to a channel from the app. */
+export async function joinAgent(ui: TetherUi, channelId: string, agent: string): Promise<{ ok: true } | Refused> {
+  try { await ui.daemon.request('join', { channel: channelId, agent }); return { ok: true } } catch (e) { return refusedOf(e) }
+}
+
 export interface CommandDeps {
   /** Opens the channel's pane or brings the one that exists forward (P3). */
   open(channelId: string, name?: string): void
@@ -146,8 +160,9 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
     // Without a name the picker asks for it: the typed text makes the row "Criar #nome".
     const name = arg.name ?? await ui.pick.list<string>({ title: NAME_PICK.title, placeholder: NAME_PICK.placeholder, emptyText: NAME_PICK.empty, items: [], create: createRow })
     if (name === undefined) return
-    const r = await act<{ channel: ChannelSummary }>('Criar canal', 'create', { name, ...(arg.title !== undefined ? { title: arg.title } : {}) })
-    if (r) { await dir.refresh().catch(() => {}); deps.open(r.channel.id, r.channel.name) }
+    const r = await createChannel(ui, name, arg.title)
+    if ('channel' in r) { await dir.refresh().catch(() => {}); deps.open(r.channel.id, r.channel.name) }
+    else await ui.dialogs.ask(failedDialog('Criar canal', r.code, r.reason)).catch(() => undefined)
   }
 
   // ---------- the gestures on an agent: channel, then agent ----------
@@ -226,9 +241,8 @@ export function createCommands(ui: TetherUi, deps: CommandDeps): Disposable[] {
     const outcomes: JoinOutcome[] = []
     for (const id of agentIds) {
       const name = ui.agents.get(id)?.name ?? id
-      try { await ui.daemon.request('join', { channel: channel.id, agent: id }); outcomes.push({ name }) } catch (e) {
-        outcomes.push({ name, code: codeOf(e), ...(e instanceof Error ? { reason: e.message } : {}) })
-      }
+      const r = await joinAgent(ui, channel.id, id)
+      outcomes.push('ok' in r ? { name } : { name, code: r.code, ...(r.reason !== undefined ? { reason: r.reason } : {}) })
     }
     const failed = outcomes.filter(o => o.code !== undefined)
     if (failed.length === 1 && outcomes.length === 1) {

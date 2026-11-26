@@ -262,9 +262,12 @@ const REFUSALS: Record<string, string> = {
   'no-daemon': 'O tetherd não respondeu.',
 }
 
+/** The plain words of a refusal code. */
+export const refusalWords = (code: string): string => REFUSALS[code] ?? `Não foi possível (${code}).`
+
 /** `reason` is the daemon's own message, told together with the plain words. */
 export function failedDialog(what: string, code: string, reason?: string): DialogSpec {
-  const words = REFUSALS[code] ?? `Não foi possível (${code}).`
+  const words = refusalWords(code)
   return {
     situation: 'channels.failed', tone: 'warn', icon: 'shield-warning',
     title: what, message: reason !== undefined && reason !== '' ? `${words} O tetherd respondeu: ${reason}` : words,
