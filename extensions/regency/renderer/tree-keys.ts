@@ -2,12 +2,10 @@
 // key, the next focus or the action to run. No DOM; everything in and out is JSON.
 import { CLOSED_ID, type RegencyModel, type Target, type TreeFilter } from '../model.ts'
 
-export type RowKind = 'desk' | 'group' | 'pane' | 'closed-head' | 'closed'
+/** `agent` is an agent's group in the by-agent view: the agent's own pane line, that also folds what it has. */
+export type RowKind = 'desk' | 'group' | 'agent' | 'pane' | 'closed-head' | 'closed'
 
-/**
- * One visible row of the tree. `key` is the row's focus id and is unique in the list: a group header and the pane of the
- * agent it is named after carry the same `target` but never the same `key`.
- */
+/** One visible row of the tree. `key` is the row's focus id and is unique in the list (a pane appears once). */
 export interface FlatRow {
   key: string
   kind: RowKind
@@ -40,8 +38,9 @@ export function flatRows(model: RegencyModel, view: 'desk' | 'agent'): FlatRow[]
     }
   } else {
     for (const g of model.byAgent) {
-      const key = groupRowKey(g.target.id)
-      rows.push({ key, kind: 'group', target: g.target, level: 1, expandable: g.paneCount > 0, expanded: !g.collapsed, foldId: g.target.id })
+      // An agent's group is its own pane's line (one key); only "Você" is a bare group.
+      const key = g.you ? groupRowKey(g.target.id) : paneRowKey(g.target)
+      rows.push({ key, kind: g.you ? 'group' : 'agent', target: g.target, level: 1, expandable: g.paneCount > 0, expanded: !g.collapsed, foldId: g.target.id })
       for (const p of g.panes) rows.push({ key: paneRowKey(p.target), kind: 'pane', target: p.target, level: 2, expandable: false, parent: key })
     }
   }
@@ -109,9 +108,10 @@ export function treeKeyStep(rows: readonly FlatRow[], focused: string | undefine
     return row.parent !== undefined ? { type: 'focus', key: row.parent } : undefined
   }
   if (menu) return { type: 'menu', key: row.key, target: row.target }
-  if (key === ' ' || key === 'Spacebar') return row.kind === 'pane' ? { type: 'quick', key: row.key, target: row.target } : undefined
+  const isPane = row.kind === 'pane' || row.kind === 'agent'
+  if (key === ' ' || key === 'Spacebar') return isPane ? { type: 'quick', key: row.key, target: row.target } : undefined
   if (key === 'Enter') {
-    if (row.kind === 'pane') return { type: 'go', key: row.key, target: row.target }
+    if (isPane) return { type: 'go', key: row.key, target: row.target }
     if (row.kind === 'closed') return { type: 'menu', key: row.key, target: row.target }
     if (row.expandable) return { type: 'toggle', key: row.key, foldId: row.foldId!, open: !row.expanded }
     return undefined

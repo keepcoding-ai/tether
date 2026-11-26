@@ -564,7 +564,7 @@ export class RegencyPane implements IContentRenderer {
     const action = t.closest<HTMLElement>('[data-action]')?.dataset.action
     if (action) { this.act(action); return }
     const row = t.closest<HTMLElement>('[data-target]')
-    if (row) this.activate(row)
+    if (row) this.activate(row, t.closest('.rg-caret') !== null)
   }
 
   private onKey(ev: KeyboardEvent): void {
@@ -638,10 +638,11 @@ export class RegencyPane implements IContentRenderer {
     else if (action === 'choose') void this.host.pickChannel().then(id => { if (id) this.select(id) })
   }
 
-  private activate(row: HTMLElement): void {
+  private activate(row: HTMLElement, onCaret = false): void {
     if (row.dataset.key) this.focusKey = row.dataset.key
-    // A desk or an agent's group folds (the group carries its agent's target: only the row's kind tells them apart).
-    if ((row.dataset.row === 'desk' || row.dataset.row === 'group') && row.dataset.fold) {
+    // A desk or "Você" folds; an agent's line goes to its pane and folds only by its caret.
+    const folds = row.dataset.row === 'desk' || row.dataset.row === 'group' || (row.dataset.row === 'agent' && onCaret)
+    if (folds && row.dataset.fold) {
       this.setLayout(toggleCollapsed(this.state, row.dataset.fold))
       this.repaint()
       return

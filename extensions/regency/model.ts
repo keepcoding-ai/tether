@@ -123,16 +123,25 @@ export interface AgentPaneRow extends Omit<TreePaneRow, 'ownerBadge'> {
   deskColor: string
 }
 
+/**
+ * A group of the by-agent view. An agent's group IS its own pane: `target` is `{ kind: 'agent', id: <pane id> }` and `self`
+ * carries what the line shows (identity, desk badge, state); the pane is never repeated among `panes`. The group of the
+ * person ("Você", `you`) has no `self`; its target is `{ kind: 'agent', id: YOU_ID }` and it is not a pane.
+ */
 export interface AgentGroupRow {
-  /** Marks the group header apart from the agent's own pane row (both carry `{ kind: 'agent', id }`). */
   group: true
-  /** `{ kind: 'agent', id }` for an agent; `{ kind: 'agent', id: YOU_ID }` for the person. */
   target: Target
   name: string
   you: boolean
   collapsed: boolean
+  /** How many panes sit under the group (the panes that pass the filter and the search). */
   paneCount: number
+  /** What the agent has: its panes, never an agent's own pane. Empty when collapsed. */
   panes: AgentPaneRow[]
+  /** The agent's own pane (absent for "Você"). */
+  self?: AgentPaneRow
+  /** Another agent's name, when this agent's pane sits in a desk (or is a pane) that agent owns. */
+  inDeskOf?: string
 }
 
 /** An ended session (only sessions, never notes or previews). */
@@ -317,36 +326,59 @@ export function treeOf(input: RegencyInput): TreeDeskRow[] {
   return rows
 }
 
+interface AgentEntry { row: AgentPaneRow; raw: RawPane; deskHit: boolean; deskAsleep: boolean }
+interface AgentBucket { id: string; name: string; self?: AgentEntry; inDeskOf?: string; kids: AgentEntry[] }
+
 /**
- * "Por agente": each pane once, under whoever owns it (the pane's owner, else its desk's), with the desk's badge. Panes with
- * no agent go under "Você", the first group. Agents follow in the order they first appear in the tree.
+ * "Por agente": every agent alive in the tree is a group, even with nothing under it, and the group's line is the agent's own
+ * pane (identity, desk badge, state). Under it go the panes it has (the pane's owner, else its desk's) with the desk's badge;
+ * a pane of another agent is never a child, that agent is a group of its own (marked `inDeskOf` when this agent owns its desk).
+ * Panes with no agent owner go under "Você", the last group. Each pane appears once. Agents keep the order of the tree.
  */
 export function agentTreeOf(input: RegencyInput): AgentGroupRow[] {
   const folded = new Set(input.collapsed)
   const filter = filterOf(input), query = queryOf(input), active = isActive(input)
-  const groups = new Map<string, { name: string; you: boolean; panes: Array<{ row: AgentPaneRow; raw: RawPane; deskHit: boolean }> }>()
-  groups.set(YOU_ID, { name: YOU_NAME, you: true, panes: [] })
+  const alive = new Set<string>()
+  for (const desk of visibleDesks(input)) for (const pane of desk.panes) if (agentOf(input, pane.id)) alive.add(pane.id)
+
+  const buckets = new Map<string, AgentBucket>()
+  const you: AgentBucket = { id: YOU_ID, name: YOU_NAME, kids: [] }
+  const ownerOfPane = (deskId: string, paneId: string): OwnerRef | undefined => input.owners.pane[paneId] ?? input.owners.desk[deskId]
+  const entries: Array<{ entry: AgentEntry; deskId: string; paneId: string }> = []
   for (const desk of visibleDesks(input)) {
     const deskHit = query !== '' && hit(query, [desk.name])
     for (const pane of desk.panes) {
-      if (active && !inState(filter, pane, desk.asleep)) continue
-      const owner = input.owners.pane[pane.id] ?? input.owners.desk[desk.id]
-      const id = owner?.id ?? YOU_ID
-      let group = groups.get(id)
-      if (!group) { group = { name: owner!.name, you: false, panes: [] }; groups.set(id, group) }
-      group.panes.push({ row: { ...paneRow(input, desk.id, pane), deskName: desk.name, deskColor: desk.color }, raw: pane, deskHit })
+      const entry: AgentEntry = {
+        row: { ...paneRow(input, desk.id, pane), deskName: desk.name, deskColor: desk.color }, raw: pane, deskHit, deskAsleep: desk.asleep,
+      }
+      entries.push({ entry, deskId: desk.id, paneId: pane.id })
+      if (alive.has(pane.id)) buckets.set(pane.id, { id: pane.id, name: agentOf(input, pane.id)!.name, self: entry, kids: [] })
     }
   }
+  for (const { entry, deskId, paneId } of entries) {
+    const owner = ownerOfPane(deskId, paneId)
+    const ownerBucket = owner !== undefined && owner.id !== paneId ? buckets.get(owner.id) : undefined
+    if (alive.has(paneId)) {
+      if (ownerBucket) buckets.get(paneId)!.inDeskOf = ownerBucket.name
+    } else (ownerBucket ?? you).kids.push(entry)
+  }
+
   const out: AgentGroupRow[] = []
-  for (const [id, g] of groups) {
-    // A group whose owner's name matches shows all its panes; so does a pane whose desk's name matches.
-    const groupHit = query !== '' && hit(query, [g.name])
-    const shown = (query === '' || groupHit ? g.panes : g.panes.filter(p => p.deskHit || paneHit(input, query, p.raw))).map(p => p.row)
-    if (active && shown.length === 0) continue
-    const collapsed = !active && folded.has(id)
+  for (const b of [...buckets.values(), you]) {
+    const passing = b.kids.filter(k => !active || inState(filter, k.raw, k.deskAsleep))
+    // An agent whose own line matches shows all its panes; so does a pane whose desk's name matches.
+    const lineHit = query !== '' && (b.self ? paneHit(input, query, b.self.raw) : hit(query, [b.name]))
+    const kids = query === '' || lineHit ? passing : passing.filter(k => k.deskHit || paneHit(input, query, k.raw))
+    if (active) {
+      const selfShown = b.self !== undefined && inState(filter, b.self.raw, b.self.deskAsleep) && (query === '' || lineHit || b.self.deskHit)
+      if (kids.length === 0 && !selfShown) continue
+    }
+    const collapsed = !active && kids.length > 0 && folded.has(b.id)
     out.push({
-      group: true, target: { kind: 'agent' as const, id }, name: g.name, you: g.you, collapsed,
-      paneCount: shown.length, panes: collapsed ? [] : shown,
+      group: true, target: { kind: 'agent' as const, id: b.id }, name: b.name, you: b === you, collapsed,
+      paneCount: kids.length, panes: collapsed ? [] : kids.map(k => k.row),
+      ...(b.self ? { self: b.self.row } : {}),
+      ...(b.inDeskOf !== undefined ? { inDeskOf: b.inDeskOf } : {}),
     })
   }
   return out

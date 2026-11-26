@@ -86,7 +86,7 @@ function row(cls: string, target: Target, label: string): HTMLElement {
  * A row of the tree: a treeitem with its focus key (`data-key`, unique even where a group and its agent's pane share a
  * target), its kind (`data-row`) and, when it folds, its fold id. Out of the tab order: the pane gives the one roving stop.
  */
-function treeRow(cls: string, target: Target, label: string, key: string, kind: 'desk' | 'group' | 'pane', level: 1 | 2): HTMLElement {
+function treeRow(cls: string, target: Target, label: string, key: string, kind: 'desk' | 'group' | 'agent' | 'pane', level: 1 | 2): HTMLElement {
   const r = row(cls, target, label)
   r.tabIndex = -1
   r.dataset.key = key
@@ -259,8 +259,22 @@ function deskBadge(name: string, color: string): HTMLElement {
   return b
 }
 
-function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext): HTMLElement {
-  const r = treeRow('rg-pane', p.target, p.title, paneRowKey(p.target), 'pane', 2)
+/**
+ * A pane's line. With `group` it is an agent's group head: the same line (identity, desk badge, state) at level 1, with the
+ * fold caret first and what the agent has counted at the end; its click goes to the pane, the caret folds.
+ */
+function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: AgentGroupRow): HTMLElement {
+  const r = group
+    ? treeRow('rg-pane rg-agent', p.target, `${p.title}, ${group.paneCount} guias`, paneRowKey(p.target), 'agent', 1)
+    : treeRow('rg-pane', p.target, p.title, paneRowKey(p.target), 'pane', 2)
+  if (group) {
+    r.dataset.fold = group.target.id
+    if (group.paneCount > 0) r.setAttribute('aria-expanded', String(!group.collapsed))
+    else r.classList.add('rg-nofold')
+    const caret = glyph(group.collapsed ? 'caret-right' : 'caret-down', group.collapsed ? 'Mostrar as guias' : 'Recolher as guias')
+    caret.classList.add('rg-caret')
+    r.append(caret)
+  }
   const state = paneStateOf(p)
   if (state) r.dataset.state = state.cls
   if (p.asleep || p.exited) r.classList.add('zz')
@@ -273,6 +287,12 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext): HTMLElemen
   }
   if ('deskName' in p) r.append(deskBadge(p.deskName, p.deskColor))
   else if (p.ownerBadge) r.append(ownerSeal(p.ownerBadge, 'da guia'))
+  if (group?.inDeskOf) {
+    const seal = ownerSeal(`em mesa de ${group.inDeskOf}`, 'da mesa')
+    seal.title = `Esta guia está numa mesa de ${group.inDeskOf}`
+    r.append(seal)
+  }
+  if (group && group.paneCount > 0) r.append(el('span', 'rg-n2', `${group.paneCount} guia${group.paneCount === 1 ? '' : 's'}`))
   r.append(el('span', 'rg-sp'))
   if (state) {
     const st = el('span', `rg-st ${state.cls}`, state.text)
@@ -283,7 +303,7 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext): HTMLElemen
   return r
 }
 
-/** The head of an agent's group in the by-agent view: its identity (or "Você"), how many panes, the fold. */
+/** The head of "Você" in the by-agent view (an agent's group head is its own pane line: `paneRow` with `group`). */
 function groupRow(g: AgentGroupRow, ctx: ColumnsContext): HTMLElement {
   const r = treeRow('rg-agent', g.target, `${g.name}, ${g.paneCount} guias`, groupRowKey(g.target.id), 'group', 1)
   r.dataset.fold = g.target.id
@@ -332,9 +352,10 @@ export function paintTree(host: HTMLElement, model: RegencyModel, ctx: TreeConte
       const group = el('div', 'rg-group')
       group.setAttribute('role', 'none')
       group.dataset.agent = g.target.id
-      group.append(groupRow(g, ctx))
+      group.append(g.self ? paneRow(g.self, ctx, g) : groupRow(g, ctx))
+      // A dot on the head when a pane under it waits (the agent's own wait is its state text).
       const ids = new Set(g.panes.map(p => p.target.id))
-      if (g.panes.some(p => p.attention === 'waiting') || (g.collapsed && model.waiting.some(w => ids.has(w.target.id)))) group.querySelector('.rg-sp')?.after(attnDot())
+      if (g.panes.some(p => p.attention === 'waiting') || (g.collapsed && model.waiting.some(w => w.target.id !== g.target.id && ids.has(w.target.id)))) group.querySelector('.rg-sp')?.after(attnDot())
       for (const p of g.panes) group.append(paneRow(p, ctx))
       out.push(group)
     }

@@ -36,13 +36,23 @@ describe('flat rows', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(rows)), rows)
   })
 
-  test('by agent: the group header and the agent pane have different keys; folds give no children', () => {
+  test('by agent: an agent\'s group is its own pane row (one key), "Você" last; folds give no children', () => {
     const rows = rowsOf('agent', { collapsed: ['a1', 'closed'] })
-    assert.deepEqual(rows.map(r => r.key), ['group:you', 'pane:pane:b1', 'group:a1', 'closed-head'])
+    assert.deepEqual(rows.map(r => r.key), ['pane:agent:a1', 'group:you', 'pane:pane:b1', 'closed-head'])
     assert.equal(rows.find(r => r.key === 'closed-head')!.expanded, false)
     assert.equal(rows.some(r => r.kind === 'closed'), false)
-    const open = rowsOf('agent').map(r => r.key)
-    assert.ok(open.includes('group:a1') && open.includes('pane:agent:a1'))
+    const open = rowsOf('agent')
+    assert.deepEqual(open.map(r => r.key), ['pane:agent:a1', 'pane:pane:n1', 'group:you', 'pane:pane:b1', 'closed-head', 'closed:s1', 'closed:s2'])
+    assert.equal(new Set(open.map(r => r.key)).size, open.length)
+    assert.deepEqual(open.filter(r => r.kind === 'agent').map(r => [r.key, r.level, r.expandable, r.foldId]), [['pane:agent:a1', 1, true, 'a1']])
+    assert.equal(open.find(r => r.key === 'pane:pane:n1')!.parent, 'pane:agent:a1')
+  })
+
+  test('by agent: an agent with nothing is a leaf row', () => {
+    const rows = rowsOf('agent', { owners: { desk: {}, pane: {} } })
+    const head = rows.find(r => r.key === 'pane:agent:a1')!
+    assert.deepEqual([head.kind, head.expandable], ['agent', false])
+    assert.equal(step(rows, 'pane:agent:a1', 'ArrowRight'), undefined)
   })
 
   test('no sessions: no "Fechadas" head', () => {
@@ -93,8 +103,12 @@ describe('acting', () => {
     assert.deepEqual(step(rows, 'desk:d1', 'Enter'), { type: 'toggle', key: 'desk:d1', foldId: 'd1', open: false })
     assert.deepEqual(step(rowsOf('desk', { collapsed: ['closed'] }), 'closed-head', 'Enter'), { type: 'toggle', key: 'closed-head', foldId: 'closed', open: true })
     const agent = rowsOf('agent')
-    assert.deepEqual(step(agent, 'group:a1', 'Enter'), { type: 'toggle', key: 'group:a1', foldId: 'a1', open: false })
+    assert.deepEqual(step(agent, 'group:you', 'Enter'), { type: 'toggle', key: 'group:you', foldId: 'you', open: false })
+    // an agent's line goes to its pane (Enter) and gives the quick look (Space); its fold is by the arrows
     assert.deepEqual(step(agent, 'pane:agent:a1', 'Enter'), { type: 'go', key: 'pane:agent:a1', target: { kind: 'agent', id: 'a1' } })
+    assert.deepEqual(step(agent, 'pane:agent:a1', ' '), { type: 'quick', key: 'pane:agent:a1', target: { kind: 'agent', id: 'a1' } })
+    assert.deepEqual(step(agent, 'pane:agent:a1', 'ArrowLeft'), { type: 'toggle', key: 'pane:agent:a1', foldId: 'a1', open: false })
+    assert.deepEqual(step(agent, 'pane:agent:a1', 'ArrowRight'), { type: 'focus', key: 'pane:pane:n1' })
     assert.deepEqual(step(rows, 'closed:s1', 'Enter'), { type: 'menu', key: 'closed:s1', target: { kind: 'session', id: 's1' } })
     assert.equal(step(rows, 'desk:d3', 'Enter'), undefined)
   })

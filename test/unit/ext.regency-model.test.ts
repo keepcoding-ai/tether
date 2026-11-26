@@ -123,28 +123,73 @@ describe('tree by desk', () => {
 })
 
 describe('tree by agent', () => {
-  test('each pane once, under who owns it, with the desk badge; no agent goes under "Você"', () => {
-    const me = { id: 'a1', name: 'conferente' }
-    const other = { id: 'a2', name: 'bancada' }
-    const g = agentTreeOf(input({ owners: { desk: { d1: me }, pane: { b1: other } } }))
-    assert.deepEqual(g.map(x => x.target.id), [YOU_ID, 'a1', 'a2'])
-    assert.equal(g[0]!.you, true)
-    assert.equal(g[0]!.name, 'Você')
-    assert.deepEqual(g[0]!.panes.map(p => p.target.id), ['g1'])
-    assert.deepEqual(g[1]!.panes.map(p => p.target.id), ['a1', 'a2', 'n1'])
-    assert.deepEqual(g[2]!.panes.map(p => p.target.id), ['b1'])
-    assert.equal(g[2]!.panes[0]!.deskName, 'casa')
-    assert.equal(g[2]!.panes[0]!.deskColor, 'green')
-    const all = g.flatMap(x => x.panes.map(p => p.target.id))
+  const me = { id: 'a1', name: 'conferente' }
+  const other = { id: 'a2', name: 'bancada' }
+  const placed = (g: ReturnType<typeof agentTreeOf>): string[] => g.flatMap(x => [...(x.self ? [x.self.target.id] : []), ...x.panes.map(p => p.target.id)])
+
+  test('every agent is a group, even with nothing: a leaf whose line is its own pane with its state and desk', () => {
+    const g = agentTreeOf(input())
+    assert.deepEqual(g.map(x => x.target.id), ['a1', 'a2', YOU_ID])
+    assert.deepEqual(g[0]!.target, { kind: 'agent', id: 'a1' })
+    assert.equal(g[0]!.name, 'conferente')
+    assert.equal(g[0]!.paneCount, 0)
+    assert.deepEqual(g[0]!.panes, [])
+    assert.equal(g[0]!.self!.attention, 'waiting')
+    assert.deepEqual(g[0]!.self!.identity, { kind: 'claude', name: 'conferente' })
+    assert.deepEqual([g[0]!.self!.deskName, g[0]!.self!.deskColor], ['obra', 'blue'])
+    assert.equal(g[1]!.self!.busy, true)
+    assert.equal(g[0]!.inDeskOf, undefined)
+  })
+
+  test('"Você" is last and holds what has no agent owner; an agent\'s pane is neither under it nor repeated', () => {
+    const g = agentTreeOf(input())
+    const you = g[g.length - 1]!
+    assert.equal(you.you, true)
+    assert.equal(you.name, 'Você')
+    assert.equal(you.self, undefined)
+    assert.deepEqual(you.panes.map(p => p.target.id), ['n1', 'b1', 'g1'])
+    assert.ok(you.panes.every(p => p.target.kind !== 'agent'))
+    const all = placed(g)
     assert.equal(new Set(all).size, all.length)
+    assert.deepEqual([...all].sort(), ['a1', 'a2', 'b1', 'g1', 'n1'])
     assert.ok(!all.includes('regency:main'))
   })
 
-  test('collapsed folds a group', () => {
-    const g = agentTreeOf(input({ collapsed: [YOU_ID] }))
-    assert.equal(g[0]!.collapsed, true)
-    assert.deepEqual(g[0]!.panes, [])
-    assert.equal(g[0]!.paneCount > 0, true)
+  test('what an agent has: its panes with the desk badge; a whole desk given to it enters as children', () => {
+    const g = agentTreeOf(input({ owners: { desk: { d2: me }, pane: { n1: me } } }))
+    const a1 = g.find(x => x.target.id === 'a1')!
+    assert.deepEqual(a1.panes.map(p => p.target.id), ['n1', 'b1'])
+    assert.deepEqual([a1.panes[1]!.deskName, a1.panes[1]!.deskColor], ['casa', 'green'])
+    assert.equal(a1.paneCount, 2)
+    assert.deepEqual(g[g.length - 1]!.panes.map(p => p.target.id), ['g1'])
+  })
+
+  test('an agent inside a desk of another agent is a group of its own, marked "em mesa de"', () => {
+    const g = agentTreeOf(input({ owners: { desk: { d1: me }, pane: { b1: other } } }))
+    assert.deepEqual(g.map(x => x.target.id), ['a1', 'a2', YOU_ID])
+    assert.deepEqual(g[0]!.panes.map(p => p.target.id), ['n1'])
+    assert.equal(g[1]!.inDeskOf, 'conferente')
+    assert.deepEqual(g[1]!.panes.map(p => p.target.id), ['b1'])
+    assert.equal(g[1]!.panes[0]!.deskName, 'casa')
+    assert.deepEqual(g[2]!.panes.map(p => p.target.id), ['g1'])
+    const all = placed(g)
+    assert.equal(new Set(all).size, all.length)
+  })
+
+  test('an owner that is not an agent of the tree owns nothing: its panes stay with "Você"', () => {
+    const g = agentTreeOf(input({ owners: { desk: {}, pane: { n1: { id: 'zz', name: 'sumido' } } } }))
+    assert.deepEqual(g.map(x => x.target.id), ['a1', 'a2', YOU_ID])
+    assert.ok(g[2]!.panes.some(p => p.target.id === 'n1'))
+  })
+
+  test('collapsed folds a group that has panes; a leaf has nothing to fold; "Você" folds too', () => {
+    const owners = { desk: { d1: me }, pane: {} }
+    const g = agentTreeOf(input({ owners, collapsed: ['a1', 'a2', YOU_ID] }))
+    assert.deepEqual([g[0]!.collapsed, g[0]!.panes.length, g[0]!.paneCount], [true, 0, 1])
+    assert.deepEqual([g[1]!.collapsed, g[1]!.paneCount], [false, 0])
+    assert.deepEqual([g[2]!.collapsed, g[2]!.panes.length], [true, 0])
+    assert.equal(g[2]!.paneCount > 0, true)
+    assert.ok(g[0]!.self, 'the line stays')
   })
 })
 
@@ -183,15 +228,20 @@ describe('state counts and filter', () => {
     assert.deepEqual(t.map(x => [x.target.id, x.paneCount, x.panes.map(p => p.target.id)]), [['d1', 1, ['a1']], ['d2', 1, ['b1']]])
     assert.deepEqual(treeOf(input({ filter: 'busy' })).map(x => x.panes.map(p => p.target.id)), [['a2']])
     const g = agentTreeOf(input({ filter: 'waiting' }))
-    assert.deepEqual(g.map(x => x.target.id), [YOU_ID])
-    assert.deepEqual(g[0]!.panes.map(p => p.target.id), ['a1', 'b1'])
+    assert.deepEqual(g.map(x => x.target.id), ['a1', YOU_ID])
+    assert.deepEqual(g[1]!.panes.map(p => p.target.id), ['b1'])
+    // by agent a leaf that does not pass goes away; one with a pane that passes stays, with its line
+    assert.deepEqual(agentTreeOf(input({ filter: 'busy' })).map(x => x.target.id), ['a2'])
+    const owned = agentTreeOf(input({ filter: 'asleep', owners: { desk: { d2: { id: 'a2', name: 'bancada' } }, pane: {} } }))
+    assert.deepEqual(owned.map(x => [x.target.id, x.panes.map(p => p.target.id)]), [['a2', ['b1']]])
+    assert.equal(owned[0]!.self!.busy, true)
   })
 
   test('with a filter on, the folds do not apply', () => {
     const t = treeOf(input({ collapsed: ['d1'], filter: 'waiting' }))
     assert.equal(t[0]!.collapsed, false)
     assert.deepEqual(t[0]!.panes.map(p => p.target.id), ['a1'])
-    assert.equal(agentTreeOf(input({ collapsed: [YOU_ID], filter: 'busy' }))[0]!.collapsed, false)
+    assert.equal(agentTreeOf(input({ collapsed: ['a2', YOU_ID], filter: 'busy' }))[0]!.collapsed, false)
     // no filter, no search: the fold stands
     assert.equal(treeOf(input({ collapsed: ['d1'], filter: 'all', query: '  ' }))[0]!.collapsed, true)
   })
@@ -227,14 +277,18 @@ describe('search', () => {
     assert.deepEqual(ids('zzz'), [])
   })
 
-  test('by agent: a group whose owner matches shows all its panes; a pane that matches shows only itself', () => {
+  test('by agent: an agent whose line matches shows all its panes; a pane that matches shows only itself under its agent', () => {
     const owners = { desk: { d1: { id: 'a1', name: 'conferente' } }, pane: {} }
     const byOwner = agentTreeOf(input({ owners, query: 'conferente' }))
-    assert.deepEqual(byOwner.map(g => [g.target.id, g.panes.map(p => p.target.id)]), [['a1', ['a1', 'a2', 'n1']]])
+    assert.deepEqual(byOwner.map(g => [g.target.id, g.panes.map(p => p.target.id)]), [['a1', ['n1']]])
+    // an agent with nothing is found by its name too, as a leaf
+    assert.deepEqual(agentTreeOf(input({ query: 'BANCADA' })).map(g => [g.target.id, g.panes.length]), [['a2', 0]])
     const byPane = agentTreeOf(input({ owners, query: 'nota' }))
     assert.deepEqual(byPane.map(g => [g.target.id, g.panes.map(p => p.target.id)]), [['a1', ['n1']]])
-    // the desk's name in the by-agent view
+    // the desk's name in the by-agent view: the panes of that desk, and the agents sitting in it
     assert.deepEqual(agentTreeOf(input({ owners, query: 'casa' })).flatMap(g => g.panes.map(p => p.target.id)), ['b1'])
+    assert.deepEqual(agentTreeOf(input({ owners, query: 'obra' })).map(g => g.target.id), ['a1', 'a2'])
+    assert.deepEqual(agentTreeOf(input({ query: 'zzz' })), [])
   })
 
   test('search and filter together; a matching desk with no panes stays only under "all"', () => {
@@ -247,15 +301,22 @@ describe('search', () => {
 })
 
 describe('focus ids in the by-agent view', () => {
-  test('the group header is marked and its focus key differs from the pane of the agent it is named after', () => {
+  test('an agent\'s group head IS its pane: one key, no repeated row; only "Você" is a bare group', () => {
     const m = regencyModelOf(input({ owners: { desk: { d1: { id: 'a1', name: 'conferente' } }, pane: {} } }))
     assert.ok(m.byAgent.every(g => g.group === true))
     const g = m.byAgent.find(x => x.target.id === 'a1')!
-    const own = g.panes.find(p => p.target.id === 'a1')!
-    assert.deepEqual(g.target, own.target)
-    assert.notEqual(groupRowKey(g.target.id), paneRowKey(own.target))
-    const keys = flatRows(m, 'agent').map(r => r.key)
+    assert.deepEqual(g.target, g.self!.target)
+    assert.ok(!g.panes.some(p => p.target.id === 'a1'))
+    const rows = flatRows(m, 'agent')
+    const keys = rows.map(r => r.key)
     assert.equal(new Set(keys).size, keys.length)
+    const head = rows.find(r => r.key === paneRowKey(g.target))!
+    assert.deepEqual([head.kind, head.level, head.expandable, head.foldId], ['agent', 1, true, 'a1'])
+    assert.deepEqual(rows.filter(r => r.parent === head.key).map(r => r.target.id), ['n1'])
+    const leaf = rows.find(r => r.key === paneRowKey({ kind: 'agent', id: 'a2' }))!
+    assert.deepEqual([leaf.kind, leaf.expandable], ['agent', false])
+    assert.equal(rows.find(r => r.key === groupRowKey(YOU_ID))!.kind, 'group')
+    assert.equal(rows.filter(r => r.target.id === 'a1').length, 1)
     const deskKeys = flatRows(m, 'desk').map(r => r.key)
     assert.equal(new Set(deskKeys).size, deskKeys.length)
     assert.ok(deskKeys.includes(deskRowKey('d1')))
