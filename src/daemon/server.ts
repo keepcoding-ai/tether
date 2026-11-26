@@ -101,6 +101,8 @@ const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
 /** How long a launch waits for a tether-ptyd it had to start. */
 const PANEL_HOST_ENSURE_MS = 20_000
+/** A connection that has not completed its hello by then is dropped (the clients send it at once; see onConnection). */
+export const HELLO_TIMEOUT_MS = 10_000
 
 /**
  * Whether NEW panes are launched in the terminal-pane host (tether-ptyd) instead of inside tetherd: TETHER_PANEL_HOST=1|0
@@ -128,6 +130,8 @@ export interface DaemonOptions {
   onSlot?: (kind: SlotEventKind, slot: SlotState) => void
   /** Overrides READY_FALLBACK_MS (tests). */
   readyFallbackMs?: number
+  /** Overrides HELLO_TIMEOUT_MS (tests). */
+  helloTimeoutMs?: number
   /** How often a running Claude slot's title is polled from its transcript (tests shorten it). */
   titlePollMs?: number
   /** Overrides MIN_AGENT_AGE_MS (tests); 0 disables the young-agent guard. */
@@ -339,6 +343,10 @@ interface Client {
   kind?: string
   /** From the hello: reads hosted panes straight from tether-ptyd, so no `data` or scrollback of them goes to it. */
   direct?: true
+  /** The hello was answered `ok`: only then does the client get events and answers to anything else. */
+  greeted?: true
+  /** Drops the connection when the hello does not come (cleared by it). */
+  helloTimer?: NodeJS.Timeout
 }
 
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
@@ -383,6 +391,7 @@ class DaemonImpl implements Daemon {
   private readonly transformPlan: ((plan: LaunchPlan, meta: SlotMeta, state?: SlotState) => LaunchPlan | Promise<LaunchPlan>) | undefined
   private readonly onSlot: ((kind: SlotEventKind, slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
+  private readonly helloTimeoutMs: number
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
@@ -437,6 +446,7 @@ class DaemonImpl implements Daemon {
     setAgentExecutor(this.executor) // the launch middlewares (skills) and the doctor's resolvers reach the adapters' operations through it
     this.store = new SlotStore(this.executor, { log: this.log })
     this.readyFallbackMs = opts.readyFallbackMs ?? READY_FALLBACK_MS
+    this.helloTimeoutMs = opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS
     this.minAgentAgeMs = opts.minAgentAgeMs ?? MIN_AGENT_AGE_MS
     this.killWaitCapMs = opts.killWaitCapMs ?? KILL_WAIT_CAP_MS
     this.titlePollMs = opts.titlePollMs
@@ -1823,12 +1833,22 @@ class DaemonImpl implements Daemon {
   private onConnection(socket: Socket): void {
     const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
     this.clients.add(client)
+    // The pipe can be opened by other accounts of the machine (Windows gives Everyone read on a named pipe Node creates):
+    // a connection that never says hello is dropped. The check runs on the next turn of the loop, after the poll phase, so a
+    // hello already read but not yet handled (the loop was busy) is not lost to the timer.
+    client.helloTimer = setTimeout(() => setImmediate(() => {
+      if (client.greeted || socket.destroyed) return
+      this.log(`client dropped: no hello in ${this.helloTimeoutMs} ms`)
+      socket.destroy()
+    }), this.helloTimeoutMs)
+    client.helloTimer.unref()
     socket.setEncoding('utf8')
     socket.on('data', perf.wrap('net:client-data', (chunk: string) => {
       for (const line of client.parser.push(chunk)) void this.onLine(client, line.value, line.raw)
     }))
     socket.on('error', (e) => this.log(`client error: ${e.message}`))
     socket.on('close', () => {
+      clearTimeout(client.helloTimer)
       this.clients.delete(client)
       for (const id of client.attached) this.slotMap.get(id)?.attached.delete(client)
       for (const name of client.procsWatched) this.unwatchProc(client, name)
@@ -1917,8 +1937,9 @@ class DaemonImpl implements Daemon {
     client.socket.write(encode(msg))
   }
 
+  /** Events go only to clients that completed the hello: a connection that did not is nobody's. */
   private broadcast(msg: DaemonMessage): void {
-    for (const c of this.clients) this.send(c, msg)
+    for (const c of this.clients) if (c.greeted) this.send(c, msg)
   }
 
   private broadcastState(slot: Slot): void {
@@ -1937,6 +1958,12 @@ class DaemonImpl implements Daemon {
       return
     }
     const msg = value as Partial<ClientMessage>
+    if (!client.greeted && msg.t !== 'hello') {
+      // Before the hello nothing is done: keystrokes are dropped, any other request is refused.
+      const id = (msg as { id?: unknown }).id
+      if (typeof id === 'number') this.send(client, { t: 'error', id, code: 'auth-required', message: 'identifique-se primeiro (hello)' })
+      return
+    }
     if (msg.t === 'input') {
       const arrive = msg.probe ? stamp() : 0 // line received: the first daemon stamp
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
@@ -1972,6 +1999,8 @@ class DaemonImpl implements Daemon {
       case 'hello':
         if (typeof req.client === 'string') client.kind = req.client
         if (req.direct === true) client.direct = true
+        client.greeted = true
+        clearTimeout(client.helloTimer)
         return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }

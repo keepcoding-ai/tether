@@ -185,6 +185,7 @@ export type ErrorCode =
   | 'door-denied'       // the caller's identity does not match
   | 'unknown-verb'      // no contributed verb by that namespace and name
   | 'unknown-request'   // ext-request: no handler by that extension and name
+  | 'auth-required'     // a request before the hello
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -193,6 +194,10 @@ export type Request =
   /**
    * `direct`: the client reads the panes hosted in tether-ptyd straight from the host (the app). tetherd then sends it no
    * `data` of a hosted pane (`ptyHost`) and no scrollback of one in `attach`; in-process panes go to it as to anyone.
+   */
+  /**
+   * The first request of every connection: until it is answered `ok`, tetherd answers nothing else (`auth-required`), sends
+   * no event, and drops the connection after a while.
    */
   | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean }
   | { t: 'list'; id: number }
