@@ -909,10 +909,17 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok(asleepLabels.includes('Acordar guia') && !asleepLabels.includes('Hibernar guia'), '"Acordar guia" in place of "Hibernar guia"')
     assert.ok(asleepLabels.some(l => /^Falar com .* \(dormindo\)$/.test(l)), 'asleep, "Falar com" says why')
     // The fake agent never reports its session: the start is refused 'unconfirmed' and the pane asks the person (the
-    // tether's own question, the same as for-agents-flow step 9 meets). The gesture reached the tetherd; the Regency stays.
+    // tether's own question, the same as for-agents-flow step 9 meets). The refusal is not silent: the Regency says it in
+    // a notice, and "Ir até a guia" takes the person to the pane, where the choice is asked.
     await pick('Acordar guia')
-    await until('the wake reached the tetherd', async () => ['unconfirmed', 'running', 'starting'].includes(doorApi.slots.get(b)?.status ?? ''))
-    await stays('pane wake')
+    const wakeNotice = page.locator('dialog[open]', { hasText: 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' })
+    await wakeNotice.waitFor({ timeout: 10_000 })
+    assert.equal((await state()).desk, DESK, 'pane wake: the Regency stays in view while the notice asks')
+    await wakeNotice.locator('button.choice[data-choice="go"]').click()
+    await until('"Ir até a guia" took the person to the pane', async () => (await state()).active === b)
+    // Back to the Regency for the rest of the gestures.
+    await page.evaluate(d => window.__tether.switchDesk(d), DESK)
+    await page.waitForFunction(d => window.__tether.activeDesk() === d, DESK)
     // "Fechar guia" on the copy: its row goes, the keyboard goes to the row now in its place.
     const copyKey = (await treeKeys()).find(k => k.endsWith(`:${copy}`))!
     const copyRow = page.locator(`.rg-tree [data-key="${copyKey}"]`)

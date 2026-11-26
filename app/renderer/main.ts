@@ -69,7 +69,7 @@ import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
 import { ProcsStore } from './procs-store.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, ManagerMenuOptions, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, ManagerMenuOptions, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi, WakeAnswer } from './ext-api.ts'
 import { DESK_PLACE_LABEL, EMBLEM_LABEL, GO_DESK_LABEL, GO_PANE_LABEL, WAKE_DESK_LABEL, WAKE_PANE_LABEL, managerDeskItems, managerDeskTail, managerPaneEntries } from './manager-menu-rules.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
@@ -1197,13 +1197,15 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void,
  * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep. `spare` (an owner's
  * wake through the door) stay as they are. Returns the panes started.
  */
-function wakeDesk(id: string, spare: ReadonlySet<string> = new Set()): string[] {
+function wakeDesk(id: string, spare: ReadonlySet<string> = new Set(), report?: (answer: WakeAnswer) => void): string[] {
   if (desks.desks.find(d => d.id === id)?.asleep) desks.setAsleep(id, false)
   const started: string[] = []
+  const answers: Promise<WakeAnswer>[] = []
   for (const p of deskPanes(id)) {
     if (spare.has(p.id) || !deskSleptPanes.delete(p.id)) continue
-    if (asleepPanes.has(p.id)) { started.push(p.id); void startSlot(p.id) }
+    if (asleepPanes.has(p.id)) { started.push(p.id); answers.push(startSlot(p.id)) }
   }
+  if (report) void Promise.all(answers).then(all => { const refused = all.find(a => !a.ok); if (refused) report(refused) })
   scheduleSave()
   return started
 }
@@ -1277,7 +1279,7 @@ function deskMenuEntries(id: string, at: () => { x: number; y: number }, opts?: 
   const managed = managerDeskItems<MenuEntry>(items, {
     place: children => ({ icon: 'arrows-left-right', label: DESK_PLACE_LABEL, run: () => {}, children }),
     ...(rename ? { rename: { icon: 'pencil-simple', label: 'Renomear', run: () => rename() } } : {}),
-    ...(desks.desks[index]?.asleep ? { wake: { icon: 'sun', label: WAKE_DESK_LABEL, run: () => { wakeDesk(id) } } } : {}),
+    ...(desks.desks[index]?.asleep ? { wake: { icon: 'sun', label: WAKE_DESK_LABEL, run: () => { wakeDesk(id, undefined, opts.onWake) } } } : {}),
   }, labelOfEntry)
   const grouped = withDeskMenuGroup<MenuEntry>(managed, fromExtMenu(door.deskMenuItems(id)), SEP, labelOfEntry, ['Hibernar mesa', WAKE_DESK_LABEL, 'Fechar mesa…'])
   const go: MenuItem | undefined = opts.goLast ? { icon: 'arrow-right', label: GO_DESK_LABEL, pin: 'primary', run: () => { revealDesk(id) } } : undefined
@@ -2366,16 +2368,21 @@ async function renamePaneTo(id: string, name: string): Promise<boolean> {
 // ---------- starting slots ----------
 
 /** Sends `start`; a refusal (unconfirmed, already-open, …) stays on the panel until the slot comes up. */
-async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<void> {
-  if (pendingStarts.has(slotId)) return
+async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<WakeAnswer> {
+  if (pendingStarts.has(slotId)) return { paneId: slotId, ok: true }
   pendingStarts.add(slotId)
   startErrors.delete(slotId)
   renderSlot(slotId)
   const reply = await window.tether.request({ t: 'start', slotId, ...(choice ? { choice } : {}) })
   pendingStarts.delete(slotId)
-  if (reply.t === 'error') { startErrors.set(slotId, { code: reply.code, message: reply.message }); applySuspend(slotId, suspended.startFailed(slotId)) }
-  else if (reply.slot) applyState(reply.slot)
+  let answer: WakeAnswer = { paneId: slotId, ok: true }
+  if (reply.t === 'error') {
+    startErrors.set(slotId, { code: reply.code, message: reply.message })
+    applySuspend(slotId, suspended.startFailed(slotId))
+    answer = { paneId: slotId, ok: false, why: reply.code === 'unconfirmed' ? 'unconfirmed' : 'refused', message: reply.message }
+  } else if (reply.slot) applyState(reply.slot)
   renderSlot(slotId)
+  return answer
 }
 
 /** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
@@ -2390,9 +2397,9 @@ function autoStartPanels(): void {
 
 async function onPanelAction(slotId: string, action: PanelAction): Promise<void> {
   switch (action) {
-    case 'start': return startSlot(slotId)
-    case 'resume': return startSlot(slotId, 'resume')
-    case 'new': return startSlot(slotId, 'new')
+    case 'start': await startSlot(slotId); return
+    case 'resume': await startSlot(slotId, 'resume'); return
+    case 'new': await startSlot(slotId, 'new'); return
     case 'close': return closePanel(slotId, { ask: false })
     case 'pick-folder': return moveToFolder(slotId)
   }
@@ -3427,7 +3434,7 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}, at: () => { x: n
   const full = opts.goLast ? {
     go: { ...focus, label: GO_PANE_LABEL },
     close: { icon: 'x' as const, label: CLOSE_GUIDE_LABEL, run: () => closeGuide(id) },
-    ...(asleepPanes.has(id) && slots.has(id) ? { wake: { icon: 'sun' as const, label: WAKE_PANE_LABEL, run: () => { void startSlot(id) } } } : {}),
+    ...(asleepPanes.has(id) && slots.has(id) ? { wake: { icon: 'sun' as const, label: WAKE_PANE_LABEL, run: () => { void startSlot(id).then(a => opts.onWake?.(a)) } } } : {}),
     // The emblem belongs to the tab: only a pane with one (findPanel above) wears it, wherever its desk is.
     emblem: { icon: 'tag' as const, label: EMBLEM_LABEL, run: () => { const p = at(); openEmblemMenu(id, p.x, p.y) } },
   } : undefined

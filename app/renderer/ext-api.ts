@@ -102,6 +102,12 @@ export type ContextMenuEntry = ContextMenuItem | 'sep'
 export interface ContextMenuHeading { heading: string }
 /** What a menu provider of an extension gives (`panes.tabMenu`, `desks.menu`): items, separators and heading lines. */
 export type ContextMenuRow = ContextMenuEntry | ContextMenuHeading
+/**
+ * How waking a pane ended: it came up (or is coming up), or the tetherd refused the start. `unconfirmed`: the session is
+ * not known, so the choice (resume or start again) is the person's, made in the pane itself.
+ */
+export type WakeAnswer = { paneId: string } & ({ ok: true } | { ok: false; why: 'unconfirmed' | 'refused'; message: string })
+
 /** Where an extension's rows go in a pane's menu: before its floor (the default) or as the menu's first group. */
 export interface TabMenuPlace { place?: 'top' }
 /**
@@ -111,6 +117,8 @@ export interface TabMenuPlace { place?: 'top' }
  */
 export interface TabMenuOptions {
   from?: 'manager'
+  /** In a manager: told how "Acordar guia" ended, so a refusal is never silent for a pane in another desk. */
+  onWake?: (answer: WakeAnswer) => void
   /** In a manager: the row "Renomear…" calls this instead of the tab's own input (a pane type with its own rename keeps it). */
   rename?: () => void
   /** In a manager: the caller's rows, before "Ir até a guia" (with `goLast`) or at the end. */
@@ -128,6 +136,8 @@ export interface TabMenuOptions {
  */
 export interface ManagerMenuOptions {
   from: 'manager'
+  /** Told how "Acordar mesa" ended: once, with the first pane whose start was refused (nothing when all woke). */
+  onWake?: (answer: WakeAnswer) => void
   rename?: () => void
   extra?: readonly ContextMenuRow[]
   goLast?: true

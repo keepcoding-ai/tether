@@ -1,7 +1,7 @@
 // The Regency in the app: declares its pane type, keeps its one pane on its system desk, and gathers the sources into the
 // model's input (the desk tree of the core, the owner board of for-agents, the channel feed of channels, the agents). Events
 // only mark the pane dirty; one animation frame repaints it, and only while the Regency is the visible desk.
-import type { ContextMenuItem, ContextMenuRow, Disposable, TetherUi, TreePane } from '../../app/renderer/ext-api.ts'
+import type { ContextMenuItem, ContextMenuRow, Disposable, TetherUi, TreePane, WakeAnswer } from '../../app/renderer/ext-api.ts'
 import type { IdentityInput } from '../../app/renderer/agent-identity.ts'
 import { GO_DESK_LABEL, WAKE_DESK_LABEL } from '../../app/renderer/manager-menu-rules.ts'
 import type { ITabRenderer } from 'dockview-core'
@@ -175,6 +175,25 @@ export function activate(ui: TetherUi): Disposable[] {
     })
   }
 
+  /**
+   * How a wake (a pane's or a desk's) ended. A refusal is said here: the choice of an `unconfirmed` pane (resume or start
+   * again) is asked inside the pane itself, which may be on another desk, so the notice offers the way to it.
+   */
+  const woke = (a: WakeAnswer): void => {
+    if (a.ok) return
+    const name = nameOf(a.paneId)
+    const unconfirmed = a.why === 'unconfirmed'
+    void ui.dialogs.ask({
+      situation: 'regency.wake-refused', tone: 'warn', icon: 'shield-warning',
+      title: unconfirmed ? `${name} não acordou` : `${name} não pôde acordar`,
+      message: unconfirmed ? 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' : a.message,
+      choices: [
+        { id: 'go', icon: 'arrow-right', label: 'Ir até a guia', consequence: 'Leva você à guia.', tone: 'safe' },
+        { id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi alterado.', tone: 'safe' },
+      ],
+    }).then(r => { if (r.choice === 'go') ui.panes.reveal(a.paneId) })
+  }
+
   /** A pane of the tree as the core sees it now (its flags), wherever it lives. */
   const treePane = (id: string): TreePane | undefined => {
     for (const d of ui.desks.tree().desks) { const p = d.panes.find(x => x.id === id); if (p) return p }
@@ -197,7 +216,7 @@ export function activate(ui: TetherUi): Disposable[] {
   /** The desk's moon or sun: the core's own row of the desk's menu, so the question and the rules are the pill's. */
   const sleepDesk = (deskId: string, wake: boolean): void => {
     const label = wake ? WAKE_DESK_LABEL : HIBERNATE_DESK_LABEL
-    const row = ui.desks.menuEntries(deskId, { from: 'manager' }).find((e): e is ContextMenuItem => e !== 'sep' && e.label === label)
+    const row = ui.desks.menuEntries(deskId, { from: 'manager', onWake: woke }).find((e): e is ContextMenuItem => e !== 'sep' && e.label === label)
     if (row && !row.disabled) { row.run(); return }
     const name = ui.desks.list().find(d => d.id === deskId)?.name ?? 'A mesa'
     if (wake) refuse(`${name} não está dormindo`, 'A mesa já está acordada.')
@@ -232,7 +251,7 @@ export function activate(ui: TetherUi): Disposable[] {
         return
       }
       ui.desks.showMenu(desk.id, x, y, undefined, {
-        from: 'manager', goLast: true, rename: renameIn(key, 'desk', name => ui.desks.rename(desk.id, name)),
+        from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'desk', name => ui.desks.rename(desk.id, name)),
       })
       return
     }
@@ -252,7 +271,7 @@ export function activate(ui: TetherUi): Disposable[] {
         { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
       )
     }
-    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
+    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
   }
 
   const host: RegencyHost = {
