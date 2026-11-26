@@ -92,8 +92,9 @@ test('door pane: a pane the daemon asks for', { timeout: 300_000 }, async () => 
     await page.waitForFunction(() => window.__tether.layout().desks.find(d => d.id === 'desk-3')?.asleep === true)
     await page.evaluate(() => window.__tether.switchDesk('desk-1'))
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
-    // The first map reaches the daemon with the layout save: the desk ids are known there.
-    await waitUntil(() => (door.desks.map()?.desks.length ?? 0) >= 3, 20_000, 'the desk map reached the daemon')
+    // The first map reaches the daemon with the layout save: the desk ids are known there. The system desks are in the map
+    // too (Browser, Regência), so it is the queue's desks that tell the map is the new one.
+    await waitUntil(() => ['desk-1', 'desk-2', 'desk-3'].every(id => door.desks.map()?.desks.some(d => d.id === id)), 20_000, 'the desk map reached the daemon')
 
     const desk2Before = (await page.evaluate(() => window.__tether.desks())).find(d => d.id === 'desk-2')!.panes
     const activeBefore = await page.evaluate(() => ({ active: window.__tether.activeId(), current: window.__tether.currentPane() }))
