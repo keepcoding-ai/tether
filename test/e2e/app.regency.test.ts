@@ -9,6 +9,9 @@
 //   5. an agent with attention `waiting` shows in "Esperam você" and in the tree with its state;
 //   6. the tree lists the queue desks, Browser and the drawer with the panes, names and identity; a folded desk hides its panes;
 //   7. "Neste canal" starts folded, faces only; open, the channel's members' column;
+//   8. immersion (Ctrl+Shift+\, the switch, the palette): the side columns become thin edges, the left keeps the count; a click on an edge goes back;
+//   9. the phone (pane under 768 px): "Chama você", "Conversa", "Tether" at the bottom, one at a time, 44 px; it opens on "Chama você"
+//      when someone waits; choosing a conversation goes to it; the box sits above the bar; the place is kept;
 //  10. nothing comes forward: no desk switch, no focus change by an event (checked at each event above).
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.regency.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
@@ -60,6 +63,8 @@ type Hooks = {
       layout(): RegencyLayout | undefined
       select(channelId: string): void
       close(): void
+      mode(): string | undefined
+      tier(): string | undefined
     }
   }
 }
@@ -330,6 +335,86 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok((await page.locator('.rg-members-host .ch-mrow[data-member]').count()) >= 2, 'the channel\'s members, with their gestures')
     await page.click('.rg-members-tg')
     assert.equal(await members.getAttribute('data-open'), 'false')
+
+    // ---- 8. immersion: the side columns become thin edges, and back ----
+    console.log('step 8')
+    before = await state()
+    const mode = (): Promise<string | undefined> => page.evaluate(() => window.__tether.ext.regency.mode())
+    assert.ok(await page.evaluate(() => window.__tether.commands().some(c => c.id === 'regency.immersion')), 'the command is in the palette')
+    assert.match((await page.locator('.rg-mode').getAttribute('title')) ?? '', /Imersão.*Ctrl\+Shift\+\\/, 'the switch says its key')
+    await page.keyboard.press('Control+Shift+Backslash')
+    await until('immersion by the key', async () => (await mode()) === 'immersion')
+    assert.equal(await page.locator('.rg-left').isVisible(), false, 'the left column folded')
+    assert.equal(await page.locator('.rg-right').isVisible(), false, 'the right column folded')
+    assert.equal(await page.locator('.rg-edge-l').isVisible(), true)
+    assert.equal(await page.locator('.rg-edge-r').isVisible(), true)
+    assert.ok(((await page.locator('.rg-edge-l').boundingBox())?.width ?? 99) <= 44, 'a thin edge')
+    const waitingNow = (await model()).waiting.length
+    assert.ok(waitingNow > 0)
+    assert.equal(await page.locator('.rg-edge-cnt').textContent(), String(waitingNow), 'the left edge keeps the count')
+    assert.match((await page.locator('.rg-edge-l').getAttribute('class')) ?? '', /\blit\b/, 'and lights: someone waits')
+    assert.equal(await page.locator(`.rg-center .ch-pane[data-channel="${extra}"]`).isVisible(), true, 'the conversation stays')
+    await waitUntil(() => saved().includes('"mode":"immersion"'), 10_000, 'the mode reached layout.json')
+    await page.screenshot({ path: join(SHOTS, 'r1-imersao.png') })
+    await page.click('.rg-edge-l')
+    await until('a click on the left edge goes back', async () => (await mode()) === 'manage')
+    assert.equal(await page.locator('.rg-left').isVisible(), true)
+    assert.equal(await page.locator('.rg-edge-l').isVisible(), false)
+    await page.click('.rg-mode')
+    await until('the visible switch', async () => (await mode()) === 'immersion')
+    await page.click('.rg-edge-r [data-action="manage-tether"]')
+    await until('the right edge goes back', async () => (await mode()) === 'manage')
+    assert.equal((await state()).desk, before.desk, 'immersion stays on the Regency')
+
+    // ---- 9. the phone (pane under 768 px): three places at the bottom, one at a time ----
+    console.log('step 9')
+    const tier = (): Promise<string | undefined> => page.evaluate(() => window.__tether.ext.regency.tier())
+    const tab = (): Promise<string | null> => page.locator('.rg').getAttribute('data-tab')
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(500, 860) })
+    await until('the phone tier', async () => (await tier()) === 'mobile')
+    console.log(`pane width at the phone: ${await page.locator('.rg').evaluate(e => (e as unknown as { clientWidth: number }).clientWidth)}`)
+    const places = page.locator('.rg-tabbar .rg-tab')
+    assert.equal(await places.count(), 3)
+    assert.deepEqual((await page.locator('.rg-tabbar .rg-tab-t').allTextContents()), ['Chama você', 'Conversa', 'Tether'])
+    for (let i = 0; i < 3; i++) assert.ok(((await places.nth(i).boundingBox())?.height ?? 0) >= 44, 'a 44 px touch target')
+    assert.equal(await page.locator('.rg-tab[data-tab="waiting"] .rg-tab-cnt').textContent(), String(waitingNow), '"Chama você" counts')
+    assert.equal(await page.locator('.rg-edge-l').isVisible(), false)
+    // Reopened with someone waiting, it opens on "Chama você".
+    await page.evaluate(() => window.__tether.ext.regency.close())
+    await page.waitForFunction(p => window.__tether.panelIds().includes(p), PANE)
+    await until('opens on "Chama você"', async () => (await tab()) === 'waiting')
+    await until('the phone tier again', async () => (await tier()) === 'mobile')
+    assert.equal(await page.locator('.rg-left').isVisible(), true)
+    assert.equal(await page.locator('.rg-center').isVisible(), false, 'one thing at a time')
+    assert.equal(await page.locator('.rg-right').isVisible(), false)
+    assert.equal(await page.locator('.rg-wait').first().isVisible(), true, '"Esperam você" is here')
+    assert.ok((await page.locator('.rg-conv').count()) >= 2, 'and the conversations')
+    await page.screenshot({ path: join(SHOTS, 'r1-celular-chama.png') })
+    // Choosing a conversation takes the person to it; the box sits right above the bar.
+    await page.click(`.rg-conv[data-target="channel:${obra}"]`)
+    await until('to the conversation', async () => (await tab()) === 'conversation')
+    assert.equal((await layout())?.channelId, obra)
+    assert.equal(await page.locator('.rg-center').isVisible(), true)
+    assert.equal(await page.locator('.rg-left').isVisible(), false)
+    await until('the centre shows it', async () => (await embed(obra))?.loaded === true)
+    const boxAt = await page.locator(`.rg-center .ch-pane[data-channel="${obra}"] .ch-composer-slot textarea`).boundingBox()
+    const barAt = await page.locator('.rg-tabbar').boundingBox()
+    assert.ok(boxAt && barAt && boxAt.y + boxAt.height <= barAt.y && barAt.y - (boxAt.y + boxAt.height) < 80, `the box sits above the bar (${JSON.stringify({ boxAt, barAt })})`)
+    await page.screenshot({ path: join(SHOTS, 'r1-celular-conversa.png') })
+    await page.click('.rg-tab[data-tab="tether"]')
+    await until('to the tether', async () => (await tab()) === 'tether')
+    assert.equal(await page.locator('.rg-right').isVisible(), true)
+    assert.equal(await page.locator('.rg-members').isVisible(), true, '"Neste canal" is in "Tether"')
+    assert.ok((await page.locator('.rg-right .rg-desk').count()) >= 2, 'and the tree')
+    assert.equal((await layout())?.narrowTab, 'tether', 'the place is kept')
+    await page.screenshot({ path: join(SHOTS, 'r1-celular-tether.png') })
+    // Back to the desktop: the three columns, no bar.
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(1500, 900) })
+    await until('the desktop tier', async () => (await tier()) === 'desktop')
+    assert.equal(await page.locator('.rg-tabbar').isVisible(), false)
+    assert.equal(await page.locator('.rg-left').isVisible(), true)
+    assert.equal(await page.locator('.rg-right').isVisible(), true)
+    await page.evaluate(i => window.__tether.ext.regency.select(i), extra)
 
     // ---- 10. nothing comes forward: the Regency hidden, events do not bring it ----
     console.log('step 10')

@@ -17,11 +17,13 @@
 .rg-edge-l { margin: 0; border: 0; border-right: 1px solid var(--border); font: inherit; }
 .rg-edge-r { border-left: 1px solid var(--border); }
 .rg .rg-edge .rg-ic svg { width: 16px; height: 16px; }
+.rg-edge-pill { writing-mode: vertical-rl; display: inline-flex; align-items: center; gap: 6px; padding: 8px 2px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--fg-dim); border: 1px solid var(--border); }
+.rg-edge-cnt { writing-mode: horizontal-tb; }
 .rg-edge-cnt:empty { display: none; }
-.rg-edge-cnt { writing-mode: vertical-rl; padding: 8px 2px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--fg-dim); border: 1px solid var(--border); }
 /* Someone waits: the left edge lights in the alert's tint (orange only means "needs the person"). */
 .rg .rg-edge-l.lit .rg-ic { color: var(--x-alert); }
-.rg-edge-l.lit .rg-edge-cnt { color: var(--x-alert); border-color: color-mix(in srgb, var(--x-alert) 50%, var(--border)); background: color-mix(in srgb, var(--x-alert) 12%, transparent); }
+.rg-edge-l.lit .rg-edge-pill { color: var(--alert-text, var(--x-alert)); border-color: color-mix(in srgb, var(--x-alert) 50%, var(--border)); background: color-mix(in srgb, var(--x-alert) 12%, transparent); }
+.rg-edge-l.lit .rg-edge-cnt { font-weight: 700; }
 .rg-edge-b, .rg-mode { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; }
 .rg-edge-b:hover, .rg-mode:hover { background: var(--bg-hover); color: var(--fg); }
 .rg-mode { width: 24px; height: 24px; margin: -4px -2px -4px 0; }

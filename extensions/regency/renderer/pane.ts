@@ -214,7 +214,9 @@ export class RegencyPane implements IContentRenderer {
     this.edgeLeft.type = 'button'
     this.edgeLeft.dataset.action = 'manage'
     this.edgeLeft.title = 'Esperam você · voltar a Gerir'
-    this.edgeLeft.append(glyph('bell', 'Esperam você'), this.edgeCount)
+    const pill = el('span', 'rg-edge-pill')
+    pill.append(this.edgeCount, el('span', 'rg-edge-pt', 'esperam você'))
+    this.edgeLeft.append(glyph('bell', 'Esperam você'), pill)
     this.edgeRight.dataset.action = 'manage'
     this.edgeRight.title = 'Voltar a Gerir'
     const to = (action: string, name: string, tip: string): HTMLButtonElement => {
