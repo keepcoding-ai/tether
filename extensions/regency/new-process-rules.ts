@@ -6,7 +6,7 @@
 // Secrets: a variable's VALUE goes only into the request this file builds; nothing here keeps it, logs it or puts it in a
 // sentence. `maskEcho` takes the values out of any text that might echo the recipe before it is shown.
 import { parseArgs } from '../../app/renderer/args.ts'
-import { looksSecretName } from '../../src/core/redact-args.ts'
+import { looksSecretName, looksSecretValue } from '../../src/core/redact-args.ts'
 
 /** The process name tetherd accepts: the same as PROC_NAME_RE (src/daemon/procs.ts, a node module the renderer does not load). */
 export const PROC_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -104,9 +104,13 @@ export function envError(rows: readonly NewProcEnvRow[]): { index: number; error
   return undefined
 }
 
-/** The names that look like a secret, by the same rule that masks arguments and names (core/redact-args.ts). */
+/**
+ * The names of the variables that look like a secret, by the same rules that mask arguments and names (core/redact-args.ts):
+ * the name (`DB_PASS`), or the shape of the value (`postgres://u:senha@…`, a PEM block, `sk-…`, a long random word). Only the
+ * names come out; the value is looked at here and nowhere said.
+ */
 export function secretNames(rows: readonly NewProcEnvRow[]): string[] {
-  return filledRows(rows).map(x => x.row.name.trim()).filter(n => n !== '' && looksSecretName(n))
+  return filledRows(rows).filter(x => x.row.name.trim() !== '' && (looksSecretName(x.row.name.trim()) || looksSecretValue(x.row.value))).map(x => x.row.name.trim())
 }
 
 /** The question before creating with secret-looking names; the default answer is going back. */

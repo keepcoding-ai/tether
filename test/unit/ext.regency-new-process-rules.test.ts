@@ -64,6 +64,32 @@ test('secret-looking names: the SAME rule that masks arguments (core/redact-args
   assert.deepEqual(secretNames([{ name: 'MODO', value: 'a' }]), [])
 })
 
+test('Temper r7 T8: the common names of a secret are asked about', () => {
+  const names = ['DB_PASS', 'SMTP_PASS', 'MYSQL_PWD', 'PGPASS', 'SENTRY_DSN', 'PRIVATE_PEM', 'SESSION_SIGNING', 'JWT_SIGNING', 'OTP_SEED', 'PIN', 'SALT', 'CERT_PEM', 'API_TOKEN', 'APIKEY', 'CLIENT_SECRET', 'NPM_AUTH']
+  assert.deepEqual(secretNames(names.map(n => ({ name: n, value: 'x' }))), names)
+  assert.deepEqual(secretNames(['PWD', 'PORT', 'NODE_ENV', 'DATABASE_URL'].map(n => ({ name: n, value: 'x' }))), [], 'a plain name with a plain value is not asked about')
+})
+
+test('the shape of the value asks too, whatever the name, and the value is never in the answer or the question', () => {
+  const rows = [
+    { name: 'DATABASE_URL', value: 'postgres://app:hunter22@db.local:5432/app' },
+    { name: 'REDIS_URL', value: 'redis://cache:6379' },
+    { name: 'WEBHOOK_URL', value: 'https://hook:abc123@example.com/x' },
+    { name: 'CHAVE', value: '-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----' },
+    { name: 'OPENAI', value: 'sk-live-abcdefghijklmnop' },
+    { name: 'GH', value: 'ghp_abcdefghijklmnopqrstuvwxyz0123' },
+    { name: 'SLACK', value: 'xoxb-1234-5678-abcdef' },
+    { name: 'AWS', value: 'AKIAABCDEFGHIJKLMNOP' },
+    { name: 'ALEATORIO', value: 'Qx7vT2mN9pL4sR8wK1zY6bH3cJ5dF0gA' },
+    { name: 'MODO', value: 'production' },
+    { name: 'PASTA', value: 'C:\\Users\\me\\projects\\web' },
+  ]
+  const asked = secretNames(rows)
+  assert.deepEqual(asked, ['DATABASE_URL', 'WEBHOOK_URL', 'CHAVE', 'OPENAI', 'GH', 'SLACK', 'AWS', 'ALEATORIO'])
+  const said = JSON.stringify(asked) + secretQuestion(asked)
+  for (const r of rows) assert.ok(!said.includes(r.value), `the value of ${r.name} is never said`)
+})
+
 test('the question names the variables and points the secret to the command', () => {
   assert.equal(secretQuestion(['API_TOKEN']), 'API_TOKEN parece um segredo. Segredo vai no próprio comando, por exemplo `dotenvx run -- …`. Criar mesmo assim?')
   assert.match(secretQuestion(['A_KEY', 'B_TOKEN', 'C_SECRET']), /^A_KEY, B_TOKEN e C_SECRET parecem segredos\. /)

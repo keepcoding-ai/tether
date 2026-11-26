@@ -46,6 +46,9 @@ describe('procs: model', () => {
 
   test('secrets show by name only, in the card and in the recipe diff', () => {
     assert.deepEqual(maskEnv({ API_KEY: 'k', db_password: 'p', GH_TOKEN: 't', PORT: '3000' }), { API_KEY: '•••', db_password: '•••', GH_TOKEN: '•••', PORT: '3000' })
+    // Temper r7 (B-2): the repo's one name rule, and the shape of the value (a URL with a password in it).
+    assert.deepEqual(maskEnv({ DB_PASS: 'p', MYSQL_PWD: 'p', PGPASS: 'p', SENTRY_DSN: 'd', PIN: '1234', DATABASE_URL: 'postgres://u:pw@h/db', REDIS_URL: 'redis://h:6379', PWD: '/home/a' }),
+      { DB_PASS: '•••', MYSQL_PWD: '•••', PGPASS: '•••', SENTRY_DSN: '•••', PIN: '•••', DATABASE_URL: '•••', REDIS_URL: 'redis://h:6379', PWD: '/home/a' })
     const before = normalizeRecipe({ command: 'node', args: ['a'], cwd, env: { API_KEY: 'old' } })
     const after = normalizeRecipe({ command: 'node', args: ['b'], cwd, env: { API_KEY: 'new' } })
     const d = recipeDiff(before, after)!

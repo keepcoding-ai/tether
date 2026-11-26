@@ -6,12 +6,12 @@ import type { Executor } from '../exec/executor.ts'
 import { procAdoptPath, procCardPath, procEventsPath, procRunPath, procsDir, procUsesPath } from '../core/paths.ts'
 import type { SlotStore } from '../core/slot-store.ts'
 import type { RunFile } from '../procd/protocol.ts'
+import { looksSecretName, looksSecretValue } from '../core/redact-args.ts'
 import { actionText, useText } from './proc-texts.ts'
 
 /** Lower case only: the name is a file name, and Windows would fold `Web` and `web` into one card. */
 export const PROC_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 export const DEFAULT_STOP_GRACE_MS = 5_000
-const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|CREDENTIAL/i
 export const SECRET_MASK = '•••'
 /** How many events `proc-info` returns. */
 export const INFO_EVENTS = 20
@@ -214,7 +214,7 @@ export function recipeDiff(before: RecipeFields, after: RecipeFields): { before:
 
 export function maskEnv(env: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(env)) out[k] = SECRET_NAME.test(k) ? SECRET_MASK : v
+  for (const [k, v] of Object.entries(env)) out[k] = looksSecretName(k) || looksSecretValue(v) ? SECRET_MASK : v
   return out
 }
 
