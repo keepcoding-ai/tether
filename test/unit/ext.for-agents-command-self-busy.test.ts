@@ -1,5 +1,5 @@
-// Repro: a command of oneself (agents_command without `guia`, owner === pane) is dropped after 5 min when the pane never
-// leaves `turn: 'busy'` (a background subagent keeps it busy), and the owner is told nothing (no `return`).
+// A command of oneself (agents_command without `guia`, owner === pane) is dropped after 5 min when the pane never
+// leaves `turn: 'busy'` (a background subagent keeps it busy); the owner is always told why (with or without `return`).
 // Fake slots, gate, delivery and clock; a fake conductor types nothing real.
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, test } from 'node:test'
@@ -66,14 +66,40 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
   })
   afterEach(() => { reg.dispose(); pending.dispose().dispose() })
 
-  test('DEFECT: busy for 5+ min, the command is dropped and the owner hears nothing', async () => {
-    // These asserts document the defect: they pass today and must flip when it is fixed.
+  test('busy for 5+ min: the command is dropped and the owner is told why, even without return', async () => {
     pending.add(PANE, PANE, 'compact', undefined) // owner === pane: a command of oneself, no `return`
     for (let i = 0; i < 6; i++) { fc.advance(MIN); await pending.flush() }
     assert.deepEqual(events, [], 'the conductor was never called')
     assert.equal(pending.count(PANE), 0, 'the command left the queue')
     assert.ok(logs.some((l) => l.includes('descartado')), `the daemon log got "descartado": ${JSON.stringify(logs)}`)
-    assert.deepEqual(delivered, [], 'no message reached the owner')
+    assert.equal(delivered.length, 1, 'the owner got exactly one message')
+    const d = delivered[0] as { owner: string; msg: { kind: string; body: string } }
+    assert.equal(d.owner, PANE)
+    assert.equal(d.msg.kind, 'notice')
+    assert.equal(d.msg.body, 'comando /compact: não rodou; a guia não ficou livre em 5 min (turno busy)')
+  })
+
+  test('the same request again is one wait with a renewed clock; a different one queues', async () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    fc.advance(4 * MIN); await pending.flush()
+    pending.add(PANE, PANE, 'compact', undefined) // renews `since`
+    pending.add(PANE, PANE, 'compact', undefined)
+    assert.equal(pending.count(PANE), 1)
+    fc.advance(2 * MIN); await pending.flush() // 6 min since the first add, 2 since the renewal: still waiting
+    assert.equal(pending.count(PANE), 1)
+    assert.deepEqual(delivered, [])
+    pending.add(PANE, PANE, 'compact', '--x') // other args
+    pending.add(PANE, PANE, 'compact', undefined, true) // other ret
+    pending.add(PANE, 'other', 'compact', undefined) // other owner
+    assert.equal(pending.count(PANE), 4)
+  })
+
+  test('held() lists what waits: name, since (ISO) and what holds it', async () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    assert.deepEqual(pending.held(PANE), [{ name: 'compact', since: new Date(T0).toISOString() }], 'not looked at yet: no heldBy')
+    fc.advance(MIN); await pending.flush()
+    assert.deepEqual(pending.held(PANE), [{ name: 'compact', since: new Date(T0).toISOString(), heldBy: 'turno busy' }])
+    assert.deepEqual(pending.held('nowhere'), [])
   })
 
   test('a short idle window before 5 min lets the command run: the cause is the duration of busy, not the gate', async () => {

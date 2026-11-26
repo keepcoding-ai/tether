@@ -61,8 +61,16 @@ export class PendingCommands {
 
   count(paneId: string): number { return this.byPane.get(paneId)?.length ?? 0 }
 
+  /** What waits on the pane and what held it at the last look (for `list`). */
+  held(paneId: string): { name: string; since: string; heldBy?: string }[] {
+    return (this.byPane.get(paneId) ?? []).map((w) => ({ name: w.name, since: new Date(w.since).toISOString(), ...(w.heldBy ? { heldBy: w.heldBy } : {}) }))
+  }
+
   add(paneId: string, owner: string, name: string, args: string | undefined, ret = false): void {
     const list = this.byPane.get(paneId) ?? []
+    // The same request again is the same wait: keep the one in the queue and renew its clock.
+    const same = list.find((w) => w.owner === owner && w.name === name && w.args === args && w.ret === ret)
+    if (same) { same.since = this.clock.now(); return }
     list.push({ owner, name, args, since: this.clock.now(), ret })
     this.byPane.set(paneId, list)
     this.timer ??= setInterval(() => { void this.flush() }, POLL_MS)
@@ -85,10 +93,9 @@ export class PendingCommands {
         if (!slot || this.clock.now() - next.since > GIVE_UP_MS) {
           list.shift()
           deps.api.log(`comando ${next.name} de ${paneId} descartado`)
-          if (next.ret) {
-            const why = !slot ? 'a guia sumiu' : next.heldBy
-            await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
-          }
+          // The owner is always told, with or without `return`: a command never goes away in silence.
+          const why = !slot ? 'a guia sumiu' : next.heldBy
+          await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
           continue
         }
         next.heldBy = slot.turn === 'busy' ? 'turno busy'
@@ -181,8 +188,8 @@ export const commandVerb: VerbDef = {
       if (eff.via !== 'self') refuse('not-commanded', 'a sua própria guia não foi dada a você ("de si")')
       deps.pending.add(paneId, caller.slotId, name, extra, wantsReturn)
       touch(deps, paneId, caller.slotId, 'command')
-      if (wantsReturn) return ok(`Comando ${name} adiado para o fim do seu turno; o resultado volta como aviso.`, { deferred: true, proven: true, return: true })
-      return ok(`Comando ${name} adiado para o fim do seu turno.`, { deferred: true, proven: true })
+      if (wantsReturn) return ok(`Comando ${name} adiado para o fim do seu turno; o resultado volta como aviso.`, { deferred: true, return: true })
+      return ok(`Comando ${name} adiado para o fim do seu turno.`, { deferred: true })
     }
     await awakeTarget(deps, paneId, 'command')
     if (wantsReturn) {
