@@ -5,6 +5,7 @@
 import type { TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { OBJECT_KEYS, type Hand, type LastAct, type Ownership } from '../rules.ts'
+import { ownerBoard } from './owner-board.ts'
 import { computeView, type PaneMarks, type SealMark, type ViewInput } from './view-model.ts'
 
 /** The mirror of `objects` as the view model reads it. */
@@ -34,6 +35,7 @@ export function marks(ui: TetherUi): IDisposable[] {
   const paneHeads = new Map<string, string>()
   let disposed = false
   let queued = false
+  ownerBoard.setActive(true)
 
   const putSeal = (deskId: string, m: SealMark): void => {
     const { focus, ...rest } = m
@@ -42,7 +44,9 @@ export function marks(ui: TetherUi): IDisposable[] {
 
   const apply = (): void => {
     if (disposed) return
-    const view = computeView(readInput(ui))
+    const input = readInput(ui)
+    ownerBoard.publish(input.deskOwner, input.paneOwner)
+    const view = computeView(input)
 
     for (const [id, m] of view.seals) {
       const key = JSON.stringify(m)
@@ -89,6 +93,7 @@ export function marks(ui: TetherUi): IDisposable[] {
     ui.panes.onDidChangeActive(schedule),
     { dispose() {
       disposed = true
+      ownerBoard.setActive(false)
       for (const id of seals.keys()) ui.desks.setSeal(id, undefined)
       for (const id of paneEmblems.keys()) ui.panes.setEmblems(id, undefined)
       for (const id of paneLines.keys()) ui.panes.setTabLine(id, undefined)
