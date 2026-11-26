@@ -75,8 +75,10 @@ export interface SlotPort {
 
 /** What a door request handler sees of the client that asked. */
 export interface DoorRequestContext {
-  /** From the hello: 'app' | 'cli' | 'test'. */
+  /** From the hello: 'app' | 'cli' | 'test' | 'remote'. */
   client: string | undefined
+  /** The asking connection's number in this tetherd (absent outside the pipe). */
+  conn?: number
 }
 
 /** The `ok` reply's fields, without `t` and `id` (the server adds them). */

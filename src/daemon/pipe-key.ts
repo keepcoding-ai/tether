@@ -41,6 +41,12 @@ export function servedHome(pipe: string): string | undefined {
   return servedHomes.get(pipe)
 }
 
+/** The pipe a tetherd in this process serves for `home` (what a helper it spawns must dial), if any. */
+export function servedPipeOf(home: string): string | undefined {
+  for (const [pipe, h] of servedHomes) if (h === home) return pipe
+  return undefined
+}
+
 export function newNonce(): string {
   return randomBytes(NONCE_BYTES).toString('hex')
 }

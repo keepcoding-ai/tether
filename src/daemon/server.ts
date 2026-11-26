@@ -31,6 +31,7 @@ import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
 import { clientProof, daemonProof, fillKeyFile, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
+import { isPortalCredential } from './handshake.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -341,8 +342,10 @@ interface Client {
   attached: Set<string>
   /** Background processes whose output this client watches (proc-attach). */
   procsWatched: Set<string>
-  /** From the hello: 'app' | 'cli' | 'test'. */
+  /** From the hello: 'app' | 'cli' | 'test' | 'remote' ('remote' only with the portal's credential, else 'cli'). */
   kind?: string
+  /** This connection's number in this tetherd (never reused): lets an extension answer only the connection that asked. */
+  conn: number
   /** From the hello: reads hosted panes straight from tether-ptyd, so no `data` or scrollback of them goes to it. */
   direct?: true
   /** The hello was answered `ok` (its proof checked): only then does the client get events and answers to anything else. */
@@ -370,6 +373,7 @@ class DaemonImpl implements Daemon {
   private readonly onShutdown: (() => void) | undefined
   private readonly server: Server
   private readonly clients = new Set<Client>()
+  private connSeq = 0
   private readonly slotMap = new Map<string, Slot>()
   private watcher: FSWatcher | undefined
   private readonly pending = new Map<string, NodeJS.Timeout>()
@@ -1855,7 +1859,7 @@ class DaemonImpl implements Daemon {
   // ---- connections ---------------------------------------------------------------------------
 
   private onConnection(socket: Socket): void {
-    const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set() }
+    const client: Client = { socket, parser: new LineParser(), attached: new Set(), procsWatched: new Set(), conn: ++this.connSeq }
     this.clients.add(client)
     // The pipe can be opened by other accounts of the machine (Windows gives Everyone read on a named pipe Node creates):
     // a connection that never says hello is dropped. The check runs on the next turn of the loop, after the poll phase, so a
@@ -2056,11 +2060,15 @@ class DaemonImpl implements Daemon {
         return await this.auth(client, req)
       case 'hello':
         await this.checkHello(client, req)
-        if (typeof req.client === 'string') client.kind = req.client
+        if (typeof req.client === 'string') {
+          // The portal's label needs the portal's credential (M-5): without it the connection is a plain cli.
+          client.kind = req.client === 'remote' && !isPortalCredential(this.home, req.cred) ? 'cli' : req.client
+          if (req.client === 'remote' && client.kind !== 'remote') this.log('client: a hello as remote without the portal credential; treated as cli')
+        }
         if (req.direct === true) client.direct = true
         client.greeted = true
         clearTimeout(client.helloTimer)
-        return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath } }
+        return { t: 'ok', id, hello: { v: PROTOCOL_VERSION, pid: this.pid, version: DAEMON_VERSION, exec: process.execPath, ...(client.kind ? { client: client.kind } : {}) } }
       case 'list':
         return { t: 'ok', id, slots: this.slots() }
       case 'perf':
@@ -2298,7 +2306,7 @@ class DaemonImpl implements Daemon {
         const t = String((req as { t?: unknown }).t)
         const handler = this.door.requestHandler(t)
         if (!handler) throw new RequestError('bad-request', `mensagem desconhecida: ${t}`)
-        const body = await handler(req as unknown as { t: string; id: number } & Record<string, unknown>, { client: client.kind })
+        const body = await handler(req as unknown as { t: string; id: number } & Record<string, unknown>, { client: client.kind, conn: client.conn })
         return { ...body, t: 'ok', id }
       }
     }

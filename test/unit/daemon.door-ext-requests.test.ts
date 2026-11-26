@@ -47,7 +47,10 @@ describe('agent door extension requests (N1d)', () => {
   test('a registered request answers over the pipe with its result, and the handler sees the args and ctx.client', async () => {
     const reply = await rec.client.request({ t: 'ext-request', ext: 'probe', name: 'ping', args: { n: 41 } })
     assert.deepEqual(reply.result, { pong: 42 })
-    assert.deepEqual(seen.at(-1), { args: { n: 41 }, ctx: { client: 'test' } })
+    // ctx.conn: the asking connection's number, so a handler can answer only the connection that asked.
+    const conn = seen.at(-1)?.ctx.conn
+    assert.ok(Number.isInteger(conn) && conn! > 0)
+    assert.deepEqual(seen.at(-1), { args: { n: 41 }, ctx: { client: 'test', conn } })
     assert.deepEqual((await rec.client.request({ t: 'ext-request', ext: 'probe', name: 'later' })).result, [1, 2, 3])
     assert.equal('result' in (await rec.client.request({ t: 'ext-request', ext: 'probe', name: 'nothing' })), false)
   })

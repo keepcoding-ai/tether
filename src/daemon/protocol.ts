@@ -209,7 +209,12 @@ export type Request =
    * and `hello` (`auth-required`), sends no event, and drops the connection after a while. A wrong or missing proof is
    * refused and the connection closed.
    */
-  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean; proof?: string }
+  /**
+   * `client: 'remote'` is the remote portal (tether-remoted): it counts as `remote` only with `cred`, the credential the
+   * `remote` extension handed that portal process on its stdin (64 hex, compared in constant time; see handshake.ts).
+   * Without the right one the connection is treated as `cli`. The reply's `hello.client` says which kind was granted.
+   */
+  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test' | 'remote'; direct?: boolean; proof?: string; cred?: string }
   | { t: 'list'; id: number }
   /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
   | { t: 'perf'; id: number; since?: number }
@@ -366,7 +371,8 @@ export type Reply =
       t: 'ok'
       id: number
       /** `exec`: the executable the daemon runs as (tetherd.exe, or the plain node when the copy failed). */
-      hello?: { v: number; pid: number; version: string; exec?: string }
+      /** `client`: the kind this connection was granted (a `remote` without its credential is `cli`). Absent on older daemons. */
+      hello?: { v: number; pid: number; version: string; exec?: string; client?: string }
       /** auth: tetherd's nonce and its proof over both nonces (pipe-key.ts daemonProof). */
       auth?: { nonce: string; proof: string }
       slots?: SlotState[]

@@ -36,7 +36,7 @@ export class ExtRequestService {
     if (typeof ext !== 'string' || !ext || typeof name !== 'string' || !name) throw new DoorError('bad-request', 'ext-request pede ext e name')
     const handler = this.handlers.get(ext)?.get(name)
     if (!handler) throw new DoorError('unknown-request', `a extensão ${ext} não responde ao pedido ${name}`)
-    const result = await handler(req.args, { client: ctx.client })
+    const result = await handler(req.args, ctx.conn === undefined ? { client: ctx.client } : { client: ctx.client, conn: ctx.conn })
     if (result === undefined) return {}
     // The reply is encoded after the request settles, outside any catch: what cannot become JSON must fail here, as the
     // request's error, not as a throw in the daemon's loop.

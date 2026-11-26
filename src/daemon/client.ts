@@ -16,7 +16,7 @@ import { clientProof, daemonProof, isNonce, newNonce, pipeKeyPath, readPipeKey, 
 import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type DeskMap, type ErrorCode, type ObjectKind, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
 /** `legacy`: a tetherd before protocol 2 (no proof either way), reached only by an `open` that allows it (see OpenOptions). */
-export type Hello = { v: number; pid: number; version: string; exec?: string; legacy?: true }
+export type Hello = { v: number; pid: number; version: string; exec?: string; client?: string; legacy?: true }
 
 export interface OpenOptions {
   /** This client reads hosted panes straight from tether-ptyd (see the `hello` request). */
@@ -28,6 +28,8 @@ export interface OpenOptions {
    * restart). Without it such a tetherd is refused with `daemon-outdated`.
    */
   legacy?: boolean
+  /** The remote portal's credential (64 hex), sent in the hello of a `remote` client (see the `hello` request). */
+  cred?: string
 }
 export type OkReply = Extract<Reply, { t: 'ok' }>
 /** A request without its `id` (the client assigns one); still a discriminated union on `t`. */
@@ -144,7 +146,7 @@ export class DaemonClient extends EventEmitter<Events> {
    * program that took the pipe's name is refused before it learns anything), then the hello with this client's proof.
    * No spawning. A tetherd before protocol 2 is refused with `daemon-outdated` unless `how.legacy`.
    */
-  static async open(pipe: string, kind: 'app' | 'cli' | 'test', how: OpenOptions = {}): Promise<DaemonClient> {
+  static async open(pipe: string, kind: 'app' | 'cli' | 'test' | 'remote', how: OpenOptions = {}): Promise<DaemonClient> {
     const home = how.home ?? servedHome(pipe) ?? tetherHome()
     const socket = await connectSocket(pipe)
     const replies = new HandshakeReader<Reply>(socket, (why) => new NotTetherError(why === 'closed' ? 'conexão fechada antes do hello' : 'sem resposta ao hello'))
@@ -169,7 +171,10 @@ export class DaemonClient extends EventEmitter<Events> {
         if (!key) throw new DaemonError('auth-failed', `não encontrei a chave do tetherd em ${pipeKeyPath(home)}: este cliente e o tetherd usam a mesma pasta do tether (TETHER_HOME)?`)
         if (!sameProof(theirs.proof, daemonProof(key, nonce, theirs.nonce))) throw new NotTetherError(`quem responde não provou ter a chave de ${pipeKeyPath(home)}`)
         const proof = clientProof(key, nonce, theirs.nonce)
-        socket.write(encode(how.direct ? { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, direct: true, proof } : { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, proof }))
+        socket.write(encode({
+          t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, ...(how.direct ? { direct: true } : {}), proof,
+          ...(kind === 'remote' && how.cred !== undefined ? { cred: how.cred } : {}),
+        }))
         const r = await replies.next()
         if (r.t === 'error') throw new DaemonError(r.code, r.message)
         if (!r.hello) throw new NotTetherError('resposta inesperada ao hello')

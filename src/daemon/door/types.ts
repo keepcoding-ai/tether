@@ -295,9 +295,11 @@ export interface DoorObjects {
 
 // ---- 8. extension requests and events (the pipe between an extension's two halves) -----------
 
-/** Who asked, as the handler sees it: the asking client's kind from its hello ('app' | 'cli' | 'test'). */
+/** Who asked, as the handler sees it: the asking client's kind from its hello ('app' | 'cli' | 'test' | 'remote'). */
 export interface ExtRequestContext {
   client: string | undefined
+  /** The asking connection's number in this tetherd: what answers only the connection that asked keys on. */
+  conn?: number
 }
 
 /** The answer of `ext-request`: any JSON (it goes back as the reply's `result`); `undefined` sends no `result`. */
