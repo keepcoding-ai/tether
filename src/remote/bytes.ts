@@ -28,7 +28,7 @@ export class WireError extends Error {
   }
 }
 
-export const fail = (code: WireErrorCode, message?: string): never => { throw new WireError(code, message) }
+export function fail(code: WireErrorCode, message?: string): never { throw new WireError(code, message) }
 
 /** A private copy of `src` over a fresh ArrayBuffer. */
 export function copy(src: Uint8Array): Bytes {
