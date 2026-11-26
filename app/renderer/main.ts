@@ -68,7 +68,8 @@ import { activateExtensions } from '../shared/ext-activation.ts'
 import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
 import { ProcsStore } from './procs-store.ts'
-import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
+import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, ManagerMenuOptions, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi } from './ext-api.ts'
+import { DESK_PLACE_LABEL, EMBLEM_LABEL, GO_DESK_LABEL, GO_PANE_LABEL, WAKE_DESK_LABEL, WAKE_PANE_LABEL, managerDeskItems, managerDeskTail, managerPaneEntries } from './manager-menu-rules.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -1246,13 +1247,23 @@ function hibernateMenuEntry(slotId: string): MenuEntry[] {
 }
 
 /** Right-click on a desk chip. */
-function showDeskMenu(id: string, x: number, y: number): void {
+function showDeskMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: ManagerMenuOptions): void {
+  if (opts && !desks.desks.some(d => d.id === id)) return
+  showContextMenu(x, y, deskMenuEntries(id, () => ({ x, y }), opts), opener)
+}
+
+/**
+ * A desk pill's menu. Without `opts`, the pill's own; for a manager (ManagerMenuOptions) the same rows aimed at desk `id`
+ * without bringing it forward (manager-menu-rules.ts). `at`: where "Cor…" opens.
+ */
+function deskMenuEntries(id: string, at: () => { x: number; y: number }, opts?: ManagerMenuOptions): MenuEntry[] {
   const index = desks.desks.findIndex(d => d.id === id)
+  const stay = opts ? { stay: true } : undefined
   const items: MenuItem[] = [
     { icon: 'pencil-simple', label: 'Renomear', run: () => strip.startRename(id) },
-    { icon: 'palette', label: 'Cor…', run: () => strip.pickColor(id, desks.desks[index]?.color ?? 'blue', x, y) },
-    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { createBlankDesk('before', id) } },
-    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { createBlankDesk('after', id) } },
+    { icon: 'palette', label: 'Cor…', run: () => { const p = at(); strip.pickColor(id, desks.desks[index]?.color ?? 'blue', p.x, p.y) } },
+    { icon: 'arrow-line-left', label: 'Nova mesa antes', run: () => { createBlankDesk('before', id, stay) } },
+    { icon: 'arrow-line-right', label: 'Nova mesa depois', run: () => { createBlankDesk('after', id, stay) } },
   ]
   if (index > 0) items.push({ icon: 'arrow-line-left', label: 'Mover para a esquerda', run: () => desks.move(id, index - 1) })
   if (index < desks.desks.length - 1) items.push({ icon: 'arrow-line-right', label: 'Mover para a direita', run: () => desks.move(id, index + 1) })
@@ -1260,7 +1271,42 @@ function showDeskMenu(id: string, x: number, y: number): void {
   if (index < desks.desks.length - 2) items.push({ icon: 'arrow-line-right', label: 'Mover para o fim', run: () => desks.move(id, desks.desks.length - 1) })
   if (!desks.desks[index]?.asleep && desks.desks.filter(d => !d.asleep).length > 1) items.push({ icon: 'moon', label: 'Hibernar mesa', run: () => { void hibernateDesk(id) } })
   if (desks.desks.length > 1) items.push({ icon: 'x', label: 'Fechar mesa…', danger: true, run: () => { void closeDesk(id) } })
-  showContextMenu(x, y, withDeskMenuGroup<MenuEntry>(items, fromExtMenu(door.deskMenuItems(id)), SEP, labelOfEntry, DESK_MENU_ANCHORS))
+  if (!opts) return withDeskMenuGroup<MenuEntry>(items, fromExtMenu(door.deskMenuItems(id)), SEP, labelOfEntry, DESK_MENU_ANCHORS)
+  const rename = opts.rename
+  const managed = managerDeskItems<MenuEntry>(items, {
+    place: children => ({ icon: 'arrows-left-right', label: DESK_PLACE_LABEL, run: () => {}, children }),
+    ...(rename ? { rename: { icon: 'pencil-simple', label: 'Renomear', run: () => rename() } } : {}),
+    ...(desks.desks[index]?.asleep ? { wake: { icon: 'sun', label: WAKE_DESK_LABEL, run: () => { wakeDesk(id) } } } : {}),
+  }, labelOfEntry)
+  const grouped = withDeskMenuGroup<MenuEntry>(managed, fromExtMenu(door.deskMenuItems(id)), SEP, labelOfEntry, ['Hibernar mesa', WAKE_DESK_LABEL, 'Fechar mesa…'])
+  const go: MenuItem | undefined = opts.goLast ? { icon: 'arrow-right', label: GO_DESK_LABEL, pin: 'primary', run: () => { revealDesk(id) } } : undefined
+  return managerDeskTail<MenuEntry>(grouped, fromExtMenu(opts.extra ?? []), go, SEP)
+}
+
+/** Where a popover a menu row opens goes when the menu was read as data: by the focused element, else mid-window. */
+function focusedPoint(): { x: number; y: number } {
+  const el = document.activeElement
+  const r = el instanceof HTMLElement && el !== document.body ? el.getBoundingClientRect() : undefined
+  return r ? { x: r.left, y: r.bottom } : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+}
+
+/** "Ir até a mesa": a queue desk comes forward (a sleeping one wakes), a system desk opens, the drawer opens. */
+function revealDesk(id: string): boolean {
+  if (drawer?.desk.meta?.id === id) { if (!drawer.isOpen) setDrawerOpen(true); return true }
+  if (desks.isSystem(id)) { if (drawer.isOpen) setDrawerOpen(false); if (desks.activeDeskId !== id) desks.toggleSystem(id); return true }
+  const desk = desks.desks.find(d => d.id === id)
+  if (!desk) return false
+  if (drawer.isOpen) setDrawerOpen(false)
+  desks.switchTo(id) // onSwitch wakes a sleeping desk, as a click on its moon entry does
+  return true
+}
+
+/** A queue desk's new name from a manager (its own input, not the pill's). */
+function renameDeskTo(id: string, name: string): boolean {
+  const clean = name.trim()
+  if (!clean || !desks.desks.some(d => d.id === id)) return false
+  desks.rename(id, clean)
+  return true
 }
 
 /** The queue desks as an extension sees them (TetherUi.desks.list). */
@@ -2298,10 +2344,22 @@ function movePaneOut(source: Desk, srcFrame: NonNullable<ReturnType<Desk['frameO
 }
 
 /** Custom name of a slot (empty removes it): the daemon stores it in the slot's meta and broadcasts the state. */
-async function renameSlot(slotId: string, name: string): Promise<void> {
+async function renameSlot(slotId: string, name: string): Promise<boolean> {
   const reply = await window.tether.request({ t: 'rename-slot', slotId, name })
-  if (reply.t === 'error') { console.error(`não foi possível renomear o painel ${slotId}: ${reply.message}`); return }
+  if (reply.t === 'error') { console.error(`não foi possível renomear o painel ${slotId}: ${reply.message}`); return false }
   if (reply.slot) applyState(reply.slot)
+  return true
+}
+
+/** TetherUi.panes.rename: a slot through the daemon, a pane without a slot by its title; a type with its own rename refuses. */
+async function renamePaneTo(id: string, name: string): Promise<boolean> {
+  if (slots.has(id)) return renameSlot(id, name.trim())
+  const panel = findPanel(id)
+  const clean = name.trim()
+  if (!panel || !clean || liveTypeOf(paneTypes, id)?.rename) return false
+  panel.api.setTitle(clean)
+  scheduleSave()
+  return true
 }
 
 // ---------- starting slots ----------
@@ -3305,7 +3363,7 @@ const CLOSE_GUIDE_LABEL = 'Fechar guia'
  * stays in the menu without a pin). A pane that is not live has no menu (a closed owner's frame is mounted first:
  * TetherUi.pads.panelFrames.mount).
  */
-function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
+function paneMenuEntries(id: string, opts: TabMenuOptions = {}, at: () => { x: number; y: number } = focusedPoint): MenuEntry[] {
   if (!findPanel(id)) return []
   const base = basePaneEntries(id, opts.from === 'manager')
   if (opts.from !== 'manager') return base
@@ -3318,7 +3376,22 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}): MenuEntry[] {
     const { pin: _pin, ...unpinned } = e
     return unpinned
   })
-  return [focus, close, SEP, ...rest]
+  if (!opts.rename && !opts.extra?.length && !opts.goLast) return [focus, close, SEP, ...rest]
+  // A pane type with its own rename (the note renames its file) keeps its row.
+  const renameRun = opts.rename && !liveTypeOf(paneTypes, id)?.rename ? opts.rename : undefined
+  const renameRow = renameRun ? { icon: 'pencil-simple' as const, label: 'Renomear…', run: () => renameRun() } : undefined
+  const full = opts.goLast ? {
+    go: { ...focus, label: GO_PANE_LABEL },
+    close: { icon: 'x' as const, label: CLOSE_GUIDE_LABEL, run: () => closeGuide(id) },
+    ...(asleepPanes.has(id) && slots.has(id) ? { wake: { icon: 'sun' as const, label: WAKE_PANE_LABEL, run: () => { void startSlot(id) } } } : {}),
+    // The emblem belongs to the tab: only a pane with one (findPanel above) wears it, wherever its desk is.
+    emblem: { icon: 'tag' as const, label: EMBLEM_LABEL, run: () => { const p = at(); openEmblemMenu(id, p.x, p.y) } },
+  } : undefined
+  return managerPaneEntries<MenuEntry>(rest, [focus, close], {
+    ...(renameRow ? { rename: renameRow } : {}),
+    extra: fromExtMenu(opts.extra ?? []),
+    ...(full ? { goLast: full } : {}),
+  }, SEP, labelOfEntry)
 }
 
 /**
@@ -3347,6 +3420,15 @@ function fromExtMenu(entries: readonly ContextMenuRow[]): MenuEntry[] {
   })
 }
 
+/** The core's menu entries as an extension reads them (headings left out), submenus included. */
+function toExtEntries(entries: readonly MenuEntry[]): ContextMenuEntry[] {
+  return entries.flatMap((e): ContextMenuEntry[] => {
+    if (e === SEP) return ['sep']
+    if ('heading' in e) return []
+    return [e.children ? { ...e, children: toExtEntries(e.children) } : e]
+  })
+}
+
 /** An entry's label (none for a separator or a heading). */
 function labelOfEntry(e: MenuEntry): string | undefined {
   return e === SEP || 'heading' in e ? undefined : e.label
@@ -3354,7 +3436,7 @@ function labelOfEntry(e: MenuEntry): string | undefined {
 
 /** The menu of `paneMenuEntries` at page coordinates; it does not activate the pane (the view that asked keeps its state). */
 function showPaneMenu(id: string, x: number, y: number, opener?: HTMLElement, opts?: TabMenuOptions): void {
-  const items = paneMenuEntries(id, opts)
+  const items = paneMenuEntries(id, opts, () => ({ x, y }))
   if (items.length) showContextMenu(x, y, items, opener)
 }
 
@@ -3448,8 +3530,16 @@ function newEmptyDesk(): void {
 }
 
 /** A new desk whose one frame starts blank ("Abrir algo aqui"): the layout is being drawn, what opens there comes later. */
-function createBlankDesk(side: 'before' | 'after', relativeTo?: string): string {
+function createBlankDesk(side: 'before' | 'after', relativeTo?: string, opts?: { stay?: boolean }): string {
   const cwd = paneCwdOf(currentDesk().activePanel?.id)
+  // `stay`: a manager creates it beside a desk it lists; the person stays where she is (no switch, no focus).
+  if (opts?.stay) {
+    const created = desks.create(side, relativeTo, { activate: false })
+    desks.desk(created)?.addPanel(emptyPanelOptions(cwd, 'layout', true))
+    scheduleSave()
+    renderStrip()
+    return created
+  }
   const id = desks.create(side, relativeTo)
   setFocusedPad(undefined)
   const panel = desks.active.addPanel(emptyPanelOptions(cwd, 'layout', true))
@@ -4972,6 +5062,7 @@ function activateRendererExtensions(): void {
         slotFacts: paneId => door.slotFacts(paneId),
         personEmblem: paneId => { const p = findPanel(paneId); return p ? personEmblemOf(p.params) : undefined },
         emblemMenu: (paneId, x, y) => { if (findPanel(paneId)) openEmblemMenu(paneId, x, y) },
+        rename: (paneId, name) => renamePaneTo(paneId, name),
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
         hibernate: paneId => door.hibernate(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
@@ -4986,6 +5077,10 @@ function activateRendererExtensions(): void {
         menu: provider => add(door.deskMenu(id, provider)),
         hibernate: (deskId, opts) => door.hibernateDesk(deskId, opts?.spare),
         wake: (deskId, opts) => door.wakeDesk(deskId, opts?.spare),
+        showMenu: (deskId, x, y, opener, opts) => { if (desks.desks.some(d => d.id === deskId)) showDeskMenu(deskId, x, y, opener, opts) },
+        menuEntries: (deskId, opts) => desks.desks.some(d => d.id === deskId) ? toExtEntries(deskMenuEntries(deskId, focusedPoint, opts)) : [],
+        reveal: deskId => revealDesk(deskId),
+        rename: (deskId, name) => renameDeskTo(deskId, name),
       },
       pick: {
         list: spec => door.pickList(spec),

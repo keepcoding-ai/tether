@@ -163,13 +163,17 @@ export class DeskSet {
     this.paint()
   }
 
-  /** A new desk (one empty frame) before or after `relativeTo` (the active desk by default); it becomes active. */
-  create(side: 'before' | 'after', relativeTo = this.activeId): string {
+  /**
+   * A new desk (one empty frame) before or after `relativeTo` (the active desk by default); it becomes active, or with
+   * `activate: false` it is mounted hidden and the visible desk stays.
+   */
+  create(side: 'before' | 'after', relativeTo = this.activeId, opts?: { activate?: boolean }): string {
     const { desks, desk } = insertDesk(this.row, relativeTo, side)
     this.row = desks
     const m = this.mount(desk)
     m.desk.fromEmpty()
-    this.switchTo(desk.id)
+    if (opts?.activate === false) { this.paint(); this.host.onDesksChange() }
+    else this.switchTo(desk.id)
     return desk.id
   }
 

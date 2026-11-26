@@ -108,7 +108,29 @@ export interface TabMenuPlace { place?: 'top' }
  * the menu then starts with how to reach the tab ("Focar guia"; for a closed one "Trazer de volta") and does not activate
  * the pane.
  */
-export interface TabMenuOptions { from?: 'manager' }
+export interface TabMenuOptions {
+  from?: 'manager'
+  /** In a manager: the row "Renomear…" calls this instead of the tab's own input (a pane type with its own rename keeps it). */
+  rename?: () => void
+  /** In a manager: the caller's rows, before "Ir até a guia" (with `goLast`) or at the end. */
+  extra?: readonly ContextMenuRow[]
+  /**
+   * In a manager, the full menu: "Focar guia" leaves the top and goes last as "Ir até a guia" (the only primary), after
+   * "Fechar guia"; "Acordar guia" for a sleeping pane and "Emblema…" join the menu. Without it the manager's menu is as before.
+   */
+  goLast?: true
+}
+/**
+ * A desk pill's menu for a view that manages desks apart from the strip: aimed at its desk, it never brings it forward.
+ * The four move rows go under "Mudar de lugar ›", "Nova mesa antes/depois" create without switching, "Acordar mesa" takes
+ * the place of "Hibernar mesa" when the desk sleeps; `rename`, `extra` and `goLast` ("Ir até a mesa" last) as for a pane.
+ */
+export interface ManagerMenuOptions {
+  from: 'manager'
+  rename?: () => void
+  extra?: readonly ContextMenuRow[]
+  goLast?: true
+}
 
 /**
  * Who opens a file (VS Code's EditorResolverService: editors register for the resources they take). Ctrl+P, a
@@ -488,6 +510,12 @@ export interface TetherUi {
      */
     emblemMenu(paneId: string, x: number, y: number): void
     /**
+     * Renames a pane without its tab's input, wherever it lives: a slot's pane through the daemon (its custom name; empty
+     * removes it), a pane without a slot by its title. False when refused: unknown pane, a pane type with its own rename
+     * (a note renames its file), or the daemon's refusal.
+     */
+    rename(paneId: string, name: string): Promise<boolean>
+    /**
      * Closes the pane of a slot, as an extension that already asked the person (its own dialog), with no further question.
      * `process: 'keep'` (the default) leaves the agent running without a pane ("Rodando sem painel", reopenable); 'stop'
      * stops it first. A pane with no slot just closes. Remembered for "reabrir o último painel fechado". Resolves once done.
@@ -533,6 +561,18 @@ export interface TetherUi {
     hibernate(deskId: string, opts?: { spare?: readonly string[] }): Promise<{ state: 'asleep' | 'partial' | 'already' | 'last-desk' | 'in-view' | 'no-desk'; panes: string[] }>
     /** Waking a desk without switching to it: the panes its sleep put down start again, but `spare`. `panes`: the ones started. */
     wake(deskId: string, opts?: { spare?: readonly string[] }): Promise<{ state: 'woke' | 'already' | 'no-desk'; panes: string[] }>
+    /**
+     * A queue desk's pill menu at page coordinates, by the `opener` button when given, aimed at that desk (it need not be
+     * visible nor have a pill on screen). Without `opts`, the pill's own menu; with `from: 'manager'`, see ManagerMenuOptions.
+     * A system desk or an unknown id: nothing.
+     */
+    showMenu(deskId: string, x: number, y: number, opener?: HTMLElement, opts?: ManagerMenuOptions): void
+    /** The items `showMenu` shows, as data (headings left out). "Cor…" opens by the focused element. */
+    menuEntries(deskId: string, opts?: ManagerMenuOptions): ContextMenuEntry[]
+    /** "Ir até a mesa": a queue desk comes forward (a sleeping one wakes, as from the moon), a system desk opens, the drawer opens. False for an unknown id. */
+    reveal(deskId: string): boolean
+    /** Renames a queue desk without its pill's input. False for a system desk, an unknown id or an empty name. */
+    rename(deskId: string, name: string): boolean
   }
   /** A list picker, filtered by typing. */
   pick: {
