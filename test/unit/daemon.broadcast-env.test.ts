@@ -17,6 +17,7 @@ import { hostStore } from '../../src/procd/run-store.ts'
 import { Recorder, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const CANARY = 'canario-env-a1-52c0d1'
+const ARG_CANARY = 'canario-arg-a1-9d41'
 
 /** An identified connection that keeps every raw byte it receives (the handshake done by hand, as pipe-key.ts says). */
 async function listener(pipe: string, home: string): Promise<{ socket: Socket; bytes: () => string }> {
@@ -84,6 +85,28 @@ describe('broadcasts carry the names of environment variables, never their value
     rec.client.on('proc-data', (name, data) => { if (name === 'canario') out += data })
     out += (await rec.client.request({ t: 'proc-attach', name: 'canario' })).scrollback ?? ''
     await waitUntil(() => out.includes(`got ${CANARY}`), 10_000, 'the process ran with the value')
+    l.socket.destroy()
+  })
+
+  test('secret-looking args of a profile and of a process: broadcasts keep the option names, mask the values; replies keep them', async () => {
+    const l = await listener(daemon.pipe, home)
+    const args = ['--model', 'haiku', '--token', ARG_CANARY, '--api-key=' + ARG_CANARY, 'X_SECRET=' + ARG_CANARY]
+    const saved = await rec.client.request({ t: 'profile-save', profile: {
+      name: 'Args', agent: 'shell', args: [], shell: { command: 'node', args: ['-e', `"API_KEY=${ARG_CANARY} run --password ${ARG_CANARY}"`, ...args] },
+    } })
+    assert.ok(JSON.stringify(saved.profile).includes(ARG_CANARY), 'the reply to whoever saved keeps the args')
+    const script = 'setInterval(() => {}, 1000)'
+    const started = await rec.client.request({ t: 'proc-start', name: 'args', recipe: { command: 'node', args: ['-e', script, ...args], cwd: home } })
+    assert.ok(started.proc!.card.args.includes(ARG_CANARY), 'the direct reply keeps the args')
+    await waitUntil(() => heard.profiles.some((ps) => ps.some((p) => p.name === 'Args')) && heard.procs.some((p) => p.name === 'args' && p.status === 'running'), 10_000, 'the broadcasts')
+    await waitUntil(() => l.bytes().includes('"args"') && l.bytes().includes('"Args"'), 10_000, 'the listener heard both')
+
+    const masked = ['--model', 'haiku', '--token', '[redacted]', '--api-key=[redacted]', 'X_SECRET=[redacted]']
+    const profile = heard.profiles.flat().find((p) => p.name === 'Args')!
+    assert.deepEqual(profile.shell!.args, ['-e', '"API_KEY=[redacted] run --password [redacted]"', ...masked])
+    assert.deepEqual(heard.procs.find((p) => p.name === 'args')!.card.args, ['-e', script, ...masked])
+    assert.ok(!l.bytes().includes(ARG_CANARY), 'a broadcast carried the canary argument')
+    await rec.client.request({ t: 'proc-stop', name: 'args' })
     l.socket.destroy()
   })
 })
