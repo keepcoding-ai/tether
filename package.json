@@ -29,7 +29,8 @@
     "app": "node app/build.mjs && electron app/dist/main.cjs",
     "app:typecheck": "tsc -p app/renderer",
     "test:app": "node --test --test-concurrency=1 \"test/e2e/app.*.test.ts\"",
-    "test:relay": "npm --prefix remote/relay test"
+    "test:relay": "npm --prefix remote/relay test",
+    "remote:web:build": "node remote/web/build.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "1.18.0",
