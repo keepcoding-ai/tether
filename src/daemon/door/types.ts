@@ -259,6 +259,20 @@ export interface DoorDelivery {
    * (cleared when the turn goes busy or the person types there). Another typist of the tether waits for it.
    */
   quiet(slotId: string): boolean
+  /**
+   * Reserves the slot's turn window for a typist of this extension (a command it will type itself): while the claim holds,
+   * no delivery STARTS on the slot by any path (inside or terminal, busy turn or not; the queue keeps its order), and the
+   * slot counts as claimed for the ronda (`DoorSeams.claimed`). A delivery already past its first byte finishes. The queue
+   * stops counting against `quiet` (the claimer is the one that may type); typing, settle and unsent text still count.
+   * `release(true)`: the claimer typed, so the slot settles (DOOR_SETTLE_MS) before anything else starts; `release(false)`:
+   * nothing was typed. Idempotent; disposing the extension releases (false) what it still holds.
+   */
+  claim(slotId: string, why: string): DeliveryClaim
+}
+
+/** A reservation of a slot's window (DoorDelivery.claim). */
+export interface DeliveryClaim {
+  release(typed: boolean): void
 }
 
 // ---- 5. rerouted attention -------------------------------------------------------------------

@@ -5,6 +5,7 @@
 import { toDisposable, type IDisposable } from '../../../../app/shared/vscode-lifecycle.ts'
 import { slotIsLive } from '../../../../app/shared/agent-info.ts'
 import type { ScreenRead } from '../../../../src/daemon/protocol.ts'
+import type { DeliveryClaim } from '../../../../src/daemon/door/types.ts'
 import { createScreenReaders, historyString, screenString } from '../../screen/index.ts'
 import { conductorFor } from './common.ts'
 import { buildContext, type ContextDeps } from '../context.ts'
@@ -14,6 +15,8 @@ import { awakeTarget, ok, commanded, optString, refuse, touch, wantString, GUIA_
 
 const GIVE_UP_MS = 5 * 60_000
 const POLL_MS = 500
+/** A command the probe did not see run goes back to the head once, after this long (the first try may still be landing). */
+const RETRY_AFTER_MS = 2_000
 
 interface Waiting {
   owner: string
@@ -23,6 +26,10 @@ interface Waiting {
   ret: boolean
   /** What held it at the last look, in words (said to the owner if it is given up). */
   heldBy?: string
+  /** Tries the probe did not prove (`proven: false`): one goes back to the queue, the second is given up. */
+  unproven?: number
+  /** Not tried again before this time (ms, the clock's): set when it goes back to the queue. */
+  retryAt?: number
 }
 
 /** A raw read as text, through a throwaway terminal (the incremental reader of the context ignores `since`). */
@@ -48,6 +55,11 @@ export async function runCommand(deps: VerbDeps, owner: string, paneId: string, 
  */
 export class PendingCommands {
   private readonly byPane = new Map<string, Waiting[]>()
+  /**
+   * The pane -> the reservation of its window (DoorDelivery.claim), taken by the first command that waits there and released
+   * when its list empties: no delivery and no ronda starts a turn between the end of the pane's turn and the command.
+   */
+  private readonly claims = new Map<string, DeliveryClaim>()
   private timer: ReturnType<typeof setInterval> | undefined
   private deps: VerbDeps | undefined
   private running = false
@@ -61,10 +73,19 @@ export class PendingCommands {
 
   count(paneId: string): number { return this.byPane.get(paneId)?.length ?? 0 }
 
+  /** What waits on the pane and what held it at the last look (for `list`). */
+  held(paneId: string): { name: string; since: string; heldBy?: string }[] {
+    return (this.byPane.get(paneId) ?? []).map((w) => ({ name: w.name, since: new Date(w.since).toISOString(), ...(w.heldBy ? { heldBy: w.heldBy } : {}) }))
+  }
+
   add(paneId: string, owner: string, name: string, args: string | undefined, ret = false): void {
     const list = this.byPane.get(paneId) ?? []
+    // The same request again is the same wait: keep the one in the queue and renew its clock.
+    const same = list.find((w) => w.owner === owner && w.name === name && w.args === args && w.ret === ret)
+    if (same) { same.since = this.clock.now(); return }
     list.push({ owner, name, args, since: this.clock.now(), ret })
     this.byPane.set(paneId, list)
+    if (!this.claims.has(paneId) && this.deps) this.claims.set(paneId, this.deps.api.delivery.claim(paneId, `comando /${name} na fila`))
     this.timer ??= setInterval(() => { void this.flush() }, POLL_MS)
     this.timer.unref?.()
   }
@@ -81,29 +102,37 @@ export class PendingCommands {
       for (const [paneId, list] of [...this.byPane]) {
         const slot = deps.api.slots.get(paneId)
         const next = list[0]
-        if (!next) { this.byPane.delete(paneId); continue }
+        if (!next) { this.byPane.delete(paneId); this.release(paneId, false); continue }
         if (!slot || this.clock.now() - next.since > GIVE_UP_MS) {
           list.shift()
           deps.api.log(`comando ${next.name} de ${paneId} descartado`)
-          if (next.ret) {
-            const why = !slot ? 'a guia sumiu' : next.heldBy
-            await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
-          }
+          if (!slot || list.length === 0) this.release(paneId, false)
+          // The owner is always told, with or without `return`: a command never goes away in silence.
+          const why = !slot ? 'a guia sumiu' : next.heldBy
+          await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
           continue
         }
-        next.heldBy = slot.turn === 'busy' ? 'turno busy'
-          : deps.gate.check(paneId, next.owner) !== undefined ? 'pessoa na guia'
-            : !deps.api.delivery.quiet(paneId) ? 'avisos do tether na caixa' : undefined
+        // A command of oneself may go while only background subagents keep the turn busy: the main turn is over.
+        const delegating = slot.turn === 'busy' && slot.delegating === true
+        const busy = slot.turn === 'busy' && !(delegating && next.owner === paneId)
+        next.heldBy = busy ? (delegating ? 'subagentes em background' : 'turno busy')
+          : next.retryAt !== undefined && this.clock.now() < next.retryAt ? 'nova tentativa (a sonda não viu o comando)'
+            : deps.gate.check(paneId, next.owner) !== undefined ? 'pessoa na guia'
+              : !deps.api.delivery.quiet(paneId) ? 'avisos do tether na caixa' : undefined
         if (next.heldBy !== undefined) continue
         list.shift()
-        if (next.ret) { await this.fireWithReturn(deps, paneId, next); continue }
-        try {
-          const r = await runCommand(deps, next.owner, paneId, next.name, next.args)
-          touch(deps, paneId, next.owner, 'command')
-          if (!r.proven) deps.api.log(`comando ${next.name} de ${paneId} rodou, não provado pela sonda`)
-        } catch (e) { deps.api.log(`comando ${next.name} de ${paneId} falhou: ${(e as Error).message}`) }
+        if (next.ret) await this.fireWithReturn(deps, paneId, next)
+        else {
+          try {
+            const r = await runCommand(deps, next.owner, paneId, next.name, next.args)
+            touch(deps, paneId, next.owner, 'command')
+            if (!r.proven) await this.unproven(deps, paneId, next)
+          } catch (e) { deps.api.log(`comando ${next.name} de ${paneId} falhou: ${(e as Error).message}`) }
+        }
+        // The command was typed (or tried): the pane settles before a delivery or the ronda may start a turn there.
+        if (list.length === 0) this.release(paneId, true)
       }
-      for (const [paneId, list] of [...this.byPane]) if (list.length === 0) this.byPane.delete(paneId)
+      for (const [paneId, list] of [...this.byPane]) if (list.length === 0) { this.byPane.delete(paneId); this.release(paneId, false) }
     } finally {
       this.running = false
       if (this.byPane.size === 0 && this.timer) { clearInterval(this.timer); this.timer = undefined }
@@ -118,7 +147,8 @@ export class PendingCommands {
     try {
       const r = await runCommand(deps, next.owner, paneId, next.name, next.args)
       touch(deps, paneId, next.owner, 'command')
-      if (!r.proven) deps.api.log(`comando ${next.name} de ${paneId} rodou, não provado pela sonda`)
+      // Not seen running: no screen to hand back yet (it goes back to the queue once, or the owner is told).
+      if (!r.proven) { await this.unproven(deps, paneId, next); return }
     } catch (e) {
       deps.api.log(`comando ${next.name} de ${paneId} falhou: ${(e as Error).message}`)
       await this.deliver(deps, next.owner, `comando ${label} falhou: ${(e as Error).message}`)
@@ -146,6 +176,35 @@ export class PendingCommands {
     }).catch((e: unknown) => { this.watches.delete(watch); deps.api.log(`retorno de ${next.name} em ${paneId} falhou: ${(e as Error).message}`) })
   }
 
+  /**
+   * The probe did not see the command run: the first time it goes back to the head of the pane's queue with a new deadline
+   * (tried again after RETRY_AFTER_MS); the second time it is given up and the owner is told why.
+   */
+  private async unproven(deps: VerbDeps, paneId: string, next: Waiting): Promise<void> {
+    next.unproven = (next.unproven ?? 0) + 1
+    if (next.unproven === 1) {
+      deps.api.log(`comando ${next.name} de ${paneId} não provado pela sonda; de volta à fila uma vez`)
+      const now = this.clock.now()
+      next.since = now
+      next.retryAt = now + RETRY_AFTER_MS
+      delete next.heldBy
+      const list = this.byPane.get(paneId) ?? []
+      list.unshift(next)
+      this.byPane.set(paneId, list)
+      return
+    }
+    deps.api.log(`comando ${next.name} de ${paneId} não provado pela sonda pela segunda vez; desisto`)
+    await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a sonda não viu o comando na guia em duas tentativas`)
+  }
+
+  /** Ends the pane's reservation, if it has one: `typed` makes the pane settle first. */
+  private release(paneId: string, typed: boolean): void {
+    const claim = this.claims.get(paneId)
+    if (!claim) return
+    this.claims.delete(paneId)
+    claim.release(typed)
+  }
+
   /** A system message that opens a turn in the owner (the way the pause notice goes); nothing for an owner that is away. */
   private async deliver(deps: VerbDeps, owner: string, body: string): Promise<void> {
     const o = deps.api.slots.get(owner)
@@ -158,6 +217,7 @@ export class PendingCommands {
       if (this.timer) clearInterval(this.timer)
       this.timer = undefined
       this.byPane.clear()
+      for (const paneId of [...this.claims.keys()]) this.release(paneId, false)
       for (const w of [...this.watches]) w.dispose()
       this.watches.clear()
     })
@@ -181,8 +241,8 @@ export const commandVerb: VerbDef = {
       if (eff.via !== 'self') refuse('not-commanded', 'a sua própria guia não foi dada a você ("de si")')
       deps.pending.add(paneId, caller.slotId, name, extra, wantsReturn)
       touch(deps, paneId, caller.slotId, 'command')
-      if (wantsReturn) return ok(`Comando ${name} adiado para o fim do seu turno; o resultado volta como aviso.`, { deferred: true, proven: true, return: true })
-      return ok(`Comando ${name} adiado para o fim do seu turno.`, { deferred: true, proven: true })
+      if (wantsReturn) return ok(`Comando ${name} adiado para o fim do seu turno; o resultado volta como aviso.`, { deferred: true, return: true })
+      return ok(`Comando ${name} adiado para o fim do seu turno.`, { deferred: true })
     }
     await awakeTarget(deps, paneId, 'command')
     if (wantsReturn) {

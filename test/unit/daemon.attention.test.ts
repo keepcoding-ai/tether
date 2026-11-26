@@ -367,3 +367,54 @@ describe('attention: idleSince', () => {
     assert.ok(b.idleSince)
   })
 })
+
+describe('attention: delegating (main turn over, background subagents alive)', () => {
+  const T = 1_000_000
+  const claude = (): AttentionState => new AttentionState(attentionOptions('claude'))
+
+  test('done with a subagent running: delegating, the turn stays busy; a start after it turns delegating off', () => {
+    const a = claude()
+    a.hook('start'); a.setBackground(1, T); a.hook('done')
+    assert.equal(a.delegating, true)
+    assert.equal(a.turn, 'busy')
+    a.hook('start')
+    assert.equal(a.delegating, false, 'the agent began a new turn')
+    assert.equal(a.turn, 'busy')
+    a.setBackground(2, T)
+    assert.equal(a.delegating, false, 'subagents started inside the new main turn')
+  })
+
+  test('a done with no subagent is not delegating; a second subagent keeps it', () => {
+    const a = claude()
+    a.hook('start'); a.hook('done')
+    assert.equal(a.delegating, false)
+    assert.equal(a.turn, 'idle')
+    const b = claude()
+    b.hook('start'); b.setBackground(1, T); b.hook('done'); b.setBackground(2, T + 1)
+    assert.equal(b.delegating, true)
+  })
+
+  test('the last subagent ends and the agent is waking: not delegating (nothing runs), the turn stays busy until the wake', () => {
+    const a = claude()
+    a.hook('start'); a.setBackground(1, T); a.hook('done'); a.setBackground(0, T + 10)
+    assert.equal(a.delegating, false)
+    assert.equal(a.turn, 'busy')
+    a.hook('start') // it woke and began a turn
+    assert.equal(a.delegating, false)
+    assert.equal(a.wakeDueAt(), undefined)
+    // never woke: the fallback ends the turn and nothing stays delegating
+    const b = claude()
+    b.hook('start'); b.setBackground(1, T); b.hook('done'); b.setBackground(0, T + 10)
+    assert.equal(b.wakeExpired(T + 10 + 120_000), true)
+    assert.equal(b.delegating, false)
+    assert.equal(b.turn, 'idle')
+  })
+
+  test('a subagent started with the turn idle counts as delegating; reset clears it', () => {
+    const a = claude()
+    a.setBackground(1, T)
+    assert.equal(a.delegating, true)
+    a.reset()
+    assert.equal(a.delegating, false)
+  })
+})

@@ -126,4 +126,6 @@ export interface DoorSeams {
   resumeSuspended?(slotId: string, why: string): boolean
   /** The pipe's `create` with a `desk` (id or name): the `paneRequest` to write, or a `DoorError` when the desk is unknown or asleep. Absent: the desk is taken as asked. */
   deskRequest?(ref: string, asker?: { slotId: string; key?: string }): { deskId: string }
+  /** A typist of an extension reserved the slot's window (DoorDelivery.claim), or it is settling after one: the ronda waits. */
+  claimed?(slotId: string): boolean
 }

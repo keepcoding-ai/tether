@@ -472,6 +472,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
     // others opened in A on the way. The command may leave only at the end of a turn, never inside one.
     const own = await call(A, 'command', { name: 'clear' })
     assert.equal(data(own).deferred, true)
+    assert.equal(data(own).proven, undefined, 'a deferred command proves nothing')
     assert.equal(seen.commands.includes('clear'), false, 'not run inside the call')
     const deadline = Date.now() + 90_000
     while (!screenOf(A).includes('IN:"/clear"')) {

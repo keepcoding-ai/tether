@@ -98,6 +98,11 @@ export interface SlotState {
   idleSince?: string
   /** Background subagents still running for this agent (Claude); present only when more than zero. They keep `turn` busy. */
   background?: number
+  /**
+   * The agent's main turn is over and only background subagents keep `turn` busy (see `background`); present only then.
+   * A command typed into the pane at this point runs normally, and the subagents survive it.
+   */
+  delegating?: true
   /** Since when the current turn runs (ISO); present only while `turn` is 'busy'. Absent on daemons older than 0.3.4. */
   busySince?: string
   /**

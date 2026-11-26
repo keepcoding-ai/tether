@@ -35,10 +35,13 @@ function fakeClock() {
 
 describe('PendingCommands with return', () => {
   const events: string[] = []
+  /** The claims of the pane's window and their releases (DoorDelivery.claim), apart from the typing. */
+  const claims: string[] = []
   const delivered: { owner: string; msg: { kind: string; from: { role: string }; body: string } }[] = []
   let slot: { turn: 'busy' | 'idle'; idleSince?: string; slotId: string; kind: string; status: string }
   let painted: number
   let failCommand = false
+  let provenOk = true
   let reg: { dispose(): void }
   let fc: ReturnType<typeof fakeClock>
   let pending: PendingCommands
@@ -53,13 +56,13 @@ describe('PendingCommands with return', () => {
       events.push(`type:${name}`)
       if (failCommand) throw new Error('boom')
       void ctx
-      return { value: undefined, proven: true }
+      return { value: undefined, proven: provenOk }
     },
     detect: async () => ({ state: 'idle' }),
   }
 
   beforeEach(() => {
-    events.length = 0; delivered.length = 0; failCommand = false; gateOk = true; quietOk = true
+    events.length = 0; claims.length = 0; delivered.length = 0; failCommand = false; provenOk = true; gateOk = true; quietOk = true
     slot = { slotId: PANE, kind: 'shell', status: 'running', turn: 'idle' }
     painted = T0
     reg = conductorRegistry.register(fake)
@@ -74,7 +77,11 @@ describe('PendingCommands with return', () => {
           userTypedAt: () => undefined,
         },
         desks: { map: () => undefined },
-        delivery: { quiet: () => quietOk, deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); return { id: 'r1', state: 'delivered' } } },
+        delivery: {
+          quiet: () => quietOk,
+          deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); return { id: 'r1', state: 'delivered' } },
+          claim: (id: string) => { claims.push(`claim:${id}`); return { release: (typed: boolean) => { claims.push(`release:${id}:${typed}`) } } },
+        },
         agents: { get: () => undefined },
         io: {}, home: '', log: () => {},
       },
@@ -180,13 +187,50 @@ describe('PendingCommands with return', () => {
     assert.match(delivered[0]!.msg.body, /avisos do tether/)
   })
 
-  test('given up without return: dropped with nothing delivered', async () => {
+  test('given up without return: dropped, and the owner is told why', async () => {
     quietOk = false
     pending.add(PANE, OWNER, 'context', undefined)
     await fc.advance(5 * 60_000 + 1)
     await pending.flush()
     assert.equal(pending.count(PANE), 0)
-    assert.deepEqual(delivered, [])
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0]!.owner, OWNER)
+    assert.equal(delivered[0]!.msg.body, 'comando /context: não rodou; a guia não ficou livre em 5 min') // never looked at, so no heldBy
+  })
+
+  test('the window of the pane is claimed while it waits and released (typed) right after the command, before the watch ends', async () => {
+    slot.turn = 'busy'
+    pending.add(PANE, OWNER, 'compact', undefined, true)
+    assert.deepEqual(claims, [`claim:${PANE}`], 'claimed on a pane of another too')
+    await pending.flush()
+    assert.deepEqual(claims, [`claim:${PANE}`], 'held while busy')
+    slot.turn = 'idle'
+    await pending.flush()
+    assert.deepEqual(claims, [`claim:${PANE}`, `release:${PANE}:true`])
+    assert.equal(fc.timers(), 1, 'the watch is still on')
+  })
+
+  test('a failed command releases the claim too', async () => {
+    failCommand = true
+    pending.add(PANE, OWNER, 'compact', undefined, true)
+    await pending.flush()
+    assert.deepEqual(claims, [`claim:${PANE}`, `release:${PANE}:true`])
+  })
+
+  test('with return, not proven by the probe: no watch, back to the queue once; the second time the owner is told', async () => {
+    provenOk = false
+    pending.add(PANE, OWNER, 'compact', undefined, true)
+    await pending.flush()
+    assert.equal(fc.timers(), 0, 'no screen to hand back')
+    assert.equal(pending.count(PANE), 1, 'back in the queue')
+    assert.deepEqual(claims, [`claim:${PANE}`], 'the claim holds for the retry')
+    await fc.advance(2_000)
+    await pending.flush()
+    assert.deepEqual(events.filter((e) => e.startsWith('type:')), ['type:compact', 'type:compact'])
+    assert.equal(pending.count(PANE), 0)
+    assert.equal(delivered.length, 1)
+    assert.match(delivered[0]!.msg.body, /comando \/compact: não rodou; a sonda não viu o comando na guia em duas tentativas/)
+    assert.deepEqual(claims, [`claim:${PANE}`, `release:${PANE}:true`])
   })
 
   test('dispose ends the live watches', async () => {

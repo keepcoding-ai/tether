@@ -745,6 +745,7 @@ class DaemonImpl implements Daemon {
       s.turn = 'busy'
       if (slot.attention.busySince) s.busySince = slot.attention.busySince
       if (slot.attention.background > 0) s.background = slot.attention.background
+      if (slot.attention.delegating) s.delegating = true
     }
     else {
       const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)
@@ -2695,6 +2696,8 @@ class DaemonImpl implements Daemon {
     if (!this.rondaChannel.connected(slot.meta.slotId)) return 'no-channel'
     // Claude: a permission prompt keeps the turn busy; the idle prompt (Notification after a finished turn) does not.
     if (slot.attention.turn === 'busy') return 'busy'
+    // An extension reserved the window for a command of its own (the delivery's claim): the nudge waits for it and its settle.
+    if (this.door.claimed?.(slot.meta.slotId)) return 'claimed'
     const pause = this.batch?.entries.find((e) => e.slotId === slot.meta.slotId)
     if (this.batch && this.batch.state !== 'closed' && pause && pause.state !== 'removed' && pause.state !== 'resumed' && pause.state !== 'resume-skipped') return 'paused'
     return undefined

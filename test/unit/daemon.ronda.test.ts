@@ -14,6 +14,10 @@ import { DaemonError } from '../../src/daemon/client.ts'
 import type { RondaChannelAgent } from '../../src/daemon/ronda-channel.ts'
 import { applyChange, buildChannelText, buildNudgeText, criterionStimulus, formatInterval, parseInterval, RONDA_DEFAULT_NUDGE, RondaError } from '../../src/daemon/ronda.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { DoorHost } from '../../src/daemon/door/host.ts'
+import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
+import { conductorRegistry, type Conductor } from '../../extensions/for-agents/conductor-api.ts'
+import { PendingCommands } from '../../extensions/for-agents/daemon/verbs/command.ts'
 import { describeRonda } from '../../src/cli/ronda.ts'
 import { rondaLabel, rondaTooltip } from '../../app/renderer/ronda-rules.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -103,11 +107,11 @@ describe('ronda: daemon clock, through the channel', () => {
     for (const d of daemons) await d.close()
     for (const h of homes) await removeHome(h)
   })
-  async function boot(home = tempHome(), adapters: Record<string, AgentAdapter> = { claude: fakeAgent('claude') }): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
+  async function boot(home = tempHome(), adapters: Record<string, AgentAdapter> = { claude: fakeAgent('claude') }, door?: DoorHost): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
     if (!homes.includes(home)) homes.push(home)
     const daemon = await startDaemon({
       home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200,
-      adapters, channelOf: (agent) => (agent === 'claude' ? channelOf() : undefined), log: (m) => logs.push(m),
+      adapters, channelOf: (agent) => (agent === 'claude' ? channelOf() : undefined), log: (m) => logs.push(m), ...(door ? { door } : {}),
     })
     daemons.push(daemon)
     return { home, daemon, rec: await Recorder.connect(daemon.pipe) }
@@ -177,6 +181,83 @@ describe('ronda: daemon clock, through the channel', () => {
     assert.equal(got?.nudge, 'Extra do teste.')
     assert.equal(got?.channel, 'none', 'not running in this daemon yet')
     second.rec.close()
+  })
+
+  test('a claimed window holds a due ronda (blocker `claimed`); once released it goes on the retry', async () => {
+    const door = new DoorHost({ log: (m) => logs.push(m) })
+    const { home, rec } = await boot(undefined, undefined, door)
+    const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home, start: true })
+    const id = slot!.slotId
+    await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent listening on its channel')
+    const claim = door.delivery.claim(id, 'comando /compact')
+    await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
+    await waitUntil(() => logs.includes(`slot ${id}: ronda due, waiting (claimed)`), 10_000, 'due while claimed')
+    await sleep(800)
+    assert.equal(sent(id), 0, 'nothing sent through several retries while claimed')
+    claim.release(false)
+    await waitUntil(() => sent(id) >= 1, 10_000, 'ronda on the retry after the release')
+    assert.equal(received(rec, id).length, 1)
+    rec.close()
+  })
+
+  // Regression of 25/11 (ronda 02:38:04.914Z, /compact 02:38:05.085Z, no compaction): a due ronda and a command of oneself
+  // waiting on the same pane meet at its busy -> idle edge. The ronda went at once (setImmediate in broadcastState) and opened a
+  // turn the command then fell into. The junction: the real daemon and door (rondaBlocker, delivery), the real PendingCommands
+  // on the door's API, and a fake conductor that records when it types (the for-agents extension itself is not loaded).
+  test('regression 25/11: at the busy -> idle edge the queued /compact is typed before the due ronda, which goes after the settle', async () => {
+    const door = new DoorHost({ log: (m) => logs.push(m) })
+    const { home, rec } = await boot(undefined, undefined, door)
+    const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home, start: true })
+    const id = slot!.slotId
+    await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent listening on its channel')
+
+    let compactAt: number | undefined
+    const conductor: Conductor = {
+      id: 'regression-25-11',
+      match: (t) => (t.paneId === id ? 1000 : undefined),
+      capabilities: [{ id: 'command', label: 'c' }],
+      command: async (_ctx, name) => { if (name === 'compact') compactAt ??= logs.length; return { value: undefined, proven: true } },
+    }
+    const reg = conductorRegistry.register(conductor)
+    const own = new DisposableStore()
+    const pending = new PendingCommands()
+    try {
+      const api = door.apiFor('for-agents', own)
+      pending.bind({
+        api: { ...api, agents: { get: () => undefined }, io: {}, home, log: () => {} },
+        store: { recordLast: async () => {} },
+        gate: { check: () => undefined, write: async () => ({ ok: true }) },
+        readers: {},
+      } as never)
+
+      // A turn in course: the ronda becomes due, and the agent asks for its own /compact.
+      writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date().toISOString(), kind: 'start' }))
+      await rec.state(id, (s) => s.turn === 'busy', 5_000, 'busy')
+      await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
+      await waitUntil(() => logs.includes(`slot ${id}: ronda due, waiting (busy)`), 10_000, 'due while busy')
+      pending.add(id, id, 'compact', undefined)
+      const sentLine = `slot ${id}: ronda sent through the channel`
+      assert.equal(sent(id), 0)
+
+      // The edge: the turn ends.
+      writeFileSync(slotAttentionPath(home, id), JSON.stringify({ ts: new Date(Date.now() + 1).toISOString(), kind: 'done' }))
+      await waitUntil(() => compactAt !== undefined || sent(id) > 0, 10_000, 'the compact or the ronda')
+      assert.notEqual(compactAt, undefined, `the /compact went first, not the ronda (${logs.filter((m) => m.startsWith(`slot ${id}: ronda`)).join(' | ')})`)
+      const typedAt = Date.now()
+      await waitUntil(() => sent(id) > 0, 15_000, 'the ronda after the compact')
+      const rondaIdx = logs.indexOf(sentLine)
+      assert.ok(rondaIdx >= compactAt!, 'the ronda line comes after the compact in the log')
+      assert.ok(Date.now() - typedAt >= 1_500, `the ronda waited for the settle (${Date.now() - typedAt} ms)`)
+      await waitUntil(() => received(rec, id).length >= 1, 10_000, 'the agent receiving the ronda')
+      assert.equal(received(rec, id).length, 1, 'one ronda, not one per retry')
+    } finally {
+      pending.dispose().dispose()
+      own.dispose()
+      reg.dispose()
+      rec.close()
+    }
   })
 
   test('no channel, no ronda: a shell and an agent without one are refused with the reason', async () => {
