@@ -263,7 +263,24 @@ test('regency tiers: the tablet and the TV designs, and back to the desktop', { 
       assert.ok(box.height >= 44 && box.width >= 44, `${sel} is a 44 px target (${box.width}x${box.height})`)
     }
     await until('the count of who waits on the switch', async () => page.locator('.rg-side-b[data-side="waiting"] .rg-side-cnt:not([hidden])').isVisible())
+    // The switch's words are whole, across the tablet's range: here (window 1024) and at a pane of ~800 px.
+    const labelsWhole = async (where: string): Promise<void> => {
+      for (const side of ['waiting', 'tether']) {
+        const fit = await page.locator(`.rg-side-b[data-side="${side}"] .rg-side-t`).evaluate(e => { const n = e as unknown as { scrollWidth: number; clientWidth: number }; return { s: n.scrollWidth, c: n.clientWidth } })
+        assert.ok(fit.s <= fit.c, `${where}: the label of "${side}" is whole (${fit.s} <= ${fit.c})`)
+      }
+    }
+    await labelsWhole('window 1024')
     await page.screenshot({ path: join(SHOTS, 'tablet-principal.png') })
+    await widen(890)
+    await until('the narrow tablet', async () => { const t = await tiers(); return t.tier === 'tablet' && t.step === 'sm' })
+    await frames()
+    const narrow = (await rect('.rg:not(.off)'))!
+    assert.ok(narrow.width >= 768 && narrow.width < 860, `a pane of ~800 px (${narrow.width})`)
+    await labelsWhole(`pane ${Math.round(narrow.width)}`)
+    await widen(1024)
+    await until('the tablet again', async () => (await tiers()).tier === 'tablet' && (await rect('.rg:not(.off)'))!.width > 900)
+    await frames()
 
     // The other place as a panel over the conversation: the conversation keeps its width; Esc closes, back on the button.
     await page.click('.rg-trail-b')

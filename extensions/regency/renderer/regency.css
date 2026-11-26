@@ -563,8 +563,10 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 }
 @keyframes rg-sheet-in { from { transform: translateX(24px); opacity: .5; } to { transform: none; opacity: 1; } }
 .rg-side-seg { gap: 4px; padding: 6px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-2); }
-.rg-side-b { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px;
+/* Each button is as wide as its words: "Tether" keeps its content's width, "Esperam você" takes the rest (never cut). */
+.rg-side-b { flex: 0 0 auto; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px;
   background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rg-side-b[data-side="waiting"] { flex: 1 0 auto; }
 .rg-side-b[aria-checked="true"] { background: var(--bg-hover); border-color: var(--border); color: var(--fg); font-weight: 600; }
 .rg-side-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg .rg-side-b .rg-ic, .rg .rg-trail-b .rg-ic { color: inherit; }
