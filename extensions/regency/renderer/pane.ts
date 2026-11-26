@@ -10,7 +10,7 @@ import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embed.ts'
 import type { RegencyModel, StateCounts, Target, TreeFilter } from '../model.ts'
-import { CLOSED_ID, TREE_FILTERS, modelSignature } from '../model.ts'
+import { CLOSED_ID, TREE_FILTERS, modelSignature, safeName } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import type { CreateFixed } from '../create-rules.ts'
 import {
@@ -536,7 +536,8 @@ export class RegencyPane implements IContentRenderer {
       if (done) return
       done = true
       this.endRename = undefined
-      const next = input.value.trim()
+      // The typed name goes through the one filter of names (no control or bidi characters).
+      const next = safeName(input.value)
       // A desk needs a name; a pane's empty name gives it back its own.
       const change = keep && next !== old.trim() && (what === 'pane' || next !== '')
       const finish = (): void => {

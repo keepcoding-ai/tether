@@ -174,6 +174,42 @@ export type StateCounts = Record<TreeFilter, number>
 export const YOU_ID = 'you'
 export const YOU_NAME = 'Você'
 
+/** The longest name the Regency shows (desk, pane, channel, agent); longer ones end in "…". */
+export const NAME_SHOWN_MAX = 80
+
+/**
+ * The one filter of names that come from outside (a page's title, `rename-slot`, a pipe client): control characters and the
+ * format ones (Cc, Cf: bidi overrides as U+202E, zero-width marks) go, except the zero-width joiner that glues emoji; any run
+ * of white space (line breaks included) becomes one space; trimmed. With `max`, cut to that many characters with "…". Used
+ * where a name is typed (renaming in a row, "+ Novo") and where the Regency's model shows one (the remote reads the same model).
+ */
+export function safeName(raw: string, max?: number): string {
+  const clean = String(raw).replace(/\s+/gu, ' ').replace(/(?!‍)[\p{Cc}\p{Cf}]/gu, '').replace(/ {2,}/g, ' ').trim()
+  if (max === undefined) return clean
+  const chars = [...clean]
+  return chars.length <= max ? clean : `${chars.slice(0, Math.max(1, max - 1)).join('').trimEnd()}…`
+}
+
+const shown = (s: string): string => safeName(s, NAME_SHOWN_MAX)
+const shownOpt = (s: string | undefined): string | undefined => s === undefined ? undefined : shown(s)
+
+/** The input with every name passed through safeName (what the model's rows show and what the search matches). */
+function cleanNames(input: RegencyInput): RegencyInput {
+  const owner = (o: OwnerRef): OwnerRef => ({ ...o, name: shown(o.name) })
+  const map = (r: Record<string, OwnerRef>): Record<string, OwnerRef> => Object.fromEntries(Object.entries(r).map(([k, o]) => [k, owner(o)]))
+  return {
+    ...input,
+    desks: { ...input.desks, desks: input.desks.desks.map(d => ({ ...d, name: shown(d.name), panes: d.panes.map(p => ({ ...p, title: shown(p.title) })) })) },
+    owners: { desk: map(input.owners.desk), pane: map(input.owners.pane) },
+    channels: input.channels.map(c => ({
+      ...c, name: shown(c.name), title: shown(c.title),
+      owner: c.owner.kind === 'agent' ? { ...c.owner, name: shown(c.owner.name) } : c.owner,
+    })),
+    agents: input.agents.map(a => ({ ...a, name: shown(a.name), ...(a.emblem ? { emblem: { ...a.emblem, name: shown(a.emblem.name) } } : {}) })),
+    ...(input.closed ? { closed: input.closed.map(c => ({ ...c, name: shown(c.name), ...(c.title !== undefined ? { title: shownOpt(c.title) } : {}) })) } : {}),
+  }
+}
+
 const key = (t: Target): string => `${t.kind}:${t.id}`
 const NO_MARKS: ChannelMarksInput = { unread: 0, toMe: 0, asks: 0, owed: 0 }
 
@@ -398,7 +434,8 @@ export function closedOf(input: RegencyInput): ClosedSection {
   return { collapsed, count: rows.length, rows: collapsed ? [] : rows }
 }
 
-export function regencyModelOf(input: RegencyInput): RegencyModel {
+export function regencyModelOf(raw: RegencyInput): RegencyModel {
+  const input = cleanNames(raw)
   return {
     waiting: waitingOf(input), conversations: conversationsOf(input), tree: treeOf(input), byAgent: agentTreeOf(input),
     closed: closedOf(input),

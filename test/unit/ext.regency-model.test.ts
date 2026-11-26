@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   agentTreeOf, CLOSED_ID, CLOSED_LIMIT, closedOf, conversationsOf, filterModel, foldText, modelSignature, regencyModelOf, stateCounts, treeOf,
-  waitingOf, YOU_ID,
+  waitingOf, YOU_ID, NAME_SHOWN_MAX, safeName,
   type RegencyInput,
 } from '../../extensions/regency/model.ts'
 import { deskRowKey, flatRows, groupRowKey, paneRowKey } from '../../extensions/regency/renderer/tree-keys.ts'
@@ -387,5 +387,44 @@ describe('model', () => {
     assert.deepEqual(m.tree, [])
     assert.deepEqual(m.conversations, { open: [], closed: [] })
     assert.deepEqual(m.byAgent.map(g => g.paneCount), [0])
+  })
+})
+
+describe('names from outside (R-9)', () => {
+  test('safeName: control, bidi and zero-width characters go, the emoji joiner stays, white space folds, the cut ends in …', () => {
+    assert.equal(safeName('evil‮gnp.exe'), 'evilgnp.exe', 'RLO')
+    assert.equal(safeName('a\u0000b\u0007c\u001Bd'), 'abcd', 'C0 controls')
+    assert.equal(safeName('linha\num\r\n  dois\tt'), 'linha um dois t', 'line breaks and tabs are a space')
+    assert.equal(safeName('⁦x⁩​y‎﻿'), 'xy', 'isolates, zero width, marks, BOM')
+    assert.equal(safeName('👨‍👩‍👧 família'), '👨‍👩‍👧 família', 'the joiner glues an emoji')
+    assert.equal(safeName('a'.repeat(100)), 'a'.repeat(100), 'no cut without max')
+    assert.equal(safeName('a'.repeat(100), 10), `${'a'.repeat(9)}…`)
+    assert.equal(safeName('🙂'.repeat(12), 10), `${'🙂'.repeat(9)}…`, 'the cut counts characters, not halves of one')
+  })
+
+  test('the model shows every name filtered: desks, panes, channels, agents, owners, closed sessions', () => {
+    const rlo = '‮'
+    const desks = tree()
+    desks.desks[0]!.name = `ob${rlo}ra`
+    desks.desks[0]!.panes[2]!.title = `no\u0000ta\n${'x'.repeat(200)}`
+    const m = regencyModelOf(input({
+      desks,
+      owners: { desk: { d1: { id: 'a1', name: `con${rlo}ferente` } }, pane: {} },
+      agents: [{ id: 'a1', kind: 'claude', name: `confe${rlo}rente`, emblem: { name: `e${rlo}m`, color: 'red', icon: 'x' } }, { id: 'a2', kind: 'soul', name: 'bancada' }],
+      channels: [channel('c1', { name: `o${rlo}bra`, title: `T⁦í⁩tulo` })],
+      closed: [{ slotId: 's1', kind: 'claude', name: `ve${rlo}lho`, title: `t${rlo}` }],
+    }))
+    const json = JSON.stringify(m)
+    assert.equal(/[\u0000-\u001F‮⁦⁩]/.test(json.replace(/\\u[0-9a-f]{4}/gi, s => String.fromCharCode(parseInt(s.slice(2), 16)))), false, 'no control or bidi character anywhere')
+    const d1 = m.tree.find(d => d.target.id === 'd1')!
+    assert.equal(d1.name, 'obra')
+    assert.equal(d1.owner, 'conferente')
+    const note = d1.panes.find(p => p.target.id === 'n1')!
+    assert.equal([...note.title].length, NAME_SHOWN_MAX)
+    assert.ok(note.title.startsWith('nota x') && note.title.endsWith('…'))
+    assert.equal(d1.panes.find(p => p.target.id === 'a1')!.identity?.name, 'conferente')
+    assert.equal(d1.panes.find(p => p.target.id === 'a1')!.identity?.emblem?.name, 'em')
+    assert.deepEqual([m.conversations.open[0]!.name, m.conversations.open[0]!.title], ['obra', 'Título'])
+    assert.deepEqual([m.closed.rows[0]?.name, m.closed.rows[0]?.title], ['velho', 't'])
   })
 })

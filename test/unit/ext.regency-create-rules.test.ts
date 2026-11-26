@@ -193,6 +193,12 @@ describe('planOf', () => {
     assert.equal((a[2] as { channel: string }).channel, REF_CHANNEL)
     assert.deepEqual(kinds(acts({ what: 'channel', channel: { name: 'sozinho' } })), ['channel', 'show'])
   })
+  test('typed names go through the one filter: no control, bidi or zero-width characters (R-9)', () => {
+    const d = acts({ what: 'desk', newDesk: { name: 'Ca\u202Esa\u0007\n nova\u200B' } })
+    assert.equal((d[0] as { name: string }).name, 'Casa nova')
+    const s = acts({ what: 'terminal', deskId: 'd1', cwd: 'C:/p', name: '\u202Econf\u0000erente\u2066' }).find(x => x.act === 'slot') as { name?: string }
+    assert.equal(s.name, 'conferente')
+  })
   test('desk: only the desk', () => {
     const a = acts({ what: 'desk', newDesk: { name: 'Casa', after: 'd1' } })
     assert.deepEqual(a, [{ act: 'desk', runs: 'app-bridge', name: 'Casa', after: 'd1', doing: 'criar a mesa «Casa»', done: 'criei a mesa «Casa»' }])

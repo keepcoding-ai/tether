@@ -4,7 +4,7 @@
 // classes, no functions inside the data and no `undefined` values: an absent field is an absent key.
 import type { DeskTree } from '../../app/renderer/ext-api.ts'
 import type { ChannelSummary } from '../channels/daemon/requests.ts'
-import type { RegencyInput } from './model.ts'
+import { safeName, type RegencyInput } from './model.ts'
 
 /** What "+ Novo" makes. `desk-for` is "Dar uma mesa nova" (the menu of an agent), never a tile. */
 export type CreateWhat = 'agent' | 'terminal' | 'note' | 'browser' | 'channel' | 'desk' | 'desk-for'
@@ -153,7 +153,8 @@ export function missing(state: CreateState, ctx: CreateContext = {}): { step: Cr
 
 // ---------------------------------------------------------------- validation
 
-const cleanSpaces = (s: string): string => s.replace(/\s+/g, ' ').trim()
+/** A typed name through the one filter of names (model.ts safeName): spaces folded, no control or bidi characters. */
+const cleanSpaces = (s: string): string => safeName(s)
 
 /** The name of a channel as the daemon takes it: no `#`, lowercase. */
 export const channelNameOf = (raw: string): string => cleanSpaces(raw).replace(/^#+/, '').toLowerCase()
