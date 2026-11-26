@@ -6,8 +6,8 @@ import { fitDesks, overflowDesks, overflowRows, pickFromOverflow, touchUsed, typ
 
 test('the "+N" rows: name, attention and the seals the pill wears (the owner\'s), without their click', () => {
   const names: Record<string, string> = { c: 'Obra', d: 'Fila' }
-  const seals: Record<string, { icon: string; hue?: number; label?: string; tooltip: string; variant?: 'solid' | 'struck'; onActivate?: () => void }[]> = {
-    c: [{ icon: 'robot', hue: 210, label: 'Kai', tooltip: 'Dono: Kai', onActivate: () => {} }],
+  const seals: Record<string, { icon: string; hue?: number; label?: string; tooltip: string; menuTooltip?: string; variant?: 'solid' | 'struck'; onActivate?: () => void }[]> = {
+    c: [{ icon: 'robot', hue: 210, label: 'Kai', tooltip: 'Dono: Kai · clique: ir para Kai', menuTooltip: 'Dono: Kai', onActivate: () => {} }],
     d: [{ icon: 'robot', label: 'Nic', tooltip: 'Nic encerrou', variant: 'struck' }],
   }
   const rows = overflowRows(['c', 'd', 'e'], id => names[id] ?? id, id => (id === 'c' ? 2 : 0), id => seals[id] ?? [])

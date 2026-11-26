@@ -88,7 +88,7 @@ export function overflowRows(
   hidden: readonly string[],
   nameOf: (id: string) => string,
   attentionOf: (id: string) => number,
-  sealsOf: (id: string) => readonly { icon: string; hue?: number | undefined; label?: string | undefined; tooltip: string; variant?: 'solid' | 'struck' | undefined }[],
+  sealsOf: (id: string) => readonly { icon: string; hue?: number | undefined; label?: string | undefined; tooltip: string; menuTooltip?: string | undefined; variant?: 'solid' | 'struck' | undefined }[],
 ): OverflowRow[] {
   return hidden.map(id => ({
     id,
@@ -96,7 +96,8 @@ export function overflowRows(
     attention: attentionOf(id),
     seals: sealsOf(id).map(s => ({
       icon: s.icon,
-      tooltip: s.tooltip,
+      // Not clickable in the menu: the seal's menu words when it has them (no "clique: …"), else its tooltip.
+      tooltip: s.menuTooltip || s.tooltip,
       ...(s.hue !== undefined ? { hue: s.hue } : {}),
       ...(s.label ? { label: s.label } : {}),
       ...(s.variant === 'struck' ? { variant: 'struck' as const } : {}),

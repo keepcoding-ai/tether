@@ -22,15 +22,17 @@ export function normalizeSeal(seal: DeskSeal | undefined): DeskSeal | undefined 
   if (!seal || typeof seal.icon !== 'string' || seal.icon === '') return undefined
   const hue = normalizeHue(seal.hue)
   const label = typeof seal.label === 'string' ? seal.label.trim() : ''
+  const menuTooltip = typeof seal.menuTooltip === 'string' ? seal.menuTooltip.trim() : ''
   return {
     icon: seal.icon, ...(hue === undefined ? {} : { hue }), ...(label === '' ? {} : { label }), tooltip: typeof seal.tooltip === 'string' ? seal.tooltip.trim() : '',
+    ...(menuTooltip === '' ? {} : { menuTooltip }),
     ...(seal.variant === 'struck' ? { variant: 'struck' as const } : {}),
     ...(typeof seal.onActivate === 'function' ? { onActivate: seal.onActivate } : {}),
   }
 }
 
 function sameSeal(a: DeskSeal, b: DeskSeal): boolean {
-  return a.icon === b.icon && a.hue === b.hue && a.label === b.label && a.tooltip === b.tooltip && a.variant === b.variant && a.onActivate === b.onActivate
+  return a.icon === b.icon && a.hue === b.hue && a.label === b.label && a.tooltip === b.tooltip && a.menuTooltip === b.menuTooltip && a.variant === b.variant && a.onActivate === b.onActivate
 }
 
 /** Seals by desk id, then by extension id. Every change tells the listeners (the pill draws again). */

@@ -356,6 +356,11 @@ export interface DeskSeal {
   /** A short name drawn beside the glyph (the owner's name), cut with an ellipsis past a fixed width. Absent: the glyph alone. */
   label?: string
   tooltip: string
+  /**
+   * The tooltip (and accessible name) where the seal is not clickable: the "+N" menu row, which picks the desk. Absent: the
+   * `tooltip`. A seal with `onActivate` says its click in `tooltip` and leaves it out here.
+   */
+  menuTooltip?: string
   /** 'struck': dashed, dimmed and the label struck through (what it names has ended). Absent: 'solid'. */
   variant?: 'solid' | 'struck'
   /** A click on the seal (absent: the click is the pill's, which shows its desk). It does not show the desk nor start a drag. */

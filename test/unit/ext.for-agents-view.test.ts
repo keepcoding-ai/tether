@@ -44,7 +44,8 @@ describe('the four pills (section 1)', () => {
 
   test('kai-aware: a desk with an owner has the solid seal, the name and the hue of the owner, and a click that goes to the owner', () => {
     const seal = computeView(input({ desks: ['kai-aware'], deskOwner: { 'kai-aware': own('A') } })).seals.get('kai-aware')!
-    assert.deepEqual(seal, { icon: 'robot', hue: agentHue('A'), label: 'Atrium', variant: 'solid', tooltip: 'Dono: Atrium · clique: ir para Atrium', focus: 'A' })
+    // Where the seal is not clickable (the "+N" menu) it says only the owner.
+    assert.deepEqual(seal, { icon: 'robot', hue: agentHue('A'), label: 'Atrium', variant: 'solid', tooltip: 'Dono: Atrium · clique: ir para Atrium', menuTooltip: 'Dono: Atrium', focus: 'A' })
   })
 
   test('bancada: the owner of another desk has its seal; nothing here carries the orange', () => {

@@ -40,6 +40,8 @@ export interface SealMark {
   hue: number
   label: string
   tooltip: string
+  /** The words where the seal is not clickable (the "+N" menu): the owner only, without the click. Absent: `tooltip`. */
+  menuTooltip?: string
   variant: 'solid' | 'struck'
   /** The owner a click goes to ("Ir para Atrium"); absent when the owner ended. */
   focus?: OwnerId
@@ -114,7 +116,7 @@ export function computeView(input: ViewInput, clock: (iso: string) => string = c
       seals.set(desk.id, { icon: 'robot', hue: agentHue(o.owner), label: o.ended.name, variant: 'struck', tooltip: `${o.ended.name} encerrou: as guias voltaram para você` })
     } else {
       const n = name(o.owner)
-      seals.set(desk.id, { icon: 'robot', hue: agentHue(o.owner), label: n, variant: 'solid', tooltip: `Dono: ${n} · clique: ir para ${n}`, focus: o.owner })
+      seals.set(desk.id, { icon: 'robot', hue: agentHue(o.owner), label: n, variant: 'solid', tooltip: `Dono: ${n} · clique: ir para ${n}`, menuTooltip: `Dono: ${n}`, focus: o.owner })
     }
   }
 

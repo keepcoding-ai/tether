@@ -226,7 +226,8 @@ test('door marks: a hidden desk keeps its owner\'s seal in the "+N" menu, beside
     assert.ok(hidden.length >= 2, `some desks are in the "+N": ${hidden.join(', ')}`)
     const [owned, plain] = hidden as [string, string]
     const hue = agentHue('claude-1')
-    await probe(page, 'seal', owned, { icon: 'robot', hue, label: 'Kai', tooltip: 'de Kai' })
+    // The owner's seal as for-agents puts it: clickable on the pill ("clique: ir para…"), only the owner where it is not (the menu).
+    await probe(page, 'sealState', owned, { icon: 'robot', hue, label: 'Kai', tooltip: 'Dono: Kai · clique: ir para Kai', menuTooltip: 'Dono: Kai', clickable: true })
     await page.waitForTimeout(200)
     await more.click()
     await page.waitForSelector('#ctx-menu li')
@@ -236,8 +237,9 @@ test('door marks: a hidden desk keeps its owner\'s seal in the "+N" menu, beside
     assert.equal(await seal.locator('.nm').innerText(), 'Kai', 'the same label as on the pill')
     assert.equal(await seal.locator('svg').count(), 1, 'the same glyph')
     assert.equal(await seal.evaluate(el => (el as HTMLElement).style.getPropertyValue('--seal-hue')), String(hue), 'the same hue')
-    assert.equal(await seal.getAttribute('title'), 'de Kai', 'the seal\'s tooltip')
-    assert.equal(await seal.getAttribute('aria-label'), 'de Kai', 'and its name for a reader')
+    assert.equal(await seal.getAttribute('title'), 'Dono: Kai', 'the menu\'s words: the owner, no click')
+    assert.equal(await seal.getAttribute('aria-label'), 'Dono: Kai', 'and its name for a reader')
+    assert.equal(await seal.evaluate(el => el.classList.contains('act')), false, 'not clickable in the menu')
     assert.equal(await row(plain).locator('.desk-seal').count(), 0, 'a desk without owner has no seal')
     // Beside the name: right after the label, on the same line.
     const [nameBox, sealBox] = await row(owned).evaluate(li => {
