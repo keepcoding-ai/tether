@@ -94,7 +94,7 @@ class Rig {
     const pid = this.client.hello.pid
     this.seen.add(pid)
     await claim(pid, { cmdIncludes: MAIN, what: 'tetherd (channels owner-in-desk claude)' })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
     this.app.on('state', (s: SlotState) => {
       const list = this.turns.get(s.slotId) ?? []
       this.turns.set(s.slotId, list)

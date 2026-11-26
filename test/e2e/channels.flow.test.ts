@@ -89,7 +89,7 @@ class Rig {
     const pid = this.client.hello.pid
     this.seen.add(pid)
     await claim(pid, { cmdIncludes: MAIN, what: 'tetherd (channels flow)' })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
     // What the person's app would draw: a state with an attention lights the pane until the next state of it says otherwise.
     this.app.on('state', (s: SlotState) => {
       const on = s.attention ?? (s.attentionFor ? JSON.stringify(s.attentionFor) : undefined)

@@ -19,7 +19,7 @@ import { handOffToCookieRuntime } from './cookie-runtime-main.ts'
 import { ackFromLiveInstance, relaunchArgs, relaunchedFrom } from './relaunch.ts'
 import { userInfo } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { DaemonClient, DaemonError, NotTetherError, type SpawnOptions } from '../../src/daemon/client.ts'
+import { DaemonClient, DaemonError, NotTetherError, pingDaemon, type SpawnOptions } from '../../src/daemon/client.ts'
 import { pipePath, PROTOCOL_VERSION } from '../../src/daemon/protocol.ts'
 import type { Notice, Reply, SlotState } from '../../src/daemon/protocol.ts'
 import { tetherHome, userDir } from '../../src/core/paths.ts'
@@ -255,7 +255,7 @@ function checkVersion(client: DaemonClient): DaemonClient {
 /** Connects to tetherd, spawning it when the pipe does not answer. */
 async function connectOnce(): Promise<DaemonClient> {
   try {
-    return checkVersion(await DaemonClient.open(pipe, 'app', { direct: true }))
+    return checkVersion(await DaemonClient.open(pipe, 'app', { direct: true, home }))
   } catch (e) {
     if (e instanceof DaemonError) throw e // it answered: spawning another one would not fix a wrong version
     if (e instanceof NotTetherError) throw new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message})`)
@@ -953,6 +953,13 @@ async function restartDaemon(): Promise<void> {
       await request({ t: 'shutdown' })
       daemon = undefined
       old.close()
+    } else {
+      // Not connected: the tetherd running may be older than this app (protocol 1, refused as daemon-outdated). It still
+      // takes a shutdown, which is how an upgrade gets past it.
+      try {
+        const c = await DaemonClient.open(pipe, 'app', { home, legacy: true })
+        try { await c.request({ t: 'shutdown' }) } finally { c.close() }
+      } catch { /* nothing answers */ }
     }
     slotStates.clear()
     agentTracker.lost()
@@ -961,7 +968,7 @@ async function restartDaemon(): Promise<void> {
     // The old daemon answers until its server is closed: wait for the pipe to go quiet before spawning.
     const deadline = Date.now() + DAEMON_START_TIMEOUT_MS
     while (Date.now() < deadline) {
-      try { (await DaemonClient.open(pipe, 'app')).close() } catch { break }
+      if (!(await pingDaemon(pipe, home))) break
       await sleep(200)
     }
     await connectDaemon()

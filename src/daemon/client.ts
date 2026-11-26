@@ -10,10 +10,24 @@ import { agentExecutor } from '../agents/agent-exec.ts'
 import { exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
-import { encode, LineParser } from './ndjson.ts'
+import { encode, LineParser, type ParsedLine } from './ndjson.ts'
+import { clientProof, daemonProof, isNonce, newNonce, pipeKeyPath, readPipeKey, sameProof, servedHome } from './pipe-key.ts'
 import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type DeskMap, type ErrorCode, type ObjectKind, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
 
-export type Hello = { v: number; pid: number; version: string; exec?: string }
+/** `legacy`: a tetherd before protocol 2 (no proof either way), reached only by an `open` that allows it (see OpenOptions). */
+export type Hello = { v: number; pid: number; version: string; exec?: string; legacy?: true }
+
+export interface OpenOptions {
+  /** This client reads hosted panes straight from tether-ptyd (see the `hello` request). */
+  direct?: boolean
+  /** The tether home whose key proves this client (pipe-key.ts). Default: the home of a tetherd in this process on that pipe, else tetherHome(). */
+  home?: string
+  /**
+   * Accept a tetherd before protocol 2, which checks nobody: only to find out it is there and to shut it down (ping,
+   * restart). Without it such a tetherd is refused with `daemon-outdated`.
+   */
+  legacy?: boolean
+}
 export type OkReply = Extract<Reply, { t: 'ok' }>
 /** A request without its `id` (the client assigns one); still a discriminated union on `t`. */
 export type RequestBody = { [K in Request['t']]: Omit<Extract<Request, { t: K }>, 'id'> }[Request['t']]
@@ -73,7 +87,7 @@ type Events = {
 export class DaemonClient extends EventEmitter<Events> {
   readonly hello: Hello
   private readonly socket: Socket
-  private readonly parser = new LineParser()
+  private parser = new LineParser()
   private nextId = 1
   private readonly waiting = new Map<number, { resolve: (r: OkReply) => void; reject: (e: Error) => void }>()
   private closed = false
@@ -89,7 +103,7 @@ export class DaemonClient extends EventEmitter<Events> {
     const home = opts.home ?? tetherHome()
     const pipe = opts.pipe ?? pipePath(home, userInfo().username)
     const kind = opts.client ?? 'cli'
-    const how = opts.direct ? { direct: true } : {}
+    const how: OpenOptions = opts.direct ? { direct: true, home } : { home }
     let foreign = 0
     const foreignError = (e: NotTetherError): Error =>
       new Error(`o canal ${pipe} está ocupado por um programa que não é o tetherd (${e.message}); feche-o ou use outro TETHER_PIPE`)
@@ -124,51 +138,56 @@ export class DaemonClient extends EventEmitter<Events> {
     throw new Error(`tetherd não respondeu em ${pipe}: ${lastError?.message ?? 'timeout'}`)
   }
 
-  /** Connects and completes the hello handshake; no spawning. `direct`: see ClientOptions. */
-  static async open(pipe: string, kind: 'app' | 'cli' | 'test', how: { direct?: boolean } = {}): Promise<DaemonClient> {
+  /**
+   * Connects and completes the handshake (pipe-key.ts): `auth` with this client's nonce, a check of tetherd's proof (a
+   * program that took the pipe's name is refused before it learns anything), then the hello with this client's proof.
+   * No spawning. A tetherd before protocol 2 is refused with `daemon-outdated` unless `how.legacy`.
+   */
+  static async open(pipe: string, kind: 'app' | 'cli' | 'test', how: OpenOptions = {}): Promise<DaemonClient> {
+    const home = how.home ?? servedHome(pipe) ?? tetherHome()
     const socket = await connectSocket(pipe)
-    let client: DaemonClient | undefined
-    const pendingHello = new Promise<Hello>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new NotTetherError('sem resposta ao hello')), 5_000)
-      const parser = new LineParser()
-      const onData = (chunk: string): void => {
-        for (const line of parser.push(chunk)) {
-          const v = line.value as Reply | undefined
-          if (v && v.t === 'ok' && v.id === 0 && v.hello) {
-            clearTimeout(timer)
-            socket.off('data', onData)
-            socket.off('close', onClose)
-            resolve(v.hello)
-            return
-          }
-          if (v && v.t === 'error' && v.id === 0) {
-            clearTimeout(timer)
-            reject(new DaemonError(v.code, v.message))
-            return
-          }
-        }
-      }
-      const onClose = (): void => {
-        clearTimeout(timer)
-        reject(new NotTetherError('conexão fechada antes do hello'))
-      }
-      socket.setEncoding('utf8')
-      socket.on('data', onData)
-      socket.on('close', onClose)
-      socket.write(encode(how.direct ? { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, direct: true } : { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind }))
-    })
+    const replies = new HandshakeReader(socket)
     try {
-      const hello = await pendingHello
-      client = new DaemonClient(socket, hello)
-      client.wire()
+      const nonce = newNonce()
+      socket.write(encode({ t: 'auth', id: 0, nonce }))
+      const auth = await replies.next()
+      let hello: Hello
+      if (auth.t === 'error' && auth.code === 'bad-request') {
+        // A tetherd before protocol 2 does not know `auth`: its own hello (unproven) says who it is.
+        socket.write(encode({ t: 'hello', id: 0, v: 1, client: kind }))
+        const old = await replies.next()
+        if (old.t !== 'ok' || !old.hello) throw new NotTetherError('resposta inesperada ao hello')
+        if (!how.legacy) throw new DaemonError('daemon-outdated', outdatedMessage(old.hello))
+        hello = { ...old.hello, legacy: true }
+      } else if (auth.t === 'error') {
+        throw new DaemonError(auth.code, auth.message)
+      } else {
+        const theirs = auth.auth
+        if (!theirs || !isNonce(theirs.nonce) || typeof theirs.proof !== 'string') throw new NotTetherError('resposta de identificação inválida')
+        const key = await readPipeKey(home)
+        if (!key) throw new DaemonError('auth-failed', `não encontrei a chave do tetherd em ${pipeKeyPath(home)}: este cliente e o tetherd usam a mesma pasta do tether (TETHER_HOME)?`)
+        if (!sameProof(theirs.proof, daemonProof(key, nonce, theirs.nonce))) throw new NotTetherError(`quem responde não provou ter a chave de ${pipeKeyPath(home)}`)
+        const proof = clientProof(key, nonce, theirs.nonce)
+        socket.write(encode(how.direct ? { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, direct: true, proof } : { t: 'hello', id: 0, v: PROTOCOL_VERSION, client: kind, proof }))
+        const r = await replies.next()
+        if (r.t === 'error') throw new DaemonError(r.code, r.message)
+        if (!r.hello) throw new NotTetherError('resposta inesperada ao hello')
+        hello = r.hello
+      }
+      const client = new DaemonClient(socket, hello)
+      client.wire(replies.release())
       return client
     } catch (e) {
+      replies.release()
       socket.destroy()
       throw e
     }
   }
 
-  private wire(): void {
+  /** `start`: the parser of the handshake (it may hold the beginning of the next line) and the lines it read past it. */
+  private wire(start: { parser: LineParser; lines: ParsedLine[] }): void {
+    this.parser = start.parser
+    for (const line of start.lines) if (line.value) this.onMessage(line.value as DaemonMessage)
     this.socket.on('data', (chunk: string) => {
       for (const line of this.parser.push(chunk)) if (line.value) this.onMessage(line.value as DaemonMessage)
     })
@@ -261,6 +280,79 @@ export class DaemonClient extends EventEmitter<Events> {
   }
 }
 
+/** The reply of a handshake step; the handshake has no other reply in flight (every step uses id 0). */
+type StepReply = Reply
+
+/** Reads the handshake's replies (id 0) one at a time; lines before each reply (a v1 tetherd's events) are skipped. */
+class HandshakeReader {
+  private readonly parser = new LineParser()
+  private lines: ParsedLine[] = []
+  private closed = false
+  private waiter: { resolve: (r: StepReply) => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | undefined
+  private readonly socket: Socket
+
+  constructor(socket: Socket) {
+    this.socket = socket
+    socket.setEncoding('utf8')
+    socket.on('data', this.onData)
+    socket.on('close', this.onClose)
+  }
+
+  private readonly onData = (chunk: string): void => {
+    this.lines.push(...this.parser.push(chunk))
+    this.pump()
+  }
+
+  private readonly onClose = (): void => {
+    this.closed = true
+    this.pump()
+  }
+
+  private pump(): void {
+    const w = this.waiter
+    if (!w) return
+    while (this.lines.length) {
+      const v = this.lines.shift()!.value as Reply | undefined
+      if (v && (v.t === 'ok' || v.t === 'error') && v.id === 0) {
+        this.waiter = undefined
+        clearTimeout(w.timer)
+        w.resolve(v)
+        return
+      }
+    }
+    if (this.closed) {
+      this.waiter = undefined
+      clearTimeout(w.timer)
+      w.reject(new NotTetherError('conexão fechada antes do hello'))
+    }
+  }
+
+  next(timeoutMs = 5_000): Promise<StepReply> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.waiter = undefined; reject(new NotTetherError('sem resposta ao hello')) }, timeoutMs)
+      this.waiter = { resolve, reject, timer }
+      this.pump()
+    })
+  }
+
+  /** Stops reading; what was read past the last reply goes on to the client. */
+  release(): { parser: LineParser; lines: ParsedLine[] } {
+    this.socket.off('data', this.onData)
+    this.socket.off('close', this.onClose)
+    if (this.waiter) clearTimeout(this.waiter.timer)
+    this.waiter = undefined
+    const lines = this.lines
+    this.lines = []
+    return { parser: this.parser, lines }
+  }
+}
+
+/** The person reads this when the tetherd running is older than this client (protocol 1: it checks nobody). */
+function outdatedMessage(h: Hello): string {
+  return `o tetherd em execução (versão ${h.version}, pid ${h.pid}) é anterior a esta versão do tether e não confere quem se conecta a ele: `
+    + 'reinicie o tetherd (no app: Reiniciar o tetherd; no terminal: tether daemon restart). Os agentes retomam as sessões.'
+}
+
 function connectSocket(pipe: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = connect(pipe)
@@ -269,10 +361,10 @@ function connectSocket(pipe: string): Promise<Socket> {
   })
 }
 
-/** Connects, sends `hello` and disconnects. Undefined when nothing answers. */
-export async function pingDaemon(pipe: string): Promise<Hello | undefined> {
+/** Connects, completes the hello and disconnects. Undefined when no tetherd answers (an older one counts: see OpenOptions.legacy). */
+export async function pingDaemon(pipe: string, home?: string): Promise<Hello | undefined> {
   try {
-    const c = await DaemonClient.open(pipe, 'cli')
+    const c = await DaemonClient.open(pipe, 'cli', { legacy: true, ...(home !== undefined ? { home } : {}) })
     c.close()
     return c.hello
   } catch {

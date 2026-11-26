@@ -103,7 +103,7 @@ class Rig {
       const text = screen.text()
       if (text.includes('Loading development channels')) this.dialogBy.set(slotId, text)
     })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
     this.app.on('state', (s: SlotState) => {
       const on = s.attention ?? (s.attentionFor ? JSON.stringify(s.attentionFor) : undefined)
       if (on) this.lit.push(`${s.slotId}:${on}`)

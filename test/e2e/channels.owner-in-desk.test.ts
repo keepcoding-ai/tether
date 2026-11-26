@@ -91,7 +91,7 @@ class Rig {
     const pid = this.client.hello.pid
     this.seen.add(pid)
     await claim(pid, { cmdIncludes: MAIN, what: 'tetherd (channels owner-in-desk)' })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
   }
 
   daemonLog(): string { const p = join(this.home, 'tetherd.log'); return existsSync(p) ? readFileSync(p, 'utf8') : '' }

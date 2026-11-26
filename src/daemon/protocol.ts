@@ -13,7 +13,12 @@ import type { PortRow } from './ports.ts'
 
 export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
 
-export const PROTOCOL_VERSION = 1
+/**
+ * 2: the client proves it is the user who runs tetherd (`auth`, then `hello` with `proof`; see pipe-key.ts), and tetherd
+ * proves it holds the same key. A v1 client's hello (no proof) gets `auth-required`; a v1 tetherd answers `auth` with
+ * bad-request, and a v2 client says the running tetherd must be restarted (`daemon-outdated`).
+ */
+export const PROTOCOL_VERSION = 2
 
 /**
  * Youngest an agent may be when tether kills it (stop, forget, shutdown, `set-profile` restart): Claude counts
@@ -185,7 +190,9 @@ export type ErrorCode =
   | 'door-denied'       // the caller's identity does not match
   | 'unknown-verb'      // no contributed verb by that namespace and name
   | 'unknown-request'   // ext-request: no handler by that extension and name
-  | 'auth-required'     // a request before the hello
+  | 'auth-required'     // a request before the hello, or a hello without proof (a client older than protocol 2)
+  | 'auth-failed'       // the hello's proof does not match this tetherd's key (or the client found no key to prove with)
+  | 'daemon-outdated'   // client side: the running tetherd predates protocol 2 and cannot check who connects
 
 // --- client → daemon ------------------------------------------------------------------------
 // Requests carry `id` (client-chosen) and get exactly one reply with the same `id` (`ok` or `error`).
@@ -195,11 +202,14 @@ export type Request =
    * `direct`: the client reads the panes hosted in tether-ptyd straight from the host (the app). tetherd then sends it no
    * `data` of a hosted pane (`ptyHost`) and no scrollback of one in `attach`; in-process panes go to it as to anyone.
    */
+  /** Opens every connection: the client's nonce (64 hex). Reply: `auth`, tetherd's nonce and proof. See pipe-key.ts. */
+  | { t: 'auth'; id: number; nonce: string }
   /**
-   * The first request of every connection: until it is answered `ok`, tetherd answers nothing else (`auth-required`), sends
-   * no event, and drops the connection after a while.
+   * Follows `auth`, with `proof` (pipe-key.ts clientProof). Until it is answered `ok`, tetherd answers nothing but `auth`
+   * and `hello` (`auth-required`), sends no event, and drops the connection after a while. A wrong or missing proof is
+   * refused and the connection closed.
    */
-  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean }
+  | { t: 'hello'; id: number; v: number; client: 'app' | 'cli' | 'test'; direct?: boolean; proof?: string }
   | { t: 'list'; id: number }
   /** Performance ruler snapshot (pull only): loop-delay samples and incidents newer than `since` (wall-clock ms). Reply: `perf`. */
   | { t: 'perf'; id: number; since?: number }
@@ -357,6 +367,8 @@ export type Reply =
       id: number
       /** `exec`: the executable the daemon runs as (tetherd.exe, or the plain node when the copy failed). */
       hello?: { v: number; pid: number; version: string; exec?: string }
+      /** auth: tetherd's nonce and its proof over both nonces (pipe-key.ts daemonProof). */
+      auth?: { nonce: string; proof: string }
       slots?: SlotState[]
       /** perf. */
       perf?: PerfSnapshot

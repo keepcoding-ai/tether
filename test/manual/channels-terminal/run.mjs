@@ -129,7 +129,7 @@ try {
   }
   client = await DaemonClient.connect({ home, pipe, client: 'test', mainPath: MAIN, env, startTimeoutMs: 45_000 })
   seen.add(client.hello.pid); await claim(client.hello.pid, { cmdIncludes: MAIN, what: 'tetherd (e2)' })
-  app = await DaemonClient.open(pipe, 'app')
+  app = await DaemonClient.open(pipe, 'app', { home })
   client.on('data', (slotId, data) => { const s = screens.get(slotId) ?? new Screen(120, 40); screens.set(slotId, s); s.write(data) })
   const req = (name, args) => app.request({ t: 'ext-request', ext: 'channels', name, ...(args !== undefined ? { args } : {}) }).then((r) => r.result)
   let nextId = 1

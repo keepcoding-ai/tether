@@ -4,7 +4,7 @@
 import { withTabEnv } from '../core/tab-env.ts'
 import { slotTitle } from '../../app/shared/agent-info.ts'
 import type { SlotEventKind } from './ext-api.ts'
-import { mkdir, readFile, stat as statAsync } from 'node:fs/promises'
+import { chmod, mkdir, readFile, stat as statAsync } from 'node:fs/promises'
 import { watch, type FSWatcher } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { isAbsolute, join } from 'node:path'
@@ -29,6 +29,7 @@ import { SlotStore } from '../core/slot-store.ts'
 import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
+import { clientProof, daemonProof, isNonce, newNonce, sameProof, servePipeHome, unservePipeHome, writePipeKey } from './pipe-key.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -343,8 +344,12 @@ interface Client {
   kind?: string
   /** From the hello: reads hosted panes straight from tether-ptyd, so no `data` or scrollback of them goes to it. */
   direct?: true
-  /** The hello was answered `ok`: only then does the client get events and answers to anything else. */
+  /** The hello was answered `ok` (its proof checked): only then does the client get events and answers to anything else. */
   greeted?: true
+  /** The nonces of this connection's `auth`, waiting for the hello's proof (used once). */
+  challenge?: { client: string; daemon: string }
+  /** Close the connection once the reply in flight is written (a refused hello). */
+  closeAfterReply?: true
   /** Drops the connection when the hello does not come (cleared by it). */
   helloTimer?: NodeJS.Timeout
 }
@@ -392,6 +397,8 @@ class DaemonImpl implements Daemon {
   private readonly onSlot: ((kind: SlotEventKind, slot: SlotState) => void) | undefined
   private readonly readyFallbackMs: number
   private readonly helloTimeoutMs: number
+  /** The pipe key (pipe-key.ts), drawn and written once this daemon owns the pipe; `auth` waits for it. */
+  private pipeKey: Promise<Buffer> = new Promise(() => {})
   private readonly minAgentAgeMs: number
   private readonly killWaitCapMs: number
   private readonly titlePollMs: number | undefined
@@ -617,6 +624,8 @@ class DaemonImpl implements Daemon {
     await this.store.flush()
     perf.start()
     this.startWatching()
+    // Unix: the socket lives in the home; only the user may enter it (the socket itself is made 0600 below).
+    if (process.platform !== 'win32') await chmod(this.home, 0o700).catch((e: Error) => this.log(`home: could not make it private (${e.message})`))
     try {
       await new Promise<void>((resolve, reject) => {
         this.server.once('error', reject)
@@ -625,8 +634,14 @@ class DaemonImpl implements Daemon {
           resolve()
         })
       })
+      if (process.platform !== 'win32') await chmod(this.pipe, 0o600)
+      // Only the owner of the pipe draws the key: a tetherd that lost the race never replaces the winner's.
+      this.pipeKey = writePipeKey(this.home, this.log)
+      await this.pipeKey
+      servePipeHome(this.pipe, this.home)
     } catch (e) {
       for (const a of adoptions) a.release()
+      if (this.server.listening) this.server.close()
       throw e
     }
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
@@ -1117,6 +1132,7 @@ class DaemonImpl implements Daemon {
     this.panelHost?.close() // the host outlives tetherd: only the connection closes
     for (const c of this.clients) c.socket.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    unservePipeHome(this.pipe, this.home)
     // What is queued for the disk lands before `closed` (a hard death loses only this queue). The executor is closed here
     // only when it is the daemon's own; tetherd's main closes the process' one after the log is flushed.
     await this.store.drain()
@@ -1958,7 +1974,7 @@ class DaemonImpl implements Daemon {
       return
     }
     const msg = value as Partial<ClientMessage>
-    if (!client.greeted && msg.t !== 'hello') {
+    if (!client.greeted && msg.t !== 'auth' && msg.t !== 'hello') {
       // Before the hello nothing is done: keystrokes are dropped, any other request is refused.
       const id = (msg as { id?: unknown }).id
       if (typeof id === 'number') this.send(client, { t: 'error', id, code: 'auth-required', message: 'identifique-se primeiro (hello)' })
@@ -1991,12 +2007,43 @@ class DaemonImpl implements Daemon {
       reply = { t: 'error', id, code: err.code, message: err.message }
     }
     this.send(client, reply)
+    if (client.closeAfterReply) client.socket.end()
+  }
+
+  /** `auth`: the first step of the handshake (pipe-key.ts). Answers before the hello; never twice for a greeted client. */
+  private async auth(client: Client, req: Extract<Request, { t: 'auth' }>): Promise<Reply> {
+    if (client.greeted) throw new RequestError('bad-request', 'conexão já identificada')
+    if (!isNonce(req.nonce)) throw new RequestError('bad-request', 'nonce inválido (64 dígitos hexadecimais)')
+    const key = await this.pipeKey
+    const daemon = newNonce()
+    client.challenge = { client: req.nonce, daemon }
+    return { t: 'ok', id: req.id, auth: { nonce: daemon, proof: daemonProof(key, req.nonce, daemon) } }
+  }
+
+  /** The hello's proof, once per connection; a refusal closes the connection after its reply. */
+  private async checkHello(client: Client, req: Extract<Request, { t: 'hello' }>): Promise<void> {
+    if (client.greeted) return
+    const challenge = client.challenge
+    client.challenge = undefined
+    if (req.proof === undefined || !challenge) {
+      client.closeAfterReply = true
+      this.log(`client refused: hello without proof (${String(req.client)}, protocol ${String(req.v)})`)
+      throw new RequestError('auth-required', `este tetherd (versão ${DAEMON_VERSION}) só atende quem prova ser o mesmo usuário, e este cliente é de uma versão anterior do tether: atualize o tether e abra de novo o app ou o terminal`)
+    }
+    if (!sameProof(req.proof, clientProof(await this.pipeKey, challenge.client, challenge.daemon))) {
+      client.closeAfterReply = true
+      this.log(`client refused: the hello's proof does not match (${String(req.client)})`)
+      throw new RequestError('auth-failed', 'a identificação não confere com a chave deste tetherd')
+    }
   }
 
   private async handle(client: Client, req: Request): Promise<Reply> {
     const { id } = req
     switch (req.t) {
+      case 'auth':
+        return await this.auth(client, req)
       case 'hello':
+        await this.checkHello(client, req)
         if (typeof req.client === 'string') client.kind = req.client
         if (req.direct === true) client.direct = true
         client.greeted = true

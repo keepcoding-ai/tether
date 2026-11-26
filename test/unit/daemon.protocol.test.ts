@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { connect } from 'node:net'
 import { after, before, describe, test } from 'node:test'
 import { guessId, LineParser, encode } from '../../src/daemon/ndjson.ts'
+import { clientProof, daemonProof, newNonce, readPipeKey } from '../../src/daemon/pipe-key.ts'
 import { Scrollback } from '../../src/daemon/scrollback.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -59,7 +60,7 @@ describe('wire: raw socket against a live daemon', () => {
     await removeHome(home)
   })
 
-  test('hello split in two chunks, garbage with an id, garbage without, then list', async () => {
+  test('auth, hello split in two chunks, garbage with an id, garbage without, then list', async () => {
     const sock = connect(daemon.pipe)
     await new Promise<void>((res, rej) => { sock.once('connect', res); sock.once('error', rej) })
     sock.setEncoding('utf8')
@@ -67,11 +68,17 @@ describe('wire: raw socket against a live daemon', () => {
     sock.on('data', (c: string) => { received += c })
     const lines = (): Record<string, unknown>[] => received.split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>)
 
-    sock.write('{"t":"hello","id":1,"v":1,')
+    const nonce = newNonce()
+    sock.write(`{"t":"auth","id":0,"nonce":"${nonce}"}\n`)
+    await waitUntil(() => lines().length >= 1, 5_000, 'auth reply')
+    const auth = lines()[0]!.auth as { nonce: string; proof: string }
+    const key = (await readPipeKey(home))!
+    assert.equal(auth.proof, daemonProof(key, nonce, auth.nonce), 'tetherd proves it holds the key')
+    sock.write(`{"t":"hello","id":1,"v":2,"proof":"${clientProof(key, nonce, auth.nonce)}",`)
     await new Promise((r) => setTimeout(r, 50))
     sock.write('"client":"test"}\n')
-    await waitUntil(() => lines().length >= 1, 5_000, 'hello reply')
-    const hello = lines()[0]!
+    await waitUntil(() => lines().length >= 2, 5_000, 'hello reply')
+    const hello = lines()[1]!
     assert.equal(hello.t, 'ok')
     assert.equal(hello.id, 1)
     assert.equal((hello.hello as { pid: number }).pid, process.pid)
@@ -80,8 +87,8 @@ describe('wire: raw socket against a live daemon', () => {
     sock.write('not json at all\n')        // malformed, no id: ignored
     sock.write('{"t":"nope","id":3}\n')    // well-formed, unknown request
     sock.write('{"t":"list","id":4}\n')
-    await waitUntil(() => lines().length >= 4, 5_000, 'three more replies')
-    const [, e2, e3, ok4] = lines()
+    await waitUntil(() => lines().length >= 5, 5_000, 'three more replies')
+    const [, , e2, e3, ok4] = lines()
     assert.deepEqual([e2!.t, e2!.id, e2!.code], ['error', 2, 'bad-request'])
     assert.deepEqual([e3!.t, e3!.id, e3!.code], ['error', 3, 'bad-request'])
     assert.equal(ok4!.t, 'ok')

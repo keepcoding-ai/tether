@@ -196,7 +196,7 @@ test('tray: close hides to the tray (app + daemon alive), Abrir restores, restar
     app = undefined
     await waitUntil(() => !pidAlive(mainPid), 15_000, 'the app process to exit')
     assert.ok(pidAlive(newDaemonPid), 'tetherd survived the app')
-    const probe = await DaemonClient.open(pipe, 'test')
+    const probe = await DaemonClient.open(pipe, 'test', { home })
     try {
       const list = await probe.request({ t: 'list' })
       const after = new Map<string, number | undefined>((list.slots ?? []).map(s => [s.slotId, s.status === 'running' ? s.pid : undefined]))

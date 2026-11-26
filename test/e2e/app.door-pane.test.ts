@@ -120,7 +120,7 @@ test('door pane: a pane the daemon asks for', { timeout: 300_000 }, async () => 
 
     // ---- 2b. the pipe's `create { desk }` (a remote client): born in that desk by its name, the person stays put ----
     console.log('step 2b')
-    const remote = await DaemonClient.open(pipe, 'test')
+    const remote = await DaemonClient.open(pipe, 'test', { home })
     try {
       const deskName = (await page.evaluate(() => window.__tether.desks())).find(d => d.id === 'desk-2')!.name
       const activeNow = await page.evaluate(() => ({ active: window.__tether.activeId(), current: window.__tether.currentPane() }))

@@ -24,13 +24,14 @@ export interface RestartOptions extends SpawnOptions {
 }
 
 export async function restartDaemon(opts: RestartOptions): Promise<RestartResult> {
-  const previous = await pingDaemon(opts.pipe)
+  const previous = await pingDaemon(opts.pipe, opts.home)
   if (previous) {
-    const client = await DaemonClient.open(opts.pipe, 'cli')
+    // `legacy`: a tetherd older than this code (protocol 1) is exactly what a restart after an upgrade replaces.
+    const client = await DaemonClient.open(opts.pipe, 'cli', { home: opts.home, legacy: true })
     try { await client.request({ t: 'shutdown' }) } finally { client.close() }
     const stopTimeoutMs = opts.stopTimeoutMs ?? STOP_TIMEOUT_MS
     const deadline = Date.now() + stopTimeoutMs
-    while (await pingDaemon(opts.pipe)) {
+    while (await pingDaemon(opts.pipe, opts.home)) {
       if (Date.now() > deadline) throw new Error(`o tetherd (pid ${previous.pid}) não encerrou em ${stopTimeoutMs / 1000} s`)
       await sleep(150)
     }

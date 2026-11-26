@@ -103,7 +103,7 @@ class Rig {
     this.seen.add(this.client.hello.pid)
     await claim(this.client.hello.pid, { cmdIncludes: MAIN, what: 'tetherd (channels soul inside)' })
     this.client.on('data', (_slotId: string, data: string) => { this.screen.write(data); this.raw += data })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
   }
 
   async state(slotId: string): Promise<SlotState | undefined> {

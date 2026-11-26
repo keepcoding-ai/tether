@@ -88,6 +88,9 @@ export function checkHome(home: string, writable: boolean, error?: string): Chec
 }
 
 export function checkDaemon(pipe: string, hello: Hello | undefined): CheckResult {
+  if (hello?.legacy) {
+    return { level: 'AVISO', name: 'tetherd', detail: `em execução (pid ${hello.pid}, versão ${hello.version}, protocolo v${hello.v}) em ${pipe}, anterior à identificação dos clientes`, hint: 'reinicie o tetherd (tether daemon restart): este não confere quem se conecta a ele' }
+  }
   if (hello) return { level: 'OK', name: 'tetherd', detail: `em execução (pid ${hello.pid}, versão ${hello.version}, protocolo v${hello.v}) em ${pipe}` }
   return { level: 'AVISO', name: 'tetherd', detail: `não está em execução (${pipe})`, hint: 'sobe sozinho quando o app ou a CLI conectam; à mão: npm run daemon' }
 }
@@ -129,7 +132,7 @@ async function probeProcHost(pipe: string, home: string, daemonUp: boolean): Pro
   }
   if (daemonUp) {
     try {
-      const d = await DaemonClient.open(pipe, 'cli')
+      const d = await DaemonClient.open(pipe, 'cli', { home })
       try { facts.attention = ((await d.request({ t: 'proc-list' })).procs ?? []).filter((p) => p.attention).length } finally { d.close() }
     } catch { /* an older tetherd, or it went away */ }
   }
@@ -409,7 +412,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   results.push(probeHome(home))
 
   const pipe = pipePath(home, userInfo().username)
-  const hello = await pingDaemon(pipe)
+  const hello = await pingDaemon(pipe, home)
   results.push(checkDaemon(pipe, hello))
   results.push(checkProcHost(await probeProcHost(pipe, home, hello !== undefined)))
 

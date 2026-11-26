@@ -157,7 +157,7 @@ class Rig {
       this.screens.set(slotId, screen)
       screen.write(data)
     })
-    this.app = await DaemonClient.open(this.pipe, 'app')
+    this.app = await DaemonClient.open(this.pipe, 'app', { home: this.home })
   }
 
   async states(): Promise<SlotState[]> { return (await this.client.request({ t: 'list' })).slots ?? [] }

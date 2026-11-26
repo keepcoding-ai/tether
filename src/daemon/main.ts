@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     return process.exit(code)
   }
 
-  const running = await pingDaemon(pipe)
+  const running = await pingDaemon(pipe, home)
   if (running) {
     log(`another tetherd (pid ${running.pid}) is already running on ${pipe}; exiting`)
     process.stdout.write(`tetherd já está em execução (pid ${running.pid}) em ${pipe}\n`)
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     const err = e as NodeJS.ErrnoException
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
       // Lost the race for the pipe, or a stranger holds it. Either way this process has nothing to own.
-      const winner = await pingDaemon(pipe)
+      const winner = await pingDaemon(pipe, home)
       if (winner) {
         log(`pipe ${pipe} taken by tetherd pid ${winner.pid} (started at the same time); leaving`)
         process.stdout.write(`tetherd já está em execução (pid ${winner.pid}) em ${pipe}\n`)
