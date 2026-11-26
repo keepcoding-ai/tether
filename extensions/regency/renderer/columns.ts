@@ -1,5 +1,5 @@
 // The Regency's columns drawn from the model: "Esperam você" and "Conversas" on the left, the faces of "Neste canal" and the
-// tree "Tether" on the right, with the reserved places "Fechadas" and "Sistema". Each paint replaces its host's children;
+// tree "Tether" on the right, with "Fechadas" at its foot ("Sistema" is the pane's own: system-view.ts). Each paint replaces its host's children;
 // rows carry `data-target` (`<kind>:<id>`) and the pane handles the clicks and keys in one place (pane.ts).
 import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import { identityMark, identityOf, identityView, type IdentityInput } from '../../../app/renderer/agent-identity.ts'
@@ -451,17 +451,4 @@ function attnDot(): HTMLElement {
   const d = el('span', 'rg-attn')
   d.title = 'Alguém nesta mesa espera você'
   return d
-}
-
-/** "Sistema": its place, shown and off (it comes in a later slice). */
-export function paintReserved(host: HTMLElement): void {
-  const place = (iconName: string, label: string, place: string): HTMLElement => {
-    const b = el('div', 'rg-reserved-row')
-    b.dataset.place = place
-    b.setAttribute('aria-disabled', 'true')
-    b.title = `${label}: em breve`
-    b.append(glyph(iconName, label), el('span', '', label))
-    return b
-  }
-  host.replaceChildren(place('gear-six', 'Sistema', 'system'))
 }

@@ -68,6 +68,8 @@ export interface CreateFixed {
   /** "Dar uma mesa nova": the agent (its pane id) and the name to show. */
   forAgent?: string
   forName?: string
+  /** "Agente aqui…" / "Terminal aqui…" of a project: the working folder comes filled (the person may still change it). */
+  cwd?: string
 }
 
 /** What the rules may look at to refuse: the tree of desks and the open channels. All optional. */
@@ -97,6 +99,7 @@ export function startCreate(fixed: CreateFixed = {}, what?: CreateWhat): CreateS
   if (fixed.forAgent !== undefined) { draft.what = 'desk-for'; draft.giveDesk = true; draft.movePane = false }
   else if (what !== undefined) draft.what = what
   if (fixed.deskId !== undefined) draft.deskId = fixed.deskId
+  if (fixed.cwd !== undefined && fixed.cwd !== '') draft.cwd = fixed.cwd
   return { draft, fixed, step: stepsOf(draft, fixed)[0] ?? 'what' }
 }
 

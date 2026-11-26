@@ -14,13 +14,16 @@ import { CLOSED_ID, TREE_FILTERS, modelSignature } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import type { CreateFixed } from '../create-rules.ts'
 import {
-  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setFilter, setNarrowTab, setView, tierOf, toggleCollapsed,
-  toggleMembers, toggleMode, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
+  DEFAULT_LAYOUT, backToTether, layoutParams, openSystem, openingTab, readLayout, rightColumnOf, selectChannel, setFilter, setNarrowTab,
+  setSystemSection, setView, systemSectionOf, tierOf, toggleCollapsed, toggleMembers, toggleMode, type NarrowTab, type RegencyLayout,
+  type RegencyMode, type RegencyView,
 } from './layout-rules.ts'
 import {
-  el, glyph, paintConversations, paintFaces, paintReserved, paintTree, paintWaiting, targetOf, type ColumnsContext,
+  el, glyph, paintConversations, paintFaces, paintTree, paintWaiting, targetOf, type ColumnsContext,
 } from './columns.ts'
 import { flatRows, paneRowKey, treeKeyStep, type FlatRow } from './tree-keys.ts'
+import { SystemView, type SystemViewHost } from './system-view.ts'
+import type { SystemSection } from '../system-rules.ts'
 
 /** What the tree is narrowed by: the folds, the state filter and the search. */
 export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; query: string }
@@ -75,7 +78,11 @@ export interface RegencyHost {
    * when the card closes with nothing made.
    */
   create(fixed: CreateFixed, restore: () => void): void
+  /** "Sistema": its model and its acts. */
+  system: SystemViewHost
 }
+
+const SYSTEM_TIP = 'Sistema: processos, ronda, perfis, projetos e ajustes'
 
 /**
  * "Fechadas" starts folded, but the model folds by what `collapsed` holds: the layout keeps the opposite for it (this id in
@@ -125,6 +132,15 @@ export class RegencyPane implements IContentRenderer {
   private readonly membersHost = el('div', 'rg-members-host')
   private readonly treeHost = el('div', 'rg-tree')
   private readonly reservedHost = el('div', 'rg-reserved')
+  /** "Sistema" at the column's foot (it swaps the right column), with the red dot of a process that fell. */
+  private readonly sysBtn = el('button', 'rg-sys-open')
+  private readonly sysDot = el('span', 'rg-sys-dot')
+  /** The same on the immersion's right edge. */
+  private readonly edgeSys = el('button', 'rg-edge-b rg-edge-sys')
+  private readonly edgeSysDot = el('span', 'rg-sys-dot')
+  private readonly sysView: SystemView
+  /** The Regency is the visible desk. */
+  private onScreen = false
   private readonly left = el('aside', 'rg-col rg-left')
   private readonly right = el('aside', 'rg-col rg-right')
   /** Immersion: the thin edges that stand for the side columns. */
@@ -177,6 +193,10 @@ export class RegencyPane implements IContentRenderer {
     this.host = host
     this.element = el('div', 'rg')
     this.element.dataset.tier = 'desktop'
+    this.sysView = new SystemView(host.system, {
+      back: () => this.closeSystem(true),
+      select: section => this.setSystemSection(section),
+    })
   }
 
   get id(): string | undefined { return this.api?.id }
@@ -210,11 +230,19 @@ export class RegencyPane implements IContentRenderer {
     this.buildTools()
     this.treeHost.setAttribute('role', 'tree')
     this.treeHost.setAttribute('aria-label', 'Tether: mesas e guias')
-    this.right.append(this.members, this.treeHd, this.tools, this.treeHost, this.reservedHost)
+    this.right.append(this.members, this.treeHd, this.tools, this.treeHost, this.reservedHost, this.sysView.element)
     this.buildEdges()
     this.buildTabBar()
     this.element.append(this.left, this.edgeLeft, this.center, this.right, this.edgeRight, this.tabBar)
-    paintReserved(this.reservedHost)
+    this.sysBtn.type = 'button'
+    this.sysBtn.dataset.action = 'system'
+    this.sysBtn.dataset.place = 'system'
+    this.sysDot.hidden = true
+    const gear = glyph('gear-six', 'Sistema')
+    gear.setAttribute('aria-hidden', 'true')
+    this.sysBtn.append(gear, el('span', 'rg-sys-open-t', 'Sistema'), this.sysDot)
+    this.reservedHost.append(this.sysBtn)
+    this.paintColumn()
     this.element.addEventListener('click', ev => this.onClick(ev))
     this.element.addEventListener('keydown', ev => this.onKey(ev))
     this.element.addEventListener('dblclick', ev => this.onDoubleClick(ev))
@@ -303,6 +331,7 @@ export class RegencyPane implements IContentRenderer {
   paint(): void {
     if (this.disposed || !this.api) return
     this.syncCenter()
+    this.paintSystem()
     const { model, counts } = this.host.view({ collapsed: this.modelFolds, filter: this.state.filter, query: this.query })
     const ctx = this.context()
     if (!this.opened && !ctx.loading) {
@@ -404,6 +433,66 @@ export class RegencyPane implements IContentRenderer {
    */
   setShown(on: boolean): void {
     this.element.classList.toggle('off', !on)
+    this.onScreen = on
+    this.sysView.setShown(on && rightColumnOf(this.state) === 'system')
+  }
+
+  // ---------------------------------------------------------------- "Sistema"
+
+  /** "Sistema" takes the right column (on `section`, or the one kept); the conversation in the centre does not move. */
+  openSystemColumn(section?: SystemSection): void {
+    const had = this.right.contains(document.activeElement)
+    this.setLayout(openSystem(this.state, section))
+    this.paintColumn()
+    this.paintSystem()
+    if (had || document.activeElement === document.body) this.sysView.focusTab()
+  }
+
+  /** The open section of "Sistema" (kept in the layout). */
+  setSystemSection(section: SystemSection): void {
+    if (rightColumnOf(this.state) === 'system' && systemSectionOf(this.state) === section) return
+    this.setLayout(setSystemSection(this.state, section))
+    this.paintColumn()
+    this.paintSystem()
+  }
+
+  /** "voltar ao tether": the tree comes back; the section stays kept. `focus`: the keyboard goes to the foot's "Sistema". */
+  closeSystem(focus = false): void {
+    if (rightColumnOf(this.state) !== 'system') return
+    this.setLayout(backToTether(this.state))
+    this.paintColumn()
+    if (focus) this.sysBtn.focus({ preventScroll: true })
+  }
+
+  /** The right column shows the tree or "Sistema"; the one clock of "Sistema" runs only while it is on screen. */
+  private paintColumn(): void {
+    const sys = rightColumnOf(this.state) === 'system'
+    this.right.dataset.column = sys ? 'system' : 'tether'
+    this.right.setAttribute('aria-label', sys ? 'Sistema' : 'Neste canal e o Tether')
+    this.sysView.setShown(sys && this.onScreen)
+  }
+
+  /** The red dot on the foot and on the edge, and the open section when "Sistema" shows. */
+  private paintSystem(): void {
+    const model = this.host.system.model()
+    const dot = model.dot
+    const tip = dot.show ? `Sistema: ${dot.tooltip}` : SYSTEM_TIP
+    for (const [b, d] of [[this.sysBtn, this.sysDot], [this.edgeSys, this.edgeSysDot]] as const) {
+      d.hidden = !dot.show
+      d.title = dot.tooltip
+      if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip) }
+    }
+    if (rightColumnOf(this.state) === 'system') this.sysView.paint(systemSectionOf(this.state), model)
+  }
+
+  /** What the E2E reads of "Sistema": the column, the section, the dots and the rows as drawn. */
+  systemSnapshot(): { column: string; section: SystemSection; dot: { foot: boolean; edge: boolean; tip: string }; view: ReturnType<SystemView['snapshot']> } {
+    return {
+      column: rightColumnOf(this.state),
+      section: systemSectionOf(this.state),
+      dot: { foot: !this.sysDot.hidden, edge: !this.edgeSysDot.hidden, tip: this.sysBtn.title },
+      view: this.sysView.snapshot(),
+    }
   }
 
   /** Chooses the channel in the centre (undefined clears it). */
@@ -503,6 +592,7 @@ export class RegencyPane implements IContentRenderer {
     this.disposed = true
     this.ro?.disconnect()
     this.menuWatch?.disconnect()
+    this.sysView.dispose()
     this.dropEmbed()
     this.host.gone(this)
   }
@@ -527,6 +617,16 @@ export class RegencyPane implements IContentRenderer {
       return b
     }
     this.edgeRight.append(to('manage-members', 'robot', 'Neste canal'), to('manage-tether', 'tree-view', 'Tether'))
+    // "Sistema" on the edge, with the red dot of a process that fell.
+    this.edgeSys.type = 'button'
+    this.edgeSys.dataset.action = 'manage-system'
+    this.edgeSys.title = SYSTEM_TIP
+    this.edgeSys.setAttribute('aria-label', SYSTEM_TIP)
+    const gear = glyph('gear-six', 'Sistema')
+    gear.setAttribute('aria-hidden', 'true')
+    this.edgeSysDot.hidden = true
+    this.edgeSys.append(gear, this.edgeSysDot)
+    this.edgeRight.append(this.edgeSys)
   }
 
   /** The tree's tools: the view's switch (in the heading), the search field and the state chips. */
@@ -908,8 +1008,12 @@ export class RegencyPane implements IContentRenderer {
     if (action === 'new') { this.openCreate({}); return }
     if (action.startsWith('tab:')) { this.setTab(action.slice(4) as NarrowTab); return }
     if (action === 'mode') { this.toggleMode(); return }
+    if (action === 'system') { this.openSystemColumn(); return }
+    if (action === 'manage-system') { this.setMode('manage'); this.openSystemColumn(); this.sysView.focusTab(); return }
     if (action === 'manage' || action === 'manage-members' || action === 'manage-tether') {
       this.setMode('manage')
+      // The edge's "Neste canal" and "Tether" are the tree's column: "Sistema" gives it back.
+      if (action !== 'manage') this.closeSystem()
       if (action === 'manage-members' && !this.state.membersOpen && this.embed) { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
       if (action === 'manage-tether') this.treeHost.querySelector<HTMLElement>('[data-key][tabindex="0"]')?.focus({ preventScroll: true })
       return

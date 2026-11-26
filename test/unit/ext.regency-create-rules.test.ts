@@ -45,6 +45,13 @@ describe('steps', () => {
     assert.equal(g.draft.giveDesk, true)
     assert.equal(g.draft.movePane, false)
   })
+  test('a project\'s "Agente aqui…" fills the folder, which survives choosing the tile; "where" stays', () => {
+    const s = startCreate({ cwd: 'C:/obra' }, 'terminal')
+    assert.equal(s.draft.cwd, 'C:/obra')
+    assert.deepEqual(stepsOf(s.draft, s.fixed), ['what', 'where', 'details'])
+    assert.equal(patchDraft(s, { what: 'agent', kind: 'claude' }).draft.cwd, 'C:/obra')
+    assert.equal(startCreate({ cwd: '' }).draft.cwd, undefined)
+  })
   test('advance walks the steps and marks ready on the last; back walks back and closes at the first', () => {
     let s = startCreate()
     s = patchDraft(s, { what: 'terminal' })

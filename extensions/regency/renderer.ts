@@ -10,6 +10,11 @@ import { WEB_PANE_PREFIX } from '../browser/manifest.ts'
 import { browserEmbeds } from '../browser/renderer/embed.ts'
 import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
+import { processEmbeds } from '../processes/embed.ts'
+import { STATUS_ID as SYNC_STATUS } from '../sync/manifest.ts'
+import { STATUS_ID as BRIDGE_STATUS } from '../web-bridge/manifest.ts'
+import { systemModelOf, type SystemInput, type SystemModel } from './system-rules.ts'
+import type { SystemViewHost } from './renderer/system-view.ts'
 import { planOf, runPlan, type CreateDraft, type CreateFixed, type CreateState } from './create-rules.ts'
 import { createRunner, type CreateSeams } from './renderer/create-run.ts'
 import { CreateCard, type CreateRunEnd, type CreateViewHost } from './renderer/create-view.ts'
@@ -26,7 +31,7 @@ import { targetOf } from './renderer/columns.ts'
 export { manifest }
 
 /** Pane types with no slot that the quick view already shows (the peek card's system screens). */
-const SCREEN_TYPES = new Set(['settings', 'keybindings'])
+const SCREEN_TYPES = new Set(['settings', 'keybindings', 'extensions'])
 /** The pill menu's own row that puts a desk to sleep (main.ts, deskMenuEntries): the moon button runs it. */
 const HIBERNATE_DESK_LABEL = 'Hibernar mesa'
 /** The menu of an ended session's row, and the picker's value for the desk that does not exist yet. */
@@ -457,13 +462,82 @@ export function activate(ui: TetherUi): Disposable[] {
   const card = new CreateCard(cardHost)
 
   /** Opens the card; an open quick view closes first (one card over the conversation at a time). */
-  const openCreate = (fixed: CreateFixed, restore: () => void): void => {
-    if (peekOpen()) { void ui.commands.run('peek.close').then(() => card.open(fixed, restore)); return }
-    card.open(fixed, restore)
+  const openCreate = (fixed: CreateFixed, restore: () => void, what?: 'agent' | 'terminal'): void => {
+    if (peekOpen()) { void ui.commands.run('peek.close').then(() => card.open(fixed, restore, what)); return }
+    card.open(fixed, restore, what)
+  }
+
+  // ---------------------------------------------------------------- "Sistema"
+
+  /** The sources of "Sistema" as the pure model's input: no value of an env variable is read (profiles give names only). */
+  const systemInput = (): SystemInput => {
+    const status = (id: string): { state?: string; badge?: string } | undefined => {
+      const s = ui.status.items().find(x => x.id === id)
+      return s ? { state: s.title, ...(s.badge !== undefined ? { badge: String(s.badge) } : {}) } : undefined
+    }
+    const bridge = status(BRIDGE_STATUS)
+    const sync = status(SYNC_STATUS)
+    return {
+      now: Date.now(),
+      procs: processEmbeds.list(),
+      agents: ui.agents.list().filter(a => a.placed !== false).map(a => ({
+        id: a.paneId, name: a.name, kind: a.kind, alive: a.alive,
+        ...(a.profile ? { profileId: a.profile.id } : {}), ...(a.ronda ? { ronda: a.ronda } : {}),
+      })),
+      profiles: ui.profiles.list().map(p => ({
+        id: p.id, name: p.name, agent: p.agent, env: Object.fromEntries(p.envNames.map(n => [n, ''])), ...(p.default ? { default: true } : {}),
+      })),
+      folders: ui.workspace.folders(),
+      status: { ...(bridge ? { bridge } : {}), ...(sync ? { sync } : {}) },
+    }
+  }
+  const systemModel = (): SystemModel => systemModelOf(systemInput())
+
+  /** "Abrir o registro numa mesa…": the awake desks; the record is born there and the person stays. */
+  const logOnDesk = async (name: string) => {
+    const desks = ui.desks.list().filter(d => !d.asleep)
+    const deskId = await ui.pick.list<string>({
+      title: `Abrir o registro de ${name} numa mesa`,
+      placeholder: 'Nome da mesa',
+      items: desks.map(d => ({ value: d.id, label: d.name, icon: 'cards', detail: `${d.panes.length} guia${d.panes.length === 1 ? '' : 's'}` })),
+      emptyText: 'Nenhuma mesa acordada',
+    })
+    return deskId ? processEmbeds.output(name, { deskId }) : undefined
+  }
+
+  const system: SystemViewHost = {
+    model: systemModel,
+    procsActive: () => processEmbeds.active,
+    identity: paneId => {
+      const a = ui.agents.get(paneId)
+      return a && a.placed !== false ? { kind: a.kind, name: a.name, seed: paneId, emblem: ui.panes.personEmblem(paneId) } : undefined
+    },
+    proc: (act, name, opts) => {
+      switch (act) {
+        case 'start': return processEmbeds.start(name)
+        case 'stop': return processEmbeds.stop(name, opts)
+        case 'restart': return processEmbeds.restart(name, opts)
+        case 'hold': return processEmbeds.hold(name)
+        case 'release': return processEmbeds.release(name)
+      }
+    },
+    peekLog: name => processEmbeds.peekOutput(name),
+    logOnDesk,
+    seen: name => { void ui.procs.seen(name).catch(() => {}) },
+    setRonda: (id, change) => ui.agents.setRonda(id, change),
+    offRonda: (id, force) => ui.agents.offRonda(id, force ? { force: true } : undefined),
+    editProfile: (id, duplicate) => ui.profiles.edit(id, duplicate ? { duplicate: true } : undefined),
+    createHere: (what, cwd, restore) => openCreate({ cwd }, restore, what),
+    togglePin: path => ui.workspace.togglePin(path),
+    openScreen: type => { ui.panes.peekScreen(type) },
+    showStatus: id => ui.status.show(id === 'bridge' ? BRIDGE_STATUS : SYNC_STATUS),
+    menu: (x, y, entries) => ui.menus.context(x, y, entries),
+    tick: () => schedule(),
   }
 
   const host: RegencyHost = {
     create: openCreate,
+    system,
     view: viewOf,
     quickView: openQuickView,
     toggleQuick,
@@ -536,6 +610,17 @@ export function activate(ui: TetherUi): Disposable[] {
   })
   /** The last plan run: its acts, how it ended and what it made. */
   ui.test.expose('lastRun', () => lastRun)
+  /** "Sistema" as drawn: the column, the section, the red dots and the rows. */
+  ui.test.expose('system', () => livePane()?.systemSnapshot())
+  /** The pure model of "Sistema" now (what the screen paints). */
+  ui.test.expose('systemModel', () => systemModel())
+  /** Opens "Sistema" on a section (or the kept one), as the foot's button does; `false` goes back to the tree. */
+  ui.test.expose('openSystem', (section?: string | false): void => {
+    const p = livePane()
+    if (!p) return
+    if (section === false) p.closeSystem()
+    else p.openSystemColumn(section ? section as SystemModel['sections'][number]['id'] : undefined)
+  })
 
   schedule()
   return [
@@ -571,6 +656,11 @@ export function activate(ui: TetherUi): Disposable[] {
     ui.panes.onDidChangeMarks(schedule),
     ownerBoard.onDidChange(schedule),
     channelEmbeds.onDidChange(() => { heard = true; schedule() }),
+    // "Sistema" and its red dot follow the processes, the profiles, the projects and the top bar's icons.
+    processEmbeds.onDidChange(schedule),
+    ui.profiles.onDidChange(schedule),
+    ui.workspace.onDidChange(schedule),
+    ui.status.onDidChange(schedule),
     { dispose: () => { peekWatch.disconnect() } },
     { dispose: () => { if (frame) cancelAnimationFrame(frame); frame = 0 } },
   ]

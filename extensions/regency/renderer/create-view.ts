@@ -116,6 +116,8 @@ export class CreateCard {
     this.render()
     d.showModal()
     this.focusFirst()
+    // A project's "Agente aqui…" / "Terminal aqui…": the tile is taken at once (the profile picker for an agent), the folder stays.
+    if (fixed.cwd !== undefined && (what === 'agent' || what === 'terminal')) void this.pickTile(what)
   }
 
   /** Closes the card; the keyboard goes back to where it came from (`restore`). */
@@ -232,7 +234,9 @@ export class CreateCard {
     if (id === undefined || !this.dialog) { this.focusFirst(); return }
     const item = items.find(i => i.id === id)
     if (!item) return
-    this.patch({ what: 'agent', kind: item.engine as string, profileId: item.id, ...(item.folder ? { cwd: item.folder } : {}) })
+    // A folder the entry fixed (a project's "Agente aqui…") wins over the profile's own.
+    const folder = this.state.fixed.cwd === undefined ? item.folder : undefined
+    this.patch({ what: 'agent', kind: item.engine as string, profileId: item.id, ...(folder ? { cwd: folder } : {}) })
     await this.forward()
   }
 

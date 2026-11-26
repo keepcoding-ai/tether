@@ -358,8 +358,96 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-cr-told p { margin: 0; line-height: 1.45; }
 .rg-cr-told .rg-ic svg { width: 18px; height: 18px; }
 
-/* The reserved places: shown, off. */
-.rg-reserved { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr; gap: 3px; padding: 6px; border-top: 1px solid var(--border); background: var(--bg-2); flex: none; }
-.rg-reserved-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--fg-dim); opacity: .55; cursor: default; font-size: 12px; }
+/* The foot "Sistema": one click swaps the right column. The red dot (--err) is a process that fell; never the orange. */
+.rg-reserved { position: sticky; bottom: 0; margin-top: auto; display: grid; grid-template-columns: 1fr; gap: 3px; padding: 6px; border-top: 1px solid var(--border); background: var(--bg-2); flex: none; }
+.rg-sys-open { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.rg-sys-open:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-sys-open:focus-visible, .rg-sys-back:focus-visible, .rg-sys-tab:focus-visible, .rg-sys-ib:focus-visible, .rg-sys-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rg .rg-sys-open .rg-ic { color: inherit; }
+.rg .rg-sys-open .rg-ic svg { width: 14px; height: 14px; }
+.rg-sys-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--err); box-shadow: 0 0 0 2px var(--bg-2); }
+.rg-edge-sys { position: relative; }
+.rg-edge-sys .rg-sys-dot { position: absolute; top: 4px; right: 4px; }
+
+/* "Sistema" in the right column: the tree's parts step out, the view steps in. */
+.rg-right > .rg-sys { display: none; }
+.rg-right[data-column="system"] > :not(.rg-sys) { display: none !important; }
+.rg-right[data-column="system"] > .rg-sys { display: flex; }
+.rg-sys { flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.rg-sys-hd { display: flex; align-items: center; gap: 6px; padding: 8px 8px 4px; flex: none; }
+.rg-sys-back { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 12px; }
+.rg-sys-back:hover { background: var(--bg-hover); color: var(--fg); }
+.rg .rg-sys-back .rg-ic { color: inherit; }
+.rg-sys-t { font-size: 12.5px; padding-right: 6px; }
+.rg-sys-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 2px 6px 6px; border-bottom: 1px solid var(--border); flex: none; }
+.rg-sys-tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 5px 2px; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 10.5px; }
+.rg-sys-tab:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-sys-tab[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--fg); font-weight: 600; }
+.rg .rg-sys-tab .rg-ic { color: inherit; }
+.rg .rg-sys-tab .rg-ic svg { width: 15px; height: 15px; }
+.rg-sys-tab-t { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-sys-tab .rg-sys-dot { position: absolute; top: 3px; right: calc(50% - 15px); }
+.rg-sys-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
+.rg-sys-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-dim); }
+.rg-sys-note { font-size: 10.5px; color: var(--fg-dim); opacity: .85; line-height: 1.4; }
+.rg-sys-empty { padding: 10px 12px; }
+
+/* A row: icon, name over its line of chips, the acts at the end (always shown: Sistema is a place to act). */
+.rg-sr { border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.rg-sr.busy { opacity: .7; }
+.rg-sr-h { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 8px; padding: 7px 8px 7px 10px; }
+.rg-sr.ronda .rg-sr-h { grid-template-columns: minmax(0, 1fr) auto; }
+.rg-sr.proc .rg-sr-h { cursor: pointer; }
+.rg-sr.proc .rg-sr-h:hover { background: var(--bg-hover); }
+.rg-sr-h > .rg-ic { margin-top: 2px; }
+.rg-sr-m { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rg-sr-n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.rg-sr-id { min-width: 0; }
+.rg-sr-l { display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 11px; color: var(--fg-dim); min-width: 0; }
+.rg-sr-c { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.rg-sr-c.st { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.rg-sr-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.rg-sr-c.ok { color: color-mix(in srgb, var(--ok) 80%, var(--fg)); }
+.rg-sr-c.warn { color: var(--warn); }
+.rg-sr-c.bad { color: var(--err); }
+.rg-sr-c.off { color: var(--fg-dim); }
+.rg-sr-c.def { font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); }
+.rg-sr-c.use { color: var(--fg); }
+.rg-sr-c.path { font-family: var(--mono, monospace); font-size: 10.5px; }
+.rg-sr-c.env { font-family: var(--mono, monospace); font-size: 10.5px; }
+.rg-sr-a { display: inline-flex; align-items: center; gap: 1px; }
+.rg-sys-ib { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); cursor: pointer; }
+.rg-sys-ib:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--fg); }
+.rg-sys-ib.danger:hover { color: var(--err); }
+.rg-sys-ib:disabled, .rg-sys-btn:disabled { opacity: .45; cursor: default; }
+.rg .rg-sys-ib .rg-ic, .rg .rg-sys-btn .rg-ic { color: inherit; }
+.rg .rg-sys-ib .rg-ic svg { width: 14px; height: 14px; }
+.rg-sys-btn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rg-sys-btn:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.rg-sys-btn.danger { border-color: color-mix(in srgb, var(--err) 55%, var(--border)); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.rg-sys-btn.danger:hover { background: color-mix(in srgb, var(--err) 20%, transparent); }
+
+/* A row's panel: a form, the in-use refusal, a question. */
+.rg-sr-x { display: flex; flex-direction: column; gap: 7px; margin: 0 8px 8px 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); font-size: 12px; }
+.rg-sr-x.inuse, .rg-sr-x.ask { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.rg-sr-x label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-dim); }
+.rg-sr-x input, .rg-sr-x select { height: 26px; padding: 0 7px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; font-size: 12px; }
+.rg-sr-x input:focus-visible, .rg-sr-x select:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.rg-sr-msg { margin: 0; line-height: 1.4; }
+.rg-sr-msg.strong { font-weight: 600; }
+.rg-sr-uses { margin: 0; padding-left: 16px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.45; }
+.rg-sr-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.rg-sr-reason { display: flex; flex-direction: column; gap: 6px; }
+.rg-sr-err { margin: 0; font-size: 11px; color: var(--err); }
+
+/* The phone: "Sistema" lives in "Tether"; every target is 44 px. */
+.rg[data-tier="mobile"] :is(.rg-sys-open, .rg-sys-back, .rg-sys-tab) { min-height: 44px; }
+.rg[data-tier="mobile"] .rg-sys-ib { width: 44px; height: 44px; }
+.rg[data-tier="mobile"] .rg-sys-btn { height: 44px; }
+.rg[data-tier="mobile"] .rg-sr-x :is(input, select) { height: 44px; font-size: 14px; }
+.rg[data-tier="mobile"] .rg-sr-h { grid-template-columns: auto minmax(0, 1fr); }
+.rg[data-tier="mobile"] .rg-sr.ronda .rg-sr-h { grid-template-columns: minmax(0, 1fr); }
+.rg[data-tier="mobile"] .rg-sr-a { grid-column: 1 / -1; justify-self: end; flex-wrap: wrap; }
 .tether-tab.regency .rg-pin { color: var(--fg-dim); }
 .tether-tab.regency .rg-pin svg { width: 12px; height: 12px; }
