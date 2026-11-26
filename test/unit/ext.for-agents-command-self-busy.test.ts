@@ -29,7 +29,7 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
   /** The claims and releases, in the order they happened, with the deliveries to the owner among them. */
   const order: string[] = []
   let proven = true
-  let slot: { turn?: 'busy' | 'idle'; slotId: string; kind: string; status: string }
+  let slot: { turn?: 'busy' | 'idle'; delegating?: true; slotId: string; kind: string; status: string }
   let reg: { dispose(): void }
   let fc: ReturnType<typeof fakeClock>
   let pending: PendingCommands
@@ -169,12 +169,48 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
     assert.deepEqual(order, [`claim:${PANE}`, 'deliver'], 'the claim stays for clear')
   })
 
-  test('real AttentionState: done with a background subagent keeps the turn busy', () => {
+  test('real AttentionState: done with a background subagent keeps the turn busy and says the main turn ended', () => {
     const a = new AttentionState(attentionOptions('claude'))
     a.hook('start')
     assert.equal(a.turn, 'busy')
+    assert.equal(a.delegating, false, 'the main turn is running')
     a.setBackground(1, T0)
+    assert.equal(a.delegating, false, 'a subagent started inside the main turn')
     a.hook('done')
     assert.equal(a.turn, 'busy', 'the agent finished its turn, the pane stays busy for the subagent')
+    assert.equal(a.delegating, true)
+  })
+
+  test('delegating slot: a command of oneself goes at the next flush; the subagents are not a reason to wait', async () => {
+    slot.delegating = true
+    pending.add(PANE, PANE, 'compact', undefined)
+    await pending.flush()
+    assert.deepEqual(events, ['type:compact'])
+    assert.equal(pending.count(PANE), 0)
+    assert.equal(delivered.length, 0, 'nothing was dropped')
+  })
+
+  test('delegating slot: a command of another owner still waits, held by the subagents', async () => {
+    slot.delegating = true
+    pending.add(PANE, 'other', 'compact', undefined)
+    await pending.flush()
+    assert.deepEqual(events, [])
+    assert.deepEqual(pending.held(PANE).map((h) => h.heldBy), ['subagentes em background'])
+  })
+
+  test('busy without delegating: still held, and dropped after 5 min with the notice', async () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    for (let i = 0; i < 6; i++) { fc.advance(MIN); await pending.flush() }
+    assert.deepEqual(events, [])
+    assert.equal((delivered[0] as { msg: { body: string } }).msg.body, 'comando /compact: não rodou; a guia não ficou livre em 5 min (turno busy)')
+  })
+
+  test('delegating slot: the other conditions still hold (quiet delivery)', async () => {
+    slot.delegating = true
+    pending.add(PANE, PANE, 'compact', undefined)
+    ;(pending as unknown as { deps: { api: { delivery: { quiet: () => boolean } } } }).deps.api.delivery.quiet = () => false
+    await pending.flush()
+    assert.deepEqual(events, [])
+    assert.deepEqual(pending.held(PANE).map((h) => h.heldBy), ['avisos do tether na caixa'])
   })
 })
