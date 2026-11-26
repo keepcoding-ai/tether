@@ -247,8 +247,8 @@ export function activate(ui: TetherUi): Disposable[] {
       const off = p?.asleep ? 'dormindo' : p?.exited ? 'encerrado' : undefined
       extra.push(
         off
-          ? { icon: 'chats', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
-          : { icon: 'chats', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
+          ? { icon: 'chats-circle', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
+          : { icon: 'chats-circle', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
         { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
       )
     }
@@ -308,8 +308,10 @@ export function activate(ui: TetherUi): Disposable[] {
     const row = [...document.querySelectorAll<HTMLElement>('.rg-tree [data-key]')].find(r => r.dataset.key === key)
     const target = row ? targetOf(row.dataset.target) : undefined
     if (!row || !target) return false
+    const pane = livePane()
+    if (!pane) return false
     row.focus({ preventScroll: true })
-    openRowMenu(target, row)
+    pane.openMenu(target, row)
     return true
   })
   ui.test.expose('renaming', (): string | undefined => livePane()?.renamingKey)

@@ -128,6 +128,8 @@ export class RegencyPane implements IContentRenderer {
   private renaming: string | undefined
   /** Ends the rename in course (`keep`: the typed name is kept). */
   private endRename: ((keep: boolean) => void) | undefined
+  /** Watches the row menu that is up, to give the keyboard back to its row (openMenu). */
+  private menuWatch: MutationObserver | undefined
   private waitingCount = 0
   /** The phone's opening tab was chosen (once, when the first model with the channels' list came). */
   private opened = false
@@ -184,7 +186,7 @@ export class RegencyPane implements IContentRenderer {
       if (!r || !target) return
       ev.preventDefault()
       this.focusRow(r.dataset.key!)
-      this.host.rowMenu(target, r, { x: ev.clientX, y: ev.clientY })
+      this.openMenu(target, r, { x: ev.clientX, y: ev.clientY })
     })
     this.ro = new ResizeObserver(() => {
       const w = this.element.clientWidth
@@ -385,6 +387,7 @@ export class RegencyPane implements IContentRenderer {
   dispose(): void {
     this.disposed = true
     this.ro?.disconnect()
+    this.menuWatch?.disconnect()
     this.dropEmbed()
     this.host.gone(this)
   }
@@ -494,6 +497,39 @@ export class RegencyPane implements IContentRenderer {
     if (!r) return
     r.focus({ preventScroll: true })
     r.scrollIntoView({ block: 'nearest' })
+  }
+
+  /**
+   * Opens a row's menu (host.rowMenu) and watches it: the menu gives the keyboard back to the row it was opened on, but a
+   * repaint by an event may have replaced that row meanwhile. Once no menu is up, a keyboard left on the page's body (and
+   * only then: nothing else is taken) goes to the row by its key, or to the row now at its place.
+   */
+  openMenu(target: Target, row: HTMLElement, at?: { x: number; y: number }): void {
+    const key = row.dataset.key
+    this.host.rowMenu(target, row, at)
+    this.menuWatch?.disconnect()
+    this.menuWatch = undefined
+    if (!key || !document.getElementById('ctx-menu')) return
+    const index = this.rows.findIndex(r => r.key === key)
+    // After the picked row ran (and the core gave the keyboard back where it could) and after the repaint it caused. A row
+    // that asked in a dialog ("Fechar guia", "Mover…") is checked again when its dialog closes.
+    const settle = (): void => {
+      requestAnimationFrame(() => {
+        if (this.disposed || !this.host.visible()) return
+        const active = document.activeElement
+        const dialog = active instanceof HTMLElement ? active.closest('dialog') : null
+        if (dialog?.open) { dialog.addEventListener('close', settle, { once: true }); return }
+        if (active === document.body) this.focusRowNear(key, index)
+      })
+    }
+    const watch = new MutationObserver(() => {
+      if (document.getElementById('ctx-menu')) return
+      watch.disconnect()
+      if (this.menuWatch === watch) this.menuWatch = undefined
+      settle()
+    })
+    watch.observe(document.body, { childList: true })
+    this.menuWatch = watch
   }
 
   /** After a gesture of the person on a row: the keyboard back to it, or to the row now at its place when it went. */
@@ -698,7 +734,7 @@ export class RegencyPane implements IContentRenderer {
       case 'toggle': this.focusKey = step.key; this.fold(step.foldId, step.open); break
       case 'quick': this.host.quickView(step.target); break
       case 'go': this.host.go(step.target); break
-      case 'menu': this.host.rowMenu(step.target, row); break
+      case 'menu': this.openMenu(step.target, row); break
       case 'clear-search': this.setQuery(''); break
       case 'clear-filter': this.setFilter('all'); break
     }
@@ -729,7 +765,7 @@ export class RegencyPane implements IContentRenderer {
     this.focusRow(row.dataset.key!)
     if (action === 'row-menu') {
       const r = button.getBoundingClientRect()
-      this.host.rowMenu(target, row, { x: Math.round(r.left), y: Math.round(r.bottom + 2) })
+      this.openMenu(target, row, { x: Math.round(r.left), y: Math.round(r.bottom + 2) })
     } else if (action === 'row-talk') this.host.talk(target)
     else if ((action === 'row-sleep' || action === 'row-wake') && target.kind === 'desk') this.host.sleepDesk(target.id, action === 'row-wake')
   }

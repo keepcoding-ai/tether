@@ -315,8 +315,8 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   if ('deskName' in p) r.append(deskBadge(p.deskName, p.deskColor))
   else if (p.ownerBadge) r.append(ownerSeal(p.ownerBadge, 'da guia'))
   if (group?.inDeskOf) {
-    // Short on the line (the crown says "owner"), whole in the tooltip.
-    const seal = ownerSeal(`de ${group.inDeskOf}`, 'da mesa')
+    // Short on the line, as the desk row draws its owner (the crown says "owner"), whole in the tooltip.
+    const seal = ownerSeal(group.inDeskOf, 'da mesa')
     seal.title = `Esta guia está numa mesa de ${group.inDeskOf}`
     seal.setAttribute('aria-label', seal.title)
     r.append(seal)
@@ -330,7 +330,7 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   }
   // "Falar com" only reaches a live agent: a sleeping or ended one would be brought forward instead of peeked.
   const name = p.identity?.name ?? p.title
-  const talk: RowAct[] = p.target.kind === 'agent' && !p.asleep && !p.exited ? [{ action: 'row-talk', icon: 'chats', tip: `Falar com ${name}` }] : []
+  const talk: RowAct[] = p.target.kind === 'agent' && !p.asleep && !p.exited ? [{ action: 'row-talk', icon: 'chats-circle', tip: `Falar com ${name}` }] : []
   r.append(acts([...talk, MENU_ACT]))
   return r
 }
