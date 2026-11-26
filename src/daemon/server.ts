@@ -695,6 +695,7 @@ class DaemonImpl implements Daemon {
       s.turn = 'busy'
       if (slot.attention.busySince) s.busySince = slot.attention.busySince
       if (slot.attention.background > 0) s.background = slot.attention.background
+      if (slot.attention.delegating) s.delegating = true
     }
     else {
       const idleSince = slot.attention.idleSince ?? slot.spawnedAt ?? this.lastEventTs(slot)

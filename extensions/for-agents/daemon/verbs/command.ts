@@ -112,7 +112,10 @@ export class PendingCommands {
           await this.deliver(deps, next.owner, `comando /${next.name}: não rodou; a guia não ficou livre em 5 min${why ? ` (${why})` : ''}`)
           continue
         }
-        next.heldBy = slot.turn === 'busy' ? 'turno busy'
+        // A command of oneself may go while only background subagents keep the turn busy: the main turn is over.
+        const delegating = slot.turn === 'busy' && slot.delegating === true
+        const busy = slot.turn === 'busy' && !(delegating && next.owner === paneId)
+        next.heldBy = busy ? (delegating ? 'subagentes em background' : 'turno busy')
           : next.retryAt !== undefined && this.clock.now() < next.retryAt ? 'nova tentativa (a sonda não viu o comando)'
             : deps.gate.check(paneId, next.owner) !== undefined ? 'pessoa na guia'
               : !deps.api.delivery.quiet(paneId) ? 'avisos do tether na caixa' : undefined

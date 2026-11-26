@@ -68,7 +68,13 @@ export class AttentionState {
   /** Background subagents still running (Claude: marker files its Subagent hooks keep). The turn stays busy while any runs. */
   background = 0
   /** The main turn ended (Stop) while subagents ran: the turn is kept busy for them, and the agent wakes when they end. */
-  private delegating = false
+  private mainEnded = false
+  /**
+   * The main turn is over and background subagents still run: `turn` stays 'busy' for them, but the agent itself is not
+   * working (a command typed now, like /compact, runs and the subagents survive). False as soon as a turn starts, and once
+   * the last subagent ends (the agent is then waking: the turn stays busy until its Stop or `wakeDueAt`).
+   */
+  get delegating(): boolean { return this.mainEnded && this.background > 0 }
   /** ms epoch when the last subagent ended while delegating: the wake fallback runs from here. */
   private wakeFrom: number | undefined = undefined
 
@@ -83,10 +89,10 @@ export class AttentionState {
     // A softer wait (idle prompt, bell) never downgrades a request still pending.
     if (kind === 'waiting' && this.pending && !pending) return false
     // A new turn voids the previous 'done' / 'waiting': the agent is working again.
-    if (kind === 'start' || kind === 'done') { this.delegating = false; this.wakeFrom = undefined }
+    if (kind === 'start' || kind === 'done') { this.mainEnded = false; this.wakeFrom = undefined }
     if (kind === 'start') { const t = this.setTurn('busy'); return this.set(undefined) || t }
     // The turn ended but a background subagent still runs: the agent is waiting for it, not stopped.
-    if (kind === 'done' && this.background > 0) { this.delegating = true; return this.setTurn('busy') }
+    if (kind === 'done' && this.background > 0) { this.mainEnded = true; return this.setTurn('busy') }
     const t = kind === 'done' ? this.setTurn('idle') : false // 'waiting' keeps the turn busy
     const before = { value: this.value, pending: this.pending }
     this.set(kind)
@@ -205,23 +211,23 @@ export class AttentionState {
     this.background = n
     if (n > 0) {
       this.wakeFrom = undefined
-      if (this.turn === 'idle') { this.delegating = true; return this.setTurn('busy') }
+      if (this.turn === 'idle') { this.mainEnded = true; return this.setTurn('busy') }
       return true
     }
-    if (this.delegating) this.wakeFrom = now
+    if (this.mainEnded) this.wakeFrom = now
     return true
   }
 
   /** When the daemon should call `wakeExpired` (ms epoch): the last subagent ended and the agent has not finished since. */
   wakeDueAt(): number | undefined {
-    return this.delegating && this.background === 0 && this.wakeFrom !== undefined ? this.wakeFrom + WAKE_MS : undefined
+    return this.mainEnded && this.background === 0 && this.wakeFrom !== undefined ? this.wakeFrom + WAKE_MS : undefined
   }
 
   /** The agent did not report a finished turn within WAKE_MS of its last subagent: the turn is over ('done'). */
   wakeExpired(now: number): boolean {
     const due = this.wakeDueAt()
     if (due === undefined || now < due) return false
-    this.delegating = false
+    this.mainEnded = false
     this.wakeFrom = undefined
     const t = this.setTurn('idle')
     return this.set('done') || t
@@ -230,7 +236,7 @@ export class AttentionState {
   /** A new launch or the process exit: nothing is pending and nothing is shown. */
   reset(): boolean {
     this.background = 0
-    this.delegating = false
+    this.mainEnded = false
     this.wakeFrom = undefined
     this.disarm()
     this.signaled = false
