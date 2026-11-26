@@ -73,6 +73,25 @@ describe('SoulEventsReader', () => {
     assert.equal(r.context()?.totalTokens, 500)
   })
 
+  test('an open-source context line fills the context but is not a turn; a turn line after it counts', () => {
+    const p = join(dir, 'e.jsonl')
+    const open = line({
+      ts: '2026-11-16T16:00:00.000Z', kind: 'context', source: 'open', sessionId: 'sess-o',
+      context: { model: 'm', totalTokens: 4000, maxTokens: 100000, percentage: 4, categories: [{ name: 'Messages', tokens: 4000 }], memoryFiles: [], skills: [], agents: [], mcpTools: [] },
+    })
+    writeFileSync(p, line({ ts: '2026-11-16T15:59:00.000Z', kind: 'start', source: 'resume', sessionId: 'sess-o' }) + open)
+    const r = new SoulEventsReader(p)
+    r.poll()
+    assert.equal(r.context()?.totalTokens, 4000)
+    assert.equal(r.totals().turns, 0)
+    assert.deepEqual(r.turns(), [])
+    appendFileSync(p, ctxLine('sess-o', 5000))
+    assert.equal(r.poll(), 1)
+    assert.equal(r.totals().turns, 1)
+    assert.equal(r.turns().length, 1)
+    assert.equal(r.context()?.totalTokens, 5000)
+  })
+
   test('a truncated file is read again from the start', () => {
     const p = join(dir, 'e.jsonl')
     copyFileSync(FIXTURE, p)
