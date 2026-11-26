@@ -43,9 +43,13 @@ import type { TerminalPanel } from './panel.ts'
 import type { LendRefusal } from './pane-loan-rules.ts'
 import {
   backButton, cardMutesChord, closeTip, dockedBox, lentNotice, paneCardFoot, paneCardHead, paneRefusalText, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton,
-  quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type PaneCardFacts, type PeekMenuItem, type PeekOpenButton, type PeekTop, type QuickEscPlace,
+  quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type Box, type PaneCardFacts, type PeekMenuItem, type PeekOpenButton, type PeekTop, type QuickEscPlace,
 } from './peek-rules.ts'
 import { lentNoticeElement, type ShellLoan } from './pane-shell.ts'
+import {
+  NO_OFFSET, clampOffset, dragAllowed, dragStarted, quickBox, quickEscAction, shownSize, sizeButton, toggledSize,
+  type Offset, type QuickAbilities, type QuickFrame, type QuickSize,
+} from './quick-card-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
 import { OPEN_ELSEWHERE_LABEL } from './sessions-rules.ts'
 
@@ -125,7 +129,12 @@ export interface PeekPaneOptions {
   over?: HTMLElement | undefined
   focus?: boolean | undefined
   from?: HTMLElement | undefined
+  /** Docked only: the area of "Ampliar" and of a drag, and what the host allows (quick-card-rules.ts). Without it the docked card neither grows nor moves. */
+  quick?: QuickFrame | undefined
 }
+
+const NO_ABILITIES: QuickAbilities = { expand: false, move: false }
+const DRAG_HINT = 'Arraste o cabeçalho para mover o cartão; duplo clique o devolve ao lugar'
 
 /** A slot shown: `lent` when the panel is the slot's tab's terminal, borrowed (else the card's own); `el` is what sits in the body. */
 interface SlotView { kind: 'slot'; slotId: string; panel: TerminalPanel; lent: boolean; el: HTMLElement }
@@ -203,6 +212,15 @@ export class PeekCard {
   private qvEmblemKey = ''
   private readonly qvState = make('span', 'peek-state')
   private readonly qvClose = iconButton('ib peek-close qv-close', 'x', 'Fechar o cartão')
+  /** "Ampliar" / "Reduzir" of the docked card (quick-card-rules.ts sizeButton); hidden where the tier has no large card. */
+  private readonly qvSize = iconButton('ib qv-size', 'arrows-out-simple', 'Ampliar')
+  /** The docked card's size and its displacement by a drag: neither outlives a close, a swap or a size change. */
+  private size: QuickSize = 'docked'
+  private offset: Offset = NO_OFFSET
+  /** A press on the header: a click until it travels DRAG_THRESHOLD px, a drag after. */
+  private drag: { id: number; x0: number; y0: number; from: Offset; moving: boolean } | undefined
+  /** The click that ends a drag is the drag's, not the pressed button's. */
+  private swallowClick = false
   private readonly qvFoot = make('footer', 'qv-foot')
   private readonly qvMenu = iconButton('ib qv-menu', 'dots-three', 'Ações desta guia')
   private readonly qvHint = make('span', 'qv-hint')
@@ -219,7 +237,7 @@ export class PeekCard {
   /** The element that had the keyboard when the card opened; it gets it back on close. */
   private returnTo: HTMLElement | undefined
   /** Docked: what the card sits over, and what follows its size. Undefined: modal. */
-  private dock: { over: HTMLElement; observer: ResizeObserver; onResize: () => void } | undefined
+  private dock: { over: HTMLElement; observer: ResizeObserver; onResize: () => void; frame: QuickFrame | undefined } | undefined
   /** The element a docked pane was asked from (the row): an Esc there closes the card. */
   private opener: HTMLElement | undefined
 
@@ -318,10 +336,32 @@ export class PeekCard {
     this.qvState.setAttribute('aria-live', 'polite')
     id.append(this.qvKind, this.qvMark, this.qvTitle, this.qvType, this.qvWhere, this.qvEmblems)
     this.qvClose.addEventListener('click', () => this.dismiss())
+    this.qvSize.hidden = true
+    this.qvSize.setAttribute('aria-pressed', 'false')
+    this.qvSize.addEventListener('click', () => this.setSize(toggledSize(this.size)))
     this.qvBand.hidden = true
     this.qvBand.setAttribute('role', 'status')
     this.qvBand.append(icon('moon'), this.qvBandText, this.qvWake)
-    this.qvHead.append(id, this.qvState, this.qvClose, this.qvBand)
+    this.qvHead.append(id, this.qvState, this.qvSize, this.qvClose, this.qvBand)
+    // Moving the docked card by its header (quick-card-rules.ts dragAllowed): a press stays a click on what it pressed until it
+    // travels a few px; then the header holds the pointer and the click that ends the drag is swallowed. A double click on the
+    // header (not on a button) puts the card back in its place.
+    this.qvHead.addEventListener('pointerdown', ev => this.dragDown(ev))
+    this.qvHead.addEventListener('pointermove', ev => this.dragMove(ev))
+    this.qvHead.addEventListener('pointerup', ev => this.dragEnd(ev))
+    this.qvHead.addEventListener('pointercancel', ev => this.dragEnd(ev))
+    this.qvHead.addEventListener('lostpointercapture', ev => this.dragEnd(ev))
+    this.qvHead.addEventListener('click', ev => {
+      if (!this.swallowClick) return
+      this.swallowClick = false
+      ev.preventDefault()
+      ev.stopPropagation()
+    }, true)
+    this.qvHead.addEventListener('dblclick', ev => {
+      if (!this.movable() || (ev.target instanceof Element && ev.target.closest('button'))) return
+      ev.preventDefault()
+      this.backHome()
+    })
     this.qvMenu.setAttribute('aria-haspopup', 'menu')
     this.qvMenu.addEventListener('click', () => {
       const cur = this.current
@@ -403,15 +443,18 @@ export class PeekCard {
     const opening = !this.current
     if (opening) {
       this.rememberReturn(from)
-      if (over) this.startDock(over)
+      if (over) this.startDock(over, opts.quick)
     } else {
       this.releaseAll(true)
+      if (this.dock) this.dock.frame = opts.quick
     }
     if (over) {
       // Docked, the row that asked last is where Esc closes and where the keyboard goes back (Space on another row swaps).
       this.opener = from ?? this.activeOutside()
       if (this.opener) this.returnTo = this.opener
     }
+    // Another pane in the card: it starts small and in its place (the size and a drag never carry over).
+    this.resetPlace()
     const holder = make('div', 'peek-pane')
     holder.dataset.pane = paneId
     this.body.replaceChildren(holder)
@@ -448,12 +491,12 @@ export class PeekCard {
     return a instanceof HTMLElement && a !== document.body && !this.root.contains(a) ? a : undefined
   }
 
-  private startDock(over: HTMLElement): void {
+  private startDock(over: HTMLElement, frame: QuickFrame | undefined): void {
     const onResize = (): void => this.placeDocked()
     const observer = new ResizeObserver(onResize)
     observer.observe(over)
     window.addEventListener('resize', onResize)
-    this.dock = { over, observer, onResize }
+    this.dock = { over, observer, onResize, frame }
     this.card.setAttribute('aria-modal', 'false')
   }
 
@@ -465,20 +508,146 @@ export class PeekCard {
     window.removeEventListener('resize', d.onResize)
     this.card.setAttribute('aria-modal', 'true')
     for (const p of ['left', 'top', 'width', 'height'] as const) this.card.style.removeProperty(p)
+    this.resetPlace()
+    this.paintSize(NO_ABILITIES)
+    delete this.root.dataset.size
   }
 
-  /** Puts the docked card at the top right of what it sits over (peek-rules.ts dockedBox); that hidden or gone, the card closes. */
+  /** The docked card back to small and to its place, with no drag in course. */
+  private resetPlace(): void {
+    this.size = 'docked'
+    this.offset = NO_OFFSET
+    this.endDrag()
+  }
+
+  /** What the docked card's host allows on its tier right now (nothing without a host frame). */
+  private abilities(): QuickAbilities {
+    return this.dock?.frame?.abilities() ?? NO_ABILITIES
+  }
+
+  /** The docked box over the conversation and the area the card lives in (the Regency; the conversation without a host frame). */
+  private geometry(): { docked: Box; area: Box } | undefined {
+    const d = this.dock
+    if (!d) return undefined
+    const r = d.over.getBoundingClientRect()
+    if (!d.over.isConnected || r.width === 0 || r.height === 0) return undefined
+    const box = (x: DOMRect): Box => ({ left: x.left, top: x.top, width: x.width, height: x.height })
+    const a = d.frame?.area.getBoundingClientRect()
+    return { docked: dockedBox(box(r)), area: a && a.width > 0 && a.height > 0 ? box(a) : box(r) }
+  }
+
+  /**
+   * Puts the docked card in its box: at the top right of what it sits over (peek-rules.ts dockedBox), moved by a drag, or
+   * large over the Regency (quick-card-rules.ts quickBox); that hidden or gone, the card closes.
+   */
   private placeDocked(): void {
     const d = this.dock
     if (!d || !this.current) return
-    const r = d.over.getBoundingClientRect()
-    if (!d.over.isConnected || r.width === 0 || r.height === 0) { this.close({ restoreFocus: false }); return }
-    const b = dockedBox({ left: r.left, top: r.top, width: r.width, height: r.height })
+    const g = this.geometry()
+    if (!g) { this.close({ restoreFocus: false }); return }
+    const a = this.abilities()
+    const size = shownSize(this.size, a)
+    if (size !== this.size) { this.size = size; this.offset = NO_OFFSET }
+    if (!a.move && !this.drag) this.offset = NO_OFFSET
+    const b = quickBox(this.size, g.docked, g.area, this.offset)
     const px = (n: number): string => `${n}px`
     if (this.card.style.left !== px(b.left)) this.card.style.left = px(b.left)
     if (this.card.style.top !== px(b.top)) this.card.style.top = px(b.top)
     if (this.card.style.width !== px(b.width)) this.card.style.width = px(b.width)
     if (this.card.style.height !== px(b.height)) this.card.style.height = px(b.height)
+    this.paintSize(a)
+  }
+
+  /** The header's "Ampliar"/"Reduzir" and the marks CSS reads (`#peek[data-size]`, the card's `data-movable`); writes only on a change. */
+  private paintSize(a: QuickAbilities): void {
+    const pane = this.current?.kind === 'pane' && this.dock !== undefined
+    this.qvSize.hidden = !(pane && a.expand)
+    const b = sizeButton(this.size)
+    if (this.qvSize.title !== b.title) {
+      this.qvSize.title = b.title
+      this.qvSize.setAttribute('aria-label', b.label)
+      this.qvSize.replaceChildren(icon(b.icon))
+    }
+    const pressed = String(this.size === 'large')
+    if (this.qvSize.getAttribute('aria-pressed') !== pressed) this.qvSize.setAttribute('aria-pressed', pressed)
+    if (this.dock && this.root.dataset.size !== this.size) this.root.dataset.size = this.size
+    const movable = String(pane && this.size === 'docked' && a.move)
+    if (this.card.dataset.movable !== movable) {
+      this.card.dataset.movable = movable
+      if (movable === 'true') { this.qvHead.title = DRAG_HINT; this.card.setAttribute('aria-description', DRAG_HINT) } else { this.qvHead.removeAttribute('title'); this.card.removeAttribute('aria-description') }
+    }
+  }
+
+  /** "Ampliar" / "Reduzir": only the card's box changes (the pane's content stays where it is in the body); a drag is undone. */
+  private setSize(size: QuickSize): void {
+    if (!this.dock || this.current?.kind !== 'pane') return
+    this.size = shownSize(size, this.abilities())
+    this.offset = NO_OFFSET
+    this.endDrag()
+    this.placeDocked()
+  }
+
+  /** Esc where it closes the card (escClosesAt): the large docked card reduces, anything else closes (quick-card-rules.ts quickEscAction). */
+  escape(target: Node | null): void {
+    const at: QuickEscPlace = this.inContent(target) ? 'content'
+      : target && this.card.contains(target) ? 'chrome'
+      : target && this.opener && target === this.opener ? 'opener'
+      : 'outside'
+    const size = this.current?.kind === 'pane' ? this.size : 'docked'
+    const act = quickEscAction(this.isModal, size, at)
+    if (act === 'reduce') this.setSize('docked')
+    else if (act === 'close') this.dismiss()
+  }
+
+  /** The docked card can be dragged now. */
+  private movable(): boolean { return this.card.dataset.movable === 'true' }
+
+  private dragDown(ev: PointerEvent): void {
+    this.swallowClick = false
+    if (!this.dock || this.current?.kind !== 'pane') return
+    if (!dragAllowed({ size: this.size, abilities: this.abilities(), pointerType: ev.pointerType, button: ev.button })) return
+    this.drag = { id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, from: this.offset, moving: false }
+  }
+
+  private dragMove(ev: PointerEvent): void {
+    const g = this.drag
+    if (!g || ev.pointerId !== g.id) return
+    const dx = ev.clientX - g.x0
+    const dy = ev.clientY - g.y0
+    if (!g.moving) {
+      if (!dragStarted(dx, dy)) return
+      g.moving = true
+      try { this.qvHead.setPointerCapture(g.id) } catch { /* the pointer is gone: the next move ends nothing */ }
+      this.card.dataset.dragging = 'true'
+      window.getSelection()?.removeAllRanges()
+    }
+    ev.preventDefault()
+    const geo = this.geometry()
+    if (!geo) return
+    this.offset = clampOffset(geo.docked, { x: g.from.x + dx, y: g.from.y + dy }, geo.area)
+    this.placeDocked()
+  }
+
+  private dragEnd(ev: PointerEvent): void {
+    const g = this.drag
+    if (!g || ev.pointerId !== g.id) return
+    // A drag that moved: the click it ends with is not the pressed button's.
+    if (g.moving && ev.type === 'pointerup') this.swallowClick = true
+    this.endDrag()
+  }
+
+  private endDrag(): void {
+    const g = this.drag
+    this.drag = undefined
+    delete this.card.dataset.dragging
+    if (g?.moving && this.qvHead.hasPointerCapture(g.id)) this.qvHead.releasePointerCapture(g.id)
+  }
+
+  /** Double click on the header: the moved card goes back to its place. */
+  private backHome(): void {
+    if (this.offset.x === 0 && this.offset.y === 0) return
+    this.offset = NO_OFFSET
+    this.placeDocked()
   }
 
   /** The pane shown went away while lent (closed, moved to another desk): the card closes, nothing to give back. */
@@ -551,7 +720,8 @@ export class PeekCard {
     const opening = !this.current
     if (opening) {
       this.rememberReturn(from)
-      if (over) this.startDock(over)
+      // A screen docked over the Regency neither grows nor moves (its header is the screen's, not the pane's).
+      if (over) this.startDock(over, undefined)
     }
     if (over) {
       this.opener = from ?? this.activeOutside()

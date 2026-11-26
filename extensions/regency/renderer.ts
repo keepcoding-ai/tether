@@ -194,8 +194,9 @@ export function activate(ui: TetherUi): Disposable[] {
     const type = t.kind === 'pane' ? ui.panes.describe(t.id)?.type : undefined
     if (type && SCREEN_TYPES.has(type)) { ui.panes.peekScreen(type); return }
     const over = livePane()?.quickAnchor()
+    const quick = livePane()?.quickFrame()
     quickId = t.id
-    ui.panes.peekPane(t.id, { ...(over ? { over } : {}), focus })
+    ui.panes.peekPane(t.id, { ...(over ? { over } : {}), ...(over && quick ? { quick } : {}), focus })
     livePane()?.markQuick()
   }
 

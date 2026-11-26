@@ -117,6 +117,15 @@ button.qv-wake[hidden] { display: none; }
 /* Docked over the Regency's conversation: no veil, the window behind takes the pointer; only the card does. */
 .peek-layer[data-mode="docked"] { background: transparent; pointer-events: none; }
 .peek-layer[data-mode="docked"] > .peek-card { inset: auto; pointer-events: auto; border-radius: 10px; box-shadow: var(--dlg-shadow, var(--drawer-shadow)); }
+/* "Ampliar": the docked card the size and look of the modal one, over the Regency (quick-card-rules.ts largeBox), still without a veil. */
+.peek-layer[data-mode="docked"][data-size="large"] > .peek-card { border-radius: 12px; box-shadow: var(--drawer-shadow); }
+button.qv-size { width: 30px; height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+button.qv-size[hidden] { display: none; }
+button.qv-size .ph { width: 15px; height: 15px; }
+/* The docked card moves by its header (quick-card-rules.ts dragAllowed): the hand says so; its buttons keep theirs. */
+.peek-card[data-movable="true"] > .qv-head { cursor: grab; user-select: none; }
+.peek-card[data-movable="true"] > .qv-head button { cursor: pointer; }
+.peek-card[data-dragging="true"], .peek-card[data-dragging="true"] > .qv-head, .peek-card[data-dragging="true"] > .qv-head button { cursor: grabbing; }
 /* A tab whose content is in the card: the discreet eye (a slot's tab draws its own, panel.ts). */
 .peek-tab-eye { display: inline-flex; flex: none; align-items: center; color: var(--fg-dim); }
 .peek-tab-eye .ph { width: 12px; height: 12px; }

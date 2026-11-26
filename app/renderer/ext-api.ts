@@ -31,6 +31,7 @@ import type { Brand } from '../shared/brand.ts'
 import type { HueName } from '../shared/palette.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
+import type { QuickFrame } from './quick-card-rules.ts'
 import type { AgentPane, RondaAnswer, RondaChange } from './agent-panes.ts'
 import type { ProfileView } from './profile-views.ts'
 import type { StatusView } from './status-rules.ts'
@@ -118,6 +119,8 @@ export type WakeAnswer = { paneId: string } & ({ ok: true } | { ok: false; why: 
 export interface PeekPaneRequest {
   over?: HTMLElement
   focus?: boolean
+  /** Docked only: the area the card may grow to ("Ampliar") and be dragged within, and what the host allows now (quick-card-rules.ts). */
+  quick?: QuickFrame
 }
 
 /**

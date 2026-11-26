@@ -2074,7 +2074,8 @@ function peekEscapeOutside(ev: KeyboardEvent): void {
   if (!peekCard?.escClosesAt(ev.target instanceof Node ? ev.target : null)) return
   if (peekEscAction({ blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
   ev.preventDefault()
-  peekCard?.dismiss()
+  // The large docked card reduces first; any other card closes (quick-card-rules.ts quickEscAction).
+  peekCard?.escape(ev.target instanceof Node ? ev.target : null)
 }
 
 /** A tab born for the slot the card shows (an agent, the CLI): the card gives way without detaching, the tab attaches. */
@@ -5495,7 +5496,7 @@ function activateRendererExtensions(): void {
         },
         // An agent with a tab opens the quick view's card of that tab; one with none, its own card.
         peek: slotId => { if (findPanel(slotId)) peekPane(slotId); else peek(slotId) },
-        peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
+        peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.over && opts.quick ? { quick: opts.quick } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
         peekScreen: typeId => peekScreen(typeId),
         peekNew: (typeId, spec) => peekNew(typeId, spec),
         peekedScreen: () => peekCard?.screenId,

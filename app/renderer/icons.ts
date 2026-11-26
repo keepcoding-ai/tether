@@ -7,6 +7,7 @@ import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwis
 import squaresFour from '@phosphor-icons/core/assets/regular/squares-four.svg'
 import arrowsInLineVertical from '@phosphor-icons/core/assets/regular/arrows-in-line-vertical.svg'
 import arrowsOutSimple from '@phosphor-icons/core/assets/regular/arrows-out-simple.svg'
+import arrowsInSimple from '@phosphor-icons/core/assets/regular/arrows-in-simple.svg'
 import bug from '@phosphor-icons/core/assets/regular/bug.svg'
 import appWindow from '@phosphor-icons/core/assets/regular/app-window.svg'
 import listNumbers from '@phosphor-icons/core/assets/regular/list-numbers.svg'
@@ -168,6 +169,7 @@ const SVG = {
   'squares-four': squaresFour,
   'arrows-in-line-vertical': arrowsInLineVertical,
   'arrows-out-simple': arrowsOutSimple,
+  'arrows-in-simple': arrowsInSimple,
   bug,
   'arrow-clockwise': arrowClockwise,
   'arrow-u-up-left': arrowUUpLeft,

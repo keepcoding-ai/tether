@@ -6,6 +6,7 @@
 // focus or changes desk by itself: only a click or a key of the person does.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
 import { icon } from '../../../app/renderer/icons.ts'
+import { quickAbilities, type QuickFrame } from '../../../app/renderer/quick-card-rules.ts'
 import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embed.ts'
@@ -16,7 +17,7 @@ import type { CreateFixed } from '../create-rules.ts'
 import {
   DEFAULT_LAYOUT, backToTether, layoutOnTier, layoutParams, openSystemOn, openingTab, otherSide, readLayout, rightColumnOf, selectChannel,
   setFilter, setNarrowTab, setSystemSection, setTabletSide, setView, systemSectionOf, systemShownOf, tabletSideOf, tierOf, tierStep,
-  toggleCollapsed, toggleMembers, toggleMode, treeColumnOf, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
+  tierPlan, toggleCollapsed, toggleMembers, toggleMode, treeColumnOf, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
   type TabletSide, type Tier,
 } from './layout-rules.ts'
 import { systemSummary } from '../system-rules.ts'
@@ -531,6 +532,14 @@ export class RegencyPane implements IContentRenderer {
   quickAnchor(): HTMLElement {
     const r = this.quickHost.getBoundingClientRect()
     return r.width > 0 && r.height > 0 ? this.quickHost : this.element
+  }
+
+  /**
+   * What the docked card needs of the Regency besides its anchor: the whole Regency (the large card's box and the bounds of
+   * a drag) and what the tier allows right now (quick-card-rules.ts quickAbilities; the TV's own column does not move).
+   */
+  quickFrame(): QuickFrame {
+    return { area: this.element, abilities: () => quickAbilities(this.tier, tierPlan(this.tier, this.state).quick === 'column') }
   }
 
   /** "Gerir" or "Imersão", kept in the pane's layout. */
