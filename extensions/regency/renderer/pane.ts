@@ -1,6 +1,7 @@
 // The Regency's one pane, `regency:main`: three columns over the model. Left: "Esperam você" and "Conversas". Centre: the
 // chosen channel, the channels extension's view embedded (its members' column goes to "Neste canal" on the right). Right:
-// "Neste canal" (folded: only the faces), the tree "Tether" and the reserved "Fechadas" and "Sistema". The pane keeps its
+// "Neste canal" (folded: only the faces), the tree "Tether" (by desk or by agent, with a state filter, a search and the
+// keyboard of a tree, roving tabindex) and the reserved "Fechadas" and "Sistema". The pane keeps its
 // layout (channel, folded desks, "Neste canal" open) in its parameters, so layout.json carries it. Nothing here takes the
 // focus or changes desk by itself: only a click or a key of the person does.
 import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
@@ -8,20 +9,29 @@ import { icon } from '../../../app/renderer/icons.ts'
 import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embed.ts'
-import type { RegencyModel, Target } from '../model.ts'
-import { modelSignature } from '../model.ts'
+import type { RegencyModel, StateCounts, Target, TreeFilter } from '../model.ts'
+import { TREE_FILTERS, modelSignature } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import {
-  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setNarrowTab, tierOf, toggleCollapsed, toggleMembers,
-  toggleMode, type NarrowTab, type RegencyLayout, type RegencyMode,
+  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setFilter, setNarrowTab, setView, tierOf, toggleCollapsed,
+  toggleMembers, toggleMode, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
 } from './layout-rules.ts'
 import {
   el, glyph, paintConversations, paintFaces, paintReserved, paintTree, paintWaiting, targetOf, type ColumnsContext,
 } from './columns.ts'
+import { flatRows, treeKeyStep, type FlatRow } from './tree-keys.ts'
+
+/** What the tree is narrowed by: the folds, the state filter and the search. */
+export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; query: string }
 
 /** What the pane asks of the extension (renderer.ts). */
 export interface RegencyHost {
-  model(collapsed: readonly string[]): RegencyModel
+  /** The model narrowed by `q`, and the panes counted by state before any filter (the chips). */
+  view(q: TreeQuery): { model: RegencyModel; counts: StateCounts }
+  /** Space on a row: the one place that opens a target's quick view. */
+  quickView(target: Target): void
+  /** The Menu key, Shift+F10 or a right click on a row: the one place that opens the row's menu, anchored on it. */
+  rowMenu(target: Target, anchor: HTMLElement): void
   /** The channels' list has not come yet. */
   loading(): boolean
   identity(paneId: string): IdentityInput | undefined
@@ -49,6 +59,18 @@ const NARROW_PLACES: readonly { tab: NarrowTab; label: string; icon: string }[] 
   { tab: 'conversation', label: 'Conversa', icon: 'chats-circle' },
   { tab: 'tether', label: 'Tether', icon: 'tree-view' },
 ]
+
+const VIEWS: readonly { view: RegencyView; label: string; tip: string }[] = [
+  { view: 'desk', label: 'Por mesa', tip: 'Cada mesa com as suas guias' },
+  { view: 'agent', label: 'Por agente', tip: 'Cada agente com o que ele usa; cada guia uma vez só' },
+]
+
+const FILTERS: Record<TreeFilter, { label: string; tip: string }> = {
+  all: { label: 'Todos', tip: 'Mostrar todas as guias' },
+  waiting: { label: 'Esperam você', tip: 'Só as guias que esperam você' },
+  busy: { label: 'Trabalhando', tip: 'Só as guias que estão trabalhando' },
+  asleep: { label: 'Dormindo', tip: 'Só as guias e mesas que dormem' },
+}
 
 export class RegencyPane implements IContentRenderer {
   readonly element: HTMLElement
@@ -79,6 +101,20 @@ export class RegencyPane implements IContentRenderer {
   private readonly treeHd = el('div', 'rg-hd')
   /** The phone's bottom bar: "Chama você", "Conversa", "Tether". */
   private readonly tabBar = el('nav', 'rg-tabbar')
+  /** "Por mesa · Por agente", the search and the state chips: built once, only updated (a repaint never replaces them). */
+  private readonly viewSeg = el('div', 'rg-seg')
+  private readonly tools = el('div', 'rg-tools')
+  private readonly searchInput = el('input', 'rg-search-in')
+  private readonly searchClear = el('button', 'rg-search-x')
+  private readonly chips = el('div', 'rg-chips')
+  /** The search text: only in the open pane, never in the layout. */
+  private query = ''
+  /** The tree's one tab stop (roving tabindex), by row key. */
+  private focusKey: string | undefined
+  /** The tree's rows on screen, in order (the keyboard walks them). */
+  private rows: FlatRow[] = []
+  /** Paints of the columns so far (the E2E proves a repaint happened). */
+  paints = 0
   private waitingCount = 0
   /** The phone's opening tab was chosen (once, when the first model with the channels' list came). */
   private opened = false
@@ -113,14 +149,29 @@ export class RegencyPane implements IContentRenderer {
     this.members.append(this.membersHead, this.membersHost)
     this.modeBtn.type = 'button'
     this.modeBtn.dataset.action = 'mode'
-    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), el('span', 'rg-sp'))
-    this.right.append(this.members, this.treeHd, this.treeHost, this.reservedHost)
+    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), el('span', 'rg-sp'), this.viewSeg)
+    this.buildTools()
+    this.treeHost.setAttribute('role', 'tree')
+    this.treeHost.setAttribute('aria-label', 'Tether: mesas e guias')
+    this.right.append(this.members, this.treeHd, this.tools, this.treeHost, this.reservedHost)
     this.buildEdges()
     this.buildTabBar()
     this.element.append(this.left, this.edgeLeft, this.center, this.right, this.edgeRight, this.tabBar)
     paintReserved(this.reservedHost)
     this.element.addEventListener('click', ev => this.onClick(ev))
     this.element.addEventListener('keydown', ev => this.onKey(ev))
+    this.treeHost.addEventListener('focusin', ev => {
+      const key = ev.target instanceof HTMLElement ? ev.target.dataset.key : undefined
+      if (key && key !== this.focusKey) { this.focusKey = key; this.paintRoving() }
+    })
+    this.treeHost.addEventListener('contextmenu', ev => {
+      const r = ev.target instanceof Element ? ev.target.closest<HTMLElement>('[data-key]') : null
+      const target = targetOf(r?.dataset.target)
+      if (!r || !target) return
+      ev.preventDefault()
+      this.focusRow(r.dataset.key!)
+      this.host.rowMenu(target, r)
+    })
     this.ro = new ResizeObserver(() => {
       const w = this.element.clientWidth
       if (w > 0) this.element.dataset.tier = tierOf(w)
@@ -130,7 +181,32 @@ export class RegencyPane implements IContentRenderer {
     this.paintTabs()
     this.paintVoid()
     this.paintMembersHead()
+    this.paintTools()
   }
+
+  /** "Por mesa" or "Por agente", kept in the layout. */
+  setView(view: RegencyView): void {
+    if (this.state.view === view) return
+    this.setLayout(setView(this.state, view))
+    this.repaint()
+  }
+
+  /** The state filter of the tree, kept in the layout. */
+  setFilter(filter: TreeFilter): void {
+    if (this.state.filter === filter) return
+    this.setLayout(setFilter(this.state, filter))
+    this.repaint()
+  }
+
+  /** The tree's search (not kept). The field is the same element before and after: its caret is untouched. */
+  setQuery(query: string): void {
+    if (this.searchInput.value !== query) this.searchInput.value = query
+    if (this.query === query) return
+    this.query = query
+    this.repaint()
+  }
+
+  get searchText(): string { return this.query }
 
   /** The tier the pane is drawn in now (the ruler of four, by the pane's width). */
   get tier(): string { return this.element.dataset.tier ?? 'desktop' }
@@ -159,23 +235,29 @@ export class RegencyPane implements IContentRenderer {
   paint(): void {
     if (this.disposed || !this.api) return
     this.syncCenter()
-    const model = this.host.model(this.state.collapsed)
+    const { model, counts } = this.host.view({ collapsed: this.state.collapsed, filter: this.state.filter, query: this.query })
     const ctx = this.context()
     if (!this.opened && !ctx.loading) {
       this.opened = true
       const tab = openingTab(this.state.narrowTab, model.waiting.length)
       if (tab !== this.state.narrowTab) this.setTab(tab)
     }
-    const sig = `${modelSignature(model)}|${this.state.channelId ?? ''}|${this.closedOpen}|${ctx.loading}`
+    this.paintTools(counts)
+    const view = this.state.view
+    const sig = `${modelSignature(model)}|${this.state.channelId ?? ''}|${this.closedOpen}|${ctx.loading}|${view}`
     if (sig === this.signature) return
     this.signature = sig
+    this.paints++
     this.waitingCount = model.waiting.length
     this.paintCounts()
+    const narrowed = this.state.filter !== 'all' || this.query.trim() !== ''
     this.keepFocus(() => {
       paintWaiting(this.waitHost, model, ctx)
       paintConversations(this.convHost, model, ctx)
-      paintTree(this.treeHost, model, ctx)
+      paintTree(this.treeHost, model, { ...ctx, view, narrowed })
+      this.rows = flatRows(model, view)
     })
+    this.paintRoving()
     const ch = this.state.channelId ? this.host.channel(this.state.channelId) : undefined
     this.closedBar.hidden = !(ch?.closed)
     this.paintVoid()
@@ -229,6 +311,103 @@ export class RegencyPane implements IContentRenderer {
       return b
     }
     this.edgeRight.append(to('manage-members', 'robot', 'Neste canal'), to('manage-tether', 'tree-view', 'Tether'))
+  }
+
+  /** The tree's tools: the view's switch (in the heading), the search field and the state chips. */
+  private buildTools(): void {
+    this.viewSeg.setAttribute('role', 'radiogroup')
+    this.viewSeg.setAttribute('aria-label', 'Organizar o Tether')
+    for (const v of VIEWS) {
+      const b = el('button', 'rg-seg-b', v.label)
+      b.type = 'button'
+      b.dataset.action = `view:${v.view}`
+      b.dataset.view = v.view
+      b.title = v.tip
+      b.setAttribute('role', 'radio')
+      this.viewSeg.append(b)
+    }
+    const search = el('div', 'rg-search')
+    this.searchInput.type = 'search'
+    this.searchInput.placeholder = 'Buscar guia, agente ou mesa…'
+    this.searchInput.setAttribute('aria-label', 'Buscar no Tether')
+    this.searchInput.spellcheck = false
+    this.searchInput.autocomplete = 'off'
+    this.searchInput.addEventListener('input', () => {
+      if (this.query === this.searchInput.value) return
+      this.query = this.searchInput.value
+      this.repaint()
+    })
+    this.searchClear.type = 'button'
+    this.searchClear.dataset.action = 'clear-search'
+    this.searchClear.title = 'Limpar a busca'
+    this.searchClear.setAttribute('aria-label', 'Limpar a busca')
+    this.searchClear.append(glyph('x', 'Limpar a busca'))
+    search.append(glyph('magnifying-glass', 'Buscar'), this.searchInput, this.searchClear)
+    this.chips.setAttribute('role', 'radiogroup')
+    this.chips.setAttribute('aria-label', 'Filtrar por estado')
+    for (const f of TREE_FILTERS) {
+      const c = el('button', 'rg-chip')
+      c.type = 'button'
+      c.dataset.action = `filter:${f}`
+      c.dataset.filter = f
+      c.title = FILTERS[f].tip
+      c.setAttribute('role', 'radio')
+      c.append(el('span', 'rg-chip-t', FILTERS[f].label), el('span', 'rg-chip-n'))
+      this.chips.append(c)
+    }
+    this.tools.append(search, this.chips)
+  }
+
+  /** The tools follow the layout and the counts in place: the field keeps its text, caret and focus. */
+  private paintTools(counts?: StateCounts): void {
+    for (const b of this.viewSeg.querySelectorAll<HTMLElement>('.rg-seg-b')) b.setAttribute('aria-checked', String(b.dataset.view === this.state.view))
+    this.searchClear.hidden = this.query === ''
+    for (const c of this.chips.querySelectorAll<HTMLElement>('.rg-chip')) {
+      const f = c.dataset.filter as TreeFilter
+      c.setAttribute('aria-checked', String(f === this.state.filter))
+      if (!counts) continue
+      const n = counts[f]
+      const cnt = c.querySelector<HTMLElement>('.rg-chip-n')!
+      if (cnt.textContent !== String(n)) cnt.textContent = String(n)
+      // The orange only on "Esperam você", and only while someone does.
+      c.classList.toggle('al', f === 'waiting' && n > 0)
+    }
+  }
+
+  /** One row of the tree is in the tab order: the focused one, else the first. */
+  private paintRoving(): void {
+    const rows = [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')]
+    const stop = rows.find(r => r.dataset.key === this.focusKey) ?? rows[0]
+    for (const r of rows) {
+      const t = r === stop ? 0 : -1
+      if (r.tabIndex !== t) r.tabIndex = t
+    }
+  }
+
+  private rowEl(key: string): HTMLElement | undefined {
+    return [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')].find(r => r.dataset.key === key)
+  }
+
+  /** Moves the tree's keyboard to a row (a key of the person: never called by an event). */
+  private focusRow(key: string): void {
+    this.focusKey = key
+    this.paintRoving()
+    const r = this.rowEl(key)
+    if (!r) return
+    r.focus({ preventScroll: true })
+    r.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** Opens or folds a desk or a group (`open` is the state asked for). */
+  private fold(foldId: string, open: boolean): void {
+    if (this.state.collapsed.includes(foldId) === !open) return
+    this.setLayout(toggleCollapsed(this.state, foldId))
+    this.repaint()
+  }
+
+  private repaint(): void {
+    this.signature = ''
+    this.paint()
   }
 
   private buildTabBar(): void {
@@ -348,13 +527,34 @@ export class RegencyPane implements IContentRenderer {
     this.membersHost.hidden = !open
   }
 
+  /**
+   * A repaint replaces the rows: the focused one is found again in the same list (the tree by its row key, the others by
+   * target) and gets the keyboard back; a tree row that went leaves it on the row now in its place. The columns' scroll is
+   * kept. The tools are never replaced, so the search field keeps its text, caret and focus by itself.
+   */
   private keepFocus(paint: () => void): void {
     const active = document.activeElement
-    const key = active instanceof HTMLElement && this.element.contains(active) ? active.dataset.target : undefined
+    const inside = active instanceof HTMLElement && this.element.contains(active) ? active : undefined
+    const list = inside ? [this.waitHost, this.convHost, this.treeHost].find(h => h.contains(inside)) : undefined
+    const key = inside?.dataset.key
+    const target = inside?.dataset.target
+    const at = list === this.treeHost && key ? [...this.treeHost.querySelectorAll('[data-key]')].indexOf(inside!) : -1
+    const scroll = [this.left.scrollTop, this.right.scrollTop] as const
     paint()
-    if (!key) return
-    const again = [...this.element.querySelectorAll<HTMLElement>('[data-target]')].find(e => e.dataset.target === key)
-    if (again && again !== document.activeElement && !document.activeElement?.closest('.rg-center')) again.focus({ preventScroll: true })
+    if (this.left.scrollTop !== scroll[0]) this.left.scrollTop = scroll[0]
+    if (this.right.scrollTop !== scroll[1]) this.right.scrollTop = scroll[1]
+    if (!inside || !list || inside.isConnected || (!key && !target)) return
+    // Only when the keyboard fell to the page's body with the row it was on: nothing else is ever taken.
+    if (document.activeElement && document.activeElement !== document.body) return
+    let again: HTMLElement | undefined
+    if (list === this.treeHost) {
+      const rows = [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')]
+      again = rows.find(r => r.dataset.key === key) ?? (at >= 0 ? rows[Math.min(at, rows.length - 1)] : undefined)
+      if (again) this.focusKey = again.dataset.key
+    } else {
+      again = [...list.querySelectorAll<HTMLElement>('[data-target]')].find(e => e.dataset.target === target)
+    }
+    again?.focus({ preventScroll: true })
   }
 
   private onClick(ev: MouseEvent): void {
@@ -368,11 +568,48 @@ export class RegencyPane implements IContentRenderer {
   }
 
   private onKey(ev: KeyboardEvent): void {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return
     const t = ev.target instanceof HTMLElement ? ev.target : null
-    if (!t?.dataset.target || t.closest('.rg-center')) return
+    if (!t || t.closest('.rg-center')) return
+    if (t === this.searchInput) { this.onSearchKey(ev); return }
+    if (t.dataset.key && this.treeHost.contains(t)) { this.onTreeKey(ev, t); return }
+    if (ev.key !== 'Enter' && ev.key !== ' ') return
+    if (!t.dataset.target) return
     ev.preventDefault()
     this.activate(t)
+  }
+
+  /** The tree's keys, by the pure rule (tree-keys.ts). */
+  private onTreeKey(ev: KeyboardEvent, row: HTMLElement): void {
+    const step = treeKeyStep(this.rows, row.dataset.key, ev, { query: this.query, filter: this.state.filter })
+    if (!step) return
+    ev.preventDefault()
+    ev.stopPropagation()
+    switch (step.type) {
+      case 'focus': this.focusRow(step.key); break
+      case 'toggle': this.focusKey = step.key; this.fold(step.foldId, step.open); break
+      case 'quick': this.host.quickView(step.target); break
+      case 'go': this.host.go(step.target); break
+      case 'menu': this.host.rowMenu(step.target, row); break
+      case 'clear-search': this.setQuery(''); break
+      case 'clear-filter': this.setFilter('all'); break
+    }
+  }
+
+  /** In the field: Esc clears it (empty, the filter); Down and Enter go into the tree. */
+  private onSearchKey(ev: KeyboardEvent): void {
+    if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+    if (ev.key === 'Escape') {
+      if (this.query !== '') this.setQuery('')
+      else if (this.state.filter !== 'all') this.setFilter('all')
+      else return
+      ev.preventDefault()
+      ev.stopPropagation()
+    } else if (ev.key === 'ArrowDown' || ev.key === 'Enter') {
+      const first = this.rows[0]
+      if (!first) return
+      ev.preventDefault()
+      this.focusRow(first.key)
+    }
   }
 
   private act(action: string): void {
@@ -381,7 +618,19 @@ export class RegencyPane implements IContentRenderer {
     if (action === 'manage' || action === 'manage-members' || action === 'manage-tether') {
       this.setMode('manage')
       if (action === 'manage-members' && !this.state.membersOpen && this.embed) { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
-      if (action === 'manage-tether') this.treeHost.querySelector<HTMLElement>('[data-target]')?.focus({ preventScroll: true })
+      if (action === 'manage-tether') this.treeHost.querySelector<HTMLElement>('[data-key][tabindex="0"]')?.focus({ preventScroll: true })
+      return
+    }
+    if (action.startsWith('view:')) { this.setView(action.slice(5) === 'agent' ? 'agent' : 'desk'); return }
+    if (action.startsWith('filter:')) { this.setFilter(TREE_FILTERS.find(f => f === action.slice(7)) ?? 'all'); return }
+    if (action === 'clear-search') { this.setQuery(''); this.searchInput.focus(); return }
+    if (action === 'clear-narrow') {
+      // The button goes with the empty state: the keyboard goes to the field.
+      this.searchInput.focus({ preventScroll: true })
+      this.query = ''
+      this.searchInput.value = ''
+      this.setLayout(setFilter(this.state, 'all'))
+      this.repaint()
       return
     }
     if (action === 'closed') { this.closedOpen = !this.closedOpen; this.signature = ''; this.paint() }
@@ -390,6 +639,13 @@ export class RegencyPane implements IContentRenderer {
   }
 
   private activate(row: HTMLElement): void {
+    if (row.dataset.key) this.focusKey = row.dataset.key
+    // A desk or an agent's group folds (the group carries its agent's target: only the row's kind tells them apart).
+    if ((row.dataset.row === 'desk' || row.dataset.row === 'group') && row.dataset.fold) {
+      this.setLayout(toggleCollapsed(this.state, row.dataset.fold))
+      this.repaint()
+      return
+    }
     const target = targetOf(row.dataset.target)
     if (!target) return
     if (target.kind === 'channel') {

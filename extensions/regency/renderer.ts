@@ -8,9 +8,12 @@ import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
 import type { Ownership } from '../for-agents/rules.ts'
 import { CMD, DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
-import { regencyModelOf, type AgentRef, type OwnerRef, type RegencyInput, type RegencyModel, type Target } from './model.ts'
+import {
+  regencyModelOf, stateCounts, type AgentRef, type OwnerRef, type RegencyInput, type RegencyModel, type StateCounts, type Target,
+  type TreeFilter,
+} from './model.ts'
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
-import { RegencyPane, RegencyTab, type RegencyHost } from './renderer/pane.ts'
+import { RegencyPane, RegencyTab, type RegencyHost, type TreeQuery } from './renderer/pane.ts'
 
 export { manifest }
 
@@ -59,7 +62,7 @@ export function activate(ui: TetherUi): Disposable[] {
     for (const [k, at] of now) if (!since.has(k)) since.set(k, at ?? Date.now())
   }
 
-  const inputOf = (collapsed: readonly string[]): RegencyInput => {
+  const inputOf = (collapsed: readonly string[], narrow: Pick<RegencyInput, 'filter' | 'query'> = {}): RegencyInput => {
     const desks = ui.desks.tree()
     const owners: RegencyInput['owners'] = { desk: {}, pane: {} }
     const nextLines = new Map<string, readonly string[]>()
@@ -81,10 +84,15 @@ export function activate(ui: TetherUi): Disposable[] {
     for (const c of channels) channelMarks[c.id] = channelEmbeds.marksOf(c.id)
     const base = { desks, owners, channels, channelMarks, agents: agentRefs(), collapsed: [...collapsed], selfDeskId: DESK_ID }
     trackSince(base)
-    return { ...base, since: Object.fromEntries(since) }
+    return { ...base, since: Object.fromEntries(since), ...narrow }
   }
 
   const modelOf = (collapsed: readonly string[]): RegencyModel => regencyModelOf(inputOf(collapsed))
+  /** One read of the sources gives both the narrowed model and the chips' counts (counted before the filter). */
+  const viewOf = (q: TreeQuery): { model: RegencyModel; counts: StateCounts } => {
+    const input = inputOf(q.collapsed, { filter: q.filter, query: q.query })
+    return { model: regencyModelOf(input), counts: stateCounts(input) }
+  }
 
   /** The queue desk each foreign pane was last seen in, and the queue desk the person used last. */
   const home = new Map<string, string>()
@@ -155,8 +163,21 @@ export function activate(ui: TetherUi): Disposable[] {
     if (type && SCREEN_TYPES.has(type)) ui.panes.peekScreen(type)
   }
 
+  /** The row menus asked so far (the E2E reads them; the menus slice opens the menu here). */
+  const menuAsks: Array<{ target: Target; anchor: string }> = []
+  /**
+   * The one place that opens a row's menu, anchored on the row (the Menu key, Shift+F10, a right click). This slice only
+   * takes the ask; the menus slice fills it.
+   */
+  const openRowMenu = (target: Target, anchor: HTMLElement): void => {
+    menuAsks.push({ target, anchor: anchor.dataset.key ?? '' })
+    if (menuAsks.length > 20) menuAsks.shift()
+  }
+
   const host: RegencyHost = {
-    model: modelOf,
+    view: viewOf,
+    quickView: openQuickView,
+    rowMenu: openRowMenu,
     loading: () => channelEmbeds.active && !heard,
     identity: (paneId): IdentityInput | undefined => {
       const a = ui.agents.get(paneId)
@@ -187,6 +208,13 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('quickView', openQuickView)
   ui.test.expose('mode', (): string | undefined => livePane()?.state.mode)
   ui.test.expose('tier', (): string | undefined => livePane()?.tier)
+  /** The model and counts the screen shows now (the pane's folds, filter and search). */
+  ui.test.expose('shown', () => { const p = livePane(); return p ? viewOf({ collapsed: p.state.collapsed, filter: p.state.filter, query: p.searchText }) : undefined })
+  ui.test.expose('view', (v: 'desk' | 'agent'): void => { livePane()?.setView(v) })
+  ui.test.expose('filter', (f: TreeFilter): void => { livePane()?.setFilter(f) })
+  ui.test.expose('search', (q: string): void => { livePane()?.setQuery(q) })
+  ui.test.expose('paints', (): number => livePane()?.paints ?? 0)
+  ui.test.expose('menuAsks', () => menuAsks.map(m => ({ ...m })))
 
   schedule()
   return [

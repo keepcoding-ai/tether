@@ -4,7 +4,8 @@
 import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import { identityMark, identityOf, identityView, type IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { MemberRow } from '../../channels/renderer/view-model.ts'
-import type { ConvRow, RegencyModel, Target, TreeDeskRow, TreePaneRow, WaitingItem } from '../model.ts'
+import type { AgentGroupRow, AgentPaneRow, ConvRow, RegencyModel, Target, TreeDeskRow, TreePaneRow, WaitingItem } from '../model.ts'
+import { deskRowKey, groupRowKey, paneRowKey } from './tree-keys.ts'
 
 export interface ColumnsContext {
   /** The agent behind a pane, as the identity draws it; undefined for a pane that is not an agent's. */
@@ -17,6 +18,12 @@ export interface ColumnsContext {
   closedOpen: boolean
   /** The channels' list has not come yet. */
   loading: boolean
+}
+
+/** What the tree is drawn by: the view, and whether a filter or a search narrows it (for the empty state). */
+export interface TreeContext extends ColumnsContext {
+  view: 'desk' | 'agent'
+  narrowed: boolean
 }
 
 export const targetKey = (t: Target): string => `${t.kind}:${t.id}`
@@ -72,6 +79,20 @@ function row(cls: string, target: Target, label: string): HTMLElement {
   r.dataset.target = targetKey(target)
   r.setAttribute('role', 'button')
   r.setAttribute('aria-label', label)
+  return r
+}
+
+/**
+ * A row of the tree: a treeitem with its focus key (`data-key`, unique even where a group and its agent's pane share a
+ * target), its kind (`data-row`) and, when it folds, its fold id. Out of the tab order: the pane gives the one roving stop.
+ */
+function treeRow(cls: string, target: Target, label: string, key: string, kind: 'desk' | 'group' | 'pane', level: 1 | 2): HTMLElement {
+  const r = row(cls, target, label)
+  r.tabIndex = -1
+  r.dataset.key = key
+  r.dataset.row = kind
+  r.setAttribute('role', 'treeitem')
+  r.setAttribute('aria-level', String(level))
   return r
 }
 
@@ -208,8 +229,9 @@ function ownerSeal(name: string, what: string): HTMLElement {
 }
 
 function deskRow(d: TreeDeskRow): HTMLElement {
-  const r = row('rg-desk', d.target, `${d.name}, ${d.paneCount} guias`)
-  r.setAttribute('aria-expanded', String(!d.collapsed))
+  const r = treeRow('rg-desk', d.target, `${d.name}, ${d.paneCount} guias`, deskRowKey(d.target.id), 'desk', 1)
+  r.dataset.fold = d.target.id
+  if (d.paneCount > 0) r.setAttribute('aria-expanded', String(!d.collapsed))
   if (d.asleep) r.classList.add('zz')
   r.style.setProperty('--rg-desk', `var(--x-${d.color}, var(--accent))`)
   const kind = DESK_KIND[d.kind]
@@ -227,8 +249,17 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   return r
 }
 
-function paneRow(p: TreePaneRow, ctx: ColumnsContext): HTMLElement {
-  const r = row('rg-pane', p.target, p.title)
+/** The desk's badge on a pane of the by-agent view: its colour and its name. */
+function deskBadge(name: string, color: string): HTMLElement {
+  const b = el('span', 'rg-dsk')
+  b.title = `Na mesa ${name}`
+  b.style.setProperty('--rg-desk', `var(--x-${color}, var(--accent))`)
+  b.append(el('span', 'rg-dot'), el('span', '', name))
+  return b
+}
+
+function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext): HTMLElement {
+  const r = treeRow('rg-pane', p.target, p.title, paneRowKey(p.target), 'pane', 2)
   const state = paneStateOf(p)
   if (state) r.dataset.state = state.cls
   if (p.asleep || p.exited) r.classList.add('zz')
@@ -239,7 +270,8 @@ function paneRow(p: TreePaneRow, ctx: ColumnsContext): HTMLElement {
   } else {
     r.append(glyph(p.icon, p.type), el('span', 'rg-gn', p.title))
   }
-  if (p.ownerBadge) r.append(ownerSeal(p.ownerBadge, 'da guia'))
+  if ('deskName' in p) r.append(deskBadge(p.deskName, p.deskColor))
+  else if (p.ownerBadge) r.append(ownerSeal(p.ownerBadge, 'da guia'))
   r.append(el('span', 'rg-sp'))
   if (state) {
     const st = el('span', `rg-st ${state.cls}`, state.text)
@@ -250,18 +282,62 @@ function paneRow(p: TreePaneRow, ctx: ColumnsContext): HTMLElement {
   return r
 }
 
-export function paintTree(host: HTMLElement, model: RegencyModel, ctx: ColumnsContext): void {
-  const out: HTMLElement[] = []
-  for (const d of model.tree) {
-    const group = el('div', 'rg-group')
-    group.dataset.desk = d.target.id
-    group.dataset.kind = d.kind
-    group.append(deskRow(d))
-    // Folded or not, the desk says when someone in it waits for the person.
-    if (model.waiting.some(w => w.desk?.id === d.target.id)) group.querySelector('.rg-sp')?.after(attnDot())
-    for (const p of d.panes) group.append(paneRow(p, ctx))
-    out.push(group)
+/** The head of an agent's group in the by-agent view: its identity (or "Você"), how many panes, the fold. */
+function groupRow(g: AgentGroupRow, ctx: ColumnsContext): HTMLElement {
+  const r = treeRow('rg-agent', g.target, `${g.name}, ${g.paneCount} guias`, groupRowKey(g.target.id), 'group', 1)
+  r.dataset.fold = g.target.id
+  if (g.paneCount > 0) r.setAttribute('aria-expanded', String(!g.collapsed))
+  r.append(glyph(g.collapsed ? 'caret-right' : 'caret-down', g.collapsed ? 'Mostrar as guias' : 'Recolher as guias'))
+  if (g.you) {
+    const me = el('span', 'aid-letter rg-me', 'V')
+    me.title = 'Você: o que não é de nenhum agente'
+    r.append(me, el('span', 'rg-dn', g.name))
+  } else {
+    r.append(identityView(ctx.identity(g.target.id) ?? { kind: '', name: g.name, seed: g.target.id }))
   }
+  r.append(el('span', 'rg-n2', `${g.paneCount} guia${g.paneCount === 1 ? '' : 's'}`), el('span', 'rg-sp'), acts())
+  return r
+}
+
+/** "Nada com esse filtro": the sentence and the way out. */
+function nothingShown(): HTMLElement {
+  const box = el('div', 'rg-none')
+  const clear = el('button', 'rg-btn')
+  clear.type = 'button'
+  clear.dataset.action = 'clear-narrow'
+  clear.title = 'Limpar o filtro e a busca'
+  clear.textContent = 'Limpar filtro e busca'
+  box.append(el('p', 'rg-empty', 'Nada com esse filtro'), clear)
+  return box
+}
+
+export function paintTree(host: HTMLElement, model: RegencyModel, ctx: TreeContext): void {
+  const out: HTMLElement[] = []
+  if (ctx.view === 'desk') {
+    for (const d of model.tree) {
+      const group = el('div', 'rg-group')
+      group.setAttribute('role', 'none')
+      group.dataset.desk = d.target.id
+      group.dataset.kind = d.kind
+      group.append(deskRow(d))
+      // Folded or not, the desk says when someone in it waits for the person.
+      if (model.waiting.some(w => w.desk?.id === d.target.id)) group.querySelector('.rg-sp')?.after(attnDot())
+      for (const p of d.panes) group.append(paneRow(p, ctx))
+      out.push(group)
+    }
+  } else {
+    for (const g of model.byAgent) {
+      const group = el('div', 'rg-group')
+      group.setAttribute('role', 'none')
+      group.dataset.agent = g.target.id
+      group.append(groupRow(g, ctx))
+      const ids = new Set(g.panes.map(p => p.target.id))
+      if (g.panes.some(p => p.attention === 'waiting') || (g.collapsed && model.waiting.some(w => ids.has(w.target.id)))) group.querySelector('.rg-sp')?.after(attnDot())
+      for (const p of g.panes) group.append(paneRow(p, ctx))
+      out.push(group)
+    }
+  }
+  if (ctx.narrowed && out.length === 0 && model.closed.count === 0) out.push(nothingShown())
   host.replaceChildren(...out)
 }
 
