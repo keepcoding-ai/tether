@@ -49,7 +49,7 @@ import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { ICON_NAMES, icon, KIND_ICON, type IconName } from './icons.ts'
 import { agentHue } from '../shared/agent-color.ts'
 import { BRAND } from '../shared/brand.ts'
-import { StatusRegistry } from './status-rules.ts'
+import { StatusRegistry, statusViewsOf } from './status-rules.ts'
 import { StatusBar } from './status-bar.ts'
 import { setupBell } from './bell.ts'
 import { openMoveDialog } from './move-dialog.ts'
@@ -94,7 +94,7 @@ import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
-import type { CreateResult, DeskTree, DeskView, PaneInfo, PickItem } from './ext-api.ts'
+import type { CreateResult, DeskTree, DeskView, PaneInfo, PeekNewSpec, PickItem } from './ext-api.ts'
 import { deskTreeOf, type TreePaneFacts } from './desk-tree-rules.ts'
 import type { DeskInfo } from './desks.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
@@ -103,7 +103,8 @@ import { type EmblemHost, emblemOfPanel, initEmblems, openEmblemMenu, personEmbl
 import { identityOf, markOf } from './agent-identity.ts'
 import { letterOf } from './agent-identity-rules.ts'
 import { extensionRows } from './extensions-list.ts'
-import { agentPaneChanges, agentPaneOf, loosePaneOf, type AgentPane } from './agent-panes.ts'
+import { agentPaneChanges, agentPaneOf, loosePaneOf, rondaAnswerOf, rondaSetRequest, type AgentPane } from './agent-panes.ts'
+import { profileViewsOf } from './profile-views.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost, type PeekPaneFacts, type PeekPaneOptions } from './peek.ts'
@@ -1926,13 +1927,42 @@ function peekApi(id: string): unknown {
  * shown in the card it stacks one level (peek.ts). Returns the screen's pane id (undefined: no such screen type).
  */
 function peekScreen(typeId: string, from?: HTMLElement): string | undefined {
+  return peekNew(typeId, undefined, from)
+}
+
+/**
+ * The screen in the card that `peekNew` built from a spec (an id, a title or params): "Abrir nesta mesa" and "Abrir em outra
+ * mesa" make the tab from it (same id, same params), not a fresh pane of the type. Replaced by every screen the card builds.
+ */
+let peekNewPane: { typeId: string; id?: string; title?: string; params?: Record<string, unknown> } | undefined
+
+/**
+ * The quick view of a pane of a slot-less type (TetherUi `panes.peekNew`). With `spec.id`, one per id: a tab with that id is
+ * lent (peekPane), the one in the card gets the keyboard, else the type builds it with the spec's params outside dockview.
+ * Without an id, one per type (a system screen: a live tab of the type is brought forward instead). Never in the layout.
+ */
+function peekNew(typeId: string, spec?: PeekNewSpec, from?: HTMLElement): string | undefined {
   const type = paneTypes.get(typeId)
   if (!type || type.hasSlot || !peekCard) return undefined
-  const tab = allPanels().find(p => type.has(p.id))
-  if (tab) { peekCard.close({ restoreFocus: false }); revealPane(tab.id); return tab.id }
-  const shown = peekCard.screenType === typeId ? peekCard.screenId : undefined
-  if (shown) { requestAnimationFrame(() => type.focus?.(shown)); return shown }
-  const options = type.optionsOf({ id: `${type.idPrefix}peek-${(peekSeq++).toString(36)}` })
+  const id = spec?.id
+  if (id !== undefined) {
+    if (!id || (type.idPrefix && !id.startsWith(type.idPrefix))) return undefined
+    if (findPanel(id)) { peekPane(id, { from: from ?? menuRunOwner }); return id }
+    if (peekCard.screenId === id) { requestAnimationFrame(() => type.focus?.(id)); return id }
+  } else {
+    const tab = allPanels().find(p => type.has(p.id))
+    if (tab) { peekCard.close({ restoreFocus: false }); revealPane(tab.id); return tab.id }
+    const shown = peekCard.screenType === typeId ? peekCard.screenId : undefined
+    if (shown) { requestAnimationFrame(() => type.focus?.(shown)); return shown }
+  }
+  const options = type.optionsOf({
+    id: id ?? `${type.idPrefix}peek-${(peekSeq++).toString(36)}`,
+    ...(spec?.title !== undefined ? { title: spec.title } : {}),
+    ...(spec?.params !== undefined ? { params: spec.params } : {}),
+  })
+  peekNewPane = spec && (id !== undefined || spec.title !== undefined || spec.params !== undefined)
+    ? { typeId, ...(id !== undefined ? { id } : {}), ...(spec.title !== undefined ? { title: spec.title } : {}), ...(spec.params !== undefined ? { params: spec.params } : {}) }
+    : undefined
   const content = type.create()
   content.init({ params: options.params ?? {}, api: peekApi(options.id), title: options.title } as unknown as GroupPanelPartInitParameters)
   const paneId = options.id
@@ -1957,9 +1987,15 @@ function placeOnDesk(options: AddPanelOptions, deskId: string, front: boolean): 
 function openScreenTab(typeId: string, deskId?: string): string | undefined {
   const type = paneTypes.get(typeId)
   if (!type) return undefined
-  const live = allPanels().find(p => type.has(p.id))
+  // A screen peekNew built from a spec becomes the tab of that spec (one per id); a plain screen, one per type.
+  const made = peekNewPane?.typeId === typeId ? peekNewPane : undefined
+  const live = made?.id !== undefined ? findPanel(made.id) : allPanels().find(p => type.has(p.id))
   if (live) { if (!deskId) revealPane(live.id); return live.id }
-  const options = type.optionsOf({ id: `${type.idPrefix}${Date.now().toString(36)}` })
+  const options = type.optionsOf({
+    id: made?.id ?? `${type.idPrefix}${Date.now().toString(36)}`,
+    ...(made?.title !== undefined ? { title: made.title } : {}),
+    ...(made?.params !== undefined ? { params: made.params } : {}),
+  })
   if (deskId && deskId !== desks.activeDeskId) {
     // "Abrir em outra mesa": the tab is born there and the person stays where they are.
     placeOnDesk(options, deskId, true)
@@ -4083,6 +4119,9 @@ function profileOf(slot: SlotState): { profileId?: string } {
   return slot.profileId && profiles.some(p => p.id === slot.profileId) ? { profileId: slot.profileId } : {}
 }
 
+/** TetherUi.profiles.onDidChange: told after every setProfiles. */
+const profileListeners = new Set<() => void>()
+
 function setProfiles(list: Profile[], problem: string | undefined): void {
   profiles = list
   profilesProblem = problem
@@ -4090,6 +4129,7 @@ function setProfiles(list: Profile[], problem: string | undefined): void {
   popupChooser?.render()
   for (const e of empties.values()) e.renderProfiles()
   notifyCreateItems()
+  for (const l of [...profileListeners]) { try { l() } catch (err) { console.error('profiles.onDidChange', err) } }
 }
 
 async function loadProfiles(): Promise<void> {
@@ -4097,10 +4137,10 @@ async function loadProfiles(): Promise<void> {
   setProfiles(r.profiles, r.problem)
 }
 
-function openProfiles(id?: string): void {
+function openProfiles(id?: string, opts?: { duplicate?: boolean }): void {
   const dlg = $<HTMLDialogElement>('dlg-new')
   if (dlg.open) dlg.close()
-  manager.show(id)
+  manager.show(id, opts)
 }
 
 // ---------- "Novo painel…" in focus mode: the chooser in a popup ----------
@@ -5432,6 +5472,7 @@ function activateRendererExtensions(): void {
         peek: slotId => { if (findPanel(slotId)) peekPane(slotId); else peek(slotId) },
         peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
         peekScreen: typeId => peekScreen(typeId),
+        peekNew: (typeId, spec) => peekNew(typeId, spec),
         peekedScreen: () => peekCard?.screenId,
         copyLink: paneId => copyPaneLink(paneId),
         attention: paneId => drawAttention(paneId),
@@ -5590,6 +5631,8 @@ function activateRendererExtensions(): void {
         onDidChange: listener => { agentPaneListeners.add(listener); return add(toDisposable(() => { agentPaneListeners.delete(listener) })) },
         focus: slotId => focusAgentPane(slotId),
         tabMenu: provider => { agentTabMenuProviders.add(provider); return add(toDisposable(() => { agentTabMenuProviders.delete(provider) })) },
+        setRonda: async (slotId, change) => rondaAnswerOf(await window.tether.request(rondaSetRequest(slotId, change))),
+        offRonda: async (slotId, opts) => rondaAnswerOf(await window.tether.request({ t: 'ronda-off', slotId, ...(opts?.force ? { force: true } : {}) })),
       },
       sessions: {
         hold: provider => { sessionHolds.add(provider); refreshSessions(); return add(toDisposable(() => { sessionHolds.delete(provider); refreshSessions() })) },
@@ -5616,6 +5659,9 @@ function activateRendererExtensions(): void {
       },
       profiles: {
         registerOption: option => add(registerProfileOption(id, option)),
+        list: () => profileViewsOf(profiles),
+        onDidChange: listener => { profileListeners.add(listener); return add(toDisposable(() => { profileListeners.delete(listener) })) },
+        edit: (profileId, opts) => openProfiles(profileId, opts?.duplicate ? { duplicate: true } : undefined),
       },
       chooser: {
         resolve: (itemId, fn) => {
@@ -5636,6 +5682,9 @@ function activateRendererExtensions(): void {
           add(handle)
           return handle
         },
+        items: () => statusViewsOf(statusRegistry.all()),
+        onDidChange: listener => add(statusRegistry.onDidChange(() => listener())),
+        show: statusId => statusBar?.show(statusId) ?? false,
       },
       attention: {
         raise: opts => {

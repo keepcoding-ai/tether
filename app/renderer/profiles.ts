@@ -148,12 +148,13 @@ export class ProfileManager {
 
   get open(): boolean { return this.dlg.open }
 
-  /** Opens on `id` (or the first profile; `'new'` starts a blank one). */
-  show(id?: string): void {
+  /** Opens on `id` (or the first profile; `'new'` starts a blank one); `duplicate` then starts a copy of it, as the button does. */
+  show(id?: string, opts?: { duplicate?: boolean }): void {
     const profiles = this.host.profiles()
     if (id === 'new') this.startNew()
     else this.edit(profiles.find(p => p.id === id)?.id ?? this.editing ?? profiles[0]?.id)
     if (!this.dlg.open) this.dlg.showModal()
+    if (opts?.duplicate && id !== 'new' && this.editing) this.duplicate()
     this.field<HTMLInputElement>('name').focus()
   }
 

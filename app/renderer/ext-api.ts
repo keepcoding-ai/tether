@@ -31,7 +31,9 @@ import type { Brand } from '../shared/brand.ts'
 import type { HueName } from '../shared/palette.ts'
 import type { StatusHandle, StatusItem } from './status-rules.ts'
 import type { SurfaceBinding } from './surface-host.ts'
-import type { AgentPane } from './agent-panes.ts'
+import type { AgentPane, RondaAnswer, RondaChange } from './agent-panes.ts'
+import type { ProfileView } from './profile-views.ts'
+import type { StatusView } from './status-rules.ts'
 import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
 import type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 import type { Reply } from '../../src/daemon/protocol.ts'
@@ -46,11 +48,12 @@ export type { PaneType } from './pane-registry.ts'
 export type { PaletteModeProvider, PaletteSearch } from './palette.ts'
 export type { ProjectFolder } from './workspace.ts'
 export type { AgentUi } from './agent-ui.ts'
-export type { AgentPane, PanePlace } from './agent-panes.ts'
+export type { AgentPane, AgentRonda, PanePlace, RondaAnswer, RondaChange } from './agent-panes.ts'
+export type { ProfileView } from './profile-views.ts'
 export type { Badge, AttentionHandle, AttentionRaise } from './seal-rules.ts'
 export type { Brand } from '../shared/brand.ts'
 export type { SurfaceBinding, SurfaceHostState, SurfaceShieldEvent } from './surface-host.ts'
-export type { StatusBadge, StatusHandle, StatusItem, StatusState } from './status-rules.ts'
+export type { StatusBadge, StatusHandle, StatusItem, StatusState, StatusView } from './status-rules.ts'
 export type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 export type { FrameDeskGroup, FrameFilter, FramePane, FrameSnapshot, PanelFrameRow, PanelFrameTree } from './panel-frames.ts'
 export type { ExtObjectChange, ExtObjects } from '../shared/api.ts'
@@ -115,6 +118,16 @@ export type WakeAnswer = { paneId: string } & ({ ok: true } | { ok: false; why: 
 export interface PeekPaneRequest {
   over?: HTMLElement
   focus?: boolean
+}
+
+/**
+ * A pane `panes.peekNew` builds for the card when no tab has its id: the id (absent: one screen per type, as `peekScreen`),
+ * the title and the params its type's `optionsOf` gets.
+ */
+export interface PeekNewSpec {
+  id?: string
+  title?: string
+  params?: Record<string, unknown>
 }
 
 /** Where an extension's rows go in a pane's menu: before its floor (the default) or as the menu's first group. */
@@ -502,6 +515,14 @@ export interface TetherUi {
      * makes it a tab. Returns the screen's pane id (a tab's, when one was brought); undefined for an unknown type.
      */
     peekScreen(typeId: string): string | undefined
+    /**
+     * The quick view of a pane of a type (no slot behind it) that may have NO tab: with `spec.id`, ONE per id — a tab with
+     * that id is lent to the card (`peekPane`), the one already in the card gets the keyboard, else the type builds one with
+     * `spec.params` outside dockview (an always-active api), never saved in the layout; the card's "Abrir nesta mesa" makes
+     * that one a tab with the same id and params. Without `spec.id` it is `peekScreen`. Returns the pane id; undefined for an
+     * unknown type or one with a slot.
+     */
+    peekNew(typeId: string, spec?: PeekNewSpec): string | undefined
     /** The pane id of the screen shown in the peek card right now (none: undefined). */
     peekedScreen(): string | undefined
     /** "Copiar link do painel": a tether:// link that brings the pane back from anywhere. */
@@ -837,6 +858,18 @@ export interface TetherUi {
      * and returns its rows (none: an empty list); it runs each time the menu opens.
      */
     tabMenu(provider: (slotId: string) => ContextMenuEntry[]): IDisposable
+    /**
+     * Switches the agent's ronda on or reassembles it (P11: the person does it from a screen, as the agent does with the
+     * skill). The pane's `ronda` follows through `onDidChange`. A refusal is the answer, never thrown: `ronda-unavailable`
+     * (the agent takes no channel) or `bad-request` (the interval or a text was refused; `message` is the sentence).
+     */
+    setRonda(slotId: string, change: RondaChange): Promise<RondaAnswer>
+    /**
+     * Switches the ronda off. A ronda with a stop criterion is not switched off without `force`: the answer is the refusal
+     * `ronda-criterion` (as the CLI does), so the screen asks the person (the criterion is in `ronda.criterion`) and calls
+     * again with `force`.
+     */
+    offRonda(slotId: string, opts?: { force?: boolean }): Promise<RondaAnswer>
   }
   /** The "Sessões" menu. */
   sessions: {
@@ -886,6 +919,15 @@ export interface TetherUi {
   profiles: {
     /** Adds a checkbox to the editor for AI-agent profiles; the value lives in `profile.extensions.<this id>.<key>`. */
     registerOption(option: ProfileOption): IDisposable
+    /** The launch profiles (tetherd's profiles.json), by engine as the editor lists them. Env: only the variables' names. */
+    list(): readonly ProfileView[]
+    /** The list changed (a `profiles` event, a reload). */
+    onDidChange(listener: () => void): IDisposable
+    /**
+     * Opens the core's profile editor (modal) without leaving the desk: on `id`, or blank for `'new'`; `duplicate` starts a
+     * copy of `id` (named "(cópia)", not saved until the person saves). An unknown id opens on the first profile.
+     */
+    edit(id: string | 'new', opts?: { duplicate?: boolean }): void
   }
   chooser: {
     /** Resolves the manifest's chooser item `itemId` (`contributes.chooser.items`) once the person picks it. */
@@ -900,6 +942,12 @@ export interface TetherUi {
    */
   status: {
     register(item: StatusItem): StatusHandle
+    /** Every icon the bar draws (any extension's), as data: title (its state in one sentence), state, badge. */
+    items(): readonly StatusView[]
+    /** An icon came, went or was updated. */
+    onDidChange(listener: () => void): IDisposable
+    /** Opens the icon's popover in the top bar, as a click does (P7). False when the icon is not drawn. */
+    show(id: string): boolean
   }
   /**
    * The extension's own system desks (`contributes.systemDesks`; a desk of another extension, or an undeclared id, throws).

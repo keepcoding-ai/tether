@@ -41,6 +41,23 @@ export class StatusBar {
     this.button(id)?.setAttribute('aria-expanded', 'false')
   }
 
+  /**
+   * Opens the icon's popover (the one a click opens), closing any other; already open: it stays. False when the icon is not
+   * drawn (undeclared, unregistered, or its extension is off).
+   */
+  show(id: string): boolean {
+    const current = this.registry.all().find(x => x.desc.id === id)
+    const wrap = this.wraps.get(id)
+    if (!current || !wrap) return false
+    if (this.openId === id) return true
+    this.close()
+    this.openId = id
+    this.fill(current, wrap)
+    wrap.classList.add('pinned')
+    this.button(id)?.setAttribute('aria-expanded', 'true')
+    return true
+  }
+
   /** Draws every registered status again (the list changed). */
   render(): void {
     const entries = this.registry.all()
@@ -88,14 +105,8 @@ export class StatusBar {
     wrap.append(btn, pop)
     btn.addEventListener('click', ev => {
       ev.stopPropagation()
-      const current = this.registry.all().find(x => x.desc.id === e.desc.id)
-      if (!current) return
       if (this.openId === e.desc.id) { this.close(); return }
-      this.close()
-      this.openId = e.desc.id
-      this.fill(current, wrap)
-      wrap.classList.add('pinned')
-      btn.setAttribute('aria-expanded', 'true')
+      this.show(e.desc.id)
     })
     btn.addEventListener('contextmenu', ev => {
       const entries = this.registry.all().find(x => x.desc.id === e.desc.id)?.item.menu?.()

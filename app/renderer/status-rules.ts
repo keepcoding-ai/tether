@@ -98,6 +98,36 @@ export class StatusRegistry {
   private fire(c: StatusChange): void { for (const l of [...this.listeners]) l(c) }
 }
 
+/**
+ * A status icon as data (TetherUi.status.items): what the top bar draws of it now. `title` is its tooltip (the state in one
+ * sentence), `badge` its number or dot (absent: none).
+ */
+export interface StatusView {
+  id: string
+  /** The extension that declared it. */
+  extension: string
+  icon: string
+  title: string
+  state: StatusState
+  badge?: number | 'dot'
+}
+
+/** The bar's entries as views, in the bar's order; an item whose callback throws shows as itself with what did not throw. */
+export function statusViewsOf(entries: readonly StatusEntry[]): StatusView[] {
+  return entries.map(({ desc, item }) => {
+    const title = attempt(() => item.title(), desc.id)
+    const state = stateView(attempt(() => item.state?.(), undefined))
+    const raw = attempt(() => item.badge?.(), undefined)
+    const view = badgeView(raw)
+    const badge: number | 'dot' | undefined = !view ? undefined : view.dot ? 'dot' : Math.floor(raw as number)
+    return { id: desc.id, extension: desc.extension, icon: desc.icon, title, state, ...(badge !== undefined ? { badge } : {}) }
+  })
+}
+
+function attempt<T>(fn: () => T, fallback: T): T {
+  try { return fn() } catch { return fallback }
+}
+
 /** What the badge draws: '' for none, the number (99+ above 99) or '' with the dot flag. */
 export function badgeView(b: StatusBadge): { text: string; dot: boolean } | undefined {
   if (b === 'dot') return { text: '', dot: true }
