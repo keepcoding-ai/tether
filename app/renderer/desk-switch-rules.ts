@@ -75,6 +75,35 @@ export function overflowDesks(order: readonly string[], visible: readonly string
   return order.filter(id => !v.has(id))
 }
 
+/** A seal as a "+N" row draws it beside the desk's name: the pill's glyph, label, hue, variant and tooltip; never a click of its own (the row picks the desk). */
+export interface OverflowSeal { icon: string; hue?: number; label?: string; tooltip: string; variant?: 'solid' | 'struck' }
+
+export interface OverflowRow { id: string; name: string; attention: number; seals: OverflowSeal[] }
+
+/**
+ * The rows of the "+N" menu, in the row's order: each hidden desk's name, its attention count, and the seals its pill wears
+ * (the owner's among them), drawn the same so a desk keeps its owner's mark when it leaves the strip.
+ */
+export function overflowRows(
+  hidden: readonly string[],
+  nameOf: (id: string) => string,
+  attentionOf: (id: string) => number,
+  sealsOf: (id: string) => readonly { icon: string; hue?: number | undefined; label?: string | undefined; tooltip: string; variant?: 'solid' | 'struck' | undefined }[],
+): OverflowRow[] {
+  return hidden.map(id => ({
+    id,
+    name: nameOf(id),
+    attention: attentionOf(id),
+    seals: sealsOf(id).map(s => ({
+      icon: s.icon,
+      tooltip: s.tooltip,
+      ...(s.hue !== undefined ? { hue: s.hue } : {}),
+      ...(s.label ? { label: s.label } : {}),
+      ...(s.variant === 'struck' ? { variant: 'struck' as const } : {}),
+    })),
+  }))
+}
+
 /**
  * Picking `picked` in the "+N": it takes the place of the visible desk used longest ago (the `active` one is
  * never replaced); the other visible desks stay. Returned in the row's order.

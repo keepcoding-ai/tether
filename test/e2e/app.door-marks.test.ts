@@ -62,7 +62,7 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
 }
 
 /** Runs `body` with the app on a private daemon; everything is closed after, by identity. */
-async function withApp(body: (page: Page, home: string) => Promise<void>): Promise<void> {
+async function withApp(body: (page: Page, home: string, app: ElectronApplication) => Promise<void>): Promise<void> {
   const home = tempHome()
   const pipe = uniquePipe(home)
   const daemon = await startDaemon({ home, pipe, memoryIntervalMs: 0, readyFallbackMs: 60_000, minAgentAgeMs: 0, log: () => {} })
@@ -70,7 +70,7 @@ async function withApp(body: (page: Page, home: string) => Promise<void>): Promi
   try {
     let page: Page
     ;({ app, page } = await launch(home, pipe))
-    await body(page, home)
+    await body(page, home, app)
   } finally {
     if (app) await killElectron(app, root).catch(() => {})
     await daemon.close()
@@ -205,6 +205,62 @@ test('door marks: the desk seal and the tab emblem', { timeout: 300_000 }, async
     await page.evaluate(() => window.__tether.disposeExtension('door-probe'))
     await page.waitForFunction(() => document.querySelectorAll('.ext-emblem, .desk-seal').length === 0)
     assert.equal(await tabOf(page, noteId).locator(':scope > .ext-emblems').evaluate(el => (el as HTMLElement).hidden), true, 'the emblem container is hidden again')
+  })
+})
+
+test('door marks: a hidden desk keeps its owner\'s seal in the "+N" menu, beside its name (R7b)', { timeout: 300_000 }, async () => {
+  await withApp(async (page, _home, app) => {
+    // Desks enough for the strip to overflow in a narrow window: the "+N" shows.
+    for (let i = 0; i < 7; i++) await page.keyboard.press('Control+Shift+N')
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-8')
+    await page.evaluate(() => window.__tether.switchDesk('desk-1'))
+    await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setContentSize(900, 700) })
+    await page.waitForFunction(() => document.documentElement.clientWidth <= 920)
+    const more = page.locator('#desk-switch .desk-more')
+    await more.waitFor({ state: 'visible' })
+    const hidden = await page.evaluate(() => {
+      const shown = new Set([...document.querySelectorAll<HTMLElement>('#desk-switch .desk-segs > .seg[data-desk]')].map(s => s.dataset.desk))
+      return ['desk-2', 'desk-3', 'desk-4', 'desk-5', 'desk-6', 'desk-7', 'desk-8'].filter(d => !shown.has(d))
+    })
+    assert.ok(hidden.length >= 2, `some desks are in the "+N": ${hidden.join(', ')}`)
+    const [owned, plain] = hidden as [string, string]
+    const hue = agentHue('claude-1')
+    await probe(page, 'seal', owned, { icon: 'robot', hue, label: 'Kai', tooltip: 'de Kai' })
+    await page.waitForTimeout(200)
+    await more.click()
+    await page.waitForSelector('#ctx-menu li')
+    const row = (desk: string) => page.locator('#ctx-menu li').nth(hidden.indexOf(desk))
+    const seal = row(owned).locator('.ctx-seals .desk-seal')
+    assert.equal(await seal.count(), 1, 'the owned desk\'s row carries its seal')
+    assert.equal(await seal.locator('.nm').innerText(), 'Kai', 'the same label as on the pill')
+    assert.equal(await seal.locator('svg').count(), 1, 'the same glyph')
+    assert.equal(await seal.evaluate(el => (el as HTMLElement).style.getPropertyValue('--seal-hue')), String(hue), 'the same hue')
+    assert.equal(await seal.getAttribute('title'), 'de Kai', 'the seal\'s tooltip')
+    assert.equal(await seal.getAttribute('aria-label'), 'de Kai', 'and its name for a reader')
+    assert.equal(await row(plain).locator('.desk-seal').count(), 0, 'a desk without owner has no seal')
+    // Beside the name: right after the label, on the same line.
+    const [nameBox, sealBox] = await row(owned).evaluate(li => {
+      const range = document.createRange()
+      const text = [...li.childNodes].find(n => n.nodeType === 3)!
+      range.selectNodeContents(text)
+      const t = range.getBoundingClientRect()
+      const s = li.querySelector('.desk-seal')!.getBoundingClientRect()
+      return [{ right: t.right, cy: t.top + t.height / 2 }, { left: s.left, cy: s.top + s.height / 2 }]
+    })
+    assert.ok(sealBox!.left >= nameBox!.right && sealBox!.left - nameBox!.right <= 16, `the seal sits beside the name: ${JSON.stringify({ nameBox, sealBox })}`)
+    assert.ok(Math.abs(sealBox!.cy - nameBox!.cy) <= 3, 'on the same line')
+    const menu = (await page.locator('#ctx-menu').boundingBox())!
+    const strip = (await page.locator('#desk-switch').boundingBox())!
+    const x0 = Math.max(0, Math.min(menu.x, strip.x) - 10)
+    const y0 = Math.max(0, strip.y - 6)
+    const x1 = Math.min(900, Math.max(menu.x + menu.width, strip.x + strip.width) + 10)
+    const shots = 'C:/atrium/.tmp/tether-agents/onda-3/mesa-regencia/capturas/r7'
+    mkdirSync(shots, { recursive: true })
+    await page.screenshot({ path: join(shots, 'faixa-mais-n-selo.png'), clip: { x: x0, y: y0, width: x1 - x0, height: menu.y + menu.height + 10 - y0 } })
+    // A pick still switches to the desk (the seal is not a target of its own there).
+    await row(owned).click()
+    await page.waitForFunction(d => window.__tether.activeDesk() === d, owned)
   })
 })
 

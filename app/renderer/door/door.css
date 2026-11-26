@@ -15,19 +15,22 @@
 :root[data-theme="light"] { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; --mark-solid-s: 58%; --mark-solid-l: 40%; }
 
 /* The seal on a pill: a small glyph in a round chip, after the name and before any count. Without a hue it takes the pill's text. */
-.seg .desk-seal {
+:is(.seg, .ctx-seals) .desk-seal {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; border-radius: 50%;
   color: inherit; background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
 }
-.seg .desk-seal.hued {
+:is(.seg, .ctx-seals) .desk-seal.hued {
   color: hsl(var(--seal-hue) var(--mark-s) var(--mark-fg-l));
   background: hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-bg-a));
   box-shadow: inset 0 0 0 1px hsl(var(--seal-hue) var(--mark-s) 50% / var(--mark-line-a));
 }
 /* With a label (the owner's name) the seal is the capsule-scale chip of the preview: glyph and name, cut past 150px. */
-.seg .desk-seal.labeled { width: auto; max-width: 150px; height: 17px; gap: 3px; padding: 0 7px 0 5px; border-radius: 999px; font-size: 10.5px; line-height: 15px; font-weight: 500; }
-.seg .desk-seal .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seg .desk-seal .ph { width: 11px; height: 11px; flex: none; }
+:is(.seg, .ctx-seals) .desk-seal.labeled { width: auto; max-width: 150px; height: 17px; gap: 3px; padding: 0 7px 0 5px; border-radius: 999px; font-size: 10.5px; line-height: 15px; font-weight: 500; }
+:is(.seg, .ctx-seals) .desk-seal .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.seg, .ctx-seals) .desk-seal .ph { width: 11px; height: 11px; flex: none; }
+/* The same seals in a "+N" row, beside the desk's name (main.ts overflowSealsTrail): the menu's icon size and colour do not reach them. */
+#ctx-menu li .ctx-seals { display: inline-flex; align-items: center; gap: 4px; flex: none; min-width: 0; }
+#ctx-menu li .ctx-seals .desk-seal .ph { width: 11px; height: 11px; color: inherit; }
 
 /* The tab's emblems of extensions (and the same emblems on a card of a view that lists panes, .pf-r-head): on the right, after the title and before the state marks. Hidden while empty. */
 :is(.tether-tab, .pf-r-head, .qv-head) .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
@@ -79,8 +82,8 @@
 #ctx-menu ul.submenu[hidden] { display: none; }
 
 /* A seal whose owner ended (DeskSeal.variant 'struck'): no fill, a dashed ring in the dim text colour, the name struck through. */
-.seg .desk-seal.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--fg-dim) 70%, transparent); outline-offset: -1px; opacity: .85; }
-.seg .desk-seal.struck .nm { text-decoration: line-through; }
+:is(.seg, .ctx-seals) .desk-seal.struck { color: var(--fg-dim); background: transparent; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--fg-dim) 70%, transparent); outline-offset: -1px; opacity: .85; }
+:is(.seg, .ctx-seals) .desk-seal.struck .nm { text-decoration: line-through; }
 /* A seal the extension answers a click on (DeskSeal.onActivate). */
 .seg .desk-seal.act { cursor: pointer; }
 .seg .desk-seal.act:hover { filter: brightness(1.12); }

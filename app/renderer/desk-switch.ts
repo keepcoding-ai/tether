@@ -21,11 +21,25 @@
 // (the "+N" swapping who is visible) slides the surviving segments to their new places (FLIP, 320 ms) unless
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
-import { fitCapsule, measureKey, overflowDesks, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type SegView } from './desk-switch-rules.ts'
+import { fitCapsule, measureKey, overflowDesks, overflowRows, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type OverflowRow, type OverflowSeal, type SegView } from './desk-switch-rules.ts'
 import { ICON_NAMES, icon, type IconName } from './icons.ts'
 import { pillMark, type Badge } from './seal-rules.ts'
 import { deskSeals, type PlacedSeal } from './door/desk-seal-rules.ts'
 import { clampDragX, dragTargetIndex, fullIndexAfterDrop, passedThreshold } from './desk-drag-rules.ts'
+
+/**
+ * A desk's seal as the pill draws it: the glyph in a round chip, the label beside it, the hue, dashed when struck (door.css
+ * `.desk-seal`). The pill and the "+N" menu draw the same node; the pill adds its click and hides it from the reader (its own
+ * label speaks), the menu names it by its tooltip.
+ */
+export function sealNode(seal: OverflowSeal): HTMLElement {
+  const el = document.createElement('span')
+  el.className = `desk-seal${seal.hue === undefined ? '' : ' hued'}${seal.label ? ' labeled' : ''}${seal.variant === 'struck' ? ' struck' : ''}`
+  if (seal.hue !== undefined) el.style.setProperty('--seal-hue', String(seal.hue))
+  if ((ICON_NAMES as readonly string[]).includes(seal.icon)) el.append(icon(seal.icon as IconName))
+  if (seal.label) { const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = seal.label; el.append(nm) }
+  return el
+}
 
 /** What a desk's badge says: how many panes finished (done) or wait for the user (waiting). */
 import { markAttention, type DeskMark } from './desk-mark.ts'
@@ -39,7 +53,7 @@ export interface DeskSwitchHost {
   recolor(id: string, color: DeskHue): void
   menu(id: string, x: number, y: number): void
   /** The "+N" menu: one entry per hidden desk; `pick` switches to it. */
-  overflowMenu(entries: { id: string; name: string; attention: number }[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
+  overflowMenu(entries: OverflowRow[], x: number, y: number, pick: (id: string) => void, opener: HTMLElement): void
   /** The moon closing the desks: one entry per hibernated desk; `wake` wakes it and switches to it. */
   sleepMenu(entries: { id: string; name: string }[], x: number, y: number, wake: (id: string) => void, opener: HTMLElement): void
   /** Hint shown in a segment's tooltip ("Ctrl+1"). */
@@ -411,13 +425,10 @@ export class DeskSwitch {
    * is the extension's (the handler in force at the click), not the pill's: it neither shows the desk nor starts a drag.
    */
   private sealGlyph({ ext, seal }: PlacedSeal, deskId: string, measuring: boolean): HTMLElement {
-    const el = document.createElement('span')
-    el.className = `desk-seal${seal.hue === undefined ? '' : ' hued'}${seal.label ? ' labeled' : ''}${seal.variant === 'struck' ? ' struck' : ''}${seal.onActivate ? ' act' : ''}`
+    const el = sealNode(seal)
+    if (seal.onActivate) el.classList.add('act')
     el.dataset.ext = ext
-    if (seal.hue !== undefined) el.style.setProperty('--seal-hue', String(seal.hue))
     el.setAttribute('aria-hidden', 'true')
-    if ((ICON_NAMES as readonly string[]).includes(seal.icon)) el.append(icon(seal.icon as IconName))
-    if (seal.label) { const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = seal.label; el.append(nm) }
     if (seal.onActivate && !measuring) {
       if (seal.tooltip) el.title = seal.tooltip
       el.addEventListener('pointerdown', ev => ev.stopPropagation())
@@ -455,7 +466,7 @@ export class DeskSwitch {
     const order = this.awake.map(d => d.id)
     const hidden = overflowDesks(order, this.visible)
     const r = this.more.getBoundingClientRect()
-    const entries = hidden.map(id => { const a = this.attention(id); return { id, name: this.desks.find(d => d.id === id)?.name ?? id, attention: a.done + a.waiting } })
+    const entries = overflowRows(hidden, id => this.desks.find(d => d.id === id)?.name ?? id, id => { const a = this.attention(id); return a.done + a.waiting }, id => deskSeals.of(id).map(p => p.seal))
     this.host.overflowMenu(entries, r.left, r.bottom + 4, id => {
       // The picked desk takes the place of the visible desk used longest ago; the others stay.
       this.visible = pickFromOverflow(order, this.visible, id, this.active, this.lastUsed)

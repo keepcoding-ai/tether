@@ -2,7 +2,22 @@
 // the "+N" count, MRU replacement on pick, use stamps.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fitDesks, overflowDesks, pickFromOverflow, touchUsed, type FitInput } from '../../app/renderer/desk-switch-rules.ts'
+import { fitDesks, overflowDesks, overflowRows, pickFromOverflow, touchUsed, type FitInput } from '../../app/renderer/desk-switch-rules.ts'
+
+test('the "+N" rows: name, attention and the seals the pill wears (the owner\'s), without their click', () => {
+  const names: Record<string, string> = { c: 'Obra', d: 'Fila' }
+  const seals: Record<string, { icon: string; hue?: number; label?: string; tooltip: string; variant?: 'solid' | 'struck'; onActivate?: () => void }[]> = {
+    c: [{ icon: 'robot', hue: 210, label: 'Kai', tooltip: 'Dono: Kai', onActivate: () => {} }],
+    d: [{ icon: 'robot', label: 'Nic', tooltip: 'Nic encerrou', variant: 'struck' }],
+  }
+  const rows = overflowRows(['c', 'd', 'e'], id => names[id] ?? id, id => (id === 'c' ? 2 : 0), id => seals[id] ?? [])
+  assert.deepEqual(rows, [
+    { id: 'c', name: 'Obra', attention: 2, seals: [{ icon: 'robot', tooltip: 'Dono: Kai', hue: 210, label: 'Kai' }] },
+    { id: 'd', name: 'Fila', attention: 0, seals: [{ icon: 'robot', tooltip: 'Nic encerrou', label: 'Nic', variant: 'struck' }] },
+    { id: 'e', name: 'e', attention: 0, seals: [] },
+  ])
+  assert.ok(!('onActivate' in rows[0]!.seals[0]!), 'the row picks the desk: the seal has no click of its own there')
+})
 
 const order = ['a', 'b', 'c', 'd', 'e']
 const widths = { a: 100, b: 100, c: 100, d: 100, e: 100 }

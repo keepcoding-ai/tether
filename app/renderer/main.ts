@@ -28,7 +28,8 @@ import type { PaletteMode } from './palette-rules.ts'
 import { beginPaneDrag, type Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
 import { DeskSet } from './desk-set.ts'
 import { SurfaceHosts, type FreezeTiming } from './surface-host.ts'
-import { DeskSwitch, type DeskAttention } from './desk-switch.ts'
+import { DeskSwitch, sealNode, type DeskAttention } from './desk-switch.ts'
+import type { OverflowSeal } from './desk-switch-rules.ts'
 import { attentionLines, BadgeBoard, effectiveAttention, SealBoard, type AttentionHandle } from './seal-rules.ts'
 import { deskMark, markAttention, routedHue, type DeskMark } from './desk-mark.ts'
 import { deskTokens, readDeskColor, type DeskHue } from './desks.ts'
@@ -626,7 +627,7 @@ function setupDock(): void {
     recolor: (id, color) => desks.recolor(id, color),
     menu: (id, x, y) => showDeskMenu(id, x, y),
     sleepMenu: (entries, x, y, wake, opener) => showContextMenu(x, y, [{ heading: 'Mesas hibernadas' }, ...entries.map(e => ({ icon: 'sun' as const, label: `Despertar ${e.name}`, run: () => wake(e.id) }))], opener),
-    overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, run: () => pick(e.id) })), opener),
+    overflowMenu: (entries, x, y, pick, opener) => showContextMenu(x, y, entries.map(e => ({ icon: 'cards' as const, label: e.attention > 0 ? `${e.name} (${e.attention})` : e.name, ...overflowSealsTrail(e.seals), run: () => pick(e.id) })), opener),
     hint: position => shortcutHint(`desk.go.${position}`),
     move: (id, to) => desks.move(id, to),
     toggleSystem: id => desks.toggleSystem(id),
@@ -3482,6 +3483,21 @@ let menuCapture: MenuEntry[] | undefined
 function leadOf(panelId: string, name: string): { lead?: HTMLElement } {
   const s = slots.get(panelId)
   return s ? { lead: markOf(identityOf({ kind: s.kind, name, seed: panelId, emblem: emblemOfPanel(panelId) })) } : {}
+}
+
+/** A "+N" row's seals beside the desk's name, drawn as the pill draws them (desk-switch.ts sealNode), each named by its tooltip. */
+function overflowSealsTrail(seals: readonly OverflowSeal[]): { trail?: HTMLElement } {
+  if (seals.length === 0) return {}
+  const box = document.createElement('span')
+  box.className = 'ctx-seals'
+  for (const s of seals) {
+    const n = sealNode(s)
+    n.title = s.tooltip
+    n.setAttribute('role', 'img')
+    n.setAttribute('aria-label', s.tooltip)
+    box.append(n)
+  }
+  return { trail: box }
 }
 
 /** A menu row's icon; a name the app does not have draws no icon (an extension's typo must not take the whole menu down). */
