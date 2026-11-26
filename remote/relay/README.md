@@ -8,7 +8,9 @@ offline: tudo em memória, com teto.
 - `src/shell.ts`: a casca HTTP + `ws` (upgrade, subprotocolo `tether-remote.v1`, `Origin`, `permessage-deflate`
   desligado, `maxPayload`), e `GET /healthz`.
 - `src/main.ts`: a entrada `serve`.
-- `test/fixtures.ts`: apoio dos testes em `test/unit/remote-relay.*.test.ts`.
+- `test/`: os testes do núcleo (`core.test.ts`) e com sockets (`wire.timing.test.ts`), mais o apoio (`fixtures.ts`).
+  Rodam com `npm test` aqui (ou `npm run test:relay` da raiz); `npm run check` é o tsc do pacote. A raiz não
+  compila nem testa este pacote.
 
 ## Subir em bancada
 

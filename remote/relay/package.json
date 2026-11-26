@@ -9,7 +9,8 @@
   },
   "scripts": {
     "serve": "node src/main.ts serve",
-    "typecheck": "tsc -p ."
+    "check": "tsc -p .",
+    "test": "node --test --test-timeout=120000 test/core.test.ts && node --test --test-concurrency=1 --test-timeout=120000 test/wire.timing.test.ts"
   },
   "dependencies": {
     "ws": "8.22.2"
