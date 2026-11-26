@@ -128,6 +128,8 @@ export class DoorHost implements DoorSeams {
     }))
   }
 
+  claimed(slotId: string): boolean { return this.delivery.claimed(slotId) }
+
   exited(slotId: string): void { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.attentionService.exited(slotId) }
 
   forgotten(slotId: string): Promise<void> { this.slotKeys.revoke(slotId); this.mcp.revoke(slotId); this.slotsService.forgotten(slotId); this.suspend.forgotten(slotId); return Promise.all([this.attentionService.forgotten(slotId), this.objects.dropPane(slotId), this.delivery.forgotten(slotId)]).then(() => undefined) }

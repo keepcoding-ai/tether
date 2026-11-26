@@ -8,6 +8,8 @@
 //    previous one opened is seen as busy);
 // 3. wait: a queue per slot, in order, kept in <home>/slots/<slot>.inbox.jsonl (whole file, temp + rename, async only).
 //    A slot whose pane the app suspended (suspend.ts) is resumed then, and its queue goes once the agent is up.
+// A claim (DoorDelivery.claim) reserves the slot's window for an extension's own typist: nothing starts by any path until it
+// is released, and then, if the claimer typed, until the settle; the ronda reads it too (DoorSeams.claimed).
 // The tether never types over the user: no `held`, no terminal path, ever.
 //
 // The queue is looked at again only at edges that already exist, with no timer per slot: a slot's state went out
@@ -29,7 +31,7 @@ import { DoorError, doorUnavailable, type InputMark, type InputOrigin, type Slot
 import { terminalText } from './terminal-text.ts'
 import { typingOf, type Typing } from './typing.ts'
 import { UserPresence } from './user-presence.ts'
-import type { DeliveryMessage, DeliveryPoll, DeliveryReceipt, DeliveryRole, DeliveryState, DoorDelivery, Typist, TypistContext } from './types.ts'
+import type { DeliveryClaim, DeliveryMessage, DeliveryPoll, DeliveryReceipt, DeliveryRole, DeliveryState, DoorDelivery, Typist, TypistContext } from './types.ts'
 
 /** After a terminal delivery, the next one to the same slot waits this long (and then for the turn it opened to end). */
 export const DOOR_SETTLE_MS = 2_000
@@ -166,6 +168,10 @@ export class DeliveryService {
   private readonly typing = new Set<string>()
   /** Slots where an `unsent` delivery left text of the tether's in the box; cleared by a busy turn or the person's keys. */
   private readonly dirtyBox = new Set<string>()
+  /** slot -> its claims (DoorDelivery.claim): claim -> why. Only slots with a claim are here. */
+  private readonly claims = new Map<string, Map<object, string>>()
+  /** slot -> when the settle after a claim released with `typed` ends (ms epoch): the slot stays claimed until then. */
+  private readonly claimSettleAt = new Map<string, number>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private timerAt = Infinity
   private readonly streamSub: IDisposable
@@ -210,6 +216,8 @@ export class DeliveryService {
     this.queues.delete(slotId)
     this.settleAt.delete(slotId)
     this.dirtyBox.delete(slotId)
+    this.claims.delete(slotId)
+    this.claimSettleAt.delete(slotId)
     this.hadStream.delete(slotId)
     this.presence.forget(slotId)
     for (const item of items) this.emit(item, 'dropped')
@@ -234,6 +242,12 @@ export class DeliveryService {
       routeOf: (slotId) => this.routeOf(slotId),
       hasTools: (slotId) => this.hasTools(slotId),
       quiet: (slotId) => this.quiet(slotId),
+      claim: (slotId, why) => {
+        const claim = this.claim(slotId, why)
+        // The extension's end releases what it still holds; a release takes the claim out of the store (no growth per claim).
+        const onDispose = own.add(toDisposable(() => claim.release(false)))
+        return { release: (typed) => { claim.release(typed); own.delete(onDispose) } }
+      },
       useTypist: (agent, typist) => {
         const entry = { typist }
         this.typists.set(agent, entry)
@@ -257,6 +271,10 @@ export class DeliveryService {
   waitReason(slotId: string): string | undefined {
     const port = this.opts.port()
     if (!port) return 'porta indisponível'
+    const claims = this.claims.get(slotId)
+    if (claims) return `guia reservada (${[...new Set(claims.values())].join(', ')})`
+    const claimSettle = this.claimSettleAt.get(slotId) ?? 0
+    if (this.now() < claimSettle) return `assentamento depois da reserva, faltam ${Math.ceil(claimSettle - this.now())} ms`
     if (this.opts.mcp.wakes(slotId)) return undefined
     if (!port.meta(slotId)?.held) return 'guia não held'
     if (!port.isAlive(slotId)) return 'processo não vivo'
@@ -297,8 +315,39 @@ export class DeliveryService {
    * terminal delivery settled, and no `unsent` text of the tether's sits in the box. Another typist of the tether checks it.
    */
   quiet(slotId: string): boolean {
-    if (this.queues.has(slotId) || this.typing.has(slotId) || this.dirtyBox.has(slotId)) return false
+    // A claimed slot's queue waits for the claimer: counting it would leave both waiting for each other.
+    if ((this.queues.has(slotId) && !this.claims.has(slotId)) || this.typing.has(slotId) || this.dirtyBox.has(slotId)) return false
     return this.now() >= (this.settleAt.get(slotId) ?? 0)
+  }
+
+  /** The slot's window is reserved by a claim, or it settles after one released with `typed` (DoorDelivery.claim). */
+  claimed(slotId: string): boolean {
+    return this.claims.has(slotId) || this.now() < (this.claimSettleAt.get(slotId) ?? 0)
+  }
+
+  /** A claim on the slot (see DoorDelivery.claim); its release is idempotent. */
+  claim(slotId: string, why: string): DeliveryClaim {
+    const key = {}
+    const mine = this.claims.get(slotId) ?? new Map<object, string>()
+    mine.set(key, why)
+    this.claims.set(slotId, mine)
+    let released = false
+    return {
+      release: (typed) => {
+        if (released) return
+        released = true
+        const held = this.claims.get(slotId)
+        if (!held?.delete(key)) return
+        if (held.size === 0) this.claims.delete(slotId)
+        if (typed) {
+          const at = this.now() + DOOR_SETTLE_MS
+          this.claimSettleAt.set(slotId, at)
+          this.settleAt.set(slotId, Math.max(at, this.settleAt.get(slotId) ?? 0))
+        }
+        if (this.queues.has(slotId)) void this.kick(slotId)
+        this.armTimer()
+      },
+    }
   }
 
   /** Stops the silence timer and the stream subscription (tests, teardown). */
@@ -387,6 +436,8 @@ export class DeliveryService {
         delivered = true
         continue
       }
+      // A claimed slot starts nothing, by any path: the claimer's command goes first, the queue keeps its order.
+      if (this.claimed(slotId)) break
       const insideOk = !item.paths || item.paths.includes('inside')
       const terminalOk = !item.paths || item.paths.includes('terminal')
       if (insideOk && this.opts.mcp.wakes(slotId) && this.opts.mcp.sendChannel(slotId, item.msg.body, deliveryMeta(item.msg, item.ext, item.id))) {
@@ -443,7 +494,7 @@ export class DeliveryService {
           if (refused || over) return false
           if (chunk.waitMs && chunk.waitMs > 0) await sleep(chunk.waitMs)
           if (refused || over) return false
-          if (!written ? !this.terminalReady(port, slotId) : (!port.meta(slotId)?.held || !port.isAlive(slotId) || typedAt() !== mark)) {
+          if (!written ? this.claimed(slotId) || !this.terminalReady(port, slotId) : (!port.meta(slotId)?.held || !port.isAlive(slotId) || typedAt() !== mark)) {
             if (written) this.opts.log(`door: entrega ${item.id}: o resto não foi digitado (a guia mudou de mãos, o processo saiu ou o usuário digitou)`)
             refused = true
             return false
