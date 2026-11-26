@@ -1,6 +1,10 @@
 /* The Regency (extensions/regency): one pane in three columns. Prefix rg-. Colours are the app's tokens; the orange
    (--x-alert) only means "needs the person". */
 .rg { height: 100%; min-height: 0; display: grid; grid-template-columns: 214px minmax(0, 1fr) 340px; background: var(--frame-bg); color: var(--fg); font-size: 12.5px; }
+/* The secondary grey of the Regency, from the theme's own tokens: the text a quarter of the way to the column's background
+   keeps 4.5:1 or more on every surface it sits on, the hovered row included (measured: dark 5.2:1, light 5.0:1 on --bg-hover;
+   the theme's --fg-dim alone falls to 4.3:1 there). No opacity on text: it would take the contrast back below. */
+.rg, dialog.rg-cr { --fg-dim: color-mix(in srgb, var(--fg) 75%, var(--bg-2)); }
 .rg[data-tier="wide"] { grid-template-columns: 240px minmax(0, 1fr) 420px; }
 /* The tablet follows the desktop for now, with narrower sides (its own design comes later). */
 .rg[data-tier="tablet"] { grid-template-columns: 180px minmax(0, 1fr) 260px; }
@@ -40,7 +44,7 @@
 .rg[data-tier="mobile"] .rg-mode { display: none; }
 .rg[data-tier="mobile"] > .rg-tabbar { display: flex; grid-row: 2; grid-column: 1; }
 .rg-tabbar { gap: 2px; padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); background: var(--bg-2); }
-.rg-tab { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rg-tab { flex: 1 1 auto; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
 .rg-tab:hover { color: var(--fg); }
 .rg-tab[aria-selected="true"] { background: var(--bg-hover); color: var(--fg); font-weight: 600; }
 .rg .rg-tab .rg-ic { color: inherit; }
@@ -82,7 +86,7 @@
 .rg-conv:hover { background: var(--bg-hover); }
 .rg-peeked[aria-current="true"] { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent); }
 .rg-conv[aria-current="true"] { background: var(--bg-hover); color: var(--fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
-.rg-conv.closed { opacity: .7; }
+.rg-conv.closed { font-style: italic; }
 .rg-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-mk { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .rg .cnt.dim { background: var(--bg-hover); color: var(--fg-dim); box-shadow: none; }
@@ -123,8 +127,11 @@
 .rg-desk, .rg-pane { position: relative; display: flex; align-items: center; gap: 6px; margin: 0 6px; padding: 4px 6px; border-radius: 6px; min-height: 28px; min-width: 0; cursor: pointer; }
 .rg-desk { font-weight: 600; margin-top: 3px; }
 .rg-desk:hover, .rg-pane:hover { background: var(--bg-hover); }
-.rg-desk.zz, .rg-pane.zz { opacity: .62; }
-.rg-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--rg-desk); }
+/* Asleep or ended: the line goes to the secondary grey (never opacity: the text keeps its 4.5:1). */
+.rg-desk.zz, .rg-pane.zz { color: var(--fg-dim); font-style: italic; }
+.rg-desk.zz .rg-swatch, .rg-desk.zz .aid, .rg-pane.zz .aid { opacity: .6; }
+/* A desk's colour is a small square; the round dot is only a state (.rg-attn). */
+.rg-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; background: var(--rg-desk); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent); }
 .rg-dn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-n2 { font-weight: 400; font-size: 11px; color: var(--fg-dim); white-space: nowrap; flex: none; }
 .rg-pane { padding-left: 26px; }
@@ -136,6 +143,8 @@
 .rg-own svg { width: 10px; height: 10px; flex: none; }
 .rg-own > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rg-st { flex: none; font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+/* While the row's buttons show over its right end, its state steps aside (no half word under them). */
+.rg:not([data-tier="mobile"]) :is(.rg-pane, .rg-agent):is(:hover, :focus-within, :focus):has(> .rg-acts:not(:empty)) > .rg-st { visibility: hidden; }
 .rg-st.wait { color: var(--x-alert); font-weight: 600; }
 .rg-st.work { color: color-mix(in srgb, var(--ok) 70%, var(--fg)); }
 .rg-st.off { color: var(--fg-dim); font-style: italic; }
@@ -152,6 +161,8 @@
 .rg-act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rg[data-tier="mobile"] .rg-acts:not(:empty) { position: static; transform: none; display: inline-flex; padding-left: 0; background: none; margin: -8px -4px -8px 0; }
 .rg[data-tier="mobile"] .rg-act { width: 44px; height: 44px; }
+/* On the phone a row has one button, the "⋯" (its menu holds the rest): no row of small icons to miss with a thumb. */
+.rg[data-tier="mobile"] .rg-act:not([data-action="row-menu"]) { display: none; }
 /* A row's name being typed in place. */
 .rg .rg-rename { flex: 1 1 0; min-width: 8em; height: 22px; margin: -2px 0; padding: 0 6px; border-radius: 4px; border: 1px solid var(--accent); outline: none; background: var(--bg); color: var(--fg);
   font-family: inherit; font-size: 12.5px; font-weight: 500; letter-spacing: normal; }
@@ -185,6 +196,44 @@
 .rg-none { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px 0 10px; }
 .rg-none .rg-btn { margin-left: 16px; }
 
+/* The search behind its icon in the heading (the field opens under it); lit while a search narrows the tree. */
+.rg-search-open { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; margin: -4px 0; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; }
+.rg-search-open:hover, .rg-search-open[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.rg-search-open.on { color: var(--accent); }
+.rg .rg-search-open .rg-ic { color: inherit; }
+.rg .rg-search-open .rg-ic svg { width: 14px; height: 14px; }
+.rg-search-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A desk with no pane: a quiet sentence (not a line that looks like a pane), "+ nova guia" at its right. */
+.rg-vazia { display: flex; align-items: center; gap: 8px; margin: 0 6px; padding: 2px 6px 4px 26px; min-height: 24px; }
+.rg-vazia-t { font-size: 11.5px; font-style: italic; color: var(--fg-dim); }
+.rg-vazia-b { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; height: 22px; padding: 0 7px 0 5px; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font: inherit; font-size: 11.5px; cursor: pointer; }
+.rg-vazia-b:hover { background: var(--bg-hover); color: var(--fg); }
+.rg .rg-vazia-b .rg-ic { color: inherit; }
+.rg .rg-vazia-b .rg-ic svg { width: 12px; height: 12px; }
+.rg-vazia-b:focus-visible, .rg-shelf-b:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rg[data-tier="mobile"] .rg-vazia { min-height: 44px; }
+.rg[data-tier="mobile"] .rg-vazia-b { height: 44px; padding: 0 12px; }
+
+/* The empty Browser and drawer: one quiet line at the tree's foot, each a small button to its desk's menu. */
+.rg-shelf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 8px 6px 0; padding: 6px 6px 2px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--fg-dim); }
+.rg-shelf-t { font-weight: 600; }
+.rg-shelf-b { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px 0 5px; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--fg-dim); font: inherit; font-size: 11.5px; cursor: pointer; }
+.rg-shelf-b:hover { background: var(--bg-hover); color: var(--fg); }
+.rg .rg-shelf-b .rg-ic { color: inherit; }
+.rg .rg-shelf-b .rg-ic svg { width: 12px; height: 12px; }
+.rg-shelf + .rg-group[data-closed] .rg-cl-head { margin-top: 4px; }
+.rg[data-tier="mobile"] .rg-shelf-b { height: 44px; padding: 0 14px 0 10px; }
+
+/* The phone: "Conversas" over the conversation (the tab "Conversa"), folding into one line; the channel takes the rest. */
+.rg[data-tier="mobile"] .rg-center > .rg-convs { flex: none; max-height: 45%; overflow: auto; border-bottom: 1px solid var(--border); background: var(--bg-2); padding-bottom: 4px; }
+.rg[data-tier="mobile"] .rg-center > .rg-convs:has(.rg-convs-tg[aria-expanded="false"]) { padding-bottom: 0; }
+.rg[data-tier="mobile"] .rg-center > .rg-embed { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }
+.rg[data-tier="mobile"] .rg-center > .rg-closed-bar { position: relative; inset: auto; flex: none; }
+.rg[data-tier="mobile"] .rg-closed-bar:not([hidden]) ~ .rg-embed { top: auto; }
+.rg-convs-tg { min-height: 44px; margin-top: 4px; margin-bottom: 4px; }
+.rg-convs-now { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+
 /* "Por agente": the agent's head (or "Você"), then its panes with the desk's badge. */
 .rg-agent { position: relative; display: flex; align-items: center; gap: 6px; margin: 3px 6px 0; padding: 4px 6px; border-radius: 6px; min-height: 28px; min-width: 0; font-weight: 600; cursor: pointer; }
 .rg-agent:hover { background: var(--bg-hover); }
@@ -201,22 +250,26 @@
 .rg .rg-me { color: var(--fg); background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--border); }
 .rg-dsk { display: inline-flex; align-items: center; gap: 4px; flex: none; max-width: 45%; padding: 0 7px 0 5px; border-radius: 999px; font-size: 10.5px; line-height: 15px; white-space: nowrap; color: var(--fg-dim); border: 1px solid var(--border); background: var(--bg-3); }
 .rg-dsk > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.rg-dsk .rg-dot { width: 6px; height: 6px; }
+.rg-dsk .rg-swatch { width: 7px; height: 7px; border-radius: 1.5px; }
 
 /* The phone: the tools are 44 px targets; the chips scroll sideways in one line. */
 .rg[data-tier="mobile"] .rg-agent { min-height: 44px; }
 .rg[data-tier="mobile"] .rg-seg-b { height: 44px; padding: 0 12px; font-size: 12.5px; }
 .rg[data-tier="mobile"] .rg-seg { padding: 0; }
 .rg[data-tier="mobile"] .rg-search { height: 46px; padding-right: 0; }
+.rg[data-tier="mobile"] .rg-search-open { width: 44px; height: 44px; }
 .rg[data-tier="mobile"] .rg-search-in { font-size: 14px; }
 .rg[data-tier="mobile"] .rg-search-x { width: 44px; height: 44px; }
-.rg[data-tier="mobile"] .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -8px; padding: 0 8px; }
+/* The five chips do not fit a phone: one line that scrolls sideways, with its scrollbar in view (the last chip is reached,
+   never cut without a sign). */
+.rg[data-tier="mobile"] .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fg-dim) transparent; margin: 0 -8px; padding: 0 8px 6px; scroll-padding-inline: 8px; }
+.rg[data-tier="mobile"] .rg-chips::after { content: ''; flex: none; width: 2px; }
 .rg[data-tier="mobile"] .rg-chip { height: 44px; padding: 0 14px; font-size: 12.5px; }
 
 /* "Fechadas", the tree's last group: the head folds; each ended session is one line (identity, title, how long ago). */
 .rg-cl-head, .rg-cl { position: relative; display: flex; align-items: center; gap: 6px; margin: 0 6px; padding: 4px 6px; border-radius: 6px; min-height: 28px; min-width: 0; cursor: pointer; }
 .rg-cl-head { margin-top: 8px; font-weight: 600; color: var(--fg-dim); border-top: 1px solid var(--border); border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 6px; }
-.rg-cl-head.rg-cl-off { cursor: default; opacity: .7; }
+.rg-cl-head.rg-cl-off { cursor: default; font-weight: 500; }
 .rg-cl { padding-left: 26px; }
 .rg-cl-head:hover, .rg-cl:hover { background: var(--bg-hover); }
 .rg-cl-head.rg-cl-off:hover { background: none; }
@@ -389,7 +442,7 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-sys-tab .rg-sys-dot { position: absolute; top: 3px; right: calc(50% - 15px); }
 .rg-sys-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
 .rg-sys-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-dim); }
-.rg-sys-note { font-size: 10.5px; color: var(--fg-dim); opacity: .85; line-height: 1.4; }
+.rg-sys-note { font-size: 10.5px; color: var(--fg-dim); line-height: 1.4; }
 .rg-sys-empty { padding: 10px 12px; }
 
 /* A row: icon, name over its line of chips, the acts at the end (always shown: Sistema is a place to act). */
@@ -451,3 +504,36 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg[data-tier="mobile"] .rg-sr-a { grid-column: 1 / -1; justify-self: end; flex-wrap: wrap; }
 .tether-tab.regency .rg-pin { color: var(--fg-dim); }
 .tether-tab.regency .rg-pin svg { width: 12px; height: 12px; }
+
+/* The brief notice after "+ Novo" (toast.ts): over the bottom of the centre, not modal, opaque, it goes by itself. */
+.rg { position: relative; }
+.rg-toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100% - 32px));
+  padding: 7px 6px 7px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-3, var(--bg-2)); color: var(--fg); box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, .35)); font-size: 12.5px; }
+.rg-toast[hidden] { display: none; }
+.rg-toast-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-toast-a { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.rg-toast-x { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 15px; }
+.rg-toast-x:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-toast-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rg[data-tier="mobile"] .rg-toast { bottom: 72px; }
+.rg[data-tier="mobile"] .rg-toast :is(.rg-btn, .rg-toast-x) { min-height: 44px; min-width: 44px; }
+@media (prefers-reduced-motion: no-preference) {
+  .rg-toast:not([hidden]) { animation: rg-toast-in .18s ease-out; }
+}
+@keyframes rg-toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translateX(-50%); } }
+
+/* The immersion's left edge: the bell and the number only (the words are the tooltip's). */
+.rg-edge-l .rg-edge-pill { writing-mode: horizontal-tb; min-width: 20px; justify-content: center; padding: 1px 5px; }
+.rg-edge-l:not(.lit) .rg-edge-pill { display: none; }
+/* The red of a process that fell, with its words, on the foot "Sistema" (the dot's own red, --err). */
+.rg-sys-dot-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 600; color: var(--err); }
+.rg-sys-open .rg-sys-dot-t[hidden] { display: none; }
+/* "Segurar": the lock lit while the person holds the process. */
+.rg-sys-ib[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* A status sentence (Bridge, Sync) wraps instead of being cut. */
+.rg-sr-c.wrap { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+/* The empty centre's second way, quieter than "Escolher conversa…". */
+.rg-btn.rg-btn-q { border-color: var(--border); background: none; color: var(--fg-dim); }
+.rg-btn.rg-btn-q:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-void .rg-btn .rg-ic svg { width: 13px; height: 13px; }
+.rg .rg-btn .rg-ic { color: inherit; }
