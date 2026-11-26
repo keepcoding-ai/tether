@@ -26,6 +26,7 @@ import {
   markOf, memoryText, MENU_LABELS, menuActions, NO_OUTPUT, othersUses, portRowView, portViews, procBadge, procGroups, type RowAction,
   rowActions, runSeparator, summaryText, timelineItem, untilText, WAIT_MS, waitingText, whenText, type MenuAction,
 } from './proc-rules.ts'
+import { createProcessActs, processEmbeds } from './embed.ts'
 import { manifest, OPEN_COMMAND, PAD_ID, PROCESS_COMPONENT, PROCESS_PANE_PREFIX, PROCESS_TAB } from './manifest.ts'
 
 export { manifest }
@@ -601,6 +602,31 @@ export function activate(ui: TetherUi): IDisposable[] {
     dispose(): void { if (tabs.get(this.paneId) === this) tabs.delete(this.paneId) }
   }
 
+  // ---------- the feed (the Regency's "Sistema" reads and acts through it) ----------
+
+  const acts = createProcessActs({
+    get: name => ui.procs.get(name),
+    now: () => Date.now(),
+    start: name => ui.procs.start(name),
+    stop: (name, opts) => ui.procs.stop(name, opts),
+    restart: (name, opts) => ui.procs.restart(name, opts),
+    use: (name, duration, purpose) => ui.procs.use(name, duration, purpose),
+    release: name => ui.procs.release(name),
+    paneIdOf,
+    panes: {
+      has: id => !!ui.panes.find(id),
+      openOnDesk: (name, deskId, timeline) => ui.panes.openOnDesk(
+        { id: paneIdOf(name), component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, title: name, params: { name, timeline } }, deskId) !== undefined,
+      peekPane: id => ui.panes.peekPane(id),
+      peekNew: (name, id) => ui.panes.peekNew('process', { id, title: name, params: { name } }) !== undefined,
+    },
+  })
+  const feed = processEmbeds.publish({
+    list: () => ui.procs.list(),
+    onDidChange: listener => ui.procs.onDidChange(() => listener()),
+    ...acts,
+  })
+
   // ---------- test hooks ----------
 
   const shownPad = (): Pad | undefined => [...pads].find(p => p.element.isConnected) ?? [...pads][0]
@@ -632,8 +658,23 @@ export function activate(ui: TetherUi): IDisposable[] {
   ui.test.expose('processesOpenPad', () => { ui.pads.open(PAD_ID) })
   ui.test.expose('processesMenuRun', (name: string, action: MenuAction) => { void runMenu(name, action) })
   ui.test.expose('processesOutput', (name: string) => outputs.get(paneIdOf(name))?.snapshot() ?? null)
+  /** The feed's reading and acts, as the Regency calls them (the list never carries `env`). */
+  ui.test.expose('processesEmbed', async (op: string, name?: string, arg?: Record<string, unknown>): Promise<unknown> => {
+    switch (op) {
+      case 'read': return { active: processEmbeds.active, names: processEmbeds.list().map(p => p.name), hasEnv: processEmbeds.list().some(p => 'env' in p.card), json: JSON.stringify(processEmbeds.list()) }
+      case 'start': return processEmbeds.start(name!)
+      case 'stop': return processEmbeds.stop(name!, arg)
+      case 'restart': return processEmbeds.restart(name!, arg)
+      case 'hold': return processEmbeds.hold(name!, arg)
+      case 'release': return processEmbeds.release(name!)
+      case 'output': return processEmbeds.output(name!, arg as { deskId: string })
+      case 'peekOutput': return processEmbeds.peekOutput(name!)
+      default: return undefined
+    }
+  })
 
   return [
+    feed,
     ui.pads.register({
       id: PAD_ID,
       create: host => { const p = new Pad(host.state); p.host = host; return p },
