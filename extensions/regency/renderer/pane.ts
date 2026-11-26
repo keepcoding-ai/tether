@@ -19,7 +19,7 @@ import {
 import {
   el, glyph, paintConversations, paintFaces, paintReserved, paintTree, paintWaiting, targetOf, type ColumnsContext,
 } from './columns.ts'
-import { flatRows, treeKeyStep, type FlatRow } from './tree-keys.ts'
+import { flatRows, paneRowKey, treeKeyStep, type FlatRow } from './tree-keys.ts'
 
 /** What the tree is narrowed by: the folds, the state filter and the search. */
 export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; query: string }
@@ -30,8 +30,17 @@ export interface RegencyHost {
   view(q: TreeQuery): { model: RegencyModel; counts: StateCounts }
   /** Space on a row: the one place that opens a target's quick view. */
   quickView(target: Target): void
-  /** The Menu key, Shift+F10 or a right click on a row: the one place that opens the row's menu, anchored on it. */
-  rowMenu(target: Target, anchor: HTMLElement): void
+  /**
+   * The Menu key, Shift+F10, a right click or the row's "⋯": the one place that opens the row's menu, at `at` (page
+   * coordinates; by default under the row's start). The row has the keyboard and gets it back when the menu closes.
+   */
+  rowMenu(target: Target, anchor: HTMLElement, at?: { x: number; y: number }): void
+  /** "Falar com": the agent's quick view with the keyboard in its terminal (the Regency stays). */
+  talk(target: Target): void
+  /** The desk's moon or sun: the core's "Hibernar mesa" / "Acordar mesa" for it; a refusal says why. */
+  sleepDesk(deskId: string, wake: boolean): void
+  /** A rename typed in a row was refused (the name stays as it was). */
+  renameRefused(what: 'desk' | 'pane'): void
   /** The channels' list has not come yet. */
   loading(): boolean
   identity(paneId: string): IdentityInput | undefined
@@ -115,6 +124,10 @@ export class RegencyPane implements IContentRenderer {
   private rows: FlatRow[] = []
   /** Paints of the columns so far (the E2E proves a repaint happened). */
   paints = 0
+  /** The row whose name is being typed (its field in place of the name), by row key. */
+  private renaming: string | undefined
+  /** Ends the rename in course (`keep`: the typed name is kept). */
+  private endRename: ((keep: boolean) => void) | undefined
   private waitingCount = 0
   /** The phone's opening tab was chosen (once, when the first model with the channels' list came). */
   private opened = false
@@ -165,12 +178,13 @@ export class RegencyPane implements IContentRenderer {
       if (key && key !== this.focusKey) { this.focusKey = key; this.paintRoving() }
     })
     this.treeHost.addEventListener('contextmenu', ev => {
+      if (ev.target instanceof Element && ev.target.closest('.rg-rename')) return
       const r = ev.target instanceof Element ? ev.target.closest<HTMLElement>('[data-key]') : null
       const target = targetOf(r?.dataset.target)
       if (!r || !target) return
       ev.preventDefault()
       this.focusRow(r.dataset.key!)
-      this.host.rowMenu(target, r)
+      this.host.rowMenu(target, r, { x: ev.clientX, y: ev.clientY })
     })
     this.ro = new ResizeObserver(() => {
       const w = this.element.clientWidth
@@ -251,9 +265,13 @@ export class RegencyPane implements IContentRenderer {
     this.waitingCount = model.waiting.length
     this.paintCounts()
     const narrowed = this.state.filter !== 'all' || this.query.trim() !== ''
+    // A name being typed in a row keeps its row: the tree waits (the next paint after the rename draws it whole).
+    const holdTree = this.renaming !== undefined
+    if (holdTree) this.signature = ''
     this.keepFocus(() => {
       paintWaiting(this.waitHost, model, ctx)
       paintConversations(this.convHost, model, ctx)
+      if (holdTree) return
       paintTree(this.treeHost, model, { ...ctx, view, narrowed })
       this.rows = flatRows(model, view)
     })
@@ -277,6 +295,86 @@ export class RegencyPane implements IContentRenderer {
     this.setLayout(selectChannel(this.state, channelId))
     this.signature = ''
     this.paint()
+  }
+
+  /** The row being renamed now (the E2E reads it). */
+  get renamingKey(): string | undefined { return this.renaming }
+
+  /**
+   * "Renomear" in a row's menu: a field in place of the row's name, with the keyboard. Enter (or leaving the field) keeps
+   * the name through `commit`; Esc keeps the old one. Repaints by events leave the row alone meanwhile; once done, the
+   * tree is painted again and the row (or the one now in its place) gets the keyboard back.
+   */
+  startRename(key: string, commit: (name: string) => boolean | Promise<boolean>, what: 'desk' | 'pane'): boolean {
+    if (this.renaming !== undefined) this.endRename?.(false)
+    const row = this.rowEl(key)
+    const name = row?.querySelector<HTMLElement>('.rg-dn, .rg-gn, .aid-name')
+    if (!row || !name) return false
+    const old = name.textContent ?? ''
+    const input = el('input', 'rg-rename')
+    input.type = 'text'
+    input.value = old
+    input.spellcheck = false
+    input.autocomplete = 'off'
+    input.setAttribute('aria-label', what === 'desk' ? 'Novo nome da mesa' : 'Novo nome da guia')
+    input.title = 'Enter grava · Esc cancela'
+    const hidden = [name, ...row.querySelectorAll<HTMLElement>('.rg-sub')]
+    for (const h of hidden) h.hidden = true
+    ;(name.closest('.aid-view') ?? name).after(input)
+    row.classList.add('rg-renaming')
+    this.renaming = key
+    const at = this.rows.findIndex(r => r.key === key)
+    let done = false
+    // `byKey`: Enter or Esc, the keyboard goes back to the row; a click elsewhere keeps the keyboard where it went.
+    const end = (keep: boolean, byKey = false): void => {
+      if (done) return
+      done = true
+      this.endRename = undefined
+      const next = input.value.trim()
+      // A desk needs a name; a pane's empty name gives it back its own.
+      const change = keep && next !== old.trim() && (what === 'pane' || next !== '')
+      const finish = (): void => {
+        const back = byKey || document.activeElement === document.body || document.activeElement === input
+        this.renaming = undefined
+        this.repaint()
+        if (back) this.focusRowNear(key, at)
+      }
+      if (!change) { finish(); return }
+      void Promise.resolve(commit(next)).catch(() => false).then(ok => {
+        finish()
+        if (!ok) this.host.renameRefused(what)
+      })
+    }
+    this.endRename = end
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation()
+      if (ev.key === 'Enter') { ev.preventDefault(); end(true, true) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); end(false, true) }
+    })
+    input.addEventListener('blur', () => end(true))
+    input.addEventListener('click', ev => ev.stopPropagation())
+    input.focus()
+    input.select()
+    return true
+  }
+
+  /**
+   * "O que <agente> tem": the view by agent, with the agent's group open and the keyboard on it. The person asked for it:
+   * a search or a filter that would hide the group is cleared.
+   */
+  showAgent(paneId: string): void {
+    const key = paneRowKey({ kind: 'agent', id: paneId })
+    let next = this.state.view === 'agent' ? this.state : setView(this.state, 'agent')
+    if (next.collapsed.includes(paneId)) next = toggleCollapsed(next, paneId)
+    if (next !== this.state) this.setLayout(next)
+    this.repaint()
+    if (!this.rowEl(key) && (this.query !== '' || this.state.filter !== 'all')) {
+      this.query = ''
+      this.searchInput.value = ''
+      if (this.state.filter !== 'all') this.setLayout(setFilter(this.state, 'all'))
+      this.repaint()
+    }
+    this.focusRow(key)
   }
 
   focus(): void {
@@ -396,6 +494,13 @@ export class RegencyPane implements IContentRenderer {
     if (!r) return
     r.focus({ preventScroll: true })
     r.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** After a gesture of the person on a row: the keyboard back to it, or to the row now at its place when it went. */
+  private focusRowNear(key: string, at: number): void {
+    if (this.rowEl(key)) { this.focusRow(key); return }
+    const near = this.rows[Math.min(Math.max(at, 0), this.rows.length - 1)]
+    if (near) this.focusRow(near.key)
   }
 
   /** Opens or folds a desk or a group (`open` is the state asked for). */
@@ -534,7 +639,9 @@ export class RegencyPane implements IContentRenderer {
    */
   private keepFocus(paint: () => void): void {
     const active = document.activeElement
-    const inside = active instanceof HTMLElement && this.element.contains(active) ? active : undefined
+    const within = active instanceof HTMLElement && this.element.contains(active) ? active : undefined
+    // A row's button with the keyboard counts as its row (the row is what comes back).
+    const inside = within?.closest<HTMLElement>('.rg-tree [data-key]') ?? within
     const list = inside ? [this.waitHost, this.convHost, this.treeHost].find(h => h.contains(inside)) : undefined
     const key = inside?.dataset.key
     const target = inside?.dataset.target
@@ -560,8 +667,10 @@ export class RegencyPane implements IContentRenderer {
   private onClick(ev: MouseEvent): void {
     const t = ev.target instanceof Element ? ev.target : null
     if (!t || t.closest('.rg-center') && !t.closest('[data-action="choose"]')) return
-    if (t.closest('.rg-members-host')) return
-    const action = t.closest<HTMLElement>('[data-action]')?.dataset.action
+    if (t.closest('.rg-members-host') || t.closest('.rg-rename')) return
+    const button = t.closest<HTMLElement>('[data-action]')
+    const action = button?.dataset.action
+    if (button && action?.startsWith('row-')) { this.rowAct(action, button); return }
     if (action) { this.act(action); return }
     const row = t.closest<HTMLElement>('[data-target]')
     if (row) this.activate(row, t.closest('.rg-caret') !== null)
@@ -610,6 +719,19 @@ export class RegencyPane implements IContentRenderer {
       ev.preventDefault()
       this.focusRow(first.key)
     }
+  }
+
+  /** A button of a row's `.rg-acts`: it acts on the row's target and never folds the row nor goes to it. */
+  private rowAct(action: string, button: HTMLElement): void {
+    const row = button.closest<HTMLElement>('[data-key]')
+    const target = targetOf(row?.dataset.target)
+    if (!row || !target) return
+    this.focusRow(row.dataset.key!)
+    if (action === 'row-menu') {
+      const r = button.getBoundingClientRect()
+      this.host.rowMenu(target, row, { x: Math.round(r.left), y: Math.round(r.bottom + 2) })
+    } else if (action === 'row-talk') this.host.talk(target)
+    else if ((action === 'row-sleep' || action === 'row-wake') && target.kind === 'desk') this.host.sleepDesk(target.id, action === 'row-wake')
   }
 
   private act(action: string): void {

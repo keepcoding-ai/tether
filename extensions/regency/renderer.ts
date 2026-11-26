@@ -1,8 +1,9 @@
 // The Regency in the app: declares its pane type, keeps its one pane on its system desk, and gathers the sources into the
 // model's input (the desk tree of the core, the owner board of for-agents, the channel feed of channels, the agents). Events
 // only mark the pane dirty; one animation frame repaints it, and only while the Regency is the visible desk.
-import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
+import type { ContextMenuItem, ContextMenuRow, Disposable, TetherUi, TreePane } from '../../app/renderer/ext-api.ts'
 import type { IdentityInput } from '../../app/renderer/agent-identity.ts'
+import { GO_DESK_LABEL, WAKE_DESK_LABEL } from '../../app/renderer/manager-menu-rules.ts'
 import type { ITabRenderer } from 'dockview-core'
 import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
@@ -14,11 +15,14 @@ import {
 } from './model.ts'
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
 import { RegencyPane, RegencyTab, type RegencyHost, type TreeQuery } from './renderer/pane.ts'
+import { targetOf } from './renderer/columns.ts'
 
 export { manifest }
 
 /** Pane types with no slot that the quick view already shows (the peek card's system screens). */
 const SCREEN_TYPES = new Set(['settings', 'keybindings'])
+/** The pill menu's own row that puts a desk to sleep (main.ts, deskMenuEntries): the moon button runs it. */
+const HIBERNATE_DESK_LABEL = 'Hibernar mesa'
 
 export function activate(ui: TetherUi): Disposable[] {
   const panes = new Set<RegencyPane>()
@@ -163,21 +167,104 @@ export function activate(ui: TetherUi): Disposable[] {
     if (type && SCREEN_TYPES.has(type)) ui.panes.peekScreen(type)
   }
 
-  /** The row menus asked so far (the E2E reads them; the menus slice opens the menu here). */
-  const menuAsks: Array<{ target: Target; anchor: string }> = []
+  /** A gesture the core or the tetherd did not take: said in a dialog, never silently. */
+  const refuse = (title: string, message: string): void => {
+    void ui.dialogs.ask({
+      situation: 'regency.refused', tone: 'warn', icon: 'shield-warning', title, message,
+      choices: [{ id: 'ok', icon: 'check', label: 'Entendi', consequence: 'Nada foi alterado.', tone: 'safe' }],
+    })
+  }
+
+  /** A pane of the tree as the core sees it now (its flags), wherever it lives. */
+  const treePane = (id: string): TreePane | undefined => {
+    for (const d of ui.desks.tree().desks) { const p = d.panes.find(x => x.id === id); if (p) return p }
+    return undefined
+  }
+
   /**
-   * The one place that opens a row's menu, anchored on the row (the Menu key, Shift+F10, a right click). This slice only
-   * takes the ask; the menus slice fills it.
+   * "Falar com": the agent's quick view, the keyboard in its terminal (the peek card lends the tab's terminal; the Regency
+   * stays). Asleep or ended it has no terminal to lend: the peek would bring its tab forward instead, so it says why.
    */
-  const openRowMenu = (target: Target, anchor: HTMLElement): void => {
-    menuAsks.push({ target, anchor: anchor.dataset.key ?? '' })
+  const talk = (t: Target): void => {
+    if (t.kind !== 'agent') return
+    const p = treePane(t.id)
+    const name = nameOf(t.id)
+    if (p?.asleep) { refuse(`${name} está dormindo`, 'Acorde a guia (menu da linha, "Acordar guia") para falar com o agente.'); return }
+    if (p?.exited) { refuse(`${name} está encerrado`, 'A sessão terminou: reinicie o agente para falar com ele.'); return }
+    ui.panes.peek(t.id)
+  }
+
+  /** The desk's moon or sun: the core's own row of the desk's menu, so the question and the rules are the pill's. */
+  const sleepDesk = (deskId: string, wake: boolean): void => {
+    const label = wake ? WAKE_DESK_LABEL : HIBERNATE_DESK_LABEL
+    const row = ui.desks.menuEntries(deskId, { from: 'manager' }).find((e): e is ContextMenuItem => e !== 'sep' && e.label === label)
+    if (row && !row.disabled) { row.run(); return }
+    const name = ui.desks.list().find(d => d.id === deskId)?.name ?? 'A mesa'
+    if (wake) refuse(`${name} não está dormindo`, 'A mesa já está acordada.')
+    else refuse(`${name} não pode dormir agora`, 'A última mesa acordada fica acordada, e uma mesa que já dorme não dorme de novo.')
+  }
+
+  /** The row menus asked so far (the E2E reads them). */
+  const menuAsks: Array<{ target: Target; anchor: string }> = []
+
+  /** Rename in the row, by the pane's field (the core's own input lives on a pill or a tab that may be out of sight). */
+  const renameIn = (key: string, what: 'desk' | 'pane', commit: (name: string) => boolean | Promise<boolean>) =>
+    (): void => { livePane()?.startRename(key, commit, what) }
+
+  /**
+   * The one place that opens a row's menu (the Menu key, Shift+F10, a right click, the row's "⋯"): the core's own menus
+   * aimed at the row's target, as a manager's (nothing comes forward; "Ir até…" last is the only way out).
+   *   desk of the queue: the pill's menu; Browser and the drawer: "Ir até a mesa" alone;
+   *   pane: the tab's menu; an agent's pane: the same plus "Falar com" and "O que <nome> tem".
+   * The row has the keyboard: the menu gives it back when it closes.
+   */
+  const openRowMenu = (target: Target, anchor: HTMLElement, at?: { x: number; y: number }): void => {
+    const key = anchor.dataset.key ?? ''
+    menuAsks.push({ target, anchor: key })
     if (menuAsks.length > 20) menuAsks.shift()
+    const box = anchor.getBoundingClientRect()
+    const { x, y } = at ?? { x: Math.round(box.left + 24), y: Math.round(box.bottom) }
+    if (target.kind === 'desk') {
+      const desk = ui.desks.tree().desks.find(d => d.id === target.id)
+      if (!desk) return
+      if (desk.kind !== 'queue') {
+        ui.menus.context(x, y, [{ icon: 'arrow-right', label: GO_DESK_LABEL, run: () => { ui.desks.reveal(desk.id) } }])
+        return
+      }
+      ui.desks.showMenu(desk.id, x, y, undefined, {
+        from: 'manager', goLast: true, rename: renameIn(key, 'desk', name => ui.desks.rename(desk.id, name)),
+      })
+      return
+    }
+    if (target.kind !== 'pane' && target.kind !== 'agent') return
+    if (target.kind === 'agent' && !ui.panes.find(target.id)) return
+    const id = target.id
+    const extra: ContextMenuRow[] = []
+    if (target.kind === 'agent') {
+      const name = nameOf(id)
+      const p = treePane(id)
+      // Asleep or ended there is no terminal to talk to: the row says so, off.
+      const off = p?.asleep ? 'dormindo' : p?.exited ? 'encerrado' : undefined
+      extra.push(
+        off
+          ? { icon: 'chats', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
+          : { icon: 'chats', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
+        { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
+      )
+    }
+    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
   }
 
   const host: RegencyHost = {
     view: viewOf,
     quickView: openQuickView,
     rowMenu: openRowMenu,
+    talk,
+    sleepDesk,
+    renameRefused: what => refuse(
+      what === 'desk' ? 'A mesa não foi renomeada' : 'A guia não foi renomeada',
+      what === 'desk' ? 'O nome ficou como estava.' : 'O tether recusou o nome (ou esta guia se renomeia pelo próprio arquivo). O nome ficou como estava.',
+    ),
     loading: () => channelEmbeds.active && !heard,
     identity: (paneId): IdentityInput | undefined => {
       const a = ui.agents.get(paneId)
@@ -216,6 +303,16 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('search', (q: string): void => { livePane()?.setQuery(q) })
   ui.test.expose('paints', (): number => livePane()?.paints ?? 0)
   ui.test.expose('menuAsks', () => menuAsks.map(m => ({ ...m })))
+  /** Opens a tree row's menu by its row key, as Shift+F10 on it would (false: no such row on screen). */
+  ui.test.expose('menu', (key: string): boolean => {
+    const row = [...document.querySelectorAll<HTMLElement>('.rg-tree [data-key]')].find(r => r.dataset.key === key)
+    const target = row ? targetOf(row.dataset.target) : undefined
+    if (!row || !target) return false
+    row.focus({ preventScroll: true })
+    openRowMenu(target, row)
+    return true
+  })
+  ui.test.expose('renaming', (): string | undefined => livePane()?.renamingKey)
 
   schedule()
   return [

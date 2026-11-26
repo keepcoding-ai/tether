@@ -96,10 +96,33 @@ function treeRow(cls: string, target: Target, label: string, key: string, kind: 
   return r
 }
 
-/** The empty `.rg-acts` place the next slice fills with the row's buttons (hover and the context key). */
-function acts(): HTMLElement {
+/** A button of a row's `.rg-acts` (the pane reads `data-action`; a click on it never folds nor goes to the row's target). */
+export interface RowAct { action: 'row-menu' | 'row-talk' | 'row-sleep' | 'row-wake'; icon: string; tip: string }
+
+const MENU_ACT: RowAct = { action: 'row-menu', icon: 'dots-three', tip: 'Mais ações (menu da linha)' }
+
+/**
+ * The row's buttons, at its right end: shown on hover and while the row has the keyboard (always on the phone, as 44 px
+ * targets). Out of the tab order: the tree keeps its one roving stop, and the keyboard has the Menu key and Shift+F10.
+ */
+function acts(list: readonly RowAct[] = []): HTMLElement {
   const a = el('span', 'rg-acts')
-  a.setAttribute('aria-hidden', 'true')
+  for (const act of list) {
+    const b = el('button', 'rg-act')
+    b.type = 'button'
+    b.tabIndex = -1
+    b.dataset.action = act.action
+    b.title = act.tip
+    b.setAttribute('aria-label', act.tip)
+    if (act.action === 'row-menu') b.setAttribute('aria-haspopup', 'menu')
+    const g = glyph(act.icon, act.tip)
+    g.removeAttribute('title')
+    g.setAttribute('aria-hidden', 'true')
+    g.removeAttribute('role')
+    g.removeAttribute('aria-label')
+    b.append(g)
+    a.append(b)
+  }
   return a
 }
 
@@ -246,7 +269,11 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   )
   if (d.owner) r.append(ownerSeal(d.owner, 'da mesa'))
   const n = el('span', 'rg-n2', `${d.paneCount} guia${d.paneCount === 1 ? '' : 's'}${d.asleep ? ' · dormindo' : ''}`)
-  r.append(n, el('span', 'rg-sp'), acts())
+  // Only a desk of the queue sleeps; Browser and the drawer have the menu alone ("Ir até a mesa").
+  const sleep: RowAct[] = d.kind !== 'queue' ? [] : d.asleep
+    ? [{ action: 'row-wake', icon: 'sun', tip: `Acordar a mesa ${d.name}` }]
+    : [{ action: 'row-sleep', icon: 'moon', tip: `Pôr a mesa ${d.name} para dormir` }]
+  r.append(n, el('span', 'rg-sp'), acts([...sleep, MENU_ACT]))
   return r
 }
 
@@ -288,8 +315,10 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   if ('deskName' in p) r.append(deskBadge(p.deskName, p.deskColor))
   else if (p.ownerBadge) r.append(ownerSeal(p.ownerBadge, 'da guia'))
   if (group?.inDeskOf) {
-    const seal = ownerSeal(`em mesa de ${group.inDeskOf}`, 'da mesa')
+    // Short on the line (the crown says "owner"), whole in the tooltip.
+    const seal = ownerSeal(`de ${group.inDeskOf}`, 'da mesa')
     seal.title = `Esta guia está numa mesa de ${group.inDeskOf}`
+    seal.setAttribute('aria-label', seal.title)
     r.append(seal)
   }
   if (group && group.paneCount > 0) r.append(el('span', 'rg-n2', `${group.paneCount} guia${group.paneCount === 1 ? '' : 's'}`))
@@ -299,7 +328,10 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
     st.title = state.text
     r.append(st)
   }
-  r.append(acts())
+  // "Falar com" only reaches a live agent: a sleeping or ended one would be brought forward instead of peeked.
+  const name = p.identity?.name ?? p.title
+  const talk: RowAct[] = p.target.kind === 'agent' && !p.asleep && !p.exited ? [{ action: 'row-talk', icon: 'chats', tip: `Falar com ${name}` }] : []
+  r.append(acts([...talk, MENU_ACT]))
   return r
 }
 
