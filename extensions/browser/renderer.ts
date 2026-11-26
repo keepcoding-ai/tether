@@ -1674,8 +1674,9 @@ export function activate(ui: TetherUi): IDisposable[] {
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
       tabMenu: showWebMenu,
       searchTextOf: id => panels.get(id)?.padTab()?.url || undefined,
-      // The page is a native surface placed by the pane's rectangle: the quick view lends it once the freeze spares the card.
-      peek: 'none',
+      // The quick view lends the pane whole (the default): the page is a native surface placed by `.br-web-page`'s rectangle,
+      // so it follows the pane into the card, and the modal card's freeze spares it (app/renderer/overlay-freeze.ts). An
+      // agent's tab keeps its shield and its rules there: the person sees the page and acts only by taking the tab.
     }),
     ui.links.provideBrowser({
       open: (url, opts) => {

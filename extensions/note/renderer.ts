@@ -386,8 +386,9 @@ export function activate(ui: TetherUi): IDisposable[] {
 
   const htmlType: PaneType = {
     ...htmlPreviewLayout, hasSlot: false, icon: 'eye',
-    // A <webview> reloads when it changes parent: the quick view will build a copy ('fresh'); until it can, it does not lend.
-    peek: 'none',
+    // A <webview> reloads when it changes parent: the quick view builds a copy of the preview (same file, its own guest) and
+    // leaves the tab's page running as it was (app/renderer/pane-fresh.ts).
+    peek: 'fresh',
     create: () => tracked(new HtmlPreviewPanel(htmlPreviewHost), previews),
     has: id => previews.get(id) instanceof HtmlPreviewPanel,
     cwdOf: previewCwd,
