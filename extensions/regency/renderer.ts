@@ -7,7 +7,7 @@ import type { ITabRenderer } from 'dockview-core'
 import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
 import type { Ownership } from '../for-agents/rules.ts'
-import { DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
+import { CMD, DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
 import { regencyModelOf, type AgentRef, type OwnerRef, type RegencyInput, type RegencyModel, type Target } from './model.ts'
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
 import { RegencyPane, RegencyTab, type RegencyHost } from './renderer/pane.ts'
@@ -177,6 +177,7 @@ export function activate(ui: TetherUi): Disposable[] {
     saved: () => ui.layout.scheduleSave(),
     visible,
     gone: pane => { panes.delete(pane); lastLayout = pane.state },
+    immersionKey: () => { try { return ui.keybindings.table().hint(CMD.immersion) } catch { return '' } },
   }
 
   ui.test.expose('model', (): RegencyModel => modelOf(livePane()?.state.collapsed ?? []))
@@ -184,9 +185,13 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('select', (channelId: string): void => { livePane()?.select(channelId) })
   ui.test.expose('close', (): void => { ui.panes.close(REGENCY_PANE_ID) })
   ui.test.expose('quickView', openQuickView)
+  ui.test.expose('mode', (): string | undefined => livePane()?.state.mode)
+  ui.test.expose('tier', (): string | undefined => livePane()?.tier)
 
   schedule()
   return [
+    // The person's key or the palette: only the Regency in sight changes (hidden, it would change out of her view).
+    ui.commands.registerCommand(CMD.immersion, () => { if (visible()) livePane()?.toggleMode() }),
     ui.panes.register({
       ...REGENCY_LAYOUT, hasSlot: false, icon: 'columns',
       create: () => { const p = new RegencyPane(host); panes.add(p); schedule(); return p },

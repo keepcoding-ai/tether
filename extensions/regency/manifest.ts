@@ -12,6 +12,11 @@ export const REGENCY_COMPONENT = 'regency-pane'
 export const REGENCY_TAB = 'regency-pane-tab'
 export const REGENCY_TITLE = 'Regência'
 
+/** The commands' ids. Ids never change: keybindings.json names them. */
+export const CMD = { immersion: 'regency.immersion' } as const
+/** The immersion's key: `Ctrl+\` is the core's (duplicate pane), so the Regency takes the one beside it. */
+export const IMMERSION_KEY = 'ctrl+shift+\\'
+
 /** The pane type as layout.json knows it (declared, so a saved Regency keeps its place with the extension off). */
 export const REGENCY_LAYOUT: PaneTypeContribution = {
   id: 'regency', affinity: 'desk', idPrefix: REGENCY_PREFIX, component: REGENCY_COMPONENT, tabComponent: REGENCY_TAB,
@@ -28,6 +33,12 @@ export const manifest: ExtensionManifest = {
   requires: ['channels'],
   contributes: {
     paneTypes: [REGENCY_LAYOUT],
+    commands: [
+      { command: CMD.immersion, title: 'Imersão', category: REGENCY_TITLE, icon: 'arrows-out-simple' },
+    ],
+    keybindings: [
+      { key: IMMERSION_KEY, command: CMD.immersion },
+    ],
     systemDesks: [{ id: DESK_ID, title: REGENCY_TITLE, icon: 'columns', color: 'purple' }],
   },
 }

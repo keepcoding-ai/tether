@@ -63,7 +63,16 @@ export function selectChannel(l: RegencyLayout, channelId: string | undefined): 
 
 export const setNarrowTab = (l: RegencyLayout, narrowTab: NarrowTab): RegencyLayout => ({ ...l, narrowTab })
 
-export const setView = (l: RegencyLayout, view: RegencyView): RegencyLayout => ({ ...l, view })
+/**
+ * The phone's tab when the pane opens: "Chama você" when someone waits (it is what unblocks the work); otherwise the
+ * conversation, unless the person had left it on "Tether" (a kept "Chama você" with nobody waiting falls to the conversation).
+ */
+export function openingTab(saved: NarrowTab, waiting: number): NarrowTab {
+  if (waiting > 0) return 'waiting'
+  return saved === 'tether' ? 'tether' : 'conversation'
+}
+
+export const setView =(l: RegencyLayout, view: RegencyView): RegencyLayout => ({ ...l, view })
 
 /** The tier by the pane's width in px: mobile < 768, tablet < 1280, desktop < 2560, wide from there. */
 export function tierOf(widthPx: number): Tier {

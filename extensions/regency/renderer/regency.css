@@ -2,9 +2,50 @@
    (--x-alert) only means "needs the person". */
 .rg { height: 100%; min-height: 0; display: grid; grid-template-columns: 214px minmax(0, 1fr) 340px; background: var(--frame-bg); color: var(--fg); font-size: 12.5px; }
 .rg[data-tier="wide"] { grid-template-columns: 240px minmax(0, 1fr) 420px; }
-/* Below the desktop tier, for now the same layout with narrower sides (the phone and tablet designs come later). */
-.rg[data-tier="tablet"], .rg[data-tier="mobile"] { grid-template-columns: 180px minmax(0, 1fr) 260px; }
+/* The tablet follows the desktop for now, with narrower sides (its own design comes later). */
+.rg[data-tier="tablet"] { grid-template-columns: 180px minmax(0, 1fr) 260px; }
 .rg [hidden] { display: none !important; }
+/* The edges (immersion) and the bottom bar (phone) are out of the layout unless their mode or tier asks. */
+.rg > .rg-edge, .rg > .rg-tabbar { display: none; }
+
+/* Immersion: the side columns become thin edges; one click on either goes back to "Gerir". */
+.rg[data-mode="immersion"] { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+.rg[data-mode="immersion"] > .rg-left, .rg[data-mode="immersion"] > .rg-right { display: none; }
+.rg[data-mode="immersion"] > .rg-edge { display: flex; }
+.rg-edge { flex-direction: column; align-items: center; gap: 8px; min-width: 0; padding: 10px 0; overflow: hidden; background: var(--bg-2); color: var(--fg-dim); cursor: pointer; }
+.rg-edge:hover { background: var(--bg-hover); }
+.rg-edge-l { margin: 0; border: 0; border-right: 1px solid var(--border); font: inherit; }
+.rg-edge-r { border-left: 1px solid var(--border); }
+.rg .rg-edge .rg-ic svg { width: 16px; height: 16px; }
+.rg-edge-cnt:empty { display: none; }
+.rg-edge-cnt { writing-mode: vertical-rl; padding: 8px 2px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--fg-dim); border: 1px solid var(--border); }
+/* Someone waits: the left edge lights in the alert's tint (orange only means "needs the person"). */
+.rg .rg-edge-l.lit .rg-ic { color: var(--x-alert); }
+.rg-edge-l.lit .rg-edge-cnt { color: var(--x-alert); border-color: color-mix(in srgb, var(--x-alert) 50%, var(--border)); background: color-mix(in srgb, var(--x-alert) 12%, transparent); }
+.rg-edge-b, .rg-mode { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; }
+.rg-edge-b:hover, .rg-mode:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-mode { width: 24px; height: 24px; margin: -4px -2px -4px 0; }
+.rg .rg-mode .rg-ic, .rg .rg-edge-b .rg-ic { color: inherit; }
+.rg .rg-mode .rg-ic svg { width: 14px; height: 14px; }
+.rg-edge:focus-visible, .rg-edge-b:focus-visible, .rg-mode:focus-visible, .rg-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* The phone (pane under 768 px): one thing at a time, chosen in the bottom bar; immersion does not apply. */
+.rg[data-tier="mobile"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+.rg[data-tier="mobile"] > .rg-col, .rg[data-tier="mobile"] > .rg-edge { display: none; }
+.rg[data-tier="mobile"][data-tab="waiting"] > .rg-left,
+.rg[data-tier="mobile"][data-tab="conversation"] > .rg-center,
+.rg[data-tier="mobile"][data-tab="tether"] > .rg-right { display: flex; grid-row: 1; grid-column: 1; border: 0; }
+.rg[data-tier="mobile"] .rg-mode { display: none; }
+.rg[data-tier="mobile"] > .rg-tabbar { display: flex; grid-row: 2; grid-column: 1; }
+.rg-tabbar { gap: 2px; padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); background: var(--bg-2); }
+.rg-tab { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rg-tab:hover { color: var(--fg); }
+.rg-tab[aria-selected="true"] { background: var(--bg-hover); color: var(--fg); font-weight: 600; }
+.rg .rg-tab .rg-ic { color: inherit; }
+.rg .rg-tab .rg-ic svg { width: 16px; height: 16px; }
+.rg-tab-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Touch: every row of the lists is a 44 px target on the phone. */
+.rg[data-tier="mobile"] :is(.rg-wait, .rg-conv, .rg-desk, .rg-pane, .rg-tg) { min-height: 44px; }
 .rg-col { min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .rg-left { border-right: 1px solid var(--border); background: var(--bg-2); }
 .rg-right { border-left: 1px solid var(--border); background: var(--bg-2); }
@@ -44,6 +85,9 @@
 .rg.off .rg-embed { display: none; }
 .rg-embed { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
 .rg-embed > .ch-pane { flex: 1; min-height: 0; }
+/* The conversation's log takes the keyboard when the Regency gets the focus: in the centre a ring around it would frame the
+   whole column, so the focus shows as a thin line along its top; each speech keeps its own ring (the channel tab is untouched). */
+.rg-embed .ch-msgs:focus-visible { outline: none; box-shadow: inset 0 2px 0 var(--accent); }
 .rg-closed-bar:not([hidden]) ~ .rg-embed { top: 28px; }
 .rg-closed-bar { position: absolute; inset: 0 0 auto; height: 28px; display: flex; align-items: center; padding: 0 14px; font-size: 11.5px; color: var(--fg-dim); background: var(--bg-2); border-bottom: 1px solid var(--border); }
 .rg-void { margin: auto; max-width: 340px; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; color: var(--fg-dim); }

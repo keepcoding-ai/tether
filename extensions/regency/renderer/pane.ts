@@ -12,7 +12,8 @@ import type { RegencyModel, Target } from '../model.ts'
 import { modelSignature } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import {
-  DEFAULT_LAYOUT, layoutParams, readLayout, selectChannel, tierOf, toggleCollapsed, toggleMembers, type RegencyLayout,
+  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setNarrowTab, tierOf, toggleCollapsed, toggleMembers,
+  toggleMode, type NarrowTab, type RegencyLayout, type RegencyMode,
 } from './layout-rules.ts'
 import {
   el, glyph, paintConversations, paintFaces, paintReserved, paintTree, paintWaiting, targetOf, type ColumnsContext,
@@ -38,7 +39,16 @@ export interface RegencyHost {
   visible(): boolean
   /** The pane went (dockview disposed it). */
   gone(pane: RegencyPane): void
+  /** The immersion's key as the key table shows it ('' when the person unbound it). */
+  immersionKey(): string
 }
+
+/** The phone's three places, in the bottom bar's order. */
+const NARROW_PLACES: readonly { tab: NarrowTab; label: string; icon: string }[] = [
+  { tab: 'waiting', label: 'Chama você', icon: 'bell' },
+  { tab: 'conversation', label: 'Conversa', icon: 'chats-circle' },
+  { tab: 'tether', label: 'Tether', icon: 'tree-view' },
+]
 
 export class RegencyPane implements IContentRenderer {
   readonly element: HTMLElement
@@ -58,6 +68,20 @@ export class RegencyPane implements IContentRenderer {
   private readonly membersHost = el('div', 'rg-members-host')
   private readonly treeHost = el('div', 'rg-tree')
   private readonly reservedHost = el('div', 'rg-reserved')
+  private readonly left = el('aside', 'rg-col rg-left')
+  private readonly right = el('aside', 'rg-col rg-right')
+  /** Immersion: the thin edges that stand for the side columns. */
+  private readonly edgeLeft = el('button', 'rg-edge rg-edge-l')
+  private readonly edgeCount = el('span', 'rg-edge-cnt')
+  private readonly edgeRight = el('div', 'rg-edge rg-edge-r')
+  /** The visible switch between "Gerir" and "Imersão" (it moves to the right edge in immersion). */
+  private readonly modeBtn = el('button', 'rg-mode')
+  private readonly treeHd = el('div', 'rg-hd')
+  /** The phone's bottom bar: "Chama você", "Conversa", "Tether". */
+  private readonly tabBar = el('nav', 'rg-tabbar')
+  private waitingCount = 0
+  /** The phone's opening tab was chosen (once, when the first model with the channels' list came). */
+  private opened = false
   private embed: EmbeddedChannel | undefined
   private embedSub: { dispose(): void } | undefined
   private closedOpen = false
@@ -77,22 +101,23 @@ export class RegencyPane implements IContentRenderer {
     this.api = p.api
     this.state = readLayout(p.params)
     this.setShown(this.host.visible())
-    const left = el('aside', 'rg-col rg-left')
-    left.setAttribute('aria-label', 'Esperam você e conversas')
-    left.append(this.waitHost, this.convHost)
+    this.left.setAttribute('aria-label', 'Esperam você e conversas')
+    this.left.append(this.waitHost, this.convHost)
     this.center.setAttribute('aria-label', 'Conversa')
     this.embedHost.hidden = true
     this.closedBar.hidden = true
     this.center.append(this.closedBar, this.embedHost, this.voidBox)
-    const right = el('aside', 'rg-col rg-right')
-    right.setAttribute('aria-label', 'Neste canal e o Tether')
+    this.right.setAttribute('aria-label', 'Neste canal e o Tether')
     this.membersHead.type = 'button'
     this.membersHead.dataset.action = 'members'
     this.members.append(this.membersHead, this.membersHost)
-    const treeHd = el('div', 'rg-hd')
-    treeHd.append(el('span', 'rg-hd-t', 'Tether'))
-    right.append(this.members, treeHd, this.treeHost, this.reservedHost)
-    this.element.append(left, this.center, right)
+    this.modeBtn.type = 'button'
+    this.modeBtn.dataset.action = 'mode'
+    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), el('span', 'rg-sp'))
+    this.right.append(this.members, this.treeHd, this.treeHost, this.reservedHost)
+    this.buildEdges()
+    this.buildTabBar()
+    this.element.append(this.left, this.edgeLeft, this.center, this.right, this.edgeRight, this.tabBar)
     paintReserved(this.reservedHost)
     this.element.addEventListener('click', ev => this.onClick(ev))
     this.element.addEventListener('keydown', ev => this.onKey(ev))
@@ -101,8 +126,33 @@ export class RegencyPane implements IContentRenderer {
       if (w > 0) this.element.dataset.tier = tierOf(w)
     })
     this.ro.observe(this.element)
+    this.paintMode()
+    this.paintTabs()
     this.paintVoid()
     this.paintMembersHead()
+  }
+
+  /** The tier the pane is drawn in now (the ruler of four, by the pane's width). */
+  get tier(): string { return this.element.dataset.tier ?? 'desktop' }
+
+  /** "Gerir" or "Imersão", kept in the pane's layout. */
+  setMode(mode: RegencyMode): void {
+    if (this.state.mode === mode) return
+    // The keyboard leaves a column that folds into an edge for the conversation, never for the page's body.
+    const active = document.activeElement
+    const lost = active instanceof HTMLElement && (this.left.contains(active) || this.right.contains(active))
+    this.setLayout(toggleMode(this.state))
+    this.paintMode()
+    if (lost && mode === 'immersion') this.focus()
+  }
+
+  toggleMode(): void { this.setMode(this.state.mode === 'immersion' ? 'manage' : 'immersion') }
+
+  /** The phone's place shown (kept in the layout as `narrowTab`). */
+  setTab(tab: NarrowTab): void {
+    if (this.state.narrowTab === tab) return
+    this.setLayout(setNarrowTab(this.state, tab))
+    this.paintTabs()
   }
 
   /** Paints what changed since the last paint (the model, the chosen channel, "Encerrados"). */
@@ -111,9 +161,16 @@ export class RegencyPane implements IContentRenderer {
     this.syncCenter()
     const model = this.host.model(this.state.collapsed)
     const ctx = this.context()
+    if (!this.opened && !ctx.loading) {
+      this.opened = true
+      const tab = openingTab(this.state.narrowTab, model.waiting.length)
+      if (tab !== this.state.narrowTab) this.setTab(tab)
+    }
     const sig = `${modelSignature(model)}|${this.state.channelId ?? ''}|${this.closedOpen}|${ctx.loading}`
     if (sig === this.signature) return
     this.signature = sig
+    this.waitingCount = model.waiting.length
+    this.paintCounts()
     this.keepFocus(() => {
       paintWaiting(this.waitHost, model, ctx)
       paintConversations(this.convHost, model, ctx)
@@ -150,6 +207,71 @@ export class RegencyPane implements IContentRenderer {
     this.ro?.disconnect()
     this.dropEmbed()
     this.host.gone(this)
+  }
+
+  /** Immersion's edges: the left keeps who waits (and lights when someone does); the right keeps "Neste canal" and the tether. */
+  private buildEdges(): void {
+    this.edgeLeft.type = 'button'
+    this.edgeLeft.dataset.action = 'manage'
+    this.edgeLeft.title = 'Esperam você · voltar a Gerir'
+    this.edgeLeft.append(glyph('bell', 'Esperam você'), this.edgeCount)
+    this.edgeRight.dataset.action = 'manage'
+    this.edgeRight.title = 'Voltar a Gerir'
+    const to = (action: string, name: string, tip: string): HTMLButtonElement => {
+      const b = el('button', 'rg-edge-b')
+      b.type = 'button'
+      b.dataset.action = action
+      b.title = tip
+      b.setAttribute('aria-label', tip)
+      b.append(glyph(name, tip))
+      return b
+    }
+    this.edgeRight.append(to('manage-members', 'robot', 'Neste canal'), to('manage-tether', 'tree-view', 'Tether'))
+  }
+
+  private buildTabBar(): void {
+    this.tabBar.setAttribute('role', 'tablist')
+    this.tabBar.setAttribute('aria-label', 'Regência')
+    for (const p of NARROW_PLACES) {
+      const b = el('button', 'rg-tab')
+      b.type = 'button'
+      b.dataset.action = `tab:${p.tab}`
+      b.dataset.tab = p.tab
+      b.setAttribute('role', 'tab')
+      b.append(glyph(p.icon, p.label), el('span', 'rg-tab-t', p.label))
+      if (p.tab === 'waiting') b.append(el('span', 'cnt rg-tab-cnt'))
+      this.tabBar.append(b)
+    }
+  }
+
+  /** The mode on the element, the switch's look and where it sits (the tree's heading, or the right edge in immersion). */
+  private paintMode(): void {
+    const imm = this.state.mode === 'immersion'
+    this.element.dataset.mode = this.state.mode
+    const key = this.host.immersionKey()
+    const tip = imm ? 'Voltar a Gerir' : 'Imersão: só a conversa'
+    this.modeBtn.title = key ? `${tip} (${key})` : tip
+    this.modeBtn.setAttribute('aria-label', tip)
+    this.modeBtn.setAttribute('aria-pressed', String(imm))
+    this.modeBtn.replaceChildren(glyph(imm ? 'columns' : 'arrows-out-simple', tip))
+    if (imm) this.edgeRight.prepend(this.modeBtn)
+    else this.treeHd.append(this.modeBtn)
+  }
+
+  private paintTabs(): void {
+    this.element.dataset.tab = this.state.narrowTab
+    for (const b of this.tabBar.querySelectorAll<HTMLElement>('.rg-tab')) b.setAttribute('aria-selected', String(b.dataset.tab === this.state.narrowTab))
+  }
+
+  /** The count of who waits, on the left edge and on the phone's "Chama você". */
+  private paintCounts(): void {
+    const n = this.waitingCount
+    const text = n > 0 ? String(n) : ''
+    this.edgeCount.textContent = text
+    this.edgeLeft.classList.toggle('lit', n > 0)
+    this.edgeLeft.setAttribute('aria-label', n > 0 ? `${n} esperam você · voltar a Gerir` : 'Ninguém espera você · voltar a Gerir')
+    const cnt = this.tabBar.querySelector<HTMLElement>('.rg-tab-cnt')
+    if (cnt) { cnt.textContent = text; cnt.hidden = n === 0; cnt.title = `${n} esperando você` }
   }
 
   private context(): ColumnsContext {
@@ -252,6 +374,14 @@ export class RegencyPane implements IContentRenderer {
   }
 
   private act(action: string): void {
+    if (action.startsWith('tab:')) { this.setTab(action.slice(4) as NarrowTab); return }
+    if (action === 'mode') { this.toggleMode(); return }
+    if (action === 'manage' || action === 'manage-members' || action === 'manage-tether') {
+      this.setMode('manage')
+      if (action === 'manage-members' && !this.state.membersOpen && this.embed) { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
+      if (action === 'manage-tether') this.treeHost.querySelector<HTMLElement>('[data-target]')?.focus({ preventScroll: true })
+      return
+    }
     if (action === 'closed') { this.closedOpen = !this.closedOpen; this.signature = ''; this.paint() }
     else if (action === 'members') { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
     else if (action === 'choose') void this.host.pickChannel().then(id => { if (id) this.select(id) })
@@ -260,7 +390,11 @@ export class RegencyPane implements IContentRenderer {
   private activate(row: HTMLElement): void {
     const target = targetOf(row.dataset.target)
     if (!target) return
-    if (target.kind === 'channel') this.select(target.id)
+    if (target.kind === 'channel') {
+      this.select(target.id)
+      // On the phone, choosing a conversation takes the person to it.
+      if (this.tier === 'mobile') this.setTab('conversation')
+    }
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
     else this.host.go(target)
   }

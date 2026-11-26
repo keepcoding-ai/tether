@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  DEFAULT_LAYOUT, layoutParams, readLayout, selectChannel, setNarrowTab, setView, tierOf, toggleCollapsed, toggleMembers, toggleMode,
+  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setNarrowTab, setView, tierOf, toggleCollapsed, toggleMembers, toggleMode,
 } from '../../extensions/regency/renderer/layout-rules.ts'
 
 describe('readLayout', () => {
@@ -43,6 +43,18 @@ describe('toggles', () => {
     assert.equal('channelId' in selectChannel(l, undefined), false)
     assert.equal(setNarrowTab(l, 'conversation').narrowTab, 'conversation')
     assert.equal(setView(l, 'agent').view, 'agent')
+  })
+})
+
+describe('openingTab', () => {
+  test('someone waiting opens "Chama você", whatever was kept', () => {
+    for (const saved of ['waiting', 'conversation', 'tether'] as const) assert.equal(openingTab(saved, 2), 'waiting')
+  })
+
+  test('nobody waiting: the conversation, or "Tether" when it was kept', () => {
+    assert.equal(openingTab('waiting', 0), 'conversation')
+    assert.equal(openingTab('conversation', 0), 'conversation')
+    assert.equal(openingTab('tether', 0), 'tether')
   })
 })
 
