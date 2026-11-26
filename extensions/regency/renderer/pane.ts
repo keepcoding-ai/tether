@@ -25,11 +25,20 @@ import { flatRows, paneRowKey, treeKeyStep, type FlatRow } from './tree-keys.ts'
 export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; query: string }
 
 /** What the pane asks of the extension (renderer.ts). */
+/** The rows a click opens the quick view of: a pane's or an agent's line in the tree, and "Esperam você". */
+const QUICK_ROWS = '[data-row="pane"][data-target], [data-row="agent"][data-target], .rg-wait[data-target]'
+
 export interface RegencyHost {
   /** The model narrowed by `q`, and the panes counted by state before any filter (the chips). */
   view(q: TreeQuery): { model: RegencyModel; counts: StateCounts }
   /** Space on a row of the tree, a click (or Space) on a pane or an agent in "Esperam você": the one place that opens a target's quick view. */
   quickView(target: Target): void
+  /** A click on a pane's or agent's row: opens its quick view; the one already in the card closes it. */
+  toggleQuick(target: Target): void
+  /** The id of the pane in the quick view's card right now (none: undefined). */
+  quicked(): string | undefined
+  /** Closes the card when the tree's quick view is in it. */
+  closeQuick(): void
   /**
    * The Menu key, Shift+F10, a right click or the row's "⋯": the one place that opens the row's menu, at `at` (page
    * coordinates; by default under the row's start). The row has the keyboard and gets it back when the menu closes.
@@ -189,6 +198,7 @@ export class RegencyPane implements IContentRenderer {
     paintReserved(this.reservedHost)
     this.element.addEventListener('click', ev => this.onClick(ev))
     this.element.addEventListener('keydown', ev => this.onKey(ev))
+    this.element.addEventListener('dblclick', ev => this.onDoubleClick(ev))
     this.treeHost.addEventListener('focusin', ev => {
       const key = ev.target instanceof HTMLElement ? ev.target.dataset.key : undefined
       if (key && key !== this.focusKey) { this.focusKey = key; this.paintRoving() }
@@ -303,6 +313,7 @@ export class RegencyPane implements IContentRenderer {
       this.rows = flatRows(model, view)
     })
     this.paintRoving()
+    this.markQuick()
     this.showFresh()
     const ch = this.state.channelId ? this.host.channel(this.state.channelId) : undefined
     this.closedBar.hidden = !(ch?.closed)
@@ -776,6 +787,8 @@ export class RegencyPane implements IContentRenderer {
     if (button && action?.startsWith('row-')) { this.rowAct(action, button); return }
     if (action) { this.act(action); return }
     const row = t.closest<HTMLElement>('[data-target]')
+    // The second click of a double click is the dblclick's (it goes to the tab): it must not close the card the first opened.
+    if (row && ev.detail > 1 && row.matches(QUICK_ROWS) && !t.closest('.rg-caret')) return
     if (row) this.activate(row, t.closest('.rg-caret') !== null)
   }
 
@@ -884,9 +897,31 @@ export class RegencyPane implements IContentRenderer {
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
     // An ended session has nowhere to go: its row opens its menu (reopen, forget).
     else if (target.kind === 'session') this.openMenu(target, row)
-    // A pane or an agent that waits for the person: the click spies it over the conversation, the person stays here.
-    else if (!byEnter && this.waitHost.contains(row) && (target.kind === 'pane' || target.kind === 'agent')) this.host.quickView(target)
+    // A pane or an agent: the click is the quick view over the conversation (the person stays here); Enter goes to the tab.
+    else if (!byEnter && (target.kind === 'pane' || target.kind === 'agent')) this.host.toggleQuick(target)
     else this.host.go(target)
+  }
+
+  /** Marks the row whose pane is in the quick view's card (class and `aria-current`); no card, no mark. */
+  markQuick(): void {
+    const id = this.host.quicked()
+    for (const r of this.element.querySelectorAll<HTMLElement>(QUICK_ROWS)) {
+      const on = id !== undefined && targetOf(r.dataset.target)?.id === id
+      r.classList.toggle('rg-peeked', on)
+      if (on) r.setAttribute('aria-current', 'true')
+      else r.removeAttribute('aria-current')
+    }
+  }
+
+  /** A double click on a row of a pane or agent: the card closes and the person goes to the tab. */
+  private onDoubleClick(ev: MouseEvent): void {
+    const t = ev.target instanceof Element ? ev.target : null
+    if (!t || t.closest('.rg-center') || t.closest('.rg-acts') || t.closest('.rg-rename') || t.closest('.rg-caret')) return
+    const row = t.closest<HTMLElement>(QUICK_ROWS)
+    const target = targetOf(row?.dataset.target)
+    if (!target || (target.kind !== 'pane' && target.kind !== 'agent')) return
+    this.host.closeQuick()
+    this.host.go(target)
   }
 }
 

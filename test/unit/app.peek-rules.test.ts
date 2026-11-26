@@ -312,10 +312,10 @@ describe('the command target with a tab in the card', () => {
 
   test('a command is the pane\'s own when its rule needs the pane\'s type, flags or focus, not just "a pane"', () => {
     const ctx = (o: Partial<CommandContext>): CommandContext => ({ pane: true, desks: 1, drawerOpen: false, focus: 'none', flags: new Set(), ...o })
-    const save = commandFromContribution({ command: 'note.save', title: 's', when: 'focus == editor' }, () => {}).when
+    const save = commandFromContribution({ command: 'note.save', title: 's', category: 'Nota', icon: 'floppy-disk', when: 'focus == editor' }, () => {}).when
     assert.equal(paneOwns(save, ctx({ focus: 'editor', paneType: 'note' })), true, 'Ctrl+S in the card\'s editor')
     assert.equal(paneOwns(save, ctx({ focus: 'terminal', paneType: 'terminal' })), false, 'not in a terminal')
-    const preview = commandFromContribution({ command: 'markdown.preview', title: 'p', when: 'markdown.note' }, () => {}).when
+    const preview = commandFromContribution({ command: 'markdown.preview', title: 'p', category: 'Nota', icon: 'eye', when: 'markdown.note' }, () => {}).when
     assert.equal(paneOwns(preview, ctx({ flags: new Set(['markdown.note']) })), true, 'a flag of the type')
     assert.equal(paneOwns(c => c.paneType === 'channel', ctx({ paneType: 'channel' })), true, 'the type itself')
     assert.equal(paneOwns(c => c.pane, ctx({ paneType: 'note', focus: 'editor' })), false, 'only "a pane": everybody\'s')

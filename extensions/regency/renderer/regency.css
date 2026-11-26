@@ -80,6 +80,7 @@
 /* "Conversas". */
 .rg-conv { display: flex; align-items: center; gap: 7px; margin: 0 6px; padding: 5px 8px; border-radius: 6px; min-height: 28px; color: var(--fg-dim); cursor: pointer; }
 .rg-conv:hover { background: var(--bg-hover); }
+.rg-peeked[aria-current="true"] { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent); }
 .rg-conv[aria-current="true"] { background: var(--bg-hover); color: var(--fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
 .rg-conv.closed { opacity: .7; }
 .rg-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

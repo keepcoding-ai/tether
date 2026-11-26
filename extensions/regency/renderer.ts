@@ -179,8 +179,26 @@ export function activate(ui: TetherUi): Disposable[] {
     const type = t.kind === 'pane' ? ui.panes.describe(t.id)?.type : undefined
     if (type && SCREEN_TYPES.has(type)) { ui.panes.peekScreen(type); return }
     const over = livePane()?.quickAnchor()
+    quickId = t.id
     ui.panes.peekPane(t.id, { ...(over ? { over } : {}), focus })
+    livePane()?.markQuick()
   }
+
+  /** The pane or agent whose quick view the tree opened last (cleared when the card closes); the row of it is marked. */
+  let quickId: string | undefined
+  const peekOpen = (): boolean => document.querySelector('#peek[data-open="true"]') !== null
+
+  /** A click on a row: its quick view opens; the row already in the card closes it. */
+  const toggleQuick = (t: Target): void => {
+    if (quickId === t.id && peekOpen()) { void ui.commands.run('peek.close'); return }
+    openQuickView(t)
+  }
+
+  /** The card closed (by any way): the mark goes. Checked a frame later, so a swap of the card's content does not clear it. */
+  const peekWatch = new MutationObserver(() => {
+    requestAnimationFrame(() => { if (quickId !== undefined && !peekOpen()) { quickId = undefined; livePane()?.markQuick() } })
+  })
+  peekWatch.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-open'] })
 
   /** A gesture the core or the tetherd did not take: said in a dialog, never silently. */
   const refuse = (title: string, message: string): void => {
@@ -347,6 +365,9 @@ export function activate(ui: TetherUi): Disposable[] {
   const host: RegencyHost = {
     view: viewOf,
     quickView: openQuickView,
+    toggleQuick,
+    quicked: () => (peekOpen() ? quickId : undefined),
+    closeQuick: () => { if (quickId !== undefined && peekOpen()) void ui.commands.run('peek.close') },
     rowMenu: openRowMenu,
     talk,
     sleepDesk,
@@ -428,6 +449,7 @@ export function activate(ui: TetherUi): Disposable[] {
     ui.panes.onDidChangeMarks(schedule),
     ownerBoard.onDidChange(schedule),
     channelEmbeds.onDidChange(() => { heard = true; schedule() }),
+    { dispose: () => { peekWatch.disconnect() } },
     { dispose: () => { if (frame) cancelAnimationFrame(frame); frame = 0 } },
   ]
 }
