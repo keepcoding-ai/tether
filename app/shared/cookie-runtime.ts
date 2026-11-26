@@ -9,7 +9,7 @@
 // logged and the launch goes on in node_modules' runtime, where the browser keeps its partition in memory.
 // No Electron import: install.mjs and the unit tests use it too.
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import * as nodeFs from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /** The argument the shortcut adds: "prefer the cookie-fuse runtime when it is valid". Never passed on to the copy. */
@@ -38,7 +38,7 @@ export interface RuntimeManifest {
 
 export type RuntimeVerdict =
   | { ok: true }
-  | { ok: false, reason: 'ausente' | 'manifesto inválido' | 'versão diferente' | 'pasta não privada' | 'executável alterado' | 'arquivos alterados' }
+  | { ok: false, reason: 'ausente' | 'manifesto inválido' | 'versão diferente' | 'pasta não privada' | 'executável alterado' | 'arquivos alterados' | `leitura falhou: ${string}` }
 
 /** Where the copy for an Electron version lives. */
 export function cookieRuntimeDir(home: string, electronVersion: string): string {
@@ -50,18 +50,27 @@ export function runtimeExe(dir: string): string {
   return join(dir, RUNTIME_EXE)
 }
 
-export function sha256File(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex')
+/**
+ * The part of `fs` the hashing reads. Inside Electron `node:fs` treats a `.asar` as a folder (the walk dies on
+ * `resources/default_app.asar` with ENOENT), so the main process passes Electron's `original-fs`; Node callers use the default.
+ */
+export interface HashFs {
+  readdirSync: typeof nodeFs.readdirSync
+  readFileSync: typeof nodeFs.readFileSync
+}
+
+export function sha256File(path: string, fs: Pick<HashFs, 'readFileSync'> = nodeFs): string {
+  return createHash('sha256').update(fs.readFileSync(path)).digest('hex')
 }
 
 /** sha256 of every file under `dir` (relative paths with `/`, sorted), the manifest at the top excluded. */
-export function hashTree(dir: string): Record<string, string> {
+export function hashTree(dir: string, fs: HashFs = nodeFs): Record<string, string> {
   const out: Record<string, string> = {}
   const walk = (rel: string): void => {
-    for (const e of readdirSync(join(dir, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const e of fs.readdirSync(join(dir, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const r = rel ? `${rel}/${e.name}` : e.name
       if (e.isDirectory()) walk(r)
-      else if (r !== RUNTIME_MANIFEST) out[r] = sha256File(join(dir, r))
+      else if (r !== RUNTIME_MANIFEST) out[r] = sha256File(join(dir, r), fs)
     }
   }
   walk('')
@@ -92,7 +101,7 @@ export function parseManifest(text: string | undefined): RuntimeManifest | undef
  * Whether the copy may run this launch: it exists, its manifest is ours, it is the Electron version of the runtime that is
  * running now (an `npm install` that moved Electron makes the copy outdated), `<home>/runtime` is reachable by its owner only
  * (otherwise another user of the machine could plant a DLL next to the executable), and every file of the copy hashes to what
- * the install wrote, none missing, none added. `privateDir` and `files` run only when the cheaper checks pass (~300 MB read).
+ * the install wrote, none missing, none added. `privateDir` and `files` run only when the cheaper checks pass (~300 MB read). A `files` that throws gives `leitura falhou: <message>`, never "ausente".
  */
 export function runtimeVerdict(input: { manifestText: string | undefined, runningVersion: string, privateDir: () => boolean, files: () => Record<string, string> | undefined }): RuntimeVerdict {
   if (input.manifestText === undefined) return { ok: false, reason: 'ausente' }
@@ -100,7 +109,8 @@ export function runtimeVerdict(input: { manifestText: string | undefined, runnin
   if (!m) return { ok: false, reason: 'manifesto inválido' }
   if (m.electronVersion !== input.runningVersion) return { ok: false, reason: 'versão diferente' }
   if (!input.privateDir()) return { ok: false, reason: 'pasta não privada' }
-  const files = input.files()
+  let files: Record<string, string> | undefined
+  try { files = input.files() } catch (e) { return { ok: false, reason: `leitura falhou: ${e instanceof Error ? e.message : String(e)}` } }
   if (files === undefined || files[RUNTIME_EXE] === undefined) return { ok: false, reason: 'ausente' }
   if (files[RUNTIME_EXE] !== m.exeSha256) return { ok: false, reason: 'executável alterado' }
   if (!sameFiles(files, m.files)) return { ok: false, reason: 'arquivos alterados' }
