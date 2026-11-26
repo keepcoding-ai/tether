@@ -19,6 +19,7 @@ import { createdText, planOf, runPlan, type CreateDraft, type CreateFixed, type 
 import { RegencyToast, type ToastAction } from './renderer/toast.ts'
 import { createRunner, type CreateSeams } from './renderer/create-run.ts'
 import { CreateCard, type CreateRunEnd, type CreateViewHost } from './renderer/create-view.ts'
+import { NewProcessCard } from './renderer/new-process-view.ts'
 import type { Ownership } from '../for-agents/rules.ts'
 import { CMD, DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
 import {
@@ -524,6 +525,26 @@ export function activate(ui: TetherUi): Disposable[] {
   }
   const systemModel = (): SystemModel => systemModelOf(systemInput())
 
+  /**
+   * "Novo processo" (Processos of "Sistema"): the card asks, the processes' feed sends tetherd the same `proc-start` the CLI
+   * sends. The card hands the request straight to the feed; the Regency keeps nothing of it, and its notice says the name only.
+   */
+  const newProcCard = new NewProcessCard({
+    existing: () => processEmbeds.list().map(p => p.name),
+    projects: cardHost.projects,
+    recentFolders: cardHost.recentFolders,
+    pickFolder: cardHost.pickFolder,
+    pickList: spec => ui.pick.list(spec),
+    defaultFolder: cardHost.defaultFolder,
+    tier: cardHost.tier,
+    create: request => processEmbeds.create(request),
+    created: (name, failed) => showToast(failed ?? `Processo ${name} criado e iniciado`),
+  })
+  const openNewProcess = (restore: () => void): void => {
+    if (peekOpen()) { void ui.commands.run('peek.close').then(() => newProcCard.open(restore)); return }
+    newProcCard.open(restore)
+  }
+
   /** "Abrir o registro numa mesa…": the awake desks; the record is born there and the person stays. */
   const logOnDesk = async (name: string) => {
     const desks = ui.desks.list().filter(d => !d.asleep)
@@ -559,6 +580,7 @@ export function activate(ui: TetherUi): Disposable[] {
     setRonda: (id, change) => ui.agents.setRonda(id, change),
     offRonda: (id, force) => ui.agents.offRonda(id, force ? { force: true } : undefined),
     editProfile: (id, duplicate) => ui.profiles.edit(id, duplicate ? { duplicate: true } : undefined),
+    newProcess: openNewProcess,
     createHere: (what, cwd, restore) => openCreate({ cwd }, restore, what),
     togglePin: path => ui.workspace.togglePin(path),
     openScreen: type => { ui.panes.peekScreen(type) },
@@ -634,6 +656,8 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('renaming', (): string | undefined => livePane()?.renamingKey)
   /** The "+ Novo" card as it is now (open, step, draft, error, the sentence told). */
   ui.test.expose('createView', () => card.snapshot())
+  /** The "Novo processo" card: its fields and, of each variable, the name and whether a value is typed (never the value). */
+  ui.test.expose('newProcessView', () => newProcCard.snapshot())
   /** Runs a draft's plan without the card (as the card's "Criar" does), then lights what was made. */
   ui.test.expose('create', async (draft: CreateDraft, fixed: CreateFixed = {}) => {
     const end = await runCreate({ draft, fixed, step: 'details' })
@@ -673,6 +697,7 @@ export function activate(ui: TetherUi): Disposable[] {
       })
     }),
     { dispose: () => card.close(false) },
+    { dispose: () => newProcCard.close(false) },
     { dispose: () => toast.dispose() },
     ui.panes.register({
       ...REGENCY_LAYOUT, hasSlot: false, icon: 'columns',

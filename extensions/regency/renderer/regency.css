@@ -410,6 +410,47 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-cr-told p { margin: 0; line-height: 1.45; }
 .rg-cr-told .rg-ic svg { width: 18px; height: 18px; }
 
+/* "Novo processo" (new-process-view.ts): the card of "+ Novo", one screen. The phone: the whole screen, 44 px targets. */
+dialog.rg-cr.rg-np { width: 480px; max-height: min(720px, calc(100vh - 48px)); }
+dialog.rg-cr.rg-np[data-tier="mobile"] { width: 100vw; height: 100vh; height: 100dvh; max-height: none; margin: 0; border-radius: 0; border: 0; }
+.rg-np-form { display: flex; flex-direction: column; margin: 0; padding: 0; border: 0; min-width: 0; }
+.rg-np-form:disabled { opacity: .7; }
+.rg-np-warn { display: flex; align-items: center; gap: 6px; margin: 0; padding: 5px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600;
+  color: var(--x-warning, var(--warn)); background: color-mix(in srgb, var(--x-warning, var(--warn)) 12%, transparent); }
+.rg-np-warn .rg-ic { color: inherit; }
+.rg-np-envs { display: flex; flex-direction: column; gap: 5px; }
+.rg-np-envs:empty { display: none; }
+.rg-np-env { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 5px; align-items: center; }
+.rg-np-en { height: 30px; min-width: 0; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  font: 12px var(--mono, monospace); outline: none; }
+.rg-np-en:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.rg-np-ev { padding-right: 2px; }
+.rg-np-ev input { font-family: var(--mono, monospace); }
+.rg-np-show { width: 24px; height: 24px; }
+.rg-np-show[aria-pressed="true"] { color: var(--accent); }
+.rg-np-del:hover { color: var(--x-error, var(--err)); }
+.rg-np-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 6px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; color: var(--fg); border: 1px dashed var(--border); background: none; }
+.rg-np-add:hover { background: var(--bg-hover); }
+.rg-np-add .rg-ic { color: inherit; }
+.rg-np-ask { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; margin: 8px 14px 2px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--x-warning, var(--warn)) 55%, var(--border)); background: color-mix(in srgb, var(--x-warning, var(--warn)) 10%, var(--bg)); }
+.rg-np-ask[hidden] { display: none; }
+.rg-np-ask > .rg-ic { color: var(--x-warning, var(--warn)); }
+.rg-np-ask > .rg-ic svg { width: 18px; height: 18px; }
+.rg-np-q { margin: 0; line-height: 1.45; font-weight: 600; }
+.rg-np-ask-b { grid-column: 1 / -1; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.rg-cr-btn.danger { color: var(--x-error, var(--err)); border-color: color-mix(in srgb, var(--x-error, var(--err)) 55%, var(--border)); }
+.rg-cr-btn.danger:hover { background: color-mix(in srgb, var(--x-error, var(--err)) 14%, var(--bg)); }
+.rg-cr-btn:disabled { opacity: .5; cursor: default; }
+.rg-np[data-tier="mobile"] .rg-np-env { grid-template-columns: minmax(0, 1fr) auto; }
+.rg-np[data-tier="mobile"] .rg-np-env > .rg-np-ev { grid-column: 1 / 2; grid-row: 2; }
+.rg-np[data-tier="mobile"] .rg-np-env > .rg-np-del { grid-column: 2; grid-row: 1 / 3; }
+.rg-np[data-tier="mobile"] .rg-np-en { height: 46px; font-size: 15px; }
+.rg-np[data-tier="mobile"] .rg-np-show { width: 44px; height: 44px; }
+.rg-np[data-tier="mobile"] .rg-np-add { height: 44px; padding: 0 14px; font-size: 14px; }
+.rg-np[data-tier="mobile"] .rg-np-ask-b .rg-cr-btn { flex: 1 1 auto; justify-content: center; }
+
 /* The foot "Sistema": one click swaps the right column. The red dot (--err) is a process that fell; never the orange. */
 .rg-reserved { position: sticky; bottom: 0; margin-top: auto; display: grid; grid-template-columns: 1fr; gap: 3px; padding: 6px; border-top: 1px solid var(--border); background: var(--bg-2); flex: none; }
 .rg-sys-open { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }

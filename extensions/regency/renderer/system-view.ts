@@ -30,6 +30,8 @@ export interface SystemViewHost {
   offRonda(agentId: string, force: boolean): Promise<RondaAnswer>
   /** The core's profile editor. */
   editProfile(id: string | 'new', duplicate?: boolean): void
+  /** The "Novo processo" card; `restore` gives the keyboard back when it closes. */
+  newProcess(restore: () => void): void
   /** The "+ Novo" card with the folder filled; `restore` gives the keyboard back when it closes with nothing made. */
   createHere(what: 'agent' | 'terminal', cwd: string, restore: () => void): void
   togglePin(path: string): void
@@ -232,7 +234,7 @@ export class SystemView {
         if (m.processes.length === 0) empty = 'Nenhum processo'
         for (const r of m.processes) want.push({ key: `proc:${r.name}`, cls: 'proc', draw: (h, k) => this.procHead(h, k, r) })
         if (m.processes.length > 0) foot.push(m.procFoot)
-        foot.push(el('span', 'rg-sys-note', 'Processos novos se criam pela linha de comando.'))
+        foot.push(button({ id: 'proc-new', icon: 'plus', tip: 'Novo processo: nome, comando, pasta, portas e variáveis', label: 'Novo processo' }, 'foot:proc-new'))
       }
     } else if (section === 'ronda') {
       if (m.ronda.length === 0) empty = 'Nenhum agente vivo para ter ronda'
@@ -304,6 +306,8 @@ export class SystemView {
     if (r.portsText) line.append(chip(r.portsText, 'ports', `Portas: ${r.portsText}`))
     if (r.startedByText) line.append(chip(r.startedByText, 'who'))
     for (const u of r.uses) line.append(chip(u.mine ? `Você segura ${u.untilText}` : `${u.byName} usa ${u.untilText}`, u.mine ? 'use mine' : 'use', u.text))
+    // The variables by name only: a value never comes back to the screen (to change one, the recipe is typed again).
+    if (r.envNames) line.append(chip(`variáveis: ${r.envNames.join(', ')}`, 'env', `Variáveis de ambiente do processo (só os nomes): ${r.envNames.join(', ')}`))
     main.append(name, line)
     const list: Act[] = []
     // Each act says its verb first (tooltip and screen reader alike). "Segurar" is a lock: the hand is "Tomar" in the tree.
@@ -609,6 +613,10 @@ export class SystemView {
     if (sys === 'back') { this.nav.back(); return }
     if (sys === 'tab') { this.nav.select(b.dataset.section as SystemSection); return }
     if (sys === 'profile-new') { this.host.editProfile('new'); return }
+    if (sys === 'proc-new') {
+      this.host.newProcess(() => this.foot.querySelector<HTMLElement>('[data-sys="proc-new"]')?.focus({ preventScroll: true }))
+      return
+    }
     const row = b.closest<HTMLElement>('.rg-sr')
     const key = row?.dataset.key ?? ''
     const panel = b.closest<HTMLElement>('.rg-sr-x')
