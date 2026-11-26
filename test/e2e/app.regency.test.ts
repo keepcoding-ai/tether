@@ -28,6 +28,10 @@
 //      "Emblema…", "Falar com" (the peek, keyboard in the terminal; the row's button too), "O que <nome> tem" (the view by
 //      agent, its group focused), "Duplicar" on the original's desk, "Mover…" to another desk, "Fechar guia" with the
 //      keyboard going to the row in its place; nothing comes forward (r2-menu-agente, r2-menu-guia, r2-por-agente again).
+//  16. "Fechadas": ended sessions fold into the tree's last section (folded by default, with the count, kept in the layout);
+//      each line is the agent, how long ago it ended; the search filters it (and opens it), a state filter empties it; Space
+//      does nothing on it; "Reabrir em…" lists the awake desks and "Nova mesa", puts the session there without changing desk,
+//      and the new row glows; "Esquecer…" asks first (r2-fechadas, r2-fechadas-reabrir).
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.regency.test.ts   (one E2E at a time: the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -198,7 +202,9 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(await page.locator('.rg-waiting .rg-empty').textContent(), 'Ninguém espera você')
     assert.equal(await page.locator('.rg-void .rg-void-t').textContent(), 'Nenhuma conversa ainda.')
     assert.equal(await page.locator('.rg-members').isVisible(), false, 'no channel, no "Neste canal"')
-    assert.equal(await page.locator('.rg-reserved-row[aria-disabled="true"]').count(), 2, '"Fechadas" and "Sistema" are there, off')
+    assert.equal(await page.locator('.rg-reserved-row[aria-disabled="true"]').count(), 1, '"Sistema" is there, off')
+    assert.equal(await page.locator('.rg-cl-head').count(), 1, '"Fechadas" is at the tree\'s foot')
+    assert.equal(await page.locator('.rg-cl-empty').textContent(), 'Nenhuma sessão fechada')
     await page.screenshot({ path: join(SHOTS, 'r1-vazio.png') })
 
     // The record: two channels with both agents, a few lines.
@@ -933,6 +939,124 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await until('the copy\'s row went', async () => !(await treeKeys()).includes(copyKey))
     await until('the keyboard on the row in its place', async () => { const k = await focusedKey(); return k !== null && (await treeKeys()).includes(k) })
     await stays('close')
+
+    // ---- 16. "Fechadas" ----
+    console.log('step 16')
+    await page.evaluate(() => { window.__tether.ext.regency.search(''); window.__tether.ext.regency.filter('all'); window.__tether.ext.regency.view('desk') })
+    const closedCount = async (): Promise<number> => (await model()).closed.count
+    const closedIds = (): Promise<string[]> => page.locator('.rg-cl[data-session]').evaluateAll(es => es.map(e => (e as unknown as { dataset: { session: string } }).dataset.session))
+    const head = page.locator('.rg-cl-head')
+    // Three fake agents end the way a person ends them: "Fechar guia" and stop the process, so the session has no tab.
+    const ended: string[] = []
+    for (const name of ['fechada-um', 'fechada-dois', 'fechada-tres']) {
+      const id = await running(name)
+      await page.waitForFunction(p => window.__tether.panelIds().includes(p), id)
+      const row = page.locator(`.rg-tree [data-key="pane:agent:${id}"]`)
+      await until(`${name} in the tree`, async () => (await row.count()) === 1)
+      await row.focus()
+      await page.keyboard.press('Shift+F10')
+      await menu.waitFor()
+      await pick('Fechar guia')
+      const stopBtn = page.locator('dialog[open] button.choice[data-choice="stop"]')
+      await stopBtn.waitFor({ timeout: 5_000 }).then(() => stopBtn.click(), () => {})
+      await until(`${name}'s row went`, async () => (await row.count()) === 0)
+      ended.push(id)
+    }
+    const [x1, x2, x3] = ended as [string, string, string]
+    await until('the ended sessions are in "Fechadas"', async () => { const m = (await model()).closed; return m.count >= 3 })
+    // Folded by default, with the count; nothing of it in the layout until the person opens it.
+    assert.equal(await head.getAttribute('aria-expanded'), 'false')
+    assert.equal(await page.locator('.rg-cl').count(), 0, 'folded: no lines')
+    assert.ok(!(await layout())!.collapsed.includes('closed:open'))
+    assert.match((await head.getAttribute('aria-label')) ?? '', /^Fechadas, \d+ sessões$/)
+    await head.click()
+    await until('opened', async () => (await head.getAttribute('aria-expanded')) === 'true')
+    assert.ok((await layout())!.collapsed.includes('closed:open'), 'the open state is in the layout')
+    await until('the lines', async () => (await page.locator('.rg-cl').count()) === (await closedCount()))
+    // Each line: the agent's identity and how long ago it ended.
+    const line = page.locator(`.rg-cl[data-session="${x1}"]`)
+    assert.ok((await line.locator('.aid-name').textContent())?.includes('fechada-um'))
+    assert.match((await line.locator('.rg-ago').textContent()) ?? '', /^(agora|há \d+ min)$/)
+    // The ones that are not the test's are forgotten with the real gesture: "Esquecer…" asks first (and "Cancelar" keeps it).
+    const forget = async (id: string, confirm: boolean): Promise<void> => {
+      const r = page.locator(`.rg-cl[data-session="${id}"]`)
+      await r.click({ button: 'right' })
+      await menu.waitFor()
+      assert.deepEqual((await labels()).filter(l => l !== ''), ['Reabrir em…', 'Esquecer…'])
+      await pick('Esquecer…')
+      const dlg = page.locator('dialog[open]', { hasText: 'Esquecer a sessão de' })
+      await dlg.waitFor()
+      if (!confirm) { await dlg.locator('button.cancel, button[data-choice="cancel"]').first().click(); await dlg.waitFor({ state: 'detached' }); return }
+      await dlg.locator('button.choice[data-choice="forget"]').click()
+      await until('forgotten', async () => !(await closedIds()).includes(id))
+    }
+    await forget(x3, false)
+    assert.ok((await closedIds()).includes(x3), 'cancelled: still there')
+    for (const id of (await closedIds()).filter(i => i !== x1 && i !== x2)) await forget(id, true)
+    assert.deepEqual((await closedIds()).sort(), [x1, x2].sort())
+    assert.equal(await closedCount(), 2)
+    await page.locator(`.rg-tree [data-key="pane:agent:${a}"]`).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: join(SHOTS, 'r2-fechadas.png') })
+    // The search filters "Fechadas" and opens it by itself; a state filter empties it.
+    await head.click()
+    await until('folded', async () => (await head.getAttribute('aria-expanded')) === 'false')
+    await page.evaluate(() => window.__tether.ext.regency.search('fechada-um'))
+    await until('the search opened it with its match', async () => (await closedIds()).join() === x1)
+    assert.match((await head.getAttribute('aria-label')) ?? '', /^Fechadas, 1 sessão$/)
+    await page.evaluate(() => window.__tether.ext.regency.search(''))
+    await until('the search ended: folded again', async () => (await page.locator('.rg-cl').count()) === 0)
+    await page.evaluate(() => window.__tether.ext.regency.filter('busy'))
+    await until('the filter empties it', async () => (await shown()).model.closed.count === 0)
+    assert.equal(await page.locator('.rg-cl').count(), 0)
+    assert.equal(await page.locator('.rg-cl-head.rg-cl-off').count(), 1)
+    await page.evaluate(() => window.__tether.ext.regency.filter('all'))
+    await until('back', async () => (await shown()).model.closed.count === 2)
+    await head.click()
+    await until('opened again', async () => (await page.locator('.rg-cl').count()) === 2)
+    // Space on a line does nothing (no quick view of an ended session); the keyboard keeps its row through a repaint.
+    const k1 = `closed:${x1}`
+    await page.locator(`.rg-tree [data-key="${k1}"]`).focus()
+    await page.keyboard.press(' ')
+    await page.waitForTimeout(400)
+    assert.equal(await page.locator('#peek[data-open="true"]').count(), 0, 'no peek of an ended session')
+    assert.equal((await state()).desk, DESK)
+    p0 = await paints()
+    await page.evaluate(() => window.__tether.ext.regency.view('agent'))
+    await until('repainted', async () => (await paints()) > p0)
+    assert.equal(await focusedKey(), k1, 'the keyboard stayed on the line through the repaint')
+    await page.evaluate(() => window.__tether.ext.regency.view('desk'))
+    // "Reabrir em…" by Enter: the awake desks of the queue and "Nova mesa", nothing else.
+    await page.locator(`.rg-tree [data-key="${k1}"]`).focus()
+    await page.keyboard.press('Enter')
+    await menu.waitFor()
+    await pick('Reabrir em…')
+    const pk = page.locator('.pk-list li.pk-item')
+    await pk.first().waitFor()
+    const tree0 = (await model()).tree.filter(d => d.kind === 'queue')
+    const awake = tree0.filter(d => !d.asleep)
+    const offered = await page.locator('.pk-list li.pk-item .pk-label').allTextContents()
+    assert.deepEqual(offered.sort(), [...awake.map(d => d.name), 'Nova mesa'].sort(), 'awake desks, then "Nova mesa"')
+    await page.screenshot({ path: join(SHOTS, 'r2-fechadas-reabrir.png') })
+    const target = awake.find(d => d.target.id !== queueDesk)!
+    await pk.filter({ has: page.locator('.pk-label', { hasText: new RegExp(`^${target.name}$`) }) }).click()
+    await until('reopened on the chosen desk', async () => (await page.evaluate(i => window.__tether.deskOf(i), x1)) === target.target.id)
+    assert.equal((await state()).desk, DESK, 'reopening does not change desk')
+    await until('the line left "Fechadas"', async () => !(await closedIds()).includes(x1))
+    await until('its row is in the tree', async () => (await page.locator(`.rg-tree [data-key="pane:agent:${x1}"]`).count()) === 1)
+    assert.equal(await page.locator(`.rg-tree [data-key="pane:agent:${x1}"]`).locator('xpath=ancestor::*[contains(@class,"rg-group")]').getAttribute('data-desk'), target.target.id, 'under the chosen desk')
+    // "Nova mesa": the desk is made after the last one, the session goes there, the person stays.
+    const desks0 = (await model()).tree.length
+    await page.locator(`.rg-tree [data-key="closed:${x2}"]`).click({ button: 'right' })
+    await menu.waitFor()
+    await pick('Reabrir em…')
+    await pk.first().waitFor()
+    await pk.filter({ has: page.locator('.pk-label', { hasText: /^Nova mesa$/ }) }).click()
+    await until('reopened on a new desk', async () => { const d = await page.evaluate(i => window.__tether.deskOf(i), x2); return d !== undefined && !tree0.some(t => t.target.id === d) })
+    assert.equal((await state()).desk, DESK, 'the new desk did not take the person')
+    await until('the desk is in the tree', async () => (await model()).tree.length === desks0 + 1)
+    await until('"Fechadas" is empty', async () => (await closedCount()) === 0)
+    assert.equal(await page.locator('.rg-cl-empty').textContent(), 'Nenhuma sessão fechada')
+    await stays('reopen')
   } finally {
     contribution.channels = savedChannels
     if (app) await killElectron(app, root).catch(() => {})
