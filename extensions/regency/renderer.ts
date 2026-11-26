@@ -1,0 +1,175 @@
+// The Regency in the app: declares its pane type, keeps its one pane on its system desk, and gathers the sources into the
+// model's input (the desk tree of the core, the owner board of for-agents, the channel feed of channels, the agents). Events
+// only mark the pane dirty; one animation frame repaints it, and only while the Regency is the visible desk.
+import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
+import type { IdentityInput } from '../../app/renderer/agent-identity.ts'
+import type { ITabRenderer } from 'dockview-core'
+import { channelEmbeds } from '../channels/renderer/embed.ts'
+import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
+import type { Ownership } from '../for-agents/rules.ts'
+import { DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
+import { regencyModelOf, type AgentRef, type OwnerRef, type RegencyInput, type RegencyModel, type Target } from './model.ts'
+import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
+import { RegencyPane, RegencyTab, type RegencyHost } from './renderer/pane.ts'
+
+export { manifest }
+
+/** Pane types with no slot that the quick view already shows (the peek card's system screens). */
+const SCREEN_TYPES = new Set(['settings', 'keybindings'])
+
+export function activate(ui: TetherUi): Disposable[] {
+  const panes = new Set<RegencyPane>()
+  /** When each target began to wait for the person (epoch ms), by `<kind>:<id>`; a key goes when its target stops waiting. */
+  const since = new Map<string, number>()
+  /** The seal lines of the last tree read, by pane id. */
+  let lines = new Map<string, readonly string[]>()
+  /** The channels' list has come at least once (the feed notifies after each directory read). */
+  let heard = channelEmbeds.list().length > 0
+  /** The layout of the last pane that went, given back to the pane that replaces it. */
+  let lastLayout: RegencyLayout = { ...DEFAULT_LAYOUT }
+  let frame = 0
+
+  const visible = (): boolean => ui.systemDesks.isActive(DESK_ID)
+  const nameOf = (slotId: string): string => ui.agents.get(slotId)?.name ?? slotId
+  const ownerOf = (o: Ownership | undefined): OwnerRef | undefined =>
+    o && !o.ended ? { id: o.owner, name: nameOf(o.owner) } : undefined
+
+  const agentRefs = (): AgentRef[] => ui.agents.list().filter(a => a.placed !== false).map(a => {
+    const emblem = ui.panes.personEmblem(a.paneId)
+    return { id: a.paneId, kind: a.kind, name: a.name, ...(emblem ? { emblem: { name: emblem.name, color: emblem.color, icon: emblem.icon } } : {}) }
+  })
+
+  /** Keeps `since` in step with who waits now: a newcomer gets its time (the slot's own for an agent), a leaver is dropped. */
+  const trackSince = (input: Omit<RegencyInput, 'since'>): void => {
+    const agents = new Set(input.agents.map(a => a.id))
+    const now = new Map<string, number | undefined>()
+    for (const d of input.desks.desks) {
+      if (d.id === DESK_ID) continue
+      for (const p of d.panes) {
+        if (p.attention !== 'waiting') continue
+        const at = agents.has(p.id) ? Date.parse(ui.panes.slotFacts(p.id)?.attention?.since ?? '') : NaN
+        now.set(`${agents.has(p.id) ? 'agent' : 'pane'}:${p.id}`, Number.isFinite(at) ? at : undefined)
+      }
+    }
+    for (const c of input.channels) {
+      const m = input.channelMarks[c.id]
+      if (!c.closed && m && m.toMe + m.asks + m.owed > 0) now.set(`channel:${c.id}`, undefined)
+    }
+    for (const k of [...since.keys()]) if (!now.has(k)) since.delete(k)
+    for (const [k, at] of now) if (!since.has(k)) since.set(k, at ?? Date.now())
+  }
+
+  const inputOf = (collapsed: readonly string[]): RegencyInput => {
+    const desks = ui.desks.tree()
+    const owners: RegencyInput['owners'] = { desk: {}, pane: {} }
+    const nextLines = new Map<string, readonly string[]>()
+    for (const d of desks.desks) {
+      if (ownerBoard.active) {
+        const o = ownerOf(ownerBoard.deskOwner(d.id))
+        if (o) owners.desk[d.id] = o
+      }
+      for (const p of d.panes) {
+        if (p.lines?.length) nextLines.set(p.id, p.lines)
+        if (!ownerBoard.active) continue
+        const o = ownerOf(ownerBoard.paneOwner(p.id))
+        if (o) owners.pane[p.id] = o
+      }
+    }
+    lines = nextLines
+    const channels = [...channelEmbeds.list()]
+    const channelMarks: RegencyInput['channelMarks'] = {}
+    for (const c of channels) channelMarks[c.id] = channelEmbeds.marksOf(c.id)
+    const base = { desks, owners, channels, channelMarks, agents: agentRefs(), collapsed: [...collapsed], selfDeskId: DESK_ID }
+    trackSince(base)
+    return { ...base, since: Object.fromEntries(since) }
+  }
+
+  const modelOf = (collapsed: readonly string[]): RegencyModel => regencyModelOf(inputOf(collapsed))
+
+  const flush = (): void => {
+    frame = 0
+    // Hidden, the Regency paints nothing; it only keeps the times of who began to wait.
+    if (!visible()) { if (panes.size > 0) inputOf([]); return }
+    for (const p of panes) p.paint()
+  }
+  const schedule = (): void => {
+    if (frame) return
+    frame = requestAnimationFrame(flush)
+  }
+
+  /** The Regency's one pane is there whenever the desk is shown: closed or never made, it comes back (with its layout). */
+  const ensurePane = (): void => {
+    if (!visible() || ui.panes.find(REGENCY_PANE_ID)) return
+    try {
+      ui.systemDesks.addPane(DESK_ID, { id: REGENCY_PANE_ID, component: REGENCY_COMPONENT, tabComponent: REGENCY_TAB, title: REGENCY_TITLE, params: layoutParams(lastLayout) })
+    } catch (e) { console.error('regência: painel', e) }
+  }
+
+  const livePane = (): RegencyPane | undefined => [...panes].find(p => p.id === REGENCY_PANE_ID) ?? [...panes][0]
+
+  /** Goes to what a row names, as the person asked by a click: its desk comes forward and it gets the keyboard. */
+  const go = (t: Target): void => {
+    if (t.kind === 'agent') { if (!ui.agents.focus(t.id)) ui.panes.reveal(t.id) }
+    else if (t.kind === 'pane') ui.panes.reveal(t.id)
+    else if (t.kind === 'channel') livePane()?.select(t.id)
+  }
+
+  /**
+   * The one place that opens the quick view of a target (the slice of the quick view replaces its inside): a live agent
+   * in the peek card, a system screen in the card; any other kind, nothing yet.
+   */
+  const openQuickView = (t: Target): void => {
+    if (t.kind === 'agent') { ui.panes.peek(t.id); return }
+    if (t.kind !== 'pane') return
+    const type = ui.panes.describe(t.id)?.type
+    if (type && SCREEN_TYPES.has(type)) ui.panes.peekScreen(type)
+  }
+
+  const host: RegencyHost = {
+    model: modelOf,
+    loading: () => channelEmbeds.active && !heard,
+    identity: (paneId): IdentityInput | undefined => {
+      const a = ui.agents.get(paneId)
+      if (!a || a.placed === false) return undefined
+      return { kind: a.kind, name: a.name, seed: paneId, emblem: ui.panes.personEmblem(paneId) }
+    },
+    lines: id => lines.get(id),
+    channel: id => channelEmbeds.list().find(c => c.id === id),
+    openChannels: () => channelEmbeds.list().filter(c => !c.closed),
+    mount: (el, channelId, opts) => channelEmbeds.mount(el, channelId, opts),
+    go,
+    pickChannel: () => ui.pick.list<string>({
+      title: 'Escolher conversa',
+      placeholder: 'Nome do canal',
+      items: channelEmbeds.list().filter(c => !c.closed).map(c => ({ value: c.id, label: `#${c.name}`, ...(c.title && c.title !== c.name ? { detail: c.title } : {}) })),
+      emptyText: 'Nenhuma conversa aberta',
+    }),
+    saved: () => ui.layout.scheduleSave(),
+    gone: pane => { panes.delete(pane); lastLayout = pane.state },
+  }
+
+  ui.test.expose('model', (): RegencyModel => modelOf(livePane()?.state.collapsed ?? []))
+  ui.test.expose('layout', (): RegencyLayout | undefined => livePane()?.state)
+  ui.test.expose('select', (channelId: string): void => { livePane()?.select(channelId) })
+  ui.test.expose('close', (): void => { ui.panes.close(REGENCY_PANE_ID) })
+  ui.test.expose('quickView', openQuickView)
+
+  schedule()
+  return [
+    ui.panes.register({
+      ...REGENCY_LAYOUT, hasSlot: false, icon: 'columns',
+      create: () => { const p = new RegencyPane(host); panes.add(p); schedule(); return p },
+      createTab: () => new RegencyTab() as unknown as ITabRenderer,
+      has: id => [...panes].some(p => p.id === id),
+      focus: () => livePane()?.focus(),
+      tabMenu: (_id, x, y) => ui.menus.context(x, y, [{ icon: 'push-pin', label: 'A Regência é uma guia fixa', disabled: true, run: () => {} }]),
+    }),
+    ui.desks.onDidChangeTree(() => { ensurePane(); schedule() }),
+    ui.systemDesks.onDidChangeActive(e => { if (e.id === DESK_ID && e.active) { ensurePane(); schedule() } }),
+    ui.agents.onDidChange(schedule),
+    ui.panes.onDidChangeMarks(schedule),
+    ownerBoard.onDidChange(schedule),
+    channelEmbeds.onDidChange(() => { heard = true; schedule() }),
+    { dispose: () => { if (frame) cancelAnimationFrame(frame); frame = 0 } },
+  ]
+}
