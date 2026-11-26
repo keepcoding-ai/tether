@@ -52,6 +52,12 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
   page.setDefaultTimeout(15_000)
   page.on('pageerror', e => console.error(`renderer error: ${e.stack}`))
   await page.waitForSelector('#conn.on', { timeout: 30_000 })
+  // The capsule is as wide as the toolbar lets it (the wider side twice, off the window), and the Gaveta, the system desks'
+  // pills (Browser, Regência, Prova) and the "+" and "⋯" count as its chrome. In the default hidden window that leaves room for
+  // the active desk and little more, so a second desk carrying a labeled seal drops into the "+N" and its pill is not in the
+  // strip. The seal's own geometry is what these tests look at, so they get a window the pills fit in.
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setContentSize(1800, 900) })
+  await page.waitForFunction(() => document.documentElement.clientWidth >= 1700)
   return { app, page }
 }
 
