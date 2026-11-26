@@ -833,7 +833,7 @@ export class RegencyPane implements IContentRenderer {
     for (const b of this.tabBar.querySelectorAll<HTMLElement>('.rg-tab')) b.setAttribute('aria-selected', String(b.dataset.tab === this.state.narrowTab))
   }
 
-  /** The count of who waits, on the left edge and on the phone's "Chama você". */
+  /** The count of who waits, on the left edge and on the phone's "Esperam você". */
   private paintCounts(): void {
     const n = this.waitingCount
     const text = n > 0 ? String(n) : ''
