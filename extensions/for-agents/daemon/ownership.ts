@@ -37,6 +37,14 @@ export function takesByTyping(eff: Effective): boolean {
 
 const isRecord =(v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+const LOG_LINE_MAX = 300
+
+/** A log line with no line break or control character (a forged second line is one line again), at most `LOG_LINE_MAX` long. */
+export function tameLogLine(line: string): string {
+  const flat = line.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?') /*  */
+  return flat.length > LOG_LINE_MAX ? `${flat.slice(0, LOG_LINE_MAX)}...` : flat
+}
+
 /** Whether `slotId` is the live (not forgotten) owner of the desk: the one rule `agents open` and the pipe's `create { desk }` share. */
 export function ownsDesk(store: Pick<OwnershipStore, 'ownedDesks'>, slotId: string, deskId: string): boolean {
   return store.ownedDesks().some(([id, o]) => id === deskId && o.owner === slotId && !o.ended)
@@ -83,8 +91,15 @@ export class OwnershipStore {
     const target = `${kind === 'desk' ? 'a mesa' : 'a guia'} ${id}`
     const rel = owner === undefined ? '' : ` (relação ${owner === id ? 'self' : 'agente'}, por ${by}, via ${via})`
     const who = owner === undefined ? ` (por ${by}, via ${via})` : rel
-    this.log(`posse: ${verb} ${target}${verb === 'deu' ? ` a ${owner}` : owner === undefined ? '' : ` de ${owner}`}${who}`)
+    this.say(`posse: ${verb} ${target}${verb === 'deu' ? ` a ${owner}` : owner === undefined ? '' : ` de ${owner}`}${who}`)
   }
+
+  /**
+   * The one way a line leaves this store for the log. Some fields come from the object store, which any pipe client writes (an
+   * `owner` or `givenBy` with a line break would forge a line the log's readers, agents included, take for the daemon's): control
+   * characters and line separators become `?`, and the line is capped.
+   */
+  private say(line: string): void { this.log(tameLogLine(line)) }
 
   /** `by` of a gesture of this store: the person's gesture, or an agent's verb. */
   private route(by: Who): string { return by === 'user' ? 'gesto' : 'verbo' }
@@ -262,7 +277,7 @@ export class OwnershipStore {
       for (const [id, o] of this.owned(kind)) {
         if (o.owner !== owner || o.ended) continue
         await this.writeOwner(kind, id, { ...o, ended: { at, name } } satisfies Ownership)
-        this.log(`posse: dono ${owner} esquecido; marca de fim em ${kind === 'desk' ? 'a mesa' : 'a guia'} ${id} (via esquecimento do slot)`)
+        this.say(`posse: dono ${owner} esquecido; marca de fim em ${kind === 'desk' ? 'a mesa' : 'a guia'} ${id} (via esquecimento do slot)`)
         touched.push(`${kind}:${id}`)
       }
     }
