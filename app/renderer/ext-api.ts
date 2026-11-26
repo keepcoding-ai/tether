@@ -244,6 +244,37 @@ export interface ChooserDestinations {
   configure(id: string): void
 }
 
+/**
+ * What can be made in a desk (`create.items`): a row of "Novo painel…" — a launch profile (by engine), an extension's
+ * chooser item ('note-new'), or the empty pane. `id` is the chooser's value (a profile id, `kind:<item>`); `itemId` is what
+ * `create.item` takes for a non-profile row.
+ */
+export interface CreateItem {
+  id: string
+  kind: 'profile' | 'item' | 'empty'
+  group: string
+  name: string
+  /** The small line under the name (a profile's args, an item's description); absent for a placeholder. */
+  hint?: string
+  icon: string
+  /** A profile's engine (its agent: 'claude', 'soul', 'shell'…). */
+  engine?: string
+  profileId?: string
+  /** A non-profile row's item id ('note-new', 'empty'). */
+  itemId?: string
+  unsafe?: boolean
+  default?: boolean
+  /** A process needs a folder; a note and an empty pane fall back to the person's. */
+  needsFolder: boolean
+  /** The profile's own folder, as the chooser suggests it while the field is untouched. */
+  folder?: string
+  /** Among the last profiles opened (they come first). */
+  recent?: boolean
+}
+
+/** A pane `create.slot`/`create.item` made: its id and the desk it was born in. */
+export interface CreateResult { paneId: string; deskId: string }
+
 /** A queue desk as an extension sees it (`desks.list`): its panes are every pane id it holds, of any type. */
 export interface DeskView {
   id: string
@@ -445,6 +476,12 @@ export interface TetherUi {
     /** Moves a pane to a queue desk, as the "Mover…" dialog does; false when refused (unknown pane or desk, same desk, the add failed). */
     moveToDesk(paneId: string, deskId: string): boolean
     /**
+     * Adds a pane to a desk WITHOUT switching to it or taking the keyboard: a queue desk (awake or not), or a system desk
+     * this extension declares. Not the desk's active tab unless `front`. undefined when refused (unknown desk, another
+     * extension's system desk).
+     */
+    openOnDesk(options: AddPanelOptions, deskId: string, opts?: { front?: boolean }): IDockviewPanel | undefined
+    /**
      * Peeks a slot without leaving where the person is: a live slot no tab shows opens in the peek card (its live terminal
      * over everything, the drawer included); a slot with a tab is revealed there. An unknown or ended slot without a tab: nothing.
      */
@@ -601,6 +638,30 @@ export interface TetherUi {
     reveal(deskId: string): boolean
     /** Renames a queue desk without its pill's input. False for a system desk, an unknown id or an empty name. */
     rename(deskId: string, name: string): boolean
+    /**
+     * A new queue desk with one blank frame, WITHOUT switching to it: after `after` (the visible queue desk by default), with
+     * `name` and `color` when given. Returns its id.
+     */
+    create(spec?: { after?: string; name?: string; color?: HueName; stay?: true }): string
+  }
+  /**
+   * Making panes in a desk the person is not looking at ("+ Novo" of a manager): the same rows and the same resolution as
+   * "Novo painel…" (profile, folder, recents, the daemon's error), but the pane is born in `deskId` without switching to it
+   * and without the keyboard. Only awake queue desks are targets.
+   */
+  create: {
+    /** The rows of "Novo painel…" (profiles by engine, the extensions' chooser items, the empty pane), recent profiles first. */
+    items(): readonly CreateItem[]
+    /** The rows changed: profiles listed again, an extension's items came or went. */
+    onDidChange(listener: () => void): IDisposable
+    /**
+     * A slot born in `deskId`: by `profileId`, or else the default profile of `kind`. `front` makes it the desk's active
+     * tab (the visible desk still does not change). `{ error }`: the message to show (the daemon's, an unknown profile, a
+     * refused desk).
+     */
+    slot(spec: { deskId: string; kind: string; cwd: string; profileId?: string; name?: string; front?: boolean }): Promise<CreateResult | { error: string }>
+    /** An extension's chooser item ('note-new') or 'empty', resolved and placed the same way. undefined: cancelled. */
+    item(spec: { deskId: string; itemId: string; cwd: string; destination?: ChooserDestination; front?: boolean }): Promise<CreateResult | { error: string } | undefined>
   }
   /** A list picker, filtered by typing. */
   pick: {

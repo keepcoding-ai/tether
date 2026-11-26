@@ -19,7 +19,8 @@ import { mergeKeybindings, parseKeybindingsFile, type FixedBinding, type KbComma
 import type { KeybindingsFileState } from '../shared/keybindings.ts'
 import { EMPTY_COMPONENT, EMPTY_TAB, EMPTY_TITLE, newEmptyPanelId, withEmpty, type EmptyOrigin } from '../shared/empty.ts'
 import { EmptyPanel, EmptyTab, type EmptyHost, type EmptySnapshot } from './empty-panel.ts'
-import { type Choice, contributeChooser, rememberProfile } from './chooser-rules.ts'
+import { type Choice, CHOICE_PREFIX, choiceOf, chooserItems, contributeChooser, rememberProfile } from './chooser-rules.ts'
+import { createItemsOf } from './create-items.ts'
 import { Chooser, type ChooserHost, type ChooserSnapshot, type ChooserState } from './chooser.ts'
 import { CommandPalette, type PaletteModeProvider } from './palette.ts'
 import { fileOpenFailedSituation, openFile, type OpenFileOptions } from './file-open.ts'
@@ -93,7 +94,7 @@ import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
-import type { DeskTree, DeskView, PaneInfo, PickItem } from './ext-api.ts'
+import type { CreateResult, DeskTree, DeskView, PaneInfo, PickItem } from './ext-api.ts'
 import { deskTreeOf, type TreePaneFacts } from './desk-tree-rules.ts'
 import type { DeskInfo } from './desks.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
@@ -142,7 +143,7 @@ const door = new DoorHost({
   // The pane a daemon request asked for: in the asked desk, not active, and the desk stays where it is.
   addPane: (slot, deskId, asleep) => {
     slots.set(slot.slotId, slot)
-    desks.desk(deskId)?.addPanel({ ...slotPanelOptions(slot), inactive: true })
+    placeOnDesk(slotPanelOptions(slot), deskId, false)
     scheduleSave()
   },
   sleep: slotId => {
@@ -282,6 +283,7 @@ let recentProfiles: string[] = loadRecentProfiles()
 function noteRecentProfile(id: string): void {
   recentProfiles = rememberProfile(recentProfiles, id)
   try { localStorage.setItem(RECENT_PROFILES_KEY, JSON.stringify(recentProfiles)) } catch { /* storage unavailable: recents live for the session */ }
+  notifyCreateItems()
 }
 /** The panes activated last (most recent first, a few): where the keyboard goes back to when a laid-out empty pane is left with Esc. */
 const activeHistory: string[] = []
@@ -1943,6 +1945,14 @@ function peekScreen(typeId: string, from?: HTMLElement): string | undefined {
 }
 let peekSeq = 0
 
+/**
+ * A pane put in a desk the person may not be looking at: the visible desk never changes and the keyboard stays where it is
+ * (no focusPane). `front` makes it the active tab of its group in that desk; else it is born inactive. The caller saves.
+ */
+function placeOnDesk(options: AddPanelOptions, deskId: string, front: boolean): IDockviewPanel | undefined {
+  return desks.desk(deskId)?.addPanel(front ? options : { ...options, inactive: true })
+}
+
 /** "Abrir nesta mesa" of a screen: a tab of the active group, as its command opened it before the card (one screen: a live tab is brought forward). */
 function openScreenTab(typeId: string, deskId?: string): string | undefined {
   const type = paneTypes.get(typeId)
@@ -1952,7 +1962,7 @@ function openScreenTab(typeId: string, deskId?: string): string | undefined {
   const options = type.optionsOf({ id: `${type.idPrefix}${Date.now().toString(36)}` })
   if (deskId && deskId !== desks.activeDeskId) {
     // "Abrir em outra mesa": the tab is born there and the person stays where they are.
-    desks.desk(deskId)?.addPanel(options)
+    placeOnDesk(options, deskId, true)
     scheduleSave()
     return options.id
   }
@@ -3785,9 +3795,9 @@ function createBlankDesk(side: 'before' | 'after', relativeTo?: string, opts?: {
  * what an extension's item resolves into (a note file prepared or picked). `undefined` when nothing is to be added (a file dialog cancelled, a note
  * already open and now focused); `{ error }` with the message to show in the chooser.
  */
-async function resolveChoice(choice: Choice, cwd: string, destination?: ChooserDestination): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
+async function resolveChoice(choice: Choice, cwd: string, destination?: ChooserDestination, name?: string): Promise<{ options: AddPanelOptions; after?: () => Promise<void> } | { error: string } | undefined> {
   if (choice.profile) {
-    const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id })
+    const reply = await window.tether.request({ t: 'create', kind: choice.profile.agent, cwd, start: true, profileId: choice.profile.id, ...(name ? { name } : {}) })
     if (reply.t === 'error' || !reply.slot) return { error: reply.t === 'error' ? reply.message : 'o daemon não devolveu o slot' }
     await window.tether.rememberFolder(cwd)
     noteRecentProfile(choice.profile.id)
@@ -3804,6 +3814,70 @@ async function resolveChoice(choice: Choice, cwd: string, destination?: ChooserD
   const r = await resolve(cwd, destination)
   if (r && !('error' in r) && cwd) await window.tether.rememberFolder(cwd)
   return r
+}
+
+// ---------- making panes in another desk (TetherUi.create) ----------
+// The same rows and the same resolveChoice as "Novo painel…"; only the placing differs: placeOnDesk, never focusPane.
+
+const createItemListeners = new Set<() => void>()
+function notifyCreateItems(): void {
+  for (const l of [...createItemListeners]) { try { l() } catch (err) { console.error('create.onDidChange', err) } }
+}
+
+/** Why `deskId` cannot receive a new pane (only awake queue desks do), in Portuguese; undefined when it can. */
+function createTargetRefusal(deskId: string): string | undefined {
+  const d = desks.desks.find(x => x.id === deskId)
+  if (!d) return desks.systemDesks.some(x => x.id === deskId) ? 'Uma mesa de sistema não recebe guias novas.' : 'Essa mesa não existe mais.'
+  if (d.asleep) return 'A mesa está dormindo: acorde-a antes de criar nela.'
+  return undefined
+}
+
+/** A resolved choice into its desk; the item's `after` (the note's .gitignore question) runs without taking the keyboard. */
+function placeCreated(r: { options: AddPanelOptions; after?: () => Promise<void> }, deskId: string, front: boolean | undefined): CreateResult | { error: string } {
+  // The desk may have gone (or fallen asleep) while the daemon answered.
+  const refused = createTargetRefusal(deskId)
+  const panel = refused ? undefined : placeOnDesk(r.options, deskId, front === true)
+  if (!panel) return { error: refused ?? 'Essa mesa não existe mais.' }
+  scheduleSave()
+  if (r.after) r.after().catch(err => console.error('create: after', err))
+  return { paneId: panel.id, deskId }
+}
+
+async function createSlotOn(spec: { deskId: string; kind: string; cwd: string; profileId?: string; name?: string; front?: boolean }): Promise<CreateResult | { error: string }> {
+  const refused = createTargetRefusal(spec.deskId)
+  if (refused) return { error: refused }
+  const profile = spec.profileId
+    ? profiles.find(p => p.id === spec.profileId)
+    : profiles.find(p => p.agent === spec.kind && p.default) ?? profiles.find(p => p.agent === spec.kind)
+  if (!profile) return { error: spec.profileId ? 'Esse perfil não existe mais.' : `Nenhum perfil de ${spec.kind}.` }
+  if (profile.agent !== spec.kind) return { error: 'O perfil é de outro motor.' }
+  const choice = choiceOf(profile.id, profiles)
+  if (!choice) return { error: 'Esse perfil não existe mais.' }
+  const name = spec.name?.trim()
+  const r = await resolveChoice(choice, spec.cwd, undefined, name || undefined)
+  if (!r) return { error: 'o daemon não devolveu o slot' }
+  if ('error' in r) return r
+  return placeCreated(r, spec.deskId, spec.front)
+}
+
+async function createItemOn(spec: { deskId: string; itemId: string; cwd: string; destination?: ChooserDestination; front?: boolean }): Promise<CreateResult | { error: string } | undefined> {
+  const refused = createTargetRefusal(spec.deskId)
+  if (refused) return { error: refused }
+  const choice = choiceOf(`${CHOICE_PREFIX}${spec.itemId}`, profiles)
+  if (!choice || choice.profile) return { error: 'Este item vem de uma extensão que não está ligada.' }
+  const r = await resolveChoice(choice, spec.cwd, spec.destination)
+  if (!r) return undefined
+  if ('error' in r) return r
+  return placeCreated(r, spec.deskId, spec.front)
+}
+
+/** A new queue desk that the person does not switch to (TetherUi.desks.create): one blank frame, named and coloured when asked. */
+function createDeskStaying(spec?: { after?: string; name?: string; color?: string }): string {
+  // An unknown `after` (or a system desk in view) appends it at the end of the queue.
+  const id = createBlankDesk('after', spec?.after ?? desks.activeDeskId, { stay: true })
+  if (spec?.name) renameDeskTo(id, spec.name)
+  if (spec?.color) desks.recolor(id, readDeskColor(spec.color))
+  return id
 }
 
 /** What every chooser (inside a pane, in the popup) needs from the renderer. */
@@ -4015,6 +4089,7 @@ function setProfiles(list: Profile[], problem: string | undefined): void {
   if (manager.open) manager.refresh()
   popupChooser?.render()
   for (const e of empties.values()) e.renderProfiles()
+  notifyCreateItems()
 }
 
 async function loadProfiles(): Promise<void> {
@@ -5262,7 +5337,11 @@ function contributeDeclared(manifest: ExtensionManifest, store: DisposableStore)
     const toggled = m.toggled
     store.add(menuRegistry.appendMenuItem(MenuId.App, menuItemOf(m, toggled ? () => configuration.read(extSettings, manifest.id, toggled) === true : undefined)))
   }
-  if (c.chooser) store.add(toDisposable(contributeChooser(c.chooser)))
+  if (c.chooser) {
+    const withdraw = contributeChooser(c.chooser)
+    notifyCreateItems()
+    store.add(toDisposable(() => { withdraw(); notifyCreateItems() }))
+  }
   // Pads: the strip draws them from the manifest; each gets its own toggle command (VS Code registers an "open" command per view container).
   for (const s of c.status ?? []) store.add(statusRegistry.declare({ ...s, extension: manifest.id }))
   // System desks: declared in the registry; the dock mirrors them into the DeskSet (and takes them back with the store).
@@ -5341,6 +5420,14 @@ function activateRendererExtensions(): void {
         focus: paneId => focusPane(paneId),
         reveal: paneId => revealPane(paneId),
         moveToDesk: (paneId, deskId) => movePaneToDesk(paneId, deskId),
+        // A queue desk, or a system desk this extension declares (as systemDesks.addPane); never another extension's.
+        openOnDesk: (options, deskId, opts) => {
+          const queue = desks.desks.some(d => d.id === deskId)
+          if (!queue && !(desks.systemDesks.some(d => d.id === deskId) && manifest.contributes?.systemDesks?.some(d => d.id === deskId))) return undefined
+          const panel = placeOnDesk(options, deskId, opts?.front === true)
+          if (panel) scheduleSave()
+          return panel
+        },
         // An agent with a tab opens the quick view's card of that tab; one with none, its own card.
         peek: slotId => { if (findPanel(slotId)) peekPane(slotId); else peek(slotId) },
         peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
@@ -5393,6 +5480,13 @@ function activateRendererExtensions(): void {
         menuEntries: (deskId, opts) => desks.desks.some(d => d.id === deskId) ? toExtEntries(deskMenuEntries(deskId, focusedPoint, opts)) : [],
         reveal: deskId => revealDesk(deskId),
         rename: (deskId, name) => renameDeskTo(deskId, name),
+        create: spec => createDeskStaying(spec),
+      },
+      create: {
+        items: () => createItemsOf(chooserItems(profiles, { empty: true }), recentProfiles),
+        onDidChange: listener => { createItemListeners.add(listener); return add(toDisposable(() => { createItemListeners.delete(listener) })) },
+        slot: spec => createSlotOn(spec),
+        item: spec => createItemOn(spec),
       },
       pick: {
         list: spec => door.pickList(spec),
