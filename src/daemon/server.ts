@@ -609,9 +609,6 @@ class DaemonImpl implements Daemon {
     await mkdir(slotsDir(this.home), { recursive: true })
     // First of all: a key that cannot be private stops the boot here, before anything is watched, reaped or served.
     const staged = await prepareKeyFile(this.home, pipeKeyPath(this.home), this.log)
-    // An open home is not refused (the key file carries its own checked ACL), but what else it holds (profiles.json with its
-    // values) is as open as the folder: said once in the log, off the boot's path.
-    void folderIsPrivate(this.home).then((p) => { if (!p) this.log(`home: ${this.home} is not private to the user; other accounts of the machine may read what it holds (profiles, recipes)`) })
     try {
       await this.boot(staged)
     } catch (e) {
@@ -664,6 +661,10 @@ class DaemonImpl implements Daemon {
       this.pipeKey = fillKeyFile(pipeKeyPath(this.home), staged)
       await this.pipeKey
       servePipeHome(this.pipe, this.home)
+      // An open home is not refused (the key file carries its own checked ACL), but what else it holds (profiles.json with
+      // its values) is as open as the folder. Said once per boot, by the tetherd that won the pipe and serves (a loser exits
+      // with its own last line), off the boot's path.
+      void folderIsPrivate(this.home).then((p) => { if (!p) this.log(`home: ${this.home} is not private to the user; other accounts of the machine may read what it holds (profiles, recipes)`) })
     } catch (e) {
       for (const a of adoptions) a.release()
       if (this.server.listening) this.server.close()
