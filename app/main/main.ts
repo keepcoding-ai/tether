@@ -263,6 +263,20 @@ async function connectOnce(): Promise<DaemonClient> {
   return checkVersion(await DaemonClient.connect({ ...daemonSpawnOptions(), client: 'app', direct: true, startTimeoutMs: DAEMON_START_TIMEOUT_MS }))
 }
 
+/**
+ * The `profiles` broadcast carries the NAMES of each profile's variables only (src/daemon/env-names.ts), and the window's
+ * profile editor shows and saves the values: on each broadcast the list goes to the window from the daemon's reply to
+ * `profiles-list`, which carries them. Only the newest reply is forwarded.
+ */
+let profilesSeq = 0
+async function forwardProfiles(client: DaemonClient): Promise<void> {
+  const seq = ++profilesSeq
+  try {
+    const r = await client.request({ t: 'profiles-list' })
+    if (seq === profilesSeq && r.profiles) win?.webContents.send('tether:event', { t: 'profiles', profiles: r.profiles })
+  } catch { /* the connection went away: the reconnect reloads the list */ }
+}
+
 function connectDaemon(): Promise<void> {
   if (connecting) return connecting
   connecting = (async () => {
@@ -273,7 +287,7 @@ function connectDaemon(): Promise<void> {
       client.on('data', (slotId, data, p) => { perfEchoData(slotId); win?.webContents.send('tether:event', probe && p ? { t: 'data', slotId, data, probe: extendProbe(p) } : { t: 'data', slotId, data }) }) // probe: main-out stamp
       client.on('removed', slotId => { slotStates.delete(slotId); panelRouter.onRemoved(slotId); osNotifyRules.remove(slotId); attentionHistory.remove(slotId); sendAttention(); agentTracker.remove(slotId); updateTray(); win?.webContents.send('tether:event', { t: 'removed', slotId }) })
       client.on('pause', batch => win?.webContents.send('tether:event', { t: 'pause', batch }))
-      client.on('profiles', profiles => win?.webContents.send('tether:event', { t: 'profiles', profiles }))
+      client.on('profiles', () => void forwardProfiles(client))
       client.on('proc', proc => win?.webContents.send('tether:event', { t: 'proc', proc }))
       client.on('proc-removed', name => win?.webContents.send('tether:event', { t: 'proc-removed', name }))
       client.on('proc-data', (name, data) => win?.webContents.send('tether:event', { t: 'proc-data', name, data }))

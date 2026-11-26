@@ -29,6 +29,7 @@ import { SlotStore } from '../core/slot-store.ts'
 import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
+import { forBroadcast } from './env-names.ts'
 import { clientProof, daemonProof, isNonce, newNonce, sameProof, servePipeHome, unservePipeHome, writePipeKey } from './pipe-key.ts'
 import {
   KILL_WAIT_CAP_MS,
@@ -1953,9 +1954,13 @@ class DaemonImpl implements Daemon {
     client.socket.write(encode(msg))
   }
 
-  /** Events go only to clients that completed the hello: a connection that did not is nobody's. */
+  /**
+   * Events go only to clients that completed the hello: a connection that did not is nobody's. And never with a value of an
+   * environment variable (env-names.ts).
+   */
   private broadcast(msg: DaemonMessage): void {
-    for (const c of this.clients) if (c.greeted) this.send(c, msg)
+    const out = forBroadcast(msg)
+    for (const c of this.clients) if (c.greeted) this.send(c, out)
   }
 
   private broadcastState(slot: Slot): void {
