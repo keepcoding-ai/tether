@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  advance, back, channelNameOf, CREATE_TILES, deskChannelOf, deskChoices, failureText, missing, NEW_DESK, patchDraft, planOf, REF_CHANNEL,
+  advance, back, channelNameOf, CREATE_TILES, createdText, defaultNameOf, deskChannelOf, deskChoices, failureText, missing, NEW_DESK, patchDraft, planOf, REF_CHANNEL,
   REF_DESK, REF_PANE, runPlan, startCreate, stepsOf,
   type ActResult, type CreateAct, type CreateContext, type CreateDraft, type CreateFixed, type CreateState,
 } from '../../extensions/regency/create-rules.ts'
@@ -193,6 +193,12 @@ describe('planOf', () => {
     assert.equal((a[2] as { channel: string }).channel, REF_CHANNEL)
     assert.deepEqual(kinds(acts({ what: 'channel', channel: { name: 'sozinho' } })), ['channel', 'show'])
   })
+  test('typed names go through the one filter: no control, bidi or zero-width characters (R-9)', () => {
+    const d = acts({ what: 'desk', newDesk: { name: 'Ca\u202Esa\u0007\n nova\u200B' } })
+    assert.equal((d[0] as { name: string }).name, 'Casa nova')
+    const s = acts({ what: 'terminal', deskId: 'd1', cwd: 'C:/p', name: '\u202Econf\u0000erente\u2066' }).find(x => x.act === 'slot') as { name?: string }
+    assert.equal(s.name, 'conferente')
+  })
   test('desk: only the desk', () => {
     const a = acts({ what: 'desk', newDesk: { name: 'Casa', after: 'd1' } })
     assert.deepEqual(a, [{ act: 'desk', runs: 'app-bridge', name: 'Casa', after: 'd1', doing: 'criar a mesa «Casa»', done: 'criei a mesa «Casa»' }])
@@ -296,4 +302,35 @@ describe('runPlan and the failure in the middle', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(run)), run)
   })
   test('failureText out of range falls back to the error alone', () => assert.equal(failureText([], 3, 'x.'), 'x.'))
+})
+
+describe('regency create: the name it is born with and the notice after', () => {
+  const pane = (id: string, title: string) => ({ id, type: 'agent', icon: 'terminal', title })
+  const withTitles = (...titles: string[]): CreateContext => ({
+    desks: { desks: desks.desks.map(d => (d.id === 'd1' ? { ...d, panes: titles.map((t, i) => pane(`p${i}`, t)) } : d)) }, channels,
+  })
+  test('a terminal with no name: "Terminal 1", then the first number nobody has (never the folder\'s name)', () => {
+    assert.equal(defaultNameOf({ what: 'terminal', cwd: 'C:/tether-daemon-xHa13I' }, ctx), 'Terminal 1')
+    assert.equal(defaultNameOf({ what: 'terminal' }, withTitles('Terminal 1', 'terminal 3')), 'Terminal 2')
+    assert.equal(defaultNameOf({ what: 'terminal', name: '  build  ' }, ctx), 'build', 'a typed name wins')
+  })
+  test('an agent with no name: its profile\'s name, numbered from 2 when taken; no profile name: none given', () => {
+    assert.equal(defaultNameOf({ what: 'agent', profileName: 'Claude' }, ctx), 'Claude')
+    assert.equal(defaultNameOf({ what: 'agent', profileName: 'Claude' }, withTitles('Claude', 'Claude 2')), 'Claude 3')
+    assert.equal(defaultNameOf({ what: 'agent' }, ctx), '')
+    const a = acts({ what: 'agent', kind: 'claude', profileId: 'p1', profileName: 'Claude', deskId: 'd3', cwd: 'C:/p' })
+    assert.equal((a[0] as { name?: string }).name, 'Claude')
+  })
+  test('a note keeps its place in `name` (the destination), no default name', () => {
+    const a = acts({ what: 'note', deskId: 'd1', cwd: 'C:/p' })
+    assert.equal((a[0] as { destination?: string }).destination, undefined)
+  })
+  test('"Ir até a guia depois de criar" survives a change of tile; the notice says what and where', () => {
+    assert.equal(patchDraft(state({ what: 'agent', goAfter: true }), { what: 'terminal' }).draft.goAfter, true)
+    assert.equal(createdText('terminal', 'Mesa 2'), 'Terminal criado em Mesa 2')
+    assert.equal(createdText('agent', 'Prova'), 'Agente criado em Prova')
+    assert.equal(createdText('note', 'Mesa 2'), 'Nota criada em Mesa 2')
+    assert.equal(createdText('desk', 'Prova'), 'Mesa Prova criada')
+    assert.equal(createdText('channel', undefined), undefined)
+  })
 })

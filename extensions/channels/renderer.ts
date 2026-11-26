@@ -31,7 +31,10 @@ export function activate(ui: TetherUi): Disposable[] {
   // The marks notify after each directory refresh too (their sync asks the directory), so one subscription covers both.
   const feed = channelEmbeds.publish({
     list: directory.list,
-    marksOf: id => ({ unread: marks.of(id).unread, toMe: marks.of(id).toMe, asks: marks.asksOf(id).length, owed: marks.owedOf(id).length }),
+    marksOf: id => {
+      const first = marks.firstCall(id)
+      return { unread: marks.of(id).unread, toMe: marks.of(id).toMe, asks: marks.asksOf(id).length, owed: marks.owedOf(id).length, ...(first ? { first } : {}) }
+    },
     onDidChange: marks.onDidChange,
     mount: (host, channelId, opts) => panes.mountEmbed(host, channelId, opts),
     create: async name => {

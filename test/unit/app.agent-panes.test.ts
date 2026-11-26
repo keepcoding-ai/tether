@@ -70,6 +70,16 @@ test('profileViewOf: engine, args, folder, default and unsafe; env only by its v
   assert.deepEqual(v.args, ['--dangerously-skip-permissions'])
 })
 
+test('profileViewOf: args keep the option names but never the value of a key/token/password-looking option (R-7)', () => {
+  const v = profileViewOf(profile({
+    args: ['--model', 'opus', '--api-key', SECRET, '--token=' + SECRET, '-e', 'MY_TOKEN=' + SECRET, '-e', 'MODE=dev', '--password', 'p', '--flag', SECRET],
+  }))
+  assert.deepEqual(v.args, ['--model', 'opus', '--api-key', '[redacted]', '--token=[redacted]', '-e', 'MY_TOKEN=[redacted]', '-e', 'MODE=dev', '--password', '[redacted]', '--flag', '[redacted]'])
+  assert.equal(JSON.stringify(v).includes(SECRET), false)
+  assert.equal(v.unsafe, undefined, 'the unsafe mark is still read from the real args')
+  assert.equal(profileViewOf(profile({ args: ['--dangerously-skip-permissions', '--api-key', SECRET] })).unsafe, true)
+})
+
 test('profileViewOf: a shell profile shows its executable and its args first; no env is an empty list; not unsafe stays out', () => {
   const v = profileViewOf({ id: 'pwsh', name: 'PowerShell', agent: 'shell', args: ['-NoLogo'], shell: { command: 'pwsh.exe', args: ['-NoProfile'] } })
   assert.deepEqual(v, { id: 'pwsh', name: 'PowerShell', agent: 'shell', args: ['-NoProfile', '-NoLogo'], shell: 'pwsh.exe', envNames: [] })

@@ -21,6 +21,14 @@ export interface VerbIo {
 interface VerbInfo { ns: string; name: string; help: string; input: Record<string, unknown>; positional?: string[] }
 type Prop = { type?: string; items?: { type?: string } }
 
+/** The identity a pipe request carries when the CLI runs inside an agent's pane: the pane's id and key; nothing for the person's shell. */
+export function askerOf(env: NodeJS.ProcessEnv): { slotId?: string; key?: string } {
+  const slotId = env[ENV_SLOT]?.trim()
+  if (!slotId) return {}
+  const key = env[ENV_SLOT_KEY]?.trim()
+  return { slotId, ...(key ? { key } : {}) }
+}
+
 function props(v: VerbInfo): Record<string, Prop> {
   const p = v.input.properties
   return p && typeof p === 'object' ? (p as Record<string, Prop>) : {}

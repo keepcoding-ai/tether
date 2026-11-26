@@ -7,7 +7,7 @@ import { DisposableStore, toDisposable, type IDisposable } from '../../../app/sh
 import type { LaunchPlan } from '../../agents/types.ts'
 import type { SlotMeta } from '../../core/event.ts'
 import type { SlotState } from '../protocol.ts'
-import { type DoorRequestHandler, type DoorSeams, type InputMark, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
+import { DoorError, type DoorRequestHandler, type DoorSeams, type InputMark, type InputOrigin, type LaunchContext, type LaunchGrant, type SlotPort } from './port.ts'
 import { DeliveryService } from './delivery.ts'
 import { DeskService } from './desks.ts'
 import { ExtRequestService } from './ext-requests.ts'
@@ -107,7 +107,13 @@ export class DoorHost implements DoorSeams {
 
   resumeSuspended(slotId: string, why: string): boolean { return this.suspend.resume(slotId, why) }
 
-  deskRequest(ref: string): { deskId: string } { return this.desks.requestForTarget(ref) }
+  /** `asker`: the slot's identity the request came with; it must prove itself (its key), and then only its own desks are asked into. */
+  deskRequest(ref: string, asker?: { slotId: string; key?: string }): { deskId: string } {
+    if (asker && !this.slotKeys.verify(asker.slotId, asker.key)) throw new DoorError('door-denied', 'a identidade do painel não confere')
+    // A shell pane is the person's own terminal inside the tether (it carries the same environment): she is not held to ownership there.
+    const agentSlot = asker && this.portRef?.stateOf(asker.slotId)?.kind !== 'shell' ? asker.slotId : undefined
+    return this.desks.requestForTarget(ref, agentSlot)
+  }
 
   input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void { this.delivery.input(slotId, data, origin, mark);this.slotsService.input(slotId, data, origin) }
 
@@ -167,6 +173,7 @@ export class DoorHost implements DoorSeams {
       deskOf: (paneId) => this.desks.deskOf(paneId),
       onDidChange: (listener) => own.add(this.desks.onDidChange(listener)),
       requestPane: (slotId, deskId) => this.desks.requestPane(slotId, deskId),
+      useOwnership: (check) => own.add(this.desks.useOwnership(check)),
       get ready() { return desksService.ready },
     }
     const verbs: DoorVerbs = {

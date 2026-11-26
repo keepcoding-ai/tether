@@ -27,7 +27,7 @@ import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
 import { cmdSync } from './sync.ts'
-import { cmdVerb, helpWithVerbs } from './verb.ts'
+import { askerOf, cmdVerb, helpWithVerbs } from './verb.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
 import { cmdTrace } from './trace.ts'
@@ -394,7 +394,7 @@ async function cmdNew(args: string[]): Promise<number> {
     if (!existsSync(cwd)) throw new Error(`a pasta não existe: ${cwd}`)
     const name = p.options.name
     if (client) {
-      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true, ...(profile ? { profileId: profile.id } : {}), ...(desk ? { desk } : {}) })
+      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true, ...(profile ? { profileId: profile.id } : {}), ...(desk ? { desk, ...askerOf(process.env) } : {}) })
       out(slotCreatedLine(reply.slot!))
       return 0
     }

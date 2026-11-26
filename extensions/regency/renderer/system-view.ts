@@ -8,7 +8,7 @@ import { identityView } from '../../../app/renderer/agent-identity.ts'
 import type { ContextMenuEntry, RondaAnswer, RondaChange } from '../../../app/renderer/ext-api.ts'
 import type { GuardedOptions, ProcAct } from '../../processes/embed.ts'
 import {
-  SYSTEM_SECTIONS, forceReasonError, intervalWords, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
+  SYSTEM_SECTIONS, forceReasonError, intervalWords, procIntent, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
   type RondaRow, type SettingsItem, type SystemModel, type SystemSection,
 } from '../system-rules.ts'
 import { el, glyph } from './columns.ts'
@@ -58,15 +58,6 @@ const SECTION_ICON: Record<SystemSection, string> = {
 
 const SETTINGS_ICON: Record<SettingsItem['id'], string> = {
   settings: 'gear-six', extensions: 'puzzle-piece', keybindings: 'keyboard', bridge: 'brand', sync: 'arrows-clockwise',
-}
-
-/** A row's colour by intent: running is ok, a fall or a failure is bad, stopping is a warning, the rest is quiet. */
-function procIntent(r: ProcRow): 'ok' | 'warn' | 'bad' | 'off' {
-  if (r.status === 'running') return 'ok'
-  if (r.status === 'stopping') return 'warn'
-  if (r.attention || r.status === 'failed' || r.status === 'host-lost') return 'bad'
-  if (r.status === 'exited' && !/código 0/.test(r.stateText)) return 'bad'
-  return 'off'
 }
 
 interface Act { id: string; icon: string; tip: string; label?: string; danger?: boolean }
@@ -227,6 +218,7 @@ export class SystemView {
       dot.hidden = !row?.dot
       dot.title = row?.dot ? model.dot.tooltip : ''
       b.title = row?.dot ? `${row.label}: ${model.dot.tooltip}` : row?.label ?? b.title
+      b.setAttribute('aria-label', b.title)
     }
   }
 
@@ -240,7 +232,7 @@ export class SystemView {
         if (m.processes.length === 0) empty = 'Nenhum processo'
         for (const r of m.processes) want.push({ key: `proc:${r.name}`, cls: 'proc', draw: (h, k) => this.procHead(h, k, r) })
         if (m.processes.length > 0) foot.push(m.procFoot)
-        foot.push(el('span', 'rg-sys-note', 'Processos novos nascem pela linha de comando: tether proc start <nome> -- <comando>.'))
+        foot.push(el('span', 'rg-sys-note', 'Processos novos se criam pela linha de comando.'))
       }
     } else if (section === 'ronda') {
       if (m.ronda.length === 0) empty = 'Nenhum agente vivo para ter ronda'
@@ -314,15 +306,21 @@ export class SystemView {
     for (const u of r.uses) line.append(chip(u.mine ? `Você segura ${u.untilText}` : `${u.byName} usa ${u.untilText}`, u.mine ? 'use mine' : 'use', u.text))
     main.append(name, line)
     const list: Act[] = []
+    // Each act says its verb first (tooltip and screen reader alike). "Segurar" is a lock: the hand is "Tomar" in the tree.
     if (r.can.start) list.push({ id: 'start', icon: 'play', tip: `Iniciar ${r.name}` })
     if (r.can.stop) list.push({ id: 'stop', icon: 'stop', tip: `Parar ${r.name}` })
     if (r.can.restart) list.push({ id: 'restart', icon: 'arrow-clockwise', tip: `Reiniciar ${r.name}` })
-    if (r.can.release) list.push({ id: 'release', icon: 'hand-grabbing', tip: `Soltar ${r.name}: deixar de segurar` })
-    else if (r.can.hold) list.push({ id: 'hold', icon: 'hand', tip: `Segurar ${r.name} por 15 min: quem quiser parar ou reiniciar vê que você usa` })
-    if (r.can.log) list.push({ id: 'log', icon: 'eye', tip: `Ver o registro de ${r.name} (visão rápida)` })
+    if (r.can.release) list.push({ id: 'release', icon: 'lock', tip: `Soltar ${r.name}: você deixa de segurá-lo` })
+    else if (r.can.hold) list.push({ id: 'hold', icon: 'lock', tip: `Segurar ${r.name} por 15 min: quem quiser parar ou reiniciar vê que você o usa` })
+    if (r.can.log) list.push({ id: 'log', icon: 'eye', tip: `Espiar o registro de ${r.name}` })
     list.push({ id: 'more', icon: 'dots-three', tip: `Mais ações de ${r.name}` })
     const acts = el('span', 'rg-sr-a')
-    for (const a of list) acts.append(button(a, `${key}:${a.id}`))
+    for (const a of list) {
+      const b = button(a, `${key}:${a.id}`)
+      // Held: the lock shows pressed (the same button lets go).
+      if (a.id === 'release' || a.id === 'hold') b.setAttribute('aria-pressed', String(a.id === 'release'))
+      acts.append(b)
+    }
     h.append(icon, main, acts)
   }
 
@@ -359,7 +357,8 @@ export class SystemView {
     name.title = r.name
     if (r.isDefault) name.append(chip('padrão', 'def', `Perfil padrão do ${r.engine}`))
     const line = el('div', 'rg-sr-l')
-    line.append(chip(r.engine, 'eng'), chip(r.usersText, 'who'))
+    line.append(chip(r.engine, 'eng'))
+    if (r.usersText !== '') line.append(chip(r.usersText, 'who'))
     if (r.envNames.length > 0) line.append(chip(`variáveis: ${r.envNames.join(', ')}`, 'env', `Variáveis de ambiente que o perfil define (só os nomes): ${r.envNames.join(', ')}`))
     main.append(name, line)
     const acts = el('span', 'rg-sr-a')
@@ -396,7 +395,8 @@ export class SystemView {
     main.append(el('span', 'rg-sr-n', r.label))
     const line = el('div', 'rg-sr-l')
     if (r.kind === 'screen') line.append(chip('abre na visão rápida', 'who'))
-    else line.append(chip(r.sentence, 'who'))
+    // The icon's state is a sentence: it wraps instead of being cut.
+    else line.append(chip(r.sentence, 'who wrap'))
     main.append(line)
     const acts = el('span', 'rg-sr-a')
     acts.append(r.kind === 'screen'

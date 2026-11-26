@@ -103,6 +103,25 @@ test('the popover: open channels, the ones with a line to her first, then the mo
   assert.equal(rows[0]!.members, '3 membros')
 })
 
+test('firstCall: the oldest call she has not answered, in one line (what "Esperam você" shows)', () => {
+  const b = new MarkBoard()
+  assert.equal(b.firstCall('c'), undefined)
+  b.hear('c', say(1, 'bancada'), ME)
+  b.hear('c', { ...say(2, 'conferente', [ME]), body: '\n  Posso   seguir com\n a migração?' }, ME)
+  assert.deepEqual(b.firstCall('c'), { why: 'to-you', text: 'conferente: Posso seguir com' })
+  const poll: Line = { seq: 3, at, kind: 'poll', from: { id: 'bancada', name: 'bancada', role: 'member' }, body: '', to: [ME], poll: { type: 'ok', question: 'Fecho a obra hoje?', options: ['sim', 'não'], to: [], closesAt: at } }
+  b.hear('c', poll, ME)
+  b.setOwed('c', [{ seq: 3, closesAt: at }])
+  b.viewed('c', 2)
+  // The speech was seen; the poll still waits for her vote, with its question.
+  assert.deepEqual(b.firstCall('c'), { why: 'poll-owed', text: 'Enquete de bancada: Fecho a obra hoje?' })
+  b.viewed('c', 3)
+  assert.deepEqual(b.firstCall('c'), { why: 'poll-owed', text: 'Enquete de bancada: Fecho a obra hoje?' }, 'seeing a poll does not answer it')
+  b.setOwed('c', [])
+  b.setAsks('c', [{ seq: 9, on: 1, emoji: '❓', by: 'conferente' }])
+  assert.deepEqual(b.firstCall('c'), { why: 'reaction-asks', text: 'conferente reagiu ❓ a uma fala sua' })
+})
+
 test('the manifest declares the top bar icon and the bar for her has its words', () => {
   assert.deepEqual(manifest.contributes?.status, [{ id: STATUS_ID, icon: 'chats-circle', order: 60 }])
   assert.equal(forYouLabel(1), '1 nova para você')

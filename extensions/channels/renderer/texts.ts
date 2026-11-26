@@ -275,6 +275,17 @@ export function failedDialog(what: string, code: string, reason?: string): Dialo
   }
 }
 
+/** A link in a speech whose text is another address than where it leads (speech-markdown.ts linkDisguise): asked before following. */
+export function disguisedLinkDialog(d: { shown: string; real: string }): DialogSpec {
+  return {
+    situation: 'channels.link-disguised', tone: 'warn', icon: 'shield-warning',
+    title: 'Este link leva a outro endereço',
+    message: `O texto mostra "${d.shown}", mas o link leva a ${d.real}.`,
+    choices: [{ id: 'follow', icon: 'link', label: 'Abrir mesmo assim', consequence: `Abre ${d.real}.`, tone: 'neutral' }],
+    cancelLabel: 'Cancelar',
+  }
+}
+
 /** A join of several that went through in part: who came in and who did not, each refusal in the plain words. */
 export interface JoinOutcome { name: string; code?: string; reason?: string }
 

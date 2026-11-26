@@ -15,7 +15,8 @@ describe('regency: the executor of "+ Novo"', () => {
     const runner = createRunner(acts, seams)
     const run = await runPlan(acts, runner.exec)
     assert.equal(run.ok, true)
-    assert.deepEqual(calls, [['slot', { deskId: 'd2', kind: 'shell', cwd: 'C:/p', front: false }]])
+    // No name typed: a legible one ("Terminal 1"), never the folder's.
+    assert.deepEqual(calls, [['slot', { deskId: 'd2', kind: 'shell', cwd: 'C:/p', front: false, name: 'Terminal 1' }]])
     assert.deepEqual(run.announce, { paneId: 'p1', deskId: 'd2' })
     assert.deepEqual(runner.made, { deskId: 'd2', paneId: 'p1' })
   })

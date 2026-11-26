@@ -617,8 +617,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       has: id => !!ui.panes.find(id),
       openOnDesk: (name, deskId, timeline) => ui.panes.openOnDesk(
         { id: paneIdOf(name), component: PROCESS_COMPONENT, tabComponent: PROCESS_TAB, title: name, params: { name, timeline } }, deskId) !== undefined,
-      peekPane: id => ui.panes.peekPane(id),
-      peekNew: (name, id) => ui.panes.peekNew('process', { id, title: name, params: { name } }) !== undefined,
+      peekPane: (id, opts) => ui.panes.peekPane(id, opts?.over ? { over: opts.over, focus: false } : undefined),
+      peekNew: (name, id, opts) => ui.panes.peekNew('process', { id, title: name, params: { name }, ...(opts?.over ? { over: opts.over } : {}) }) !== undefined,
     },
   })
   const feed = processEmbeds.publish({

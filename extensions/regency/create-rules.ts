@@ -4,7 +4,7 @@
 // classes, no functions inside the data and no `undefined` values: an absent field is an absent key.
 import type { DeskTree } from '../../app/renderer/ext-api.ts'
 import type { ChannelSummary } from '../channels/daemon/requests.ts'
-import type { RegencyInput } from './model.ts'
+import { safeName, type RegencyInput } from './model.ts'
 
 /** What "+ Novo" makes. `desk-for` is "Dar uma mesa nova" (the menu of an agent), never a tile. */
 export type CreateWhat = 'agent' | 'terminal' | 'note' | 'browser' | 'channel' | 'desk' | 'desk-for'
@@ -48,6 +48,10 @@ export interface CreateDraft {
   newDesk?: { name: string; color?: string; after?: string }
   /** Bring the new pane to the front of its desk (default: it stays behind). */
   front?: boolean
+  /** "Ir até a guia depois de criar": once made, the person goes to the new pane (default: she stays on the Regency). */
+  goAfter?: boolean
+  /** The chosen profile's name: the agent's name when the person gives none. */
+  profileName?: string
   /** Agent: a channel (id) to join as soon as it is born. */
   joinChannel?: string
   /** Browser: the agent (id) it is for. Absent = for the person. */
@@ -108,7 +112,7 @@ export function patchDraft(state: CreateState, patch: Partial<CreateDraft>): Cre
   let draft: CreateDraft = { ...state.draft, ...patch }
   if (patch.what !== undefined && patch.what !== state.draft.what) {
     draft = { what: patch.what, ...patch }
-    for (const k of ['cwd', 'deskId', 'front', 'newDesk'] as const) {
+    for (const k of ['cwd', 'deskId', 'front', 'goAfter', 'newDesk'] as const) {
       const keep = patch[k] ?? state.draft[k]
       if (keep !== undefined) (draft as Record<string, unknown>)[k] = keep
     }
@@ -153,7 +157,8 @@ export function missing(state: CreateState, ctx: CreateContext = {}): { step: Cr
 
 // ---------------------------------------------------------------- validation
 
-const cleanSpaces = (s: string): string => s.replace(/\s+/g, ' ').trim()
+/** A typed name through the one filter of names (model.ts safeName): spaces folded, no control or bidi characters. */
+const cleanSpaces = (s: string): string => safeName(s)
 
 /** The name of a channel as the daemon takes it: no `#`, lowercase. */
 export const channelNameOf = (raw: string): string => cleanSpaces(raw).replace(/^#+/, '').toLowerCase()
@@ -322,7 +327,7 @@ export function planOf(state: CreateState, ctx: CreateContext = {}): CreateAct[]
   let deskId = draft.deskId as string
   if (deskId === NEW_DESK) { newDeskAct(); deskId = REF_DESK }
   const front = draft.front === true
-  const name = cleanSpaces(draft.name ?? '')
+  const name = draft.what === 'note' ? cleanSpaces(draft.name ?? '') : defaultNameOf(draft, ctx)
   if (draft.what === 'agent' || draft.what === 'terminal') {
     const agent = draft.what === 'agent'
     acts.push({
@@ -348,6 +353,46 @@ export function planOf(state: CreateState, ctx: CreateContext = {}): CreateAct[]
     }
   }
   return acts
+}
+
+// ---------------------------------------------------------------- the name it is born with, and what is said after
+
+/** The base of the name a pane gets when the person gives none: the agent's profile, "Terminal" (never the folder's name). */
+export function defaultBaseOf(draft: CreateDraft): string | undefined {
+  if (draft.what === 'terminal') return 'Terminal'
+  if (draft.what === 'agent') { const p = cleanSpaces(draft.profileName ?? ''); return p === '' ? undefined : p }
+  return undefined
+}
+
+/**
+ * The pane's name: the one typed, else a legible one nobody has yet. A terminal is "Terminal 1", "Terminal 2"…; an agent
+ * is its profile's name ("Claude"), numbered from 2 when a pane already has it. '' when there is none to give.
+ */
+export function defaultNameOf(draft: CreateDraft, ctx: CreateContext = {}): string {
+  const typed = cleanSpaces(draft.name ?? '')
+  if (typed !== '') return typed
+  const base = defaultBaseOf(draft)
+  if (base === undefined) return ''
+  const taken = new Set<string>()
+  for (const d of ctx.desks?.desks ?? []) for (const p of d.panes) taken.add(p.title.trim().toLowerCase())
+  if (draft.what !== 'terminal' && !taken.has(base.toLowerCase())) return base
+  for (let n = draft.what === 'terminal' ? 1 : 2; ; n++) {
+    const name = `${base} ${n}`
+    if (!taken.has(name.toLowerCase())) return name
+  }
+}
+
+/** The brief notice after "+ Novo" made something on a desk: "Terminal criado em Mesa 2". Nothing for a channel (the centre shows it). */
+export function createdText(what: CreateWhat | undefined, deskName: string | undefined): string | undefined {
+  const at = deskName ? ` em ${deskName}` : ''
+  switch (what) {
+    case 'agent': return `Agente criado${at}`
+    case 'terminal': return `Terminal criado${at}`
+    case 'note': return `Nota criada${at}`
+    case 'browser': return `Navegador aberto${at}`
+    case 'desk': case 'desk-for': return deskName ? `Mesa ${deskName} criada` : 'Mesa criada'
+    default: return undefined
+  }
 }
 
 // ---------------------------------------------------------------- running the plan (the card and the remote share it)

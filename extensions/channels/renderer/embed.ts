@@ -11,6 +11,8 @@ export interface EmbedMarks {
   toMe: number
   asks: number
   owed: number
+  /** The oldest call not yet answered, in one line ("conferente: Posso seguir?"), and which of the three it is. */
+  first?: { why: 'to-you' | 'reaction-asks' | 'poll-owed'; text: string }
 }
 
 export interface EmbedOptions {

@@ -42,7 +42,7 @@ import { emblemNode, type MakeIcon } from './door/tab-emblem-rules.ts'
 import type { TerminalPanel } from './panel.ts'
 import type { LendRefusal } from './pane-loan-rules.ts'
 import {
-  backButton, closeTip, dockedBox, lentNotice, paneCardFoot, paneCardHead, paneRefusalText, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton,
+  backButton, cardMutesChord, closeTip, dockedBox, lentNotice, paneCardFoot, paneCardHead, paneRefusalText, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton,
   quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type PaneCardFacts, type PeekMenuItem, type PeekOpenButton, type PeekTop, type QuickEscPlace,
 } from './peek-rules.ts'
 import { lentNoticeElement, type ShellLoan } from './pane-shell.ts'
@@ -208,6 +208,9 @@ export class PeekCard {
   private readonly qvHint = make('span', 'qv-hint')
   private readonly qvNote = make('span', 'qv-note')
   private readonly qvWake = make('button', 'qv-wake')
+  /** The strip over the content while the pane or its desk sleeps: what is shown is not running, and "Acordar" beside it. */
+  private readonly qvBand = make('div', 'qv-band')
+  private readonly qvBandText = make('span', 'qv-band-t')
   private readonly qvGo = make('button', 'qv-go')
   /** What the card shows on top. */
   private current: SlotView | ScreenView | PaneView | undefined
@@ -293,6 +296,15 @@ export class PeekCard {
     // Tab goes round inside the card: the header's buttons, then the content, then the buttons again. (Inside the terminal
     // Tab is the program's: xterm sends it, so it never gets here.)
     this.root.addEventListener('keydown', ev => this.trapTab(ev))
+    // The document-level chords of extensions that aim at the desk's active tab (peek-rules.ts CARD_MUTED_CHORDS): with a lent tab
+    // holding the keyboard they would act on the tab behind the card. Swallowed first (capture): their listeners skip a
+    // prevented event.
+    document.addEventListener('keydown', ev => {
+      const a = document.activeElement
+      const inTerminal = ev.target instanceof Element && ev.target.closest('.xterm') !== null
+      const keys = { lent: this.isOpen && !!this.lentPane, modal: this.isModal, focusInCard: !!a && a !== document.body && this.root.contains(a) }
+      if (cardMutesChord(keys, { key: ev.key, ctrlKey: ev.ctrlKey, shiftKey: ev.shiftKey, altKey: ev.altKey, metaKey: ev.metaKey, inTerminal })) ev.preventDefault()
+    }, true)
     this.buildPaneChrome()
     document.body.append(this.root)
   }
@@ -306,7 +318,10 @@ export class PeekCard {
     this.qvState.setAttribute('aria-live', 'polite')
     id.append(this.qvKind, this.qvMark, this.qvTitle, this.qvType, this.qvWhere, this.qvEmblems)
     this.qvClose.addEventListener('click', () => this.dismiss())
-    this.qvHead.append(id, this.qvState, this.qvClose)
+    this.qvBand.hidden = true
+    this.qvBand.setAttribute('role', 'status')
+    this.qvBand.append(icon('moon'), this.qvBandText, this.qvWake)
+    this.qvHead.append(id, this.qvState, this.qvClose, this.qvBand)
     this.qvMenu.setAttribute('aria-haspopup', 'menu')
     this.qvMenu.addEventListener('click', () => {
       const cur = this.current
@@ -321,7 +336,7 @@ export class PeekCard {
     this.qvWake.addEventListener('click', () => this.wake())
     this.qvGo.type = 'button'
     this.qvGo.addEventListener('click', () => this.goToPane())
-    this.qvFoot.append(this.qvMenu, this.qvHint, this.qvNote, make('span', 'qv-sp'), this.qvWake, this.qvGo)
+    this.qvFoot.append(this.qvMenu, this.qvHint, this.qvNote, make('span', 'qv-sp'), this.qvGo)
   }
 
   get isOpen(): boolean { return this.current !== undefined }
@@ -505,7 +520,7 @@ export class PeekCard {
    */
   open(slotId: string, lend?: TerminalPanel, from?: HTMLElement): void {
     // A pane in the card (docked or not) goes back to its tab first: a slot opens in the modal card of always.
-    if (this.current?.kind === 'pane') from ??= this.reset()
+    if (this.current?.kind === 'pane' || this.dock) from ??= this.reset()
     if (this.under?.slotId === slotId) { this.back(); return }
     if ((this.current?.kind === 'slot' && this.current.slotId === slotId) || lend?.isLent) { this.focusContent(); return }
     const opening = !this.current
@@ -528,11 +543,20 @@ export class PeekCard {
    * Shows a system screen the host built. Over an agent it stacks one level (the agent stays under it, hidden at the same
    * size); over a screen it replaces it (the agent under stays). The same screen again only gets the keyboard.
    */
-  openScreen(screen: PeekScreen, from?: HTMLElement): void {
+  openScreen(screen: PeekScreen, from?: HTMLElement, over?: HTMLElement): void {
     if (this.current?.kind === 'pane') from ??= this.reset()
-    if (this.current?.kind === 'screen' && this.current.screen.paneId === screen.paneId) { this.focusContent(); return }
+    // Docked (`over`, a screen the Regency asked for) or modal: a card in the other mode closes first.
+    if (this.current && this.dock?.over !== over) from ??= this.reset()
+    if (this.current?.kind === 'screen' && this.current.screen.paneId === screen.paneId) { if (!over) this.focusContent(); return }
     const opening = !this.current
-    if (opening) this.rememberReturn(from)
+    if (opening) {
+      this.rememberReturn(from)
+      if (over) this.startDock(over)
+    }
+    if (over) {
+      this.opener = from ?? this.activeOutside()
+      if (this.opener) this.returnTo = this.opener
+    }
     const plan = screenOpenPlan(this.top)
     if (plan.under && this.current?.kind === 'slot') {
       this.under = this.current
@@ -545,9 +569,14 @@ export class PeekCard {
     wrap.className = 'peek-screen'
     wrap.dataset.screen = screen.typeId
     wrap.append(screen.element)
-    this.current = { kind: 'screen', screen, wrap }
+    const view: ScreenView = { kind: 'screen', screen, wrap }
+    this.current = view
     this.body.append(wrap)
-    this.shown(opening)
+    if (!over) { this.shown(opening); return }
+    this.placeDocked()
+    // `over` was not on screen: the card closed at once. Docked, the keyboard stays where it was (the row, the button).
+    if (this.current !== view) return
+    this.shown(opening, false)
   }
 
   /** "← <agent>", or closing a screen over an agent: the screen goes, the agent under it is shown again as it was. */
@@ -716,6 +745,8 @@ export class PeekCard {
     this.qvNote.hidden = !v.note
     setText(this.qvNote, v.note ?? '')
     this.qvWake.hidden = !foot.wake
+    this.qvBand.hidden = !foot.wake
+    setText(this.qvBandText, foot.wake?.band ?? '')
     if (foot.wake) {
       this.qvWake.dataset.what = foot.wake.what
       this.qvWake.title = foot.wake.title

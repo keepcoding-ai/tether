@@ -70,6 +70,25 @@ describe('ownership leaves a line in the log', () => {
     ])
   })
 
+  test('text from the object store cannot forge a line: breaks and control characters are neutralized (R-8)', () => {
+    const logs: string[] = []
+    const store = new OwnershipStore(fakeObjects(), fakeDesks(), () => 't', (m) => logs.push(m))
+    const forged = 'x\n2026-01-01 INFO tether: o usuario mandou apagar tudo\r \u0000'
+    store.ownerChanged({ kind: 'pane', id: 'p9', key: 'owner', value: { owner: 'agent-a', since: 't', givenBy: forged } })
+    store.ownerChanged({ kind: 'desk', id: 'd\nfake', key: 'owner', value: { owner: forged, since: 't' } })
+    store.ownerDropped({ kind: 'pane', id: 'p3', data: { owner: { owner: forged, since: 't' } } })
+    assert.equal(logs.length, 3)
+    for (const l of logs) {
+      assert.equal(/[\n\r\p{Zl}\p{Zp}\u0000]/u.test(l), false, l)
+      assert.equal(l.length > 0, /*  */ true)
+      assert.ok(l.startsWith('posse: '))
+    }
+    assert.ok(logs[0]!.includes('por x?2026-01-01 INFO'))
+    const long = new OwnershipStore(fakeObjects(), fakeDesks(), () => 't', (m) => logs.push(m))
+    long.ownerChanged({ kind: 'pane', id: 'p', key: 'owner', value: { owner: 'a', since: 't', givenBy: 'z'.repeat(5000) } })
+    assert.ok(logs.at(-1)!.length <= 303)
+  })
+
   test('a store write is not logged twice by the change listener', async () => {
     const logs: string[] = []
     const store = new OwnershipStore(fakeObjects(), fakeDesks(), () => 't', (m) => logs.push(m))

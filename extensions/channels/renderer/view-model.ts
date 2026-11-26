@@ -418,6 +418,38 @@ export const isNearBottom = (scrollTop: number, clientHeight: number, scrollHeig
 
 export const unreadLabel = (n: number): string => (n === 1 ? '1 fala nova' : `${n} falas novas`)
 
+// ---------- what the person really sees (the "seen" rule) ----------
+// A row is seen only when it is in the conversation's view AND nothing of the tether covers it: the docked quick view, a modal,
+// a menu over the conversation. The pane asks the page what is on top at a few points of the row (elementFromPoint), these
+// rules decide from the answers.
+
+export interface Box { left: number; top: number; width: number; height: number }
+
+/** Where to ask what is on top of a row: three points across its middle line, inside the part of it in the view. None: out of view. */
+export function seenProbes(row: Box, view: Box): { x: number; y: number }[] {
+  const top = Math.max(row.top, view.top)
+  const bottom = Math.min(row.top + row.height, view.top + view.height)
+  const left = Math.max(row.left, view.left)
+  const right = Math.min(row.left + row.width, view.left + view.width)
+  if (bottom - top < 1 || right - left < 1) return []
+  const y = (top + bottom) / 2
+  return [1 / 6, 1 / 2, 5 / 6].map(f => ({ x: left + (right - left) * f, y }))
+}
+
+/** A row is shown when most of its probes find the conversation itself on top (`hits`: one per probe). */
+export const rowShown = (hits: readonly boolean[]): boolean => hits.length > 0 && hits.filter(Boolean).length * 2 > hits.length
+
+/**
+ * At the end of the conversation, how far it is seen: up to `last`, unless a row newer than `seen` that is in the view is
+ * covered; then only up to the line before the first such row (the rows below it wait until the cover goes). Rows above the
+ * view, scrolled away at the end, count as read, as always. `rows`: the rows in the view newer than `seen`, any order.
+ */
+export function seenUpTo(last: number, seen: number, rows: readonly { seq: number; shown: boolean }[]): number {
+  let upTo = last
+  for (const r of rows) if (r.seq > seen && !r.shown && r.seq - 1 < upTo) upTo = r.seq - 1
+  return upTo
+}
+
 /** The bar for the lines addressed to the person (the only orange of the channels, P1). */
 /** The bar and the tab's tooltip for reactions of agents that ask the person (❓ doubt, ❌ disagree) on her speeches. */
 export const asksLabel = (n: number): string => (n === 1 ? '1 reação pede você' : `${n} reações pedem você`)

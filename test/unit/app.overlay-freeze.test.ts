@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isRelevant, sparing } from '../../app/renderer/overlay-freeze.ts'
+import { FREEZES_ATTR, isRelevant, sparing } from '../../app/renderer/overlay-freeze.ts'
 import { FreezeRegistry } from '../../app/shared/freeze-rules.ts'
 
 // No DOM shim in the unit suite: plain fakes with just the members isRelevant touches.
@@ -32,6 +32,15 @@ test('adding a node that contains .menu is relevant; plain node is not', () => {
   assert.equal(isRelevant(child(el(), [el({ contains: ['.menu'] })])), true)
   assert.equal(isRelevant(child(el(), [], [el({ selectors: ['#overlay'] })])), true)
   assert.equal(isRelevant(child(el(), [el()])), false)
+})
+
+test('an extension popover marked to freeze: shown or hidden, added or removed, it is relevant', () => {
+  assert.equal(FREEZES_ATTR, 'data-freezes')
+  const sel = `[${FREEZES_ATTR}]`
+  assert.equal(isRelevant(attr(el({ selectors: [sel] }), 'hidden')), true, 'the "@" list shown or hidden')
+  assert.equal(isRelevant(child(el(), [el({ selectors: [sel] })])), true, 'the reaction picker added')
+  assert.equal(isRelevant(child(el(), [], [el({ selectors: [sel] })])), true, 'and removed')
+  assert.equal(isRelevant(attr(el(), 'hidden')), false, 'an unmarked element')
 })
 
 test('pinned class change is relevant', () => {

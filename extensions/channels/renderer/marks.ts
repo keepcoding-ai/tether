@@ -46,14 +46,33 @@ export interface ChannelMarks {
   seen: number
 }
 
-interface Held { seen: number; lines: Map<number, Heard>; asks: Map<number, Ask>; dismissed: Set<number>; owed: Map<number, PollOwed> }
+interface Held {
+  seen: number; lines: Map<number, Heard>; asks: Map<number, Ask>; dismissed: Set<number>; owed: Map<number, PollOwed>
+  /** What a line to her and a poll ask, by `seq` (who and the first line): what "Esperam você" shows of the call. */
+  said: Map<number, Said>
+}
+
+/** The first line of what a speech or a poll asks, with who asked. */
+export interface Said { from: string; text: string; poll?: true }
+
+/** What the person is asked first in a channel (the oldest call not yet answered): one line, for "Esperam você". */
+export interface FirstCall { why: 'to-you' | 'reaction-asks' | 'poll-owed'; text: string }
+
+/** The longest first line kept of a speech (the screen truncates; the tooltip shows what is kept). */
+export const SAID_MAX = 240
+
+/** A body's first line that has text, its spaces folded, at most SAID_MAX characters. */
+export function firstLineOf(body: string): string {
+  const line = body.split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).find(l => l !== '') ?? ''
+  return line.length > SAID_MAX ? `${line.slice(0, SAID_MAX - 1)}…` : line
+}
 
 export class MarkBoard {
   private readonly held = new Map<string, Held>()
 
   private entry(channelId: string): Held {
     let h = this.held.get(channelId)
-    if (!h) { h = { seen: 0, lines: new Map(), asks: new Map(), dismissed: new Set(), owed: new Map() }; this.held.set(channelId, h) }
+    if (!h) { h = { seen: 0, lines: new Map(), asks: new Map(), dismissed: new Set(), owed: new Map(), said: new Map() }; this.held.set(channelId, h) }
     return h
   }
 
@@ -108,7 +127,10 @@ export class MarkBoard {
   hear(channelId: string, line: Line, moderator: string): boolean {
     const kind = classify(line, moderator)
     const h = this.entry(channelId)
+    // A poll's question is kept even when its line is old: the poll still waits for her vote after she saw it.
+    if (kind !== undefined && line.kind === 'poll' && line.poll) this.keepSaid(h, line.seq, { from: line.from.name, text: firstLineOf(line.poll.question), poll: true })
     if (kind === undefined || line.seq <= h.seen || h.lines.get(line.seq) === kind) return false
+    if (kind === 'toMe' && line.kind === 'message') this.keepSaid(h, line.seq, { from: line.from.name, text: firstLineOf(line.body) })
     h.lines.set(line.seq, kind)
     if (h.lines.size > MAX_HELD) {
       let min = Infinity
@@ -133,6 +155,7 @@ export class MarkBoard {
     h.seen = seq
     for (const s of [...h.lines.keys()]) if (s <= seq) h.lines.delete(s)
     for (const s of [...h.asks.keys()]) if (s <= seq) h.asks.delete(s)
+    for (const [s, said] of [...h.said]) if (s <= seq && !said.poll) h.said.delete(s)
     return true
   }
 
@@ -152,6 +175,38 @@ export class MarkBoard {
   }
 
   forget(channelId: string): void { this.held.delete(channelId) }
+
+  /**
+   * The oldest call she has not answered in the channel, in one line: a speech to her ("conferente: Posso seguir?"), a reaction
+   * that asks her ("conferente reagiu ❓ a uma fala sua") or a poll that waits for her vote ("Enquete de conferente: Qual?").
+   */
+  firstCall(channelId: string): FirstCall | undefined {
+    const h = this.held.get(channelId)
+    if (!h) return undefined
+    const calls: { seq: number; call: FirstCall }[] = []
+    for (const [seq, kind] of h.lines) {
+      if (kind !== 'toMe' || h.said.get(seq)?.poll) continue
+      const s = h.said.get(seq)
+      calls.push({ seq, call: { why: 'to-you', text: s ? `${s.from}: ${s.text}` : 'uma fala para você' } })
+    }
+    for (const a of h.asks.values()) calls.push({ seq: a.seq, call: { why: 'reaction-asks', text: `${a.by} reagiu ${a.emoji} a uma fala sua` } })
+    for (const p of h.owed.values()) {
+      const s = h.said.get(p.seq)
+      calls.push({ seq: p.seq, call: { why: 'poll-owed', text: s ? `Enquete de ${s.from}: ${s.text}` : 'Uma enquete espera o seu voto' } })
+    }
+    calls.sort((x, y) => x.seq - y.seq)
+    return calls[0]?.call
+  }
+
+  private keepSaid(h: Held, seq: number, said: Said): void {
+    h.said.set(seq, said)
+    if (h.said.size <= MAX_HELD) return
+    // The oldest goes, unless it is a poll still waiting for her vote.
+    for (const s of [...h.said.keys()].sort((a, b) => a - b)) {
+      if (h.said.size <= MAX_HELD) break
+      if (!h.owed.has(s)) h.said.delete(s)
+    }
+  }
 }
 
 // ---------- the effects ----------
@@ -165,6 +220,8 @@ export interface Marks {
   asksOf(channelId: string): Ask[]
   /** The open polls that call her and wait for her vote: they light the same seal (orange) and go when she votes or the poll closes. */
   owedOf(channelId: string): PollOwed[]
+  /** The oldest call she has not answered, in one line (MarkBoard.firstCall). */
+  firstCall(channelId: string): FirstCall | undefined
   /** Open channels with something unseen, and the sums (what the popover and the icon say). */
   totals(): Totals
   /** The pane shows the end of the conversation to the person (active, visible, window in front): up to `seq` is seen. */
@@ -348,6 +405,7 @@ export function createMarks(ui: TetherUi, deps: MarksDeps): Marks {
     of: channelId => board.of(channelId),
     asksOf: channelId => board.asksOf(channelId),
     owedOf: channelId => board.owedOf(channelId),
+    firstCall: channelId => board.firstCall(channelId),
     totals,
     viewed: (channelId, seq) => {
       if (seq <= 0) return

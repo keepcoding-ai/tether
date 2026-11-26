@@ -23,6 +23,12 @@ export function sparing<E>(...parts: readonly (Container<E> | null | undefined)[
   return { contains: el => present.some(p => p.contains(el)) }
 }
 
+/**
+ * The mark an extension puts on a popover of its own that the person opens (never on a notice or a tooltip): while it is shown
+ * (not `hidden`, rendered) it holds the freeze. Extensions write the attribute; they import nothing from here at runtime.
+ */
+export const FREEZES_ATTR = 'data-freezes'
+
 /** The peek card's layer (peek.ts), read when a hold asks (it is built after the watcher starts). */
 const peekLayer = (): Element | null => document.getElementById('peek')
 
@@ -39,6 +45,9 @@ const FREEZING: { reason: string; matches(): Element[]; spares?(el: Element): Co
   { reason: 'menu', matches: () => visible('#closed-list:not([hidden])') },
   // Toolbar and status popovers pinned open by a click (a hover-only popover is a tooltip: it does not freeze).
   { reason: 'popover', matches: () => visible('.pinned .popover') },
+  // An extension's own popover the person opened (FREEZES_ATTR on it: the channel's "@"/"#" list, its reaction picker, its poll
+  // form). Over the docked card's page it would sit under the native view: shown, it freezes like a menu.
+  { reason: 'popover', matches: () => visible(`[${FREEZES_ATTR}]`) },
   // The "no connection to tetherd" card covers the whole window.
   { reason: 'dialog', matches: () => visible('#overlay:not([hidden])') },
   // The peek card (peek.ts): over everything, the open drawer included. A surface lent to it (the browser's page in the
@@ -54,9 +63,9 @@ function visible(selector: string): Element[] {
   })
 }
 
-const OVERLAY_SELECTOR = 'dialog, .menu, .popover, #overlay, #closed-list'
+const OVERLAY_SELECTOR = `dialog, .menu, .popover, #overlay, #closed-list, [${FREEZES_ATTR}]`
 // Elements whose own attribute changes (open, hidden, class) can flip an overlay.
-const OVERLAY_TARGET = 'dialog, .menu, #overlay, #closed-list, .pinned'
+const OVERLAY_TARGET = `dialog, .menu, #overlay, #closed-list, .pinned, [${FREEZES_ATTR}]`
 
 const hasWord = (list: string | null | undefined, word: string): boolean => (list ?? '').split(/\s+/).includes(word)
 

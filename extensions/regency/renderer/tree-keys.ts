@@ -68,16 +68,19 @@ export type TreeStep =
   | { type: 'menu'; key: string; target: Target }
   | { type: 'clear-search' }
   | { type: 'clear-filter' }
+  | { type: 'search' }
 
 export interface TreeKeyState { query: string; filter: TreeFilter }
 
 /**
  * The tree's keys: arrows walk (Up/Down by row, Home/End to the ends, Right opens or enters, Left closes or climbs); Space is
  * the quick look on a pane; Enter goes to a pane and folds a desk, a group or "Fechadas"; the Menu key and Shift+F10 open the
- * row's menu; Esc clears the search, then the filter. A `focused` that is not in `rows` counts as no focus.
+ * row's menu; Esc clears the search, then the filter; Ctrl+F opens the search field. A `focused` that is not in `rows`
+ * counts as no focus.
  */
 export function treeKeyStep(rows: readonly FlatRow[], focused: string | undefined, ev: KeyInput, state: TreeKeyState): TreeStep | undefined {
   const { key } = ev
+  if (ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey && (key === 'f' || key === 'F')) return { type: 'search' }
   if (ev.ctrlKey || ev.altKey || ev.metaKey) return undefined
   if (key === 'Escape') {
     if (state.query.trim() !== '') return { type: 'clear-search' }

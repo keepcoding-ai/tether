@@ -6,7 +6,7 @@
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
 import { slotTitle } from '../../app/shared/agent-info.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
-import { OwnershipStore, takesByTyping } from './daemon/ownership.ts'
+import { OwnershipStore, ownsDesk, takesByTyping } from './daemon/ownership.ts'
 import { Reconciler } from './daemon/reconcile.ts'
 import { WriteGate } from './daemon/guard.ts'
 import { bindDeskOwners } from './desk-owners.ts'
@@ -44,6 +44,7 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
   }
   const disposables: IDisposable[] = [
     ...bindDeskOwners(api.objects),
+    api.desks.useOwnership((slotId, deskId) => ownsDesk(store, slotId, deskId)),
     api.objects.onDidChange((e) => { store.ownerChanged(e); reconciler.objectChanged(e) }),
     api.objects.onDidDrop((e) => { store.ownerDropped(e); if (e.kind === 'pane') reconciler.paneDropped(e.id) }),
     api.desks.onDidChange((map) => reconciler.deskMapChanged(map)),

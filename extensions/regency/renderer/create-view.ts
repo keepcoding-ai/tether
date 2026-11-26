@@ -10,7 +10,7 @@ import { HUE_LABELS } from '../../../app/renderer/emblem-rules.ts'
 import { HUE_NAMES } from '../../../app/shared/palette.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import {
-  advance, back, CREATE_TILES, channelNameOf, deskChannelOf, deskChoices, NEW_DESK, patchDraft, startCreate, stepsOf, STEP_LABELS,
+  advance, back, CREATE_TILES, channelNameOf, defaultNameOf, deskChannelOf, deskChoices, NEW_DESK, patchDraft, startCreate, stepsOf, STEP_LABELS,
   type CreateContext, type CreateDraft, type CreateFixed, type CreateState, type CreateStep, type CreateWhat,
 } from '../create-rules.ts'
 import type { RegencyInput } from '../model.ts'
@@ -56,12 +56,12 @@ export interface CreateViewSnapshot {
 }
 
 const TILE_ICON: Readonly<Record<string, { icon: string; hint: string }>> = {
-  agent: { icon: 'robot', hint: 'motor e perfil' },
-  terminal: { icon: 'terminal-window', hint: 'pasta e shell' },
-  note: { icon: 'note-pencil', hint: 'numa pasta' },
-  browser: { icon: 'globe-simple', hint: 'para você ou um agente' },
-  desk: { icon: 'cards', hint: 'nome e cor' },
-  channel: { icon: 'chats-circle', hint: 'nome e com quem' },
+  agent: { icon: 'robot', hint: 'uma IA para trabalhar' },
+  terminal: { icon: 'terminal-window', hint: 'um terminal numa pasta' },
+  note: { icon: 'note-pencil', hint: 'uma anotação' },
+  browser: { icon: 'globe-simple', hint: 'uma página da web' },
+  desk: { icon: 'cards', hint: 'uma mesa para organizar' },
+  channel: { icon: 'chats-circle', hint: 'uma conversa com agentes' },
 }
 
 const NOUN: Readonly<Record<CreateWhat, string>> = {
@@ -118,6 +118,8 @@ export class CreateCard {
     this.focusFirst()
     // A project's "Agente aqui…" / "Terminal aqui…": the tile is taken at once (the profile picker for an agent), the folder stays.
     if (fixed.cwd !== undefined && (what === 'agent' || what === 'terminal')) void this.pickTile(what)
+    // The empty centre's "Criar canal": straight to the channel's details.
+    else if (what === 'channel') void this.pickTile(what)
   }
 
   /** Closes the card; the keyboard goes back to where it came from (`restore`). */
@@ -229,14 +231,14 @@ export class CreateCard {
   private async chooseAgent(): Promise<void> {
     const items = this.host.items().filter(isAgentItem)
     const id = await this.picked(this.host.pickList<string>({
-      title: 'Novo agente: motor e perfil', placeholder: 'Nome do perfil ou do motor', emptyText: 'Nenhum perfil de agente', items: items.map(i => this.profileRow(i)),
+      title: 'Novo agente: qual agente', placeholder: 'Nome do perfil ou do motor', emptyText: 'Nenhum perfil de agente', items: items.map(i => this.profileRow(i)),
     }))
     if (id === undefined || !this.dialog) { this.focusFirst(); return }
     const item = items.find(i => i.id === id)
     if (!item) return
     // A folder the entry fixed (a project's "Agente aqui…") wins over the profile's own.
     const folder = this.state.fixed.cwd === undefined ? item.folder : undefined
-    this.patch({ what: 'agent', kind: item.engine as string, profileId: item.id, ...(folder ? { cwd: folder } : {}) })
+    this.patch({ what: 'agent', kind: item.engine as string, profileId: item.id, profileName: item.name, ...(folder ? { cwd: folder } : {}) })
     await this.forward()
   }
 
@@ -380,6 +382,7 @@ export class CreateCard {
       case 'desk': this.patch({ deskId: t.value }); if (t.value === NEW_DESK) this.fillDefaults(); break
       case 'join': if (t.value === '') this.drop('joinChannel'); else this.patch({ joinChannel: t.value }); break
       case 'front': this.patch({ front: on }); break
+      case 'go': this.patch({ goAfter: on }); break
       case 'for': if (t.value === '') this.drop('browserFor'); else this.patch({ browserFor: t.value }); break
       case 'place': this.patch({ name: t.value }); break
       case 'shell-row': this.patch({ kind: 'shell', profileId: t.value }); break
@@ -712,13 +715,13 @@ export class CreateCard {
           who.append(mark, el('span', 'rg-cr-vt', item.name))
           if (item.hint) who.append(el('span', 'rg-cr-vd', item.hint))
         }
-        const change = this.textButton('profile', 'Trocar', 'Escolher outro motor ou perfil')
+        const change = this.textButton('profile', 'Trocar', 'Escolher outro agente')
         who.append(el('span', 'rg-sp'), change)
-        body.append(this.field('what', 'Motor e perfil', who))
+        body.append(this.field('what', 'Qual agente', who))
         this.paintFolder(body)
-        body.append(this.field('name', 'Nome (opcional)', this.textInput('name', d.name ?? '', 'Nome da guia', item?.name ?? 'o nome do perfil')))
+        body.append(this.field('name', 'Nome (opcional)', this.textInput('name', d.name ?? '', 'Nome da guia', this.defaultName() || 'o nome do perfil')))
         this.paintJoin(body)
-        this.paintFront(body)
+        this.paintGo(body)
         return
       }
       case 'terminal': {
@@ -728,8 +731,8 @@ export class CreateCard {
           body.append(this.field('shell', 'Shell', this.valueButton('shell', 'terminal-window', current.name, current.hint, 'Escolher o shell')))
         }
         this.paintFolder(body)
-        body.append(this.field('name', 'Nome (opcional)', this.textInput('name', d.name ?? '', 'Nome da guia', 'terminal')))
-        this.paintFront(body)
+        body.append(this.field('name', 'Nome (opcional)', this.textInput('name', d.name ?? '', 'Nome da guia', this.defaultName() || 'Terminal')))
+        this.paintGo(body)
         return
       }
       case 'note': {
@@ -738,7 +741,7 @@ export class CreateCard {
         const place = d.name ?? 'project'
         for (const p of NOTE_PLACES) list.append(this.radio('rg-cr-place', 'place', p.id, place === p.id, [el('span', 'rg-cr-on', p.label), el('small', '', p.tip)], { tip: p.tip }))
         body.append(this.field('place', 'Onde guardar', list))
-        this.paintFront(body)
+        this.paintGo(body)
         return
       }
       case 'browser': {
@@ -816,9 +819,15 @@ export class CreateCard {
     body.append(this.field('join', 'Entrar num canal', list))
   }
 
-  private paintFront(body: HTMLElement): void {
+  /** "Ir até a guia depois de criar", unticked: by default the person stays on the Regency and the new row glows. */
+  private paintGo(body: HTMLElement): void {
     const desk = this.deskName()
-    body.append(this.check('front', this.state.draft.front === true, desk ? `Trazer a guia para a frente de ${desk}` : 'Trazer a guia para a frente da mesa', { tip: 'A guia nova fica à frente na mesa dela; você continua na Regência' }))
+    body.append(this.check('go', this.state.draft.goAfter === true, 'Ir até a guia depois de criar', { tip: desk ? `Leva você até a guia nova, em ${desk}` : 'Leva você até a guia nova' }))
+  }
+
+  /** The name the pane gets if the person types none ("Terminal 1", the profile's name). */
+  private defaultName(): string {
+    return defaultNameOf({ ...this.state.draft, name: '' }, this.ctx())
   }
 
   private showError(body: HTMLElement, error: string): void {

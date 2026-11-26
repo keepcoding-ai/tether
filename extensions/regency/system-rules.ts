@@ -135,7 +135,8 @@ export type SettingsItem =
   | { id: 'settings' | 'extensions' | 'keybindings'; label: string; kind: 'screen'; screenType: string }
   | { id: 'bridge' | 'sync'; label: string; kind: 'status'; sentence: string; badge?: string }
 
-export interface SystemDot { show: boolean; count: number; tooltip: string; places: ('foot' | 'edge')[] }
+/** `text`: the words shown beside the dot ("1 processo caiu"); `tooltip`: the same with the process's name when it is one. */
+export interface SystemDot { show: boolean; count: number; text: string; tooltip: string; places: ('foot' | 'edge')[] }
 
 export interface SystemSectionRow { id: SystemSection; label: string; count: number; dot: boolean }
 
@@ -232,12 +233,61 @@ function procRow(p: SystemProcInput, now: number): ProcRow {
     },
   }
   if (p.pid !== undefined && (p.status === 'running' || p.status === 'stopping')) row.pid = p.pid
-  if (ports.length > 0) row.portsText = ports.map(x => `${x.port} ${x.listening ? 'ouvindo' : 'parada'}`).join(' · ')
+  if (ports.length > 0) row.portsText = portsWords(ports, p.status)
   if (p.startedBy !== undefined) row.startedByText = `Iniciado por ${authorName(p.startedBy)}`
   return row
 }
 
+/**
+ * The ports in words: "porta 3000", "portas 3000 e 5173". A port that does not answer is said only while the process runs
+ * ("porta 3000 ainda sem resposta"): beside "Rodando" a word like "parada" would read as the process's state.
+ */
+export function portsWords(ports: readonly { port: number; listening: boolean }[], status: SystemProcInput['status']): string {
+  const running = status === 'running'
+  const silent = running ? ports.filter(p => !p.listening).map(p => p.port) : []
+  const list = (ns: number[]): string => (ns.length < 2 ? ns.join('') : `${ns.slice(0, -1).join(', ')} e ${ns[ns.length - 1]}`)
+  const all = ports.map(p => p.port)
+  const head = `${all.length === 1 ? 'porta' : 'portas'} ${list(all)}`
+  if (silent.length === 0) return head
+  if (silent.length === all.length) return `${head} ainda sem resposta`
+  return `${head} (${list(silent)} ainda sem resposta)`
+}
+
 const procRank = (r: ProcRow): number => (r.attention ? 0 : r.status === 'running' || r.status === 'stopping' ? 1 : 2)
+
+/** A row's colour by intent: running is ok, a fall or a failure is bad, stopping is a warning, the rest is quiet. */
+export function procIntent(r: ProcRow): 'ok' | 'warn' | 'bad' | 'off' {
+  if (r.status === 'running') return 'ok'
+  if (r.status === 'stopping') return 'warn'
+  if (r.attention || r.status === 'failed' || r.status === 'host-lost') return 'bad'
+  if (r.status === 'exited' && !/código 0/.test(r.stateText)) return 'bad'
+  return 'off'
+}
+
+/** The TV's rail of "Sistema" at a glance: each process with its state, the notice of a fall, the rondas that are on. */
+export interface SystemSummary {
+  procs: { name: string; state: string; intent: 'ok' | 'warn' | 'bad' | 'off' }[]
+  /** "1 processo caiu" (the red dot's words), absent while nothing fell. */
+  fell?: string
+  /** The words when there is no process. */
+  procsEmpty?: string
+  rondas: { name: string; text: string }[]
+  /** The words when no ronda is on. */
+  rondasEmpty?: string
+}
+
+/** The summary from the model the sections paint (same order: what needs attention first). */
+export function systemSummary(model: SystemModel): SystemSummary {
+  const procs = model.processes.map(p => ({ name: p.name, state: p.stateText, intent: procIntent(p) }))
+  const rondas = model.ronda.filter(r => r.on).map(r => ({ name: r.name, text: [r.intervalText, r.nextText ? `próxima ${r.nextText}` : undefined].filter(Boolean).join(' · ') }))
+  return {
+    procs,
+    ...(model.dot.show ? { fell: model.dot.text } : {}),
+    ...(procs.length === 0 ? { procsEmpty: 'Nenhum processo' } : {}),
+    rondas,
+    ...(rondas.length === 0 ? { rondasEmpty: 'Nenhuma ronda ligada' } : {}),
+  }
+}
 
 /** Needs attention first, then the live ones, then the rest; by name inside each. */
 export function procRowsOf(procs: readonly SystemProcInput[], now: number): ProcRow[] {
@@ -276,11 +326,13 @@ export const engineLabel = (agent: string): string => ENGINE_LABELS[agent] ?? ag
 export function profileRowsOf(profiles: readonly SystemProfileInput[], agents: readonly SystemAgentInput[]): ProfileRow[] {
   const used = new Map<string, number>()
   for (const a of agents) if (a.profileId !== undefined) used.set(a.profileId, (used.get(a.profileId) ?? 0) + 1)
+  // "Nenhum agente usa" informs only beside a profile that is used: when none is, no line says it (usersText '').
+  const anyUsed = profiles.some(p => (used.get(p.id) ?? 0) > 0)
   return profiles.map((p): ProfileRow => {
     const users = used.get(p.id) ?? 0
     return {
       id: p.id, name: p.name, engine: engineLabel(p.agent), isDefault: p.default === true, users,
-      usersText: users === 0 ? 'Nenhum agente usa' : users === 1 ? '1 agente usa' : `${users} agentes usam`,
+      usersText: users === 0 ? (anyUsed ? 'Nenhum agente usa' : '') : users === 1 ? '1 agente usa' : `${users} agentes usam`,
       envNames: Object.keys(p.env ?? {}).sort(cmp),
     }
   }).sort((a, b) => cmp(a.engine, b.engine) || Number(b.isDefault) - Number(a.isDefault) || byName(a.name, b.name) || cmp(a.id, b.id))
@@ -334,18 +386,33 @@ export function settingsOf(status: SystemInput['status']): SettingsItem[] {
  * The red dot: a process that fell or asks for attention (the daemon's `attention` mark, the same as the pad's badge). It shows on
  * the foot "Sistema" and on the immersion's edge, never on the Regency's pill (that one carries the orange of "esperam você").
  */
-export function systemDot(input: { procs: readonly { name: string; attention?: boolean }[] }): SystemDot {
+export function systemDot(input: { procs: readonly { name: string; attention?: boolean; status?: SystemProcInput['status'] }[] }): SystemDot {
   const marked = input.procs.filter(p => p.attention === true)
   const count = marked.length
+  const text = dotText(marked)
   const tooltip = count === 0 ? ''
-    : count === 1 ? `O processo "${marked[0]!.name}" pede atenção`
-      : `${count} processos pedem atenção`
-  return { show: count > 0, count, tooltip, places: count > 0 ? ['foot', 'edge'] : [] }
+    : count === 1 ? `O processo "${marked[0]!.name}" ${isDown(marked[0]!.status) ? 'caiu' : 'pede atenção'}`
+      : text
+  return { show: count > 0, count, text, tooltip, places: count > 0 ? ['foot', 'edge'] : [] }
+}
+
+/** A marked process that is down (it fell, did not start, or was lost with the process server). */
+const isDown = (status: SystemProcInput['status'] | undefined): boolean => status === 'exited' || status === 'failed' || status === 'host-lost'
+
+/**
+ * The words beside the red dot, everywhere the Regency shows it: "1 processo caiu", "2 processos caíram"; a mark on a process
+ * that is not down says "pede atenção". '' when none is marked.
+ */
+export function dotText(marked: readonly { status?: SystemProcInput['status'] }[]): string {
+  const n = marked.length
+  if (n === 0) return ''
+  if (marked.every(p => isDown(p.status))) return n === 1 ? '1 processo caiu' : `${n} processos caíram`
+  return n === 1 ? '1 processo pede atenção' : `${n} processos pedem atenção`
 }
 
 export const procFootText = (procs: readonly SystemProcInput[]): string => {
-  const marks = procs.filter(p => p.attention === true).length
-  if (marks > 0) return marks === 1 ? '1 processo pede atenção' : `${marks} processos pedem atenção`
+  const marked = procs.filter(p => p.attention === true)
+  if (marked.length > 0) return dotText(marked)
   const running = procs.filter(p => p.status === 'running').length
   return procs.length === 0 ? 'Nenhum processo' : `${running} rodando de ${procs.length}`
 }

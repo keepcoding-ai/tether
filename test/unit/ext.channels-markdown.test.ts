@@ -1,7 +1,7 @@
 // The markdown of a channel message (extensions/channels/renderer/speech-markdown.ts): the pure tree and the plain text.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { markdownPlain, markdownTree } from '../../extensions/channels/renderer/speech-markdown.ts'
+import { linkDisguise, linkTip, markdownPlain, markdownTree } from '../../extensions/channels/renderer/speech-markdown.ts'
 import type { MdNode } from '../../extensions/channels/renderer/speech-markdown.ts'
 
 // Compact form: el -> "tag[cls]{...}", text -> JSON-ish, code text -> `x`, link -> "a(href){...}".
@@ -99,4 +99,23 @@ test('markdownPlain drops the marks', () => {
   assert.equal(markdownPlain('```\nx = 1\n```'), 'x = 1')
   assert.equal(markdownPlain('> citado ~~x~~'), 'citado x')
   assert.equal(markdownPlain('| a | b |\n|---|---|\n| 1 | 2 |'), 'a b\n1 2')
+})
+
+test('a link whose text spells another address is told apart (tip and confirmation)', () => {
+  const evil = 'https://evil.example/x'
+  assert.deepEqual(linkDisguise('https://banco.example/login', evil), { shown: 'https://banco.example/login', real: evil }, 'another host, with scheme')
+  assert.deepEqual(linkDisguise('banco.example/login', evil), { shown: 'banco.example/login', real: evil }, 'another host, no scheme')
+  assert.deepEqual(linkDisguise('http://evil.example/x', evil), { shown: 'http://evil.example/x', real: evil }, 'the same host on another scheme')
+  assert.deepEqual(linkDisguise('tether://tab/a', 'tether://tab/b'), undefined, 'the same place (scheme and host)')
+  assert.deepEqual(linkDisguise('tether://desk/1', 'https://evil.example'), { shown: 'tether://desk/1', real: 'https://evil.example' })
+  assert.equal(linkDisguise('www.x.com', 'http://www.x.com'), undefined, 'linkify of a bare host')
+  assert.equal(linkDisguise('https://a.b/c', 'https://a.b/c'), undefined, 'autodetected: the text is the address')
+  assert.equal(linkDisguise('HTTPS://A.B/', 'https://a.b/c'), undefined, 'same host, case aside')
+  assert.equal(linkDisguise('o site', evil), undefined, 'plain words: no address, only the tip')
+  assert.equal(linkDisguise('leia mais em banco.example', evil), undefined, 'a sentence is no address')
+})
+
+test('the tip of a markdown link names the real destination unless the text is the address', () => {
+  assert.equal(linkTip('o site', 'https://a.b/c'), 'Leva a https://a.b/c')
+  assert.equal(linkTip('https://a.b/c', 'https://a.b/c'), undefined)
 })

@@ -51,6 +51,24 @@ export function fitDesks(i: FitInput): string[] {
   return vis
 }
 
+export interface CapsuleFitInput extends FitInput {
+  /** Room for the segments when the fixed pills (Gaveta, system desks) are icon-only, px. Never below `avail`. */
+  availCompact: number
+}
+
+/**
+ * The fixed pills keep their names while every common desk fits beside them. When some desk would fall into the "+N",
+ * the pills shrink to their icons (the active one keeps its name, which the caller measures into `availCompact`) and
+ * the room they give back goes to the desks. Never fewer desks visible than with the names.
+ */
+export function fitCapsule(i: CapsuleFitInput): { visible: string[]; compactPills: boolean } {
+  const labeled = fitDesks(i)
+  if (labeled.length === i.order.length) return { visible: labeled, compactPills: false }
+  const compact = fitDesks({ ...i, avail: Math.max(i.avail, i.availCompact) })
+  if (compact.length < labeled.length) return { visible: labeled, compactPills: false }
+  return { visible: compact, compactPills: true }
+}
+
 /** The desks the "+N" lists: every desk not visible, in the row's order. */
 export function overflowDesks(order: readonly string[], visible: readonly string[]): string[] {
   const v = new Set(visible)

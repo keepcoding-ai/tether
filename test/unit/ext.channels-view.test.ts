@@ -7,8 +7,33 @@ import type { ChannelSummary, MemberInfo } from '../../extensions/channels/daemo
 import { channelIdOfPane, channelPaneId, manifest } from '../../extensions/channels/manifest.ts'
 import {
   agentLinkOf, applyLine, applyPage, emptyTimeline, FOLD_MARKS, foldAria, foldOf, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest, muteBar, nameYou, olderCursor, rowsOf, dayLabel, NO_DESK_WAIT_HINT, WAIT_HINT,
-  type MembersAnswer, type SayRow,
+  type MembersAnswer, type SayRow, rowShown, seenProbes, seenUpTo,
 } from '../../extensions/channels/renderer/view-model.ts'
+
+test('seen: a row is probed at three points of its middle line, inside the part in view; out of view, none', () => {
+  const view = { left: 0, top: 100, width: 600, height: 400 }
+  assert.deepEqual(seenProbes({ left: 0, top: 200, width: 600, height: 40 }, view), [{ x: 100, y: 220 }, { x: 300, y: 220 }, { x: 500, y: 220 }])
+  assert.deepEqual(seenProbes({ left: 0, top: 80, width: 600, height: 40 }, view).map(p => p.y), [110, 110, 110], 'clipped at the top: the visible part')
+  assert.deepEqual(seenProbes({ left: 0, top: 500, width: 600, height: 40 }, view), [], 'below the view')
+  assert.deepEqual(seenProbes({ left: 0, top: 40, width: 600, height: 40 }, view), [], 'above the view')
+})
+
+test('seen: a row is shown when most probes find the conversation on top (the docked card covering 60% hides it)', () => {
+  assert.equal(rowShown([true, true, true]), true)
+  assert.equal(rowShown([true, true, false]), true, 'a corner under something')
+  assert.equal(rowShown([true, false, false]), false, 'the docked card over the right of the row')
+  assert.equal(rowShown([false, false, false]), false, 'a modal over everything')
+  assert.equal(rowShown([]), false, 'no probe: not in view')
+})
+
+test('seen: at the end, up to the line before the first covered new row; nothing covered, up to the last', () => {
+  assert.equal(seenUpTo(20, 10, [{ seq: 15, shown: true }, { seq: 20, shown: true }]), 20, 'nothing covered: as before')
+  assert.equal(seenUpTo(20, 10, [{ seq: 17, shown: false }, { seq: 15, shown: true }, { seq: 20, shown: true }]), 16, 'the covered line and those below wait')
+  assert.equal(seenUpTo(20, 10, [{ seq: 18, shown: false }, { seq: 12, shown: false }]), 11, 'the first covered one counts, in any order')
+  assert.equal(seenUpTo(20, 10, [{ seq: 11, shown: false }]), 10, 'the newest unseen covered: nothing more is seen')
+  assert.equal(seenUpTo(20, 10, [{ seq: 8, shown: false }]), 20, 'an old line under the card holds nothing back')
+  assert.equal(seenUpTo(20, 10, []), 20, 'rows scrolled away above the view count as read')
+})
 
 const at = (h: number, m = 0): string => new Date(2026, 10, 23, h, m).toISOString()
 const say = (seq: number, id: string, name: string, role: 'owner' | 'member' | 'moderator', body: string, extra: Partial<Line> = {}): Line =>

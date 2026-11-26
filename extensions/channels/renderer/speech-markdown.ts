@@ -15,7 +15,44 @@ export type MdNode =
 
 export interface MarkdownHooks {
   leaf(text: string, parent: HTMLElement): void
-  link(href: string, parent: HTMLElement): HTMLElement | undefined
+  /** `text`: what the link shows (its plain text), to tell it apart from where it leads (linkDisguise). */
+  link(href: string, parent: HTMLElement, text: string): HTMLElement | undefined
+}
+
+const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
+
+/** The address a link's text spells: its scheme (when written) and host; undefined when the text is no address. */
+function addressOf(text: string): { scheme?: string; host: string } | undefined {
+  const t = text.trim()
+  if (t === '' || /\s/.test(t)) return undefined
+  const withScheme = SCHEME.test(t)
+  // Without a scheme only a host-like text counts (a dot between letters, an optional path): "banco.example/login", "www.x.com".
+  if (!withScheme && !/^[\p{L}\p{N}-]+(\.[\p{L}\p{N}-]+)+(:\d+)?([/?#]\S*)?$/u.test(t)) return undefined
+  try {
+    const url = new URL(withScheme ? t : `https://${t}`)
+    return { ...(withScheme ? { scheme: url.protocol } : {}), host: url.host.toLowerCase() }
+  } catch { return undefined }
+}
+
+/**
+ * A link whose text is an address other than where it leads (`[https://banco.example](https://evil.example)`): what the text
+ * says and the real destination, for the tip and the confirmation before following. undefined when the text is no address or
+ * names the same place: the same host, and the same scheme when the text writes one (`www.x.com` for `http://www.x.com`).
+ */
+export function linkDisguise(text: string, href: string): { shown: string; real: string } | undefined {
+  const said = addressOf(text)
+  if (!said) return undefined
+  const out = { shown: text.trim(), real: href.trim() }
+  let real: URL
+  try { real = new URL(href.trim()) } catch { return out }
+  if (said.host !== real.host.toLowerCase()) return out
+  if (said.scheme !== undefined && said.scheme !== real.protocol) return out
+  return undefined
+}
+
+/** The tip of a markdown link: the real destination whenever the text is not the address itself. */
+export function linkTip(text: string, href: string): string | undefined {
+  return text.trim() === href.trim() ? undefined : `Leva a ${href.trim()}`
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true, typographer: false })
@@ -101,7 +138,7 @@ export function markdownNodes(body: string, hooks: MarkdownHooks): DocumentFragm
         parent.append(el)
       } else {
         const holder = parent instanceof HTMLElement ? parent : document.createElement('span')
-        const a = hooks.link(n.href, holder)
+        const a = hooks.link(n.href, holder, plainOf(n.kids))
         if (a) { build(n.kids, a); parent.append(a) } else build(n.kids, parent)
       }
     }

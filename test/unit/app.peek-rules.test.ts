@@ -7,6 +7,7 @@ import {
   PEEK_SCREEN_COMMANDS, paneCardFoot, paneCardHead, paneRefusalText, paneRoute, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan,
   peekOpenButton, peekRoute, quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView, type PaneCardFacts,
   cardHoldsKeys, commandAim, isStructureCommand, paneOwns, PEEK_PANE_COMMANDS, type CommandAimInput,
+  CARD_MUTED_CHORDS, cardMutesChord, type ChordPress,
 } from '../../app/renderer/peek-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 import { commandFromContribution, type CommandContext } from '../../app/renderer/commands.ts'
@@ -220,11 +221,18 @@ describe('the quick view of a pane', () => {
     assert.equal(paneCardHead(facts({ typeId: 'something-new' })).kind, 'guia', 'a type of the future still has a tag')
     assert.equal(paneCardHead(facts({ place: undefined })).where, undefined)
   })
-  test('the state: a slot\'s turn line; asleep (the pane or its desk) wins; a pane without a slot has none', () => {
-    const slot = { title: 'conferente', state: 'busy' as const, text: 'trabalhando agora' }
-    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot })).state, { text: 'trabalhando agora', tone: 'busy' })
-    assert.deepEqual(paneCardHead(facts({ typeId: 'terminal', agent: true, slot, asleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+  test('the state: the pane\'s one state, the words of the Regency\'s tree; a free pane that is not an agent\'s has none', () => {
+    const agent = (over: Partial<PaneCardFacts>) => paneCardHead(facts({ typeId: 'terminal', agent: true, ...over })).state
+    assert.deepEqual(agent({ busy: true }), { text: 'trabalhando', tone: 'busy' })
+    assert.deepEqual(agent({ busy: true, asleep: true }), { text: 'dormindo', tone: 'asleep' })
     assert.deepEqual(paneCardHead(facts({ deskAsleep: true })).state, { text: 'dormindo', tone: 'asleep' })
+    // the capture r3-cartao-regencia-terminal: a turn just done said "pede atenção" here and nothing waited in the tree
+    assert.deepEqual(agent({ attention: 'done' }), { text: 'terminou', tone: 'idle' })
+    assert.deepEqual(agent({ attention: 'waiting' }), { text: 'espera você', tone: 'attention' })
+    assert.deepEqual(agent({}), { text: 'livre', tone: 'idle' })
+    assert.deepEqual(agent({ exited: true }), { text: 'encerrado', tone: 'ended' })
+    assert.equal(paneCardHead(facts()).state, undefined, 'a note at rest says nothing')
+    assert.deepEqual(paneCardHead(facts({ attention: 'waiting' })).state, { text: 'espera você', tone: 'attention' }, 'a seal waits on any pane')
   })
   test('the foot: "Ir até a guia" always; "Acordar" only while it sleeps (the desk wakes whole); how to close in one line', () => {
     const awake = paneCardFoot(facts(), ['Ctrl+Shift+O'])
@@ -237,6 +245,8 @@ describe('the quick view of a pane', () => {
     assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.what, 'pane')
     assert.equal(paneCardFoot(facts({ asleep: true, deskAsleep: true }), [])!.wake?.what, 'desk')
     assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.label, 'Acordar')
+    assert.equal(paneCardFoot(facts({ deskAsleep: true }), [])!.wake?.band, 'Mesa dormindo: o que você vê não está rodando')
+    assert.equal(paneCardFoot(facts({ asleep: true }), [])!.wake?.band, 'Guia dormindo: o que você vê não está rodando')
   })
   test('a refusal says why in a sentence', () => {
     assert.equal(paneRefusalText('none'), 'Ainda não dá para espiar este tipo de guia.')
@@ -319,5 +329,28 @@ describe('the command target with a tab in the card', () => {
     assert.equal(paneOwns(c => c.paneType === 'channel', ctx({ paneType: 'channel' })), true, 'the type itself')
     assert.equal(paneOwns(c => c.pane, ctx({ paneType: 'note', focus: 'editor' })), false, 'only "a pane": everybody\'s')
     assert.equal(paneOwns(undefined, ctx({ paneType: 'note' })), false, 'no rule: nobody\'s')
+  })
+})
+
+describe('the document chords of extensions with a tab in the card (Ctrl+L, Ctrl+T)', () => {
+  const press = (key: string, o: Partial<ChordPress> = {}): ChordPress => ({ key, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, ...o })
+  const holds = { lent: true, modal: true, focusInCard: true }
+
+  test('the card holding the keyboard swallows Ctrl+L and Ctrl+T: they would act on the tab behind it', () => {
+    assert.deepEqual([...CARD_MUTED_CHORDS], ['l', 't'])
+    assert.equal(cardMutesChord(holds, press('l')), true)
+    assert.equal(cardMutesChord(holds, press('L')), true, 'Caps Lock')
+    assert.equal(cardMutesChord(holds, press('t')), true)
+    assert.equal(cardMutesChord({ lent: true, modal: false, focusInCard: true }, press('l')), true, 'docked, keyboard in the card')
+  })
+
+  test('without the card holding the keyboard, other chords, or in a terminal, nothing is swallowed', () => {
+    assert.equal(cardMutesChord({ lent: false, modal: true, focusInCard: true }, press('l')), false, 'no lent tab')
+    assert.equal(cardMutesChord({ lent: true, modal: false, focusInCard: false }, press('l')), false, 'docked, keyboard in the conversation')
+    assert.equal(cardMutesChord(holds, press('l', { shiftKey: true })), false)
+    assert.equal(cardMutesChord(holds, press('l', { altKey: true })), false)
+    assert.equal(cardMutesChord(holds, press('l', { ctrlKey: false })), false)
+    assert.equal(cardMutesChord(holds, press('k')), false)
+    assert.equal(cardMutesChord(holds, press('l', { inTerminal: true })), false, 'the program owns it (clear screen)')
   })
 })

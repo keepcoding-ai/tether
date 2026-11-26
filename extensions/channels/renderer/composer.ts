@@ -193,6 +193,8 @@ export function createComposer(opts: ComposerOptions): Composer {
   list.setAttribute('role', 'listbox')
   list.setAttribute('aria-label', MENTION_TEXT.listLabel)
   list.hidden = true
+  // Shown, it freezes the native pages (app/renderer/overlay-freeze.ts FREEZES_ATTR): over the docked card it would sit under one.
+  list.dataset.freezes = ''
   field.setAttribute('aria-autocomplete', 'list')
   element.append(...(opts.poll ? [form.element] : []), ...(box?.parts ?? []), head, field, note, error, row, list)
 

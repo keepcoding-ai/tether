@@ -160,3 +160,16 @@ test('output opens the record on a desk; refuses when it already has a tab or th
   assert.deepEqual(acts.peekOutput('worker'), { ok: true })
   assert.deepEqual(r.calls, ['open web desk-2 true', 'open web desk-2 false', 'open web nope true', 'peekPane process:web', 'peekNew worker process:worker'])
 })
+
+test('peekOutput with `over` (the Regency): the tab lent and the record built are both docked on that element', () => {
+  const r = rig()
+  const seen: unknown[] = []
+  r.deps.panes.peekPane = (id, o) => { seen.push(['pane', id, o?.over]) }
+  r.deps.panes.peekNew = (n, id, o) => { seen.push(['new', id, o?.over]); return true }
+  const acts = createProcessActs(r.deps)
+  const over = { anchor: true } as unknown as HTMLElement
+  r.tabs.add('process:web')
+  assert.deepEqual(acts.peekOutput('web', { over }), { ok: true })
+  assert.deepEqual(acts.peekOutput('worker', { over }), { ok: true })
+  assert.deepEqual(seen, [['pane', 'process:web', over], ['new', 'process:worker', over]])
+})

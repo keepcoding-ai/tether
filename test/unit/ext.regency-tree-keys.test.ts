@@ -138,4 +138,12 @@ describe('acting', () => {
     assert.equal(step(rows, 'desk:d1', 'a'), undefined)
     assert.equal(step(rows, 'desk:d1', 'Tab'), undefined)
   })
+
+  test('Ctrl+F opens the search field (with or without a focused row); Ctrl+Shift+F and Alt+F stay the browser\'s', () => {
+    assert.deepEqual(step(rows, 'desk:d1', 'f', { ctrlKey: true }), { type: 'search' })
+    assert.deepEqual(step([], undefined, 'F', { ctrlKey: true }), { type: 'search' })
+    assert.equal(step(rows, 'desk:d1', 'f', { ctrlKey: true, shiftKey: true }), undefined)
+    assert.equal(step(rows, 'desk:d1', 'f', { altKey: true }), undefined)
+    assert.equal(step(rows, 'desk:d1', 'f'), undefined)
+  })
 })

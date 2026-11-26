@@ -15,7 +15,8 @@ import { STATUS_ID as SYNC_STATUS } from '../sync/manifest.ts'
 import { STATUS_ID as BRIDGE_STATUS } from '../web-bridge/manifest.ts'
 import { systemModelOf, type SystemInput, type SystemModel } from './system-rules.ts'
 import type { SystemViewHost } from './renderer/system-view.ts'
-import { planOf, runPlan, type CreateDraft, type CreateFixed, type CreateState } from './create-rules.ts'
+import { createdText, planOf, runPlan, type CreateDraft, type CreateFixed, type CreateState } from './create-rules.ts'
+import { RegencyToast, type ToastAction } from './renderer/toast.ts'
 import { createRunner, type CreateSeams } from './renderer/create-run.ts'
 import { CreateCard, type CreateRunEnd, type CreateViewHost } from './renderer/create-view.ts'
 import type { Ownership } from '../for-agents/rules.ts'
@@ -371,13 +372,25 @@ export function activate(ui: TetherUi): Disposable[] {
       extra.push(
         off
           ? { icon: 'chats-circle', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
-          : { icon: 'chats-circle', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
+          : { icon: 'chats-circle', label: `Falar com ${name}`, run: () => talk(target) },
         { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
       )
       // "Dar uma mesa nova…": the card of one step (name and colour); giving needs for-agents.
       if (ownerBoard.active) extra.push({ icon: 'cards', label: GIVE_NEW_DESK_LABEL, run: () => { livePane()?.openCreate({ forAgent: id, forName: name }, key) } })
     }
-    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
+    // In blocks: the agent's, the tab's, who commands it; Space (the row's key) is the quick view's, so "Espiar" shows it.
+    const groups = { ...(target.kind === 'agent' ? { agent: nameOf(id) } : {}), owner: commanderOf(id), peek: () => openQuickView(target), peekHint: 'Espaço' }
+    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, groups, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
+  }
+
+  /** Who commands a pane, for the title "Quem manda aqui: …": its own owner, else its desk's, else the person. */
+  const commanderOf = (paneId: string): string => {
+    if (!ownerBoard.active) return 'você'
+    const own = ownerOf(ownerBoard.paneOwner(paneId))
+    if (own) return own.name
+    const desk = ui.desks.tree().desks.find(d => d.panes.some(p => p.id === paneId))
+    const o = desk ? ownerOf(ownerBoard.deskOwner(desk.id)) : undefined
+    return o && o.id !== paneId ? o.name : 'você'
   }
 
   // ---------------------------------------------------------------- "+ Novo"
@@ -432,12 +445,29 @@ export function activate(ui: TetherUi): Disposable[] {
       const pane = livePane()
       if (!pane) return
       if (state.draft.what === 'channel') return
-      if (run.announce) pane.announce(run.announce.paneId, run.announce.deskId, { focus: true })
+      const made = run.announce
+      // "Ir até a guia depois de criar": the person asked to go there, so her desk changes and the tab takes the keyboard.
+      if (made && state.draft.goAfter === true) { ui.panes.reveal(made.paneId); return }
+      if (made) pane.announce(made.paneId, made.deskId, { focus: true })
       else if (runner.made.deskId) pane.announceDesk(runner.made.deskId, { focus: true })
+      const deskId = made?.deskId ?? runner.made.deskId
+      const text = createdText(state.draft.what, deskId ? ui.desks.list().find(d => d.id === deskId)?.name : undefined)
+      if (!text) return
+      const target: Target | undefined = made ? (ui.agents.get(made.paneId) ? { kind: 'agent', id: made.paneId } : { kind: 'pane', id: made.paneId }) : undefined
+      showToast(text, target ? { label: 'Espiar', tip: 'Ver a guia nova sem sair da Regência (Espaço na linha)', run: () => openQuickView(target) } : undefined)
     }
     return { ok: run.ok, ...(run.text !== undefined ? { text: run.text } : {}), after }
   }
   let lastRun: { acts: string[]; ok: boolean; done: number; text?: string; made: object } | undefined
+
+  /** The brief notice of the Regency (one at a time), mounted on the live pane when it is said. */
+  const toast = new RegencyToast()
+  const showToast = (text: string, action?: ToastAction): void => {
+    const pane = livePane()
+    if (!pane) return
+    if (toast.element.parentElement !== pane.element) pane.element.append(toast.element)
+    toast.show(text, action)
+  }
 
   const cardHost: CreateViewHost = {
     items: () => ui.create.items(),
@@ -462,7 +492,7 @@ export function activate(ui: TetherUi): Disposable[] {
   const card = new CreateCard(cardHost)
 
   /** Opens the card; an open quick view closes first (one card over the conversation at a time). */
-  const openCreate = (fixed: CreateFixed, restore: () => void, what?: 'agent' | 'terminal'): void => {
+  const openCreate = (fixed: CreateFixed, restore: () => void, what?: 'agent' | 'terminal' | 'channel'): void => {
     if (peekOpen()) { void ui.commands.run('peek.close').then(() => card.open(fixed, restore, what)); return }
     card.open(fixed, restore, what)
   }
@@ -521,7 +551,8 @@ export function activate(ui: TetherUi): Disposable[] {
         case 'release': return processEmbeds.release(name)
       }
     },
-    peekLog: name => processEmbeds.peekOutput(name),
+    // Docked over the conversation, as every quick view the Regency opens (the record is a pane like the others).
+    peekLog: name => { const over = livePane()?.quickAnchor(); return processEmbeds.peekOutput(name, over ? { over } : undefined) },
     logOnDesk,
     seen: name => { void ui.procs.seen(name).catch(() => {}) },
     setRonda: (id, change) => ui.agents.setRonda(id, change),
@@ -610,8 +641,12 @@ export function activate(ui: TetherUi): Disposable[] {
   })
   /** The last plan run: its acts, how it ended and what it made. */
   ui.test.expose('lastRun', () => lastRun)
+  /** The brief notice shown now (its text and buttons), undefined when none. */
+  ui.test.expose('toast', () => toast.shown)
   /** "Sistema" as drawn: the column, the section, the red dots and the rows. */
   ui.test.expose('system', () => livePane()?.systemSnapshot())
+  /** The four tiers as drawn: the tier, the tablet's step, side and panel, the TV's quick column. */
+  ui.test.expose('tiers', () => livePane()?.tierSnapshot())
   /** The pure model of "Sistema" now (what the screen paints). */
   ui.test.expose('systemModel', () => systemModel())
   /** Opens "Sistema" on a section (or the kept one), as the foot's button does; `false` goes back to the tree. */
@@ -637,6 +672,7 @@ export function activate(ui: TetherUi): Disposable[] {
       })
     }),
     { dispose: () => card.close(false) },
+    { dispose: () => toast.dispose() },
     ui.panes.register({
       ...REGENCY_LAYOUT, hasSlot: false, icon: 'columns',
       create: () => { const p = new RegencyPane(host); panes.add(p); schedule(); return p },

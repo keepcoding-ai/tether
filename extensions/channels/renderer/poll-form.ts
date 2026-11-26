@@ -59,6 +59,8 @@ export function createPollForm(opts: PollFormOptions): PollForm {
   const id = `ch-pf-${++formSeq}`
   const root = el('div', 'ch-pf')
   root.hidden = true
+  // Shown, it freezes the native pages (app/renderer/overlay-freeze.ts FREEZES_ATTR): over the docked card it would sit under one.
+  root.dataset.freezes = ''
   root.setAttribute('role', 'dialog')
   root.setAttribute('aria-label', 'Nova enquete')
 

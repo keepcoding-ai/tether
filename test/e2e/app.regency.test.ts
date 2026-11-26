@@ -10,7 +10,7 @@
 //   6. the tree lists the queue desks, Browser and the drawer with the panes, names and identity; a folded desk hides its panes;
 //   7. "Neste canal" starts folded, faces only; open, the channel's members' column;
 //   8. immersion (Ctrl+Shift+\, the switch, the palette): the side columns become thin edges, the left keeps the count; a click on an edge goes back;
-//   9. the phone (pane under 768 px): "Chama você", "Conversa", "Tether" at the bottom, one at a time, 44 px; it opens on "Chama você"
+//   9. the phone (pane under 768 px): "Esperam você", "Conversa", "Tether" at the bottom, one at a time, 44 px; it opens on "Esperam você"
 //      when someone waits; choosing a conversation goes to it; the box sits above the bar; the place is kept;
 //  10. nothing comes forward: no desk switch, no focus change by an event (checked at each event above).
 //  11. "Por mesa · Por agente": the switch changes the view; each pane once, under its owner, with the desk's badge; the view is
@@ -100,6 +100,7 @@ type Hooks = {
       menuAsks(): { target: { kind: string; id: string }; anchor: string }[]
       menu(key: string): boolean
       renaming(): string | undefined
+      create(draft: { what: string; kind?: string; deskId?: string; cwd?: string }): Promise<{ ok: boolean; text?: string }>
     }
   }
 }
@@ -112,7 +113,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const electronPath = require('electron') as string
 const mainPath = join(root, 'app', 'dist', 'main.cjs')
 const AGENT = fileURLToPath(new URL('../fixtures/channels/agent.cjs', import.meta.url))
-const SHOTS = 'C:/atrium/.tmp/tether-agents/onda-3/mesa-regencia/capturas'
+const SHOTS = 'C:/atrium/.tmp/tether-agents/onda-3/mesa-regencia/capturas/r6'
 const DESK = 'regency.main'
 const PANE = 'regency:main'
 
@@ -308,7 +309,10 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const waitRow = page.locator(`.rg-wait[data-target="channel:${extra}"]`)
     await waitRow.waitFor()
     assert.equal(await waitRow.getAttribute('data-reason'), 'to-you')
-    assert.match((await waitRow.textContent()) ?? '', /1 fala para você/)
+    // R6, L: the card shows what is asked (who and the first line), the count of the kind in the tooltip.
+    await until('the card says what is asked', async () => (await waitRow.locator('.rg-w2').textContent()) === 'conferente: Posso seguir com a migração?')
+    assert.match((await waitRow.locator('.rg-w2').getAttribute('title')) ?? '', /^conferente: Posso seguir com a migração\? · 1 fala para você$/)
+    assert.equal(await waitRow.locator('.rg-w1').textContent(), `#${(await model()).conversations.open.find(c => c.target.id === extra)?.name ?? ''}`)
     assert.ok((await model()).waiting.some(w => w.key === `channel:${extra}:to-you`))
     assert.equal(await page.locator(`.rg-conv[data-target="channel:${extra}"] .rg-tome`).count(), 1, 'the conversation says "para você"')
     assert.deepEqual(await state(), before, 'the line to her moves nothing')
@@ -325,7 +329,8 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const w = (await model()).waiting.map(x => x.key)
     assert.deepEqual(w, [`channel:${extra}:to-you`, `agent:${a}:agent-waiting`], 'who waits longest comes first')
     assert.equal(await page.locator('.rg-waiting .cnt').textContent(), '2')
-    await page.screenshot({ path: join(SHOTS, 'r1-tres-colunas.png') })
+    await page.screenshot({ path: join(SHOTS, 'tres-colunas.png') })
+    await page.locator('.rg-left').screenshot({ path: join(SHOTS, 'esperam-o-que-pede.png') })
 
     // The click on the channel's call: it goes to the centre and, seen there, the call goes.
     await waitRow.click()
@@ -336,20 +341,21 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
 
     // ---- 6. the tree: queue desks, Browser, the drawer; names and identity; a folded desk hides its panes ----
     console.log('step 6')
-    const tree = (await model()).tree
+    const { tree, shelf } = await model()
     assert.ok(!tree.some(d => d.target.id === DESK), 'the Regency is not in its own tree')
     const kinds = tree.map(d => d.kind)
     assert.deepEqual(kinds.filter(k => k === 'queue').length, 2)
-    assert.ok(tree.some(d => d.kind === 'system' && d.target.id === 'browser.desk'), 'Browser is a desk of the tree')
-    assert.equal(kinds.at(-1), 'drawer', 'the drawer comes last')
-    assert.ok(kinds.indexOf('system') > kinds.lastIndexOf('queue'), 'queue, then system, then drawer')
+    // Empty, Browser and the drawer fold into the shelf at the tree's foot (queue first, then system, then drawer).
+    assert.deepEqual(shelf.map(s => [s.target.id, s.kind]), [['browser.desk', 'system'], [shelf.at(-1)!.target.id, 'drawer']], 'the empty Browser and drawer are on the shelf')
+    assert.ok(!tree.some(d => d.kind !== 'queue'), 'not desk rows')
+    assert.deepEqual(await page.locator('.rg-shelf .rg-shelf-b span:not(.rg-ic)').allTextContents(), ['Browser', 'Gaveta'])
     const q1 = tree.find(d => d.target.id === queueDesk)!
     const ra = q1.panes.find(p => p.target.id === a)!
     assert.deepEqual(ra.target, { kind: 'agent', id: a })
     assert.equal(ra.identity?.kind, 'claude')
     assert.equal(tree.find(d => d.target.id === desk2)!.panes.find(p => p.target.id === b)?.identity?.kind, 'claude')
-    assert.equal(await page.locator(`.rg-group[data-desk="browser.desk"]`).count(), 1)
-    assert.equal(await page.locator(`.rg-group[data-kind="drawer"]`).count(), 1)
+    assert.equal(await page.locator(`.rg-group[data-desk="browser.desk"]`).count(), 0)
+    assert.equal(await page.locator(`.rg-shelf-b[data-target="desk:browser.desk"]`).count(), 1)
     assert.equal(await page.locator(`.rg-pane[data-target="agent:${a}"] .aid`).count(), 1, 'an agent row draws its identity')
     assert.equal(await page.locator(`.rg-pane[data-target="agent:${b}"]`).getAttribute('role'), 'treeitem')
     assert.equal(await page.locator('.rg-tree [data-key][tabindex="0"]').count(), 1, 'the tree is one tab stop (roving tabindex)')
@@ -395,6 +401,10 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok(waitingNow > 0)
     assert.equal(await page.locator('.rg-edge-cnt').textContent(), String(waitingNow), 'the left edge keeps the count')
     assert.match((await page.locator('.rg-edge-l').getAttribute('class')) ?? '', /\blit\b/, 'and lights: someone waits')
+    // R6, Q: the bell and the number; the words are the tooltip's, never vertical text on the edge.
+    assert.equal((await page.locator('.rg-edge-l').innerText()).trim(), String(waitingNow), 'only the number on the edge')
+    assert.match((await page.locator('.rg-edge-l').getAttribute('title')) ?? '', /esperam? você · voltar a Gerir$/)
+    await page.screenshot({ path: join(SHOTS, 'imersao.png') })
     assert.equal(await page.locator(`.rg-center .ch-pane[data-channel="${extra}"]`).isVisible(), true, 'the conversation stays')
     await waitUntil(() => saved().includes('"mode":"immersion"'), 10_000, 'the mode reached layout.json')
     await page.screenshot({ path: join(SHOTS, 'r1-imersao.png') })
@@ -417,32 +427,40 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     console.log(`pane width at the phone: ${await page.locator('.rg').evaluate(e => (e as unknown as { clientWidth: number }).clientWidth)}`)
     const places = page.locator('.rg-tabbar .rg-tab')
     assert.equal(await places.count(), 3)
-    assert.deepEqual((await page.locator('.rg-tabbar .rg-tab-t').allTextContents()), ['Chama você', 'Conversa', 'Tether'])
+    assert.deepEqual((await page.locator('.rg-tabbar .rg-tab-t').allTextContents()), ['Esperam você', 'Conversa', 'Tether'])
     for (let i = 0; i < 3; i++) assert.ok(((await places.nth(i).boundingBox())?.height ?? 0) >= 44, 'a 44 px touch target')
-    assert.equal(await page.locator('.rg-tab[data-tab="waiting"] .rg-tab-cnt').textContent(), String(waitingNow), '"Chama você" counts')
+    assert.equal(await page.locator('.rg-tab[data-tab="waiting"] .rg-tab-cnt').textContent(), String(waitingNow), '"Esperam você" counts')
     assert.equal(await page.locator('.rg-edge-l').isVisible(), false)
-    // Reopened with someone waiting, it opens on "Chama você".
+    // Reopened with someone waiting, it opens on "Esperam você".
     await page.evaluate(() => window.__tether.ext.regency.close())
     await page.waitForFunction(p => window.__tether.panelIds().includes(p), PANE)
-    await until('opens on "Chama você"', async () => (await tab()) === 'waiting')
+    await until('opens on "Esperam você"', async () => (await tab()) === 'waiting')
     await until('the phone tier again', async () => (await tier()) === 'mobile')
     assert.equal(await page.locator('.rg-left').isVisible(), true)
     assert.equal(await page.locator('.rg-center').isVisible(), false, 'one thing at a time')
     assert.equal(await page.locator('.rg-right').isVisible(), false)
     assert.equal(await page.locator('.rg-wait').first().isVisible(), true, '"Esperam você" is here')
-    assert.ok((await page.locator('.rg-conv').count()) >= 2, 'and the conversations')
-    await page.screenshot({ path: join(SHOTS, 'r1-celular-chama.png') })
-    // Choosing a conversation takes the person to it; the box sits right above the bar.
+    assert.equal(await page.locator('.rg-left .rg-conv').count(), 0, 'only who waits: the conversations live in "Conversa"')
+    await page.screenshot({ path: join(SHOTS, 'celular-esperam.png') })
+    // "Conversa": the list over the conversation; choosing one folds the list into a line that names it.
+    await page.click('.rg-tab[data-tab="conversation"]')
+    await until('to the conversation tab', async () => (await tab()) === 'conversation')
+    await until('the list over the conversation', async () => (await page.locator('.rg-center .rg-convs .rg-conv').count()) >= 2)
+    for (const r of await page.locator('.rg-center .rg-convs .rg-conv').all()) assert.ok(((await r.boundingBox())?.height ?? 0) >= 44, 'a 44 px conversation row')
     await page.click(`.rg-conv[data-target="channel:${obra}"]`)
-    await until('to the conversation', async () => (await tab()) === 'conversation')
     assert.equal((await layout())?.channelId, obra)
     assert.equal(await page.locator('.rg-center').isVisible(), true)
     assert.equal(await page.locator('.rg-left').isVisible(), false)
+    await until('the list folded, naming the conversation', async () => (await page.locator('.rg-convs-tg').getAttribute('aria-expanded')) === 'false'
+      && (await page.locator('.rg-convs-now').textContent()) === '#obra')
     await until('the centre shows it', async () => (await embed(obra))?.loaded === true)
     const boxAt = await page.locator(`.rg-center .ch-pane[data-channel="${obra}"] .ch-composer-slot textarea`).boundingBox()
     const barAt = await page.locator('.rg-tabbar').boundingBox()
     assert.ok(boxAt && barAt && boxAt.y + boxAt.height <= barAt.y && barAt.y - (boxAt.y + boxAt.height) < 80, `the box sits above the bar (${JSON.stringify({ boxAt, barAt })})`)
-    await page.screenshot({ path: join(SHOTS, 'r1-celular-conversa.png') })
+    const listAt = await page.locator('.rg-center .rg-convs').boundingBox()
+    const logAt = await page.locator(`.rg-center .ch-pane[data-channel="${obra}"]`).boundingBox()
+    assert.ok(listAt && logAt && listAt.y + listAt.height <= logAt.y + 1, `the folded list sits above the channel (${JSON.stringify({ listAt, logAt })})`)
+    await page.screenshot({ path: join(SHOTS, 'celular-conversa.png') })
     await page.click('.rg-tab[data-tab="tether"]')
     await until('to the tether', async () => (await tab()) === 'tether')
     assert.equal(await page.locator('.rg-right').isVisible(), true)
@@ -535,7 +553,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await until('and opens', async () => (await kids.count()) > 0)
     assert.deepEqual(await state(), before, 'switching and folding stay in the Regency')
     await waitUntil(() => saved().includes('"view":"agent"'), 10_000, 'the view reached layout.json')
-    await page.screenshot({ path: join(SHOTS, 'r2-por-agente.png') })
+    await page.screenshot({ path: join(SHOTS, 'por-agente.png') })
     await reopen()
     assert.equal((await layout())?.view, 'agent', 'the view survives reopening')
     assert.equal(await page.locator('.rg-seg-b[data-view="agent"]').getAttribute('aria-checked'), 'true')
@@ -549,12 +567,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const chipN = (f: TreeFilter): Promise<string | null> => page.locator(`.rg-chip[data-filter="${f}"] .rg-chip-n`).textContent()
     const chipsMatch = async (): Promise<boolean> => {
       const c = (await shown()).counts
-      for (const f of ['all', 'waiting', 'busy', 'asleep'] as const) if ((await chipN(f)) !== String(c[f])) return false
+      for (const f of ['all', 'waiting', 'busy', 'idle', 'asleep'] as const) if ((await chipN(f)) !== String(c[f])) return false
       return true
     }
     await until('the chips count as the model', chipsMatch)
     const counts0 = (await shown()).counts
     assert.ok(counts0.waiting >= 2, `a and b wait (${JSON.stringify(counts0)})`)
+    assert.equal(counts0.waiting + counts0.busy + counts0.idle + counts0.asleep, counts0.all, 'the four chips cover every pane, each once')
+    assert.deepEqual(await page.locator('.rg-chip .rg-chip-t').allTextContents(), ['Todos', 'Esperam você', 'Trabalhando', 'Livre', 'Dormindo'])
     assert.match((await page.locator('.rg-chip[data-filter="waiting"]').getAttribute('class')) ?? '', /\bal\b/, 'orange: someone waits')
     assert.doesNotMatch((await page.locator('.rg-chip[data-filter="busy"]').getAttribute('class')) ?? '', /\bal\b/, 'the orange only on "Esperam você"')
     await page.click('.rg-chip[data-filter="waiting"]')
@@ -563,9 +583,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.deepEqual([...new Set(await page.locator('.rg-tree .rg-pane').evaluateAll(es => es.map(e => (e as unknown as { dataset: { state: string } }).dataset.state)))], ['wait'])
     assert.ok(!(await shown()).model.tree.some(d => d.panes.length === 0), 'desks with nobody waiting are gone')
     assert.equal(await page.locator('.rg-tree .rg-group[data-kind="drawer"]').count(), 0, 'the empty drawer is gone')
-    // The search, typed by the person, over the filter: only a.
+    // The search lives behind the heading's icon; Ctrl+F in the tree opens it with the keyboard.
     const field = page.locator('.rg-search-in')
-    await field.click()
+    assert.equal(await page.locator('.rg-search').isVisible(), false, 'folded into its icon')
+    assert.equal(await field.getAttribute('placeholder'), 'Filtrar mesas e guias…')
+    await page.locator('.rg-tree [data-key][tabindex="0"]').focus()
+    await page.keyboard.press('Control+f')
+    await until('Ctrl+F opened the field with the keyboard', async () => (await page.locator('.rg-search').isVisible()) && await field.evaluate(e => (e as unknown as { ownerDocument: { activeElement: unknown } }).ownerDocument.activeElement === e))
+    // The search, typed by the person, over the filter: only a.
     await page.keyboard.type('confer')
     await until('the search narrows', async () => {
       const t = (await shown()).model.tree
@@ -575,7 +600,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(await page.locator('.rg-search-x').isVisible(), true, 'the clear button shows')
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowLeft')
-    await page.screenshot({ path: join(SHOTS, 'r2-filtro-busca.png') })
+    await page.screenshot({ path: join(SHOTS, 'filtros.png') })
     // A repaint by an event (a stops waiting): the tree empties, the field keeps its text, caret and focus.
     let p0 = await paints()
     doorApi.attention.signal(a, 'done')
@@ -588,10 +613,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.deepEqual(await fieldState(), { value: 'confer', caret: 4, focused: true }, 'the field survived the repaint')
     await until('the chips follow in place', chipsMatch)
     assert.equal((await shown()).counts.waiting, counts0.waiting - 1)
-    // Esc clears the search; a second Esc the filter.
+    // Esc clears the search; a second Esc folds the field into its icon; Esc in the tree clears the filter.
     await page.keyboard.press('Escape')
     await until('the search cleared', async () => (await fieldState()).value === '' && (await page.locator('.rg-tree .rg-pane').count()) === counts0.waiting - 1)
     assert.equal((await layout())?.filter, 'waiting', 'the filter stays')
+    await page.keyboard.press('Escape')
+    await until('the field folded', async () => !(await page.locator('.rg-search').isVisible()))
+    assert.equal((await layout())?.filter, 'waiting', 'the filter still stays')
+    await page.locator('.rg-tree [data-key][tabindex="0"]').focus()
     await page.keyboard.press('Escape')
     await until('the filter back to "Todos"', async () => (await layout())?.filter === 'all')
     assert.equal(await page.locator('.rg-chip[data-filter="all"]').getAttribute('aria-checked'), 'true')
@@ -605,7 +634,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await page.evaluate(() => window.__tether.ext.regency.search('zzz-nada-assim'))
     await page.locator('.rg-none').waitFor()
     await page.click('.rg-none [data-action="clear-narrow"]')
-    await until('cleared by the button', async () => (await fieldState()).value === '' && (await page.locator('.rg-tree .rg-desk').count()) >= 3)
+    await until('cleared by the button', async () => (await fieldState()).value === '' && (await page.locator('.rg-tree .rg-desk').count()) >= 2)
     // The filter is kept with the pane; the search is not.
     await page.click('.rg-chip[data-filter="busy"]')
     await page.evaluate(() => window.__tether.ext.regency.search('confer'))
@@ -728,13 +757,31 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await until('the phone tier', async () => (await tier()) === 'mobile')
     await page.click('.rg-tab[data-tab="tether"]')
     await until('on "Tether"', async () => (await tab()) === 'tether')
-    for (const sel of ['.rg-seg-b', '.rg-chip', '.rg-search', '.rg-search-in']) {
-      const boxes = await page.locator(sel).evaluateAll(es => es.map(e => (e as unknown as { getBoundingClientRect(): { height: number } }).getBoundingClientRect().height))
+    const heights = (sel: string): Promise<number[]> => page.locator(sel).evaluateAll(es => es.map(e => (e as unknown as { getBoundingClientRect(): { height: number } }).getBoundingClientRect().height))
+    for (const sel of ['.rg-seg-b', '.rg-chip', '.rg-search-open', '.rg-tree .rg-act[data-action="row-menu"]']) {
+      const boxes = await heights(sel)
       assert.ok(boxes.length > 0 && boxes.every(h => h >= 44), `${sel} is a 44 px target (${boxes.join(', ')})`)
     }
-    assert.equal(await page.locator('.rg-chips').evaluate(e => (globalThis as unknown as { getComputedStyle(x: unknown): { overflowX: string } }).getComputedStyle(e).overflowX), 'auto')
+    // A row has one button on the phone, its "⋯": the rest are in its menu.
+    assert.deepEqual([...new Set(await page.locator('.rg-tree .rg-act').evaluateAll(es => es.filter(e => (e as unknown as { getClientRects(): ArrayLike<unknown> }).getClientRects().length > 0)
+      .map(e => (e as unknown as { dataset: { action: string } }).dataset.action)))], ['row-menu'], 'only the "⋯" shows on a row')
+    // The chips: one line that scrolls sideways, its scrollbar shown; the last one ("Dormindo") is reached whole.
+    const chipsBox = page.locator('.rg-chips')
+    const chipsStyle = await chipsBox.evaluate(e => { const s = (globalThis as unknown as { getComputedStyle(x: unknown): { overflowX: string; scrollbarWidth: string } }).getComputedStyle(e); return [s.overflowX, s.scrollbarWidth] })
+    assert.deepEqual(chipsStyle, ['auto', 'thin'], 'scrolls sideways with a visible scrollbar')
+    await page.locator('.rg-chip[data-filter="asleep"]').scrollIntoViewIfNeeded()
+    const lastAt = await page.locator('.rg-chip[data-filter="asleep"]').boundingBox()
+    const rowAt = await chipsBox.boundingBox()
+    assert.ok(lastAt && rowAt && lastAt.x + lastAt.width <= rowAt.x + rowAt.width + 1, `"Dormindo" whole once scrolled to (${JSON.stringify({ lastAt, rowAt })})`)
+    await chipsBox.evaluate(e => { (e as unknown as { scrollLeft: number }).scrollLeft = 0 })
     assert.ok(await right.evaluate(e => { const r = e as unknown as { scrollWidth: number; clientWidth: number }; return r.scrollWidth <= r.clientWidth }), 'no sideways scroll of the column')
-    await page.screenshot({ path: join(SHOTS, 'r2-celular-tether.png') })
+    await page.screenshot({ path: join(SHOTS, 'celular-tether.png') })
+    // The search opens from its icon, a 44 px field.
+    await page.click('.rg-search-open')
+    await page.locator('.rg-search').waitFor()
+    assert.ok((await heights('.rg-search')).every(h => h >= 44), 'the field is a 44 px target')
+    await page.keyboard.press('Escape')
+    await page.locator('.rg-search').waitFor({ state: 'hidden' })
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(1500, 900) })
     await until('the desktop tier', async () => (await tier()) === 'desktop')
 
@@ -777,6 +824,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(deskLabels.at(-1), 'Ir até a mesa', '"Ir até a mesa" last')
     for (const l of ['Renomear', 'Cor…', 'Mudar de lugar', 'Nova mesa antes', 'Nova mesa depois', 'Hibernar mesa', 'Fechar mesa…']) assert.ok(deskLabels.includes(l), `"${l}" in the desk menu`)
     assert.ok(deskLabels.some(l => /^(Dar|Tomar|Revogar|Pausar)/.test(l)), 'the for-agents rows come along')
+    await page.screenshot({ path: join(SHOTS, 'menu-mesa.png') })
     assert.equal(await focusedKey(), null, 'the menu has the keyboard')
     await page.screenshot({ path: join(SHOTS, 'r2-menu-mesa.png') })
     // "Renomear": a field in the row; a repaint by an event keeps it; Enter keeps the name; the keyboard back on the row.
@@ -820,6 +868,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const desk3 = (await queueIds()).find(id => !q0.includes(id))!
     const dk3 = `desk:${desk3}`
     const desk3Row = page.locator(`.rg-tree [data-key="${dk3}"]`)
+    // A new desk holds only the core's empty placeholder: no pane line, a quiet "mesa vazia" with "+ nova guia".
+    const desk3Group = page.locator(`.rg-group[data-desk="${desk3}"]`)
+    await desk3Group.locator('.rg-vazia').waitFor()
+    assert.equal(await desk3Group.locator('.rg-vazia-t').textContent(), 'mesa vazia')
+    assert.equal(await desk3Group.locator('.rg-pane').count(), 0, 'the placeholder is not a pane')
+    assert.equal((await treeDesk(desk3))?.paneCount, 0)
+    assert.equal(await desk3Group.locator(`.rg-vazia-b[data-action="new-in:${desk3}"]`).count(), 1, '"+ nova guia" at its right')
+    await page.screenshot({ path: join(SHOTS, 'mesa-vazia.png') })
     await desk3Row.focus()
     await page.keyboard.press('ContextMenu')
     await menu.waitFor()
@@ -845,8 +901,8 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await until('awake by the sun', async () => (await treeDesk(desk3))?.asleep === false)
     await stays('wake by the sun')
     assert.equal(await focusedKey(), dk3, 'the button left the keyboard on its row')
-    // Browser has the short menu.
-    await page.locator('.rg-tree [data-key="desk:browser.desk"]').click({ button: 'right' })
+    // Browser (empty, on the shelf) has the short menu.
+    await page.locator('.rg-shelf-b[data-target="desk:browser.desk"]').click()
     await menu.waitFor()
     assert.deepEqual(await labels(), ['Ir até a mesa'])
     await closeMenu()
@@ -866,7 +922,18 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(agentLabels.at(-1), 'Ir até a guia')
     assert.ok(!agentLabels.includes('Focar guia'), 'no "Focar guia" on top')
     for (const l of ['Renomear…', 'Hibernar guia', 'Fechar guia', 'Emblema…', 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…']) assert.ok(agentLabels.includes(l), `"${l}" in the agent's menu`)
+    // R6, E: in blocks with a title; one close; Space beside "Espiar", nothing beside "Falar com".
+    const heads = await menu.locator(':scope > li.hd').allTextContents()
+    assert.equal(heads[0], 'O agente bancada')
+    assert.ok(heads.includes('Esta guia'), JSON.stringify(heads))
+    assert.ok(heads.some(h => h.startsWith('Quem manda aqui: ')), JSON.stringify(heads))
+    assert.equal(agentLabels.filter(l => /^Fechar/.test(l)).length, 1, 'one close: "Fechar guia"')
+    assert.equal(await items.filter({ hasText: /^Espiar/ }).locator('kbd').textContent(), 'Espaço')
+    assert.equal(await items.filter({ hasText: /^Falar com bancada/ }).locator('kbd').count(), 0)
+    const order = (l: string): number => agentLabels.indexOf(l)
+    assert.ok(order('Falar com bancada') < order('Espiar') && order('Espiar') < order('Fechar guia') && order('Fechar guia') < order('Ir até a guia'), 'agent, then this tab, "Ir até a guia" last')
     await page.screenshot({ path: join(SHOTS, 'r2-menu-agente.png') })
+    await page.screenshot({ path: join(SHOTS, 'menu-agente.png') })
     // "Renomear…" in the row: the slot's name.
     await pick('Renomear…')
     const bField = bRow.locator('.rg-rename')
@@ -922,18 +989,28 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     console.log(`pane menu: ${JSON.stringify(paneLabels)}`)
     assert.equal(paneLabels.at(-1), 'Ir até a guia')
     assert.ok(!paneLabels.includes('Focar guia'))
+    assert.ok(!paneLabels.includes('Fechar painel') && !paneLabels.includes('Fechar painel…'), 'no "Fechar painel" in the Regency')
+    assert.equal(paneLabels.filter(l => l === 'Fechar guia').length, 1)
+    assert.equal((await menu.locator(':scope > li.hd').allTextContents()).includes('Esta guia'), true)
     await page.screenshot({ path: join(SHOTS, 'r2-menu-guia.png') })
+    await page.screenshot({ path: join(SHOTS, 'menu-guia.png') })
     await closeMenu()
     const n0 = await paneCount()
     const ids0 = await page.evaluate(() => window.__tether.panelIds())
+    // The frame's gestures are the tab's, not the Regency's (R6, E): no "Duplicar", "Novo quadro" nor the status bar here.
     await bRow.click({ button: 'right' })
     await menu.waitFor()
-    await pick('Duplicar painel à direita')
+    const frameless = await labels()
+    for (const l of ['Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo quadro…', 'Novo painel…', 'Mostrar barra de status', 'Fechar painel…']) assert.ok(!frameless.includes(l), `"${l}" is not in the Regency's menu`)
+    await closeMenu()
+    // A second pane on b's desk to close below ("+ Novo" makes it, as the person would now).
+    const second = await page.evaluate(([d, cwd]) => window.__tether.ext.regency.create({ what: 'terminal', kind: 'shell', deskId: d!, cwd: cwd! }), [desk2, home] as const)
+    assert.ok(second.ok, `the second pane was made (${second.text ?? ''})`)
     await until('the copy came', async () => (await paneCount()) === n0 + 1)
     const copy = (await page.evaluate(() => window.__tether.panelIds())).find(id => !ids0.includes(id))!
-    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), copy), desk2, 'on the original\'s desk')
+    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), copy), desk2, 'on b\'s desk')
     await page.waitForTimeout(400)
-    await stays('duplicate')
+    await stays('second pane')
     // "Mover…" the channel's tab to desk2.
     await cRow.click({ button: 'right' })
     await menu.waitFor()
@@ -1079,6 +1156,17 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const offered = await page.locator('.pk-list li.pk-item .pk-label').allTextContents()
     assert.deepEqual(offered.sort(), [...awake.map(d => d.name), 'Nova mesa'].sort(), 'awake desks, then "Nova mesa"')
     await page.screenshot({ path: join(SHOTS, 'r2-fechadas-reabrir.png') })
+    // R6: the box is opaque with a shadow; the see-through look of r2-fechadas-reabrir was the 160 ms fade-in (pk-in) caught
+    // mid-way: once it ends, the computed opacity is 1 and the background has no transparency.
+    await page.waitForTimeout(400)
+    const look = await page.evaluate(() => {
+      const s = (globalThis as unknown as { getComputedStyle(e: unknown): { opacity: string; backgroundColor: string; boxShadow: string } }).getComputedStyle(document.querySelector('dialog.picker[open]'))
+      return { opacity: s.opacity, bg: s.backgroundColor, shadow: s.boxShadow }
+    })
+    assert.equal(look.opacity, '1', JSON.stringify(look))
+    assert.match(look.bg, /^rgb\(/, `an opaque background (${look.bg})`)
+    assert.notEqual(look.shadow, 'none')
+    await page.screenshot({ path: join(SHOTS, 'reabrir-em.png') })
     const target = awake.find(d => d.target.id !== queueDesk)!
     await pk.filter({ has: page.locator('.pk-label', { hasText: new RegExp(`^${target.name}$`) }) }).click()
     await until('reopened on the chosen desk', async () => (await page.evaluate(i => window.__tether.deskOf(i), x1)) === target.target.id)
@@ -1129,6 +1217,20 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok(card.left >= centre.left && card.right <= centre.right + 0.5 && card.top >= centre.top && card.bottom <= centre.bottom, `the card sits over the conversation: ${JSON.stringify({ card, centre })}`)
     assert.equal(await page.locator('#peek .qv-head .qv-type').textContent(), 'agente')
     assert.equal(await page.locator('#peek .qv-foot .qv-go').textContent(), 'Ir até a guia')
+    // One state: the card's header says what a's line in the tree says (and "Esperam você" lists a exactly when it waits).
+    const cardState = (): Promise<string> => page.locator('#peek .qv-head .peek-state').evaluate(e => (e as unknown as { hidden: boolean; textContent: string | null }).hidden ? '' : (e as unknown as { textContent: string | null }).textContent ?? '')
+    const lineState = async (): Promise<string> => (await page.locator(`.rg-tree [data-key="${aKey}"] .rg-st`).count()) ? (await page.locator(`.rg-tree [data-key="${aKey}"] .rg-st`).textContent()) ?? '' : ''
+    doorApi.attention.signal(a, 'waiting')
+    await until('card and line both say "espera você"', async () => (await cardState()) === 'espera você' && (await lineState()) === 'espera você')
+    assert.ok((await model()).waiting.some(x => x.target.id === a), '"Esperam você" lists it')
+    // A turn done (the card said "pede atenção" here): the card and the line agree, and nothing waits. (A pane in view may
+    // clear its "done" at once: then both say "livre"; the point is that they say the same.)
+    doorApi.attention.signal(a, 'done')
+    await until('card and line agree on the turn done', async () => {
+      const c = await cardState()
+      return c !== 'espera você' && c === (await lineState()) && ['terminou', 'livre'].includes(c)
+    })
+    assert.ok(!(await model()).waiting.some(x => x.target.id === a), 'and "Esperam você" does not list it')
     await page.screenshot({ path: join(SHOTS, 'r3-cartao-regencia-terminal.png') })
     // The conversation stays usable: the box takes text and sends with the card open; Esc there is the box's.
     const box17 = page.locator(`.rg-center .ch-pane[data-channel="${obra}"] .ch-composer-slot textarea`)

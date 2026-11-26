@@ -74,7 +74,7 @@ import { registerAgentUi } from './agent-ui.ts'
 import { registerProfileOption } from './profile-options.ts'
 import { ProcsStore } from './procs-store.ts'
 import type { ChoiceResolution, ChooserDestination, ChooserDestinations, ContextMenuEntry, ContextMenuRow, FileOpener, LooseCause, ManagerMenuOptions, MenuPin, PadHost, PadType, TabMenuOptions, TetherUi, WakeAnswer } from './ext-api.ts'
-import { DESK_PLACE_LABEL, EMBLEM_LABEL, GO_DESK_LABEL, GO_PANE_LABEL, WAKE_DESK_LABEL, WAKE_PANE_LABEL, managerDeskItems, managerDeskTail, managerPaneEntries } from './manager-menu-rules.ts'
+import { DESK_PLACE_LABEL, EMBLEM_LABEL, GO_DESK_LABEL, GO_PANE_LABEL, WAKE_DESK_LABEL, WAKE_PANE_LABEL, managerDeskItems, managerDeskTail, managerGroupedEntries, managerPaneEntries } from './manager-menu-rules.ts'
 import { DisabledPane, DisabledTab, type DisabledPaneHost } from './disabled-pane.ts'
 import { extensions } from '../../extensions/index.renderer.ts'
 import type { ExtensionManifest } from '../../extensions/types.ts'
@@ -1751,7 +1751,9 @@ function quickFactsOf(paneId: string): PeekPaneFacts | undefined {
   const desk = paneDeskOf(paneId)
   return {
     title: facts.title, typeId: facts.type, agent: !!s && s.kind !== 'shell', place: describePane(paneId)?.place, color: desk?.color,
-    ...(s ? { slot: peekHeader(s, Date.now()), slotKind: s.kind } : {}),
+    // The state from the same facts as the desk tree (the Regency's line and filter read them): one state, said alike.
+    ...(s ? { slotKind: s.kind } : {}),
+    ...(facts.attention ? { attention: facts.attention } : {}), busy: facts.busy === true, exited: facts.exited === true,
     asleep: facts.asleep === true, deskAsleep: desk?.asleep === true, icon: facts.icon as IconName, emblems: door.emblemsOf(paneId),
   }
 }
@@ -1947,8 +1949,8 @@ function peekNew(typeId: string, spec?: PeekNewSpec, from?: HTMLElement): string
   const id = spec?.id
   if (id !== undefined) {
     if (!id || (type.idPrefix && !id.startsWith(type.idPrefix))) return undefined
-    if (findPanel(id)) { peekPane(id, { from: from ?? menuRunOwner }); return id }
-    if (peekCard.screenId === id) { requestAnimationFrame(() => type.focus?.(id)); return id }
+    if (findPanel(id)) { peekPane(id, { from: from ?? menuRunOwner, ...(spec?.over ? { over: spec.over, focus: false } : {}) }); return id }
+    if (peekCard.screenId === id) { if (!spec?.over) requestAnimationFrame(() => type.focus?.(id)); return id }
   } else {
     const tab = allPanels().find(p => type.has(p.id))
     if (tab) { peekCard.close({ restoreFocus: false }); revealPane(tab.id); return tab.id }
@@ -1970,7 +1972,7 @@ function peekNew(typeId: string, spec?: PeekNewSpec, from?: HTMLElement): string
     paneId, typeId, title: options.title ?? typeId, icon: type.icon as IconName, element: content.element,
     focus: () => type.focus?.(paneId),
     dispose: () => content.dispose?.(),
-  }, from ?? menuRunOwner)
+  }, from ?? menuRunOwner, spec?.over)
   return paneId
 }
 let peekSeq = 0
@@ -3665,6 +3667,28 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}, at: () => { x: n
     // The emblem belongs to the tab: only a pane with one (findPanel above) wears it, wherever its desk is.
     emblem: { icon: 'tag' as const, label: EMBLEM_LABEL, run: () => { const p = at(); openEmblemMenu(id, p.x, p.y) } },
   } : undefined
+  if (full && opts.groups) {
+    const g = opts.groups
+    // The ownership rows come apart from the pane's own (basePaneEntries puts them on top), for their own block.
+    const top = fromExtMenu(door.paneMenuTop(describePane(id)).map(r => (r !== 'sep' && !('heading' in r) && r.pin === 'primary' ? { ...r, pin: 'icon' as const } : r)))
+    const own = basePaneEntries(id, true, false).map((e): MenuEntry => {
+      if (e === SEP || 'heading' in e || e.pin !== 'primary') return e
+      const { pin: _pin, ...unpinned } = e
+      return unpinned
+    })
+    const peekRow: MenuEntry | undefined = g.peek ? { icon: 'eye', label: PEEK_LABEL, ...(g.peekHint ? { trail: Object.assign(document.createElement('kbd'), { textContent: g.peekHint }) } : {}), run: () => g.peek?.() } : undefined
+    return managerGroupedEntries<MenuEntry>(own, top, {
+      ...(renameRow ? { rename: renameRow } : {}),
+      extra: fromExtMenu(opts.extra ?? []),
+      goLast: full,
+    }, {
+      heading: text => ({ heading: text }),
+      headingOf: e => (e !== SEP && 'heading' in e ? e.heading : undefined),
+      owner: g.owner,
+      ...(g.agent !== undefined ? { agent: g.agent } : {}),
+      ...(peekRow ? { peek: peekRow } : {}),
+    }, SEP, labelOfEntry)
+  }
   return managerPaneEntries<MenuEntry>(rest, [focus, close], {
     ...(renameRow ? { rename: renameRow } : {}),
     extra: fromExtMenu(opts.extra ?? []),
@@ -3676,14 +3700,14 @@ function paneMenuEntries(id: string, opts: TabMenuOptions = {}, at: () => { x: n
  * A pane's own menu as its tab shows it: the slot's, the empty pane's or the pane type's, with the extensions' rows
  * (TetherUi.panes.tabMenu) before its floor.
  */
-function basePaneEntries(id: string, forManager = false): MenuEntry[] {
+function basePaneEntries(id: string, forManager = false, withTop = true): MenuEntry[] {
   const slot = slots.get(id)
   const own = slot ? slotMenuEntries(slot) : empties.has(id) ? emptyMenuEntries(id) : typeMenuEntries(id)
   const pane = describePane(id)
   // In a manager an extension's `primary` is an icon: the two primaries of its bar are the guide's own (and a `highlight`).
   const ext = (rows: ContextMenuRow[]): MenuEntry[] => fromExtMenu(forManager ? rows.map(r => (r !== 'sep' && !('heading' in r) && r.pin === 'primary' ? { ...r, pin: 'icon' as const } : r)) : rows)
   const withFloor = withPaneMenuItems<MenuEntry>(own, ext(door.paneMenuItems(pane)), SEP, e => e !== SEP && 'label' in e && (e.label === LINK_LABEL || isCloseLabel(e.label)))
-  return withPaneMenuTop<MenuEntry>(withFloor, ext(door.paneMenuTop(pane)), SEP)
+  return withTop ? withPaneMenuTop<MenuEntry>(withFloor, ext(door.paneMenuTop(pane)), SEP) : withFloor
 }
 
 /** An extension's menu rows (items, separators, headings, one level of submenu) as the core's menu entries. */

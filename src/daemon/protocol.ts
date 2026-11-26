@@ -208,9 +208,11 @@ export type Request =
   /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
   /**
    * `desk`: the desk (its id, or its unique name) the slot's pane should be born in, without moving the person (it becomes
-   * `paneRequest`, which the app serves). Refused when the desk map is known and has no such desk, or the desk sleeps. Absent: as before.
+   * `paneRequest`, which the app serves). Refused when the desk map is known and has no such desk, the desk sleeps or is a system
+   * desk. Absent: as before. `slotId` + `key` (TETHER_SLOT_ID, TETHER_SLOT_KEY): the request comes from an agent's pane; with
+   * `desk`, only a desk that agent owns is accepted (`door-denied` otherwise, or when the key does not prove the slot).
    */
-  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string; desk?: string }
+  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string; desk?: string; slotId?: string; key?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
   | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
   /**

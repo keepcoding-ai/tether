@@ -52,7 +52,7 @@ type Hooks = {
   panelIds(): string[]
   activeDesk(): string
   runCommand(id: string): Promise<string>
-  peekState(): { open: boolean; screen?: string; screenType?: string }
+  peekState(): { open: boolean; screen?: string; screenType?: string; mode?: 'modal' | 'docked' }
   desks(): { id: string; panes: string[] }[]
   processesOutput(name: string): OutSnap | null
   processesEmbed(op: string, name?: string, arg?: Record<string, unknown>): Promise<{ ok?: true; refusal?: string }>
@@ -118,7 +118,7 @@ async function launch(home: string, pipe: string): Promise<{ app: ElectronApplic
 test('regency system: the column, processes, record, in use, red dot, ronda, profiles, projects, ajustes, phone', { timeout: 600_000 }, async () => {
   const build = spawnSync(process.execPath, [join(root, 'app', 'build.mjs')], { cwd: root, stdio: 'inherit' })
   assert.equal(build.status, 0, 'app build failed')
-  mkdirSync(SHOTS, { recursive: true })
+  mkdirSync(join(SHOTS, 'r6'), { recursive: true })
   const home = tempHome()
   const pipe = uniquePipe(home)
   const work = join(home, 'work')
@@ -284,9 +284,20 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     const web = (await rowOf('proc:web'))!
     assert.equal(web.state, 'ok')
     assert.match(web.text, /Rodando/)
-    assert.match(web.text, new RegExp(`${webPort} ouvindo`))
+    assert.match(web.text, new RegExp(`porta ${webPort}`))
+    assert.doesNotMatch(web.text, /parada|ouvindo/, 'a port never reads as a state beside "Rodando"')
     assert.ok(web.acts.includes('stop') && web.acts.includes('restart') && web.acts.includes('hold') && web.acts.includes('log'))
-    assert.match((await sys()).view.foot, /Processos novos nascem pela linha de comando/)
+    assert.match((await sys()).view.foot, /^.*Processos novos se criam pela linha de comando\.$/s)
+    assert.doesNotMatch((await sys()).view.foot, /tether proc/, 'no command on the foot')
+    // R6, M: every act of a process says its verb first, to the eye (tooltip) and to the screen reader (aria-label).
+    const tips = await row('proc:web').locator('.rg-sr-h .rg-sr-a button').evaluateAll(es => es.map(e => [(e as unknown as { dataset: { sys: string } }).dataset.sys, (e as unknown as { title: string }).title, (e as unknown as { getAttribute(n: string): string | null }).getAttribute('aria-label')]))
+    const verb: Record<string, string> = { stop: 'Parar', start: 'Iniciar', restart: 'Reiniciar', hold: 'Segurar', release: 'Soltar', log: 'Espiar o registro', more: 'Mais ações' }
+    for (const [id, title, aria] of tips) {
+      assert.ok(verb[id!] && title!.startsWith(verb[id!]!), `"${id}" has the tooltip "${verb[id!]}…" (${title})`)
+      assert.equal(aria, title, `"${id}" says the same to a screen reader`)
+    }
+    assert.equal(await act('proc:web', 'hold').locator('svg').count(), 1)
+    assert.equal(await act('proc:web', 'hold').getAttribute('aria-pressed'), 'false', '"Segurar" is a toggle (a lock)')
     assert.doesNotMatch(await page.locator('.rg-sys').innerText(), /Novo processo/)
     await act('proc:worker', 'stop').click()
     await until('worker stopped', async () => (await proc('worker'))?.status === 'stopped')
@@ -301,15 +312,21 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     await track('worker')
     await until('the row is running again', async () => (await rowOf('proc:worker'))?.state === 'ok')
     await page.screenshot({ path: join(SHOTS, 'r5-processos.png') })
+    await act('proc:web', 'stop').hover()
+    await page.waitForTimeout(900)
+    await page.screenshot({ path: join(SHOTS, 'r6', 'sistema-processos.png') })
 
     // ---- 4. the record: a peek with lines arriving; on a desk without switching ----
     console.log('step 4')
     await row('proc:web').locator('.rg-sr-n').click()
     await until('the card is the record', async () => { const s = await page.evaluate(() => window.__tether.peekState()); return s.open && s.screenType === 'process' })
+    // R6: docked over the conversation like every other quick view of the Regency, not the modal card.
+    assert.equal((await page.evaluate(() => window.__tether.peekState())).mode, 'docked', 'the record is docked over the conversation')
     let first: OutSnap | null = null
     await until('lines in the card', async () => { first = await page.evaluate(() => window.__tether.processesOutput('web')); return first && /tick \d+/.test(first.text) })
     await until('lines keep arriving', async () => ticks((await page.evaluate(() => window.__tether.processesOutput('web')))?.text ?? '') > ticks(first!.text) + 2)
     assert.ok(!(await page.evaluate(() => window.__tether.panelIds())).includes('process:web'), 'no tab for a peek')
+    await page.screenshot({ path: join(SHOTS, 'r6', 'registro-ancorado.png') })
     await closePeek()
     await act('proc:web', 'more').click()
     await page.locator('#ctx-menu li', { hasText: 'Abrir o registro numa mesa…' }).click()
@@ -355,8 +372,17 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     const worker = (await proc('worker'))!
     assert.equal(await killOwned(await claim(worker.pid!, { cmdIncludes: fixture, what: 'worker fixture' }), { tree: true }), 'killed')
     await until('the dot on the foot', async () => (await sys()).dot.foot, 20_000)
-    assert.match((await sys()).dot.tip, /O processo "worker" pede atenção/)
+    assert.match((await sys()).dot.tip, /O processo "worker" caiu/)
     assert.equal(await page.locator('.rg-reserved .rg-sys-dot:not([hidden])').isVisible(), true)
+    // R6, N: the dot comes with its words, in the same red.
+    assert.equal(await page.locator('.rg-reserved .rg-sys-dot-t').innerText(), '1 processo caiu')
+    const reds = await page.evaluate(() => {
+      const css = (s: string): string => (globalThis as unknown as { getComputedStyle(e: unknown): { color: string; backgroundColor: string } }).getComputedStyle(document.querySelector(s)).color
+      const bg = (s: string): string => (globalThis as unknown as { getComputedStyle(e: unknown): { backgroundColor: string } }).getComputedStyle(document.querySelector(s)).backgroundColor
+      return [css('.rg-reserved .rg-sys-dot-t'), bg('.rg-reserved .rg-sys-dot')]
+    })
+    assert.equal(reds[0], reds[1], 'the words are the dot\'s red')
+    await page.screenshot({ path: join(SHOTS, 'r6', 'processo-caiu.png') })
     assert.equal(await page.locator(`#desk-switch .seg.sys[data-system="${DESK}"] .rg-sys-dot`).count(), 0, 'not on the pill')
     await page.screenshot({ path: join(SHOTS, 'r5-ponto-vermelho.png') })
     await page.click('.rg-mode')
