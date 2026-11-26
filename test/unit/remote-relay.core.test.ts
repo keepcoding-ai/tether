@@ -1,14 +1,20 @@
 // Relay core (fio-spec 5, passo 1.2), with no socket: admission, routing between houses and devices, the limits
 // and the shutdown. Negative tests of spec 9.2 are named with their number; the socket-level ones (timing, ws
 // options, real backpressure) are in remote-relay.wire.timing.test.ts.
-import { describe, test } from 'node:test'
+import { describe as nodeDescribe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DENY_MAX, encodeOuter, randomBytes, toHex, type OuterFrame } from '../../src/remote/index.ts'
 import { RelayCore, type Peer } from '../../remote/relay/src/core.ts'
 import { RELAY_LIMITS, type RelayLimits } from '../../remote/relay/src/limits.ts'
-import {
-  data, deviceAdmit, dPair, FakeConn, houseAuth, makeDevice, makeHome, routeData, sleep, until, type Device, type Home,
-} from '../../remote/relay/test/fixtures.ts'
+import type { Device, Home } from '../../remote/relay/test/fixtures.ts'
+import { relayDepsMissing } from '../../remote/relay/test/deps.ts'
+
+// The fixtures load `ws`, a dependency of the relay package only: without `npm ci` there, the file skips.
+const SKIP = relayDepsMissing()
+const describe = (name: string, fn: () => void): void => { nodeDescribe(name, { skip: SKIP }, fn) }
+const fx = SKIP ? ({} as typeof import('../../remote/relay/test/fixtures.ts')) : await import('../../remote/relay/test/fixtures.ts')
+const { data, deviceAdmit, dPair, FakeConn, houseAuth, makeDevice, makeHome, routeData, sleep, until } = fx
+type FakeConn = InstanceType<typeof fx.FakeConn>
 
 const AUD = 'relay.test:8443'
 type Frame<T extends OuterFrame['type']> = Extract<OuterFrame, { type: T }>

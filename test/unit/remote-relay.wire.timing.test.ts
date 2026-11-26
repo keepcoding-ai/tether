@@ -1,21 +1,29 @@
 // Relay over real sockets (fio-spec 5, 9.2; passo 1.2): the relay on an ephemeral port, houses and devices as `ws`
 // clients. Timing-sensitive (the uniform refusal is measured), so it runs in the serial stage of the unit runner.
-import { afterEach, describe, test } from 'node:test'
+import { afterEach, describe as nodeDescribe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   encodeOuter, FAIL_DELAY_MS, MAX_OUTER, randomBytes, toHex, WS_SUBPROTOCOL, b64url,
   type Bytes, type OuterFrame,
 } from '../../src/remote/index.ts'
-import { startRelay, type RelayServer } from '../../remote/relay/src/shell.ts'
+import type { RelayServer } from '../../remote/relay/src/shell.ts'
 import { RELAY_LIMITS } from '../../remote/relay/src/limits.ts'
-import {
+import type { Client } from '../../remote/relay/test/fixtures.ts'
+import { relayDepsMissing } from '../../remote/relay/test/deps.ts'
+
+// The shell and the clients load `ws`, a dependency of the relay package only: without `npm ci` there, the file skips.
+const SKIP = relayDepsMissing()
+const describe = (name: string, fn: () => void): void => { nodeDescribe(name, { skip: SKIP }, fn) }
+const { startRelay } = SKIP ? ({} as typeof import('../../remote/relay/src/shell.ts')) : await import('../../remote/relay/src/shell.ts')
+const {
   connect, data, deviceAdmit, deviceTry, dPair, houseAuth, houseOnline, makeDevice, makeHome, nowS, routeData, sleep,
-  terminateClients, until, type Client,
-} from '../../remote/relay/test/fixtures.ts'
+  terminateClients, until,
+} = SKIP ? ({} as typeof import('../../remote/relay/test/fixtures.ts')) : await import('../../remote/relay/test/fixtures.ts')
 
 // A failed assertion skips the test's own close: the hook closes what is left, so the file never hangs.
 const relays: RelayServer[] = []
 afterEach(async () => {
+  if (SKIP) return
   terminateClients()
   await Promise.all(relays.splice(0).map(r => r.close()))
 })
