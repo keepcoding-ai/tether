@@ -27,6 +27,7 @@ import { cmdPause } from './pause.ts'
 import { cmdRonda } from './ronda.ts'
 import { cmdProc } from './proc.ts'
 import { cmdSync } from './sync.ts'
+import { cmdRemote } from './remote.ts'
 import { askerOf, cmdVerb, helpWithVerbs } from './verb.ts'
 import { adapterOf, planFor, profileFor, runHere } from './here.ts'
 import { cmdUsage } from './usage.ts'
@@ -83,6 +84,10 @@ export const USAGE = `uso: tether <comando> [opções]
   sync now [--json]                   sincroniza: envia o que mudou aqui e traz o que mudou lá
   sync status [--json]                o que está ligado, pendências e a última sincronização
   sync disconnect                     desliga (os arquivos ficam)
+  remote status [--json]              acesso remoto: ligado ou não, portal, relay e aparelhos
+  remote off                          desliga o acesso remoto (as sessões dos aparelhos terminam)
+  remote revoke <aparelho>            revoga um aparelho pareado (id ou começo único dele)
+                                      (parear e ligar se faz no app, na tela; nunca por aqui)
   <ns> <verbo> [args]                 verbo contribuído por uma extensão (precisa do tetherd; sem
                                       <verbo>, lista os do <ns>)
   link                                imprime o link tether:// deste painel (só dentro do tether)
@@ -146,6 +151,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'pause': return await cmdPause(rest, { out, err, env: process.env })
       case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       case 'sync': return await cmdSync(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
+      case 'remote': return await cmdRemote(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
         // Not a built-in: a verb an extension contributed (`tether <ns> <verbo>`); the built-ins above always win.
