@@ -106,7 +106,7 @@ import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
 import { PeekCard, type PeekHost, type PeekPaneFacts, type PeekPaneOptions } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { lentNotice, paneLentNotice, paneRoute, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
+import { cardHoldsKeys, commandAim, lentNotice, paneLentNotice, paneOwns, paneRoute, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type CardKeyboard, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -302,17 +302,35 @@ function focusOwnerOf(el: Element | null | undefined): CommandContext['focus'] {
  * the commands: the editor's actions (available with `focus === 'editor'`) must still count the note as focused.
  */
 let focusOwner: CommandContext['focus'] = 'none'
+/** The last non-transient owner of the keyboard was inside the peek card (the palette over the card keeps aiming at it). */
+let focusInCard = false
 document.addEventListener('focusin', ev => {
   const t = ev.target instanceof Element ? ev.target : null
   if (t?.closest(TRANSIENT_FOCUS)) return
   focusOwner = focusOwnerOf(t)
+  focusInCard = !!peekCard?.contains(t)
 })
+
+/** The card and the keyboard, as peek-rules.ts commandAim reads them. */
+function cardKeyboard(): CardKeyboard {
+  const active = document.activeElement
+  const transient = !active || active === document.body || !!active.closest(TRANSIENT_FOCUS)
+  return { lent: !!(peekCard?.isOpen && peekCard.lentPane), modal: !!peekCard?.isModal, focusInCard: transient ? focusInCard : !!peekCard?.contains(active) }
+}
+
+/**
+ * The pane the pane's commands aim at: the tab lent to the peek card while the keyboard is in the card (peek-rules.ts
+ * cardHoldsKeys), else the current desk's active pane.
+ */
+function commandPaneId(): string | undefined {
+  return cardHoldsKeys(cardKeyboard()) ? peekCard!.lentPane : currentDesk().activePanel?.id
+}
 
 function commandContext(): CommandContext {
   const active = document.activeElement
   const transient = !active || active === document.body || active.closest(TRANSIENT_FOCUS)
   const focus = transient ? focusOwner : focusOwnerOf(active)
-  const activeId = currentDesk().activePanel?.id
+  const activeId = commandPaneId()
   // The active pane's type and its context flags (PaneType.contextFlags: 'markdown.note', 'keybindings.screen'…).
   const type = activeId ? liveTypeOf(paneTypes, activeId) : undefined
   // A screen in the peek card adds its flags: its own commands work while it is there (the desk's pane stays the active one).
@@ -333,11 +351,18 @@ function peekScreenFlags(): readonly string[] {
 }
 
 /**
- * The chords that fire with the card open: the card's own few (peek-rules.ts peekKeeps) and, with a screen in it, the
+ * The chords that fire with the card open: the card's own few (peek-rules.ts peekKeeps); with a lent tab in it, what
+ * peek-rules.ts commandAim aims at the card (the tab's own commands, the pane-level ones); with a screen in it, the
  * screen's own commands (peek-rules.ts screenOwns: true only thanks to the screen's flags).
  */
 function peekChordKeeps(command: string): boolean {
   if (peekKeeps(command)) return true
+  const k = cardKeyboard()
+  if (k.lent) {
+    // A lent tab in the card: its own commands and the pane-level ones aim at it; the structure and the rest stay quiet.
+    const when = commands.get(command)?.when
+    return commandAim({ ...k, command, key: true, paneOwn: paneOwns(when, commandContext()) }) !== 'mute'
+  }
   const screen = peekScreenFlags()
   const when = commands.get(command)?.when
   if (!screen.length || !when) return false
@@ -4173,7 +4198,7 @@ const commandHost: CommandHost = {
   duplicateActive: target => { void duplicateActive(target) },
   splitEmpty: (target, origin) => splitEmpty(target, origin),
   newEmptyDesk: () => newEmptyDesk(),
-  activePane: () => { const a = currentDesk().activePanel; return a && (slots.has(a.id) || liveTypeOf(paneTypes, a.id)) ? a.id : undefined },
+  activePane: scope => { const id = scope === 'desk' ? currentDesk().activePanel?.id : commandPaneId(); return id && (slots.has(id) || liveTypeOf(paneTypes, id)) ? id : undefined },
   renamePane: id => { const type = liveTypeOf(paneTypes, id); if (type?.rename) type.rename(id); else tabs.get(id)?.startRename() },
   switchProfile: id => { if (slots.has(id)) void switchProfile(id) },
   restartAgent: id => { if (slots.has(id)) void restartAgent(id) },
@@ -4390,7 +4415,7 @@ const dispatcher = new ChordDispatcher({
   // The peek card open: only the palette and the card's own close keep their chords (peek-rules.ts PEEK_KEEPS). Docked, the
   // filter holds only while the keyboard is in the card: the conversation and the tree around it keep every chord.
   keeps: () => peekCard?.isOpen && (peekCard.isModal || peekCard.contains(document.activeElement)) ? peekChordKeeps : undefined,
-  editorChord: (first, second) => { const id = currentDesk().activePanel?.id; return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
+  editorChord: (first, second) => { const id = commandPaneId(); return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
 })
 let pill: ChordPill
 /** The keydown the dispatcher let through to the terminal (Ctrl+K twice = ^K): the panel's own policy must not take it back. */
@@ -5265,7 +5290,8 @@ function activateRendererExtensions(): void {
         register: type => add(paneTypes.register(type)),
         open: (options, where) => addPaneOptions(options, where?.target, where?.reference),
         find: paneId => findPanel(paneId),
-        activeId: () => (openingFile ? fileTargetDesk() : currentDesk()).activePanel?.id,
+        // The tab lent to the peek card while the keyboard is in it (Ctrl+S saves the note in the card), else the desk's.
+        activeId: () => openingFile ? fileTargetDesk().activePanel?.id : commandPaneId(),
         deskActiveId: () => fileTargetDesk().activePanel?.id,
         cwdOf: paneId => paneCwdOf(paneId),
         focus: paneId => focusPane(paneId),

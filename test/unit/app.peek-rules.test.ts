@@ -6,8 +6,10 @@ import {
   backButton, closeTip, DOCK_KEEP_BELOW, DOCK_MARGIN, DOCK_MAX_HEIGHT, DOCK_MAX_WIDTH, DOCK_MIN_HEIGHT, DOCK_MIN_WIDTH, DOCK_WIDTH_SHARE, dockedBox, lentNotice, PEEK_CLOSE_COMMAND,
   PEEK_SCREEN_COMMANDS, paneCardFoot, paneCardHead, paneRefusalText, paneRoute, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan,
   peekOpenButton, peekRoute, quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView, type PaneCardFacts,
+  cardHoldsKeys, commandAim, isStructureCommand, paneOwns, PEEK_PANE_COMMANDS, type CommandAimInput,
 } from '../../app/renderer/peek-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
+import { commandFromContribution, type CommandContext } from '../../app/renderer/commands.ts'
 
 describe('where a peek goes', () => {
   test('a live slot without a tab opens the card', () => {
@@ -265,5 +267,58 @@ describe('the quick view of a pane', () => {
     assert.equal(tiny.width, 300 - 2 * DOCK_MARGIN)
     assert.ok(tiny.left >= 10 && tiny.top >= 10 && tiny.left + tiny.width <= 310 && tiny.top + tiny.height <= 310, JSON.stringify(tiny))
     assert.equal(tiny.height, DOCK_MIN_HEIGHT, 'short: the floor height, the box of speech may be covered')
+  })
+})
+
+describe('the command target with a tab in the card', () => {
+  const aim = (o: Partial<CommandAimInput> & { command: string }): string =>
+    commandAim({ lent: true, modal: true, focusInCard: true, key: true, paneOwn: false, ...o })
+
+  test('the card holds the keys only with a lent tab, and with the keyboard in it unless modal', () => {
+    assert.equal(cardHoldsKeys({ lent: false, modal: true, focusInCard: true }), false, 'no lent tab (closed, an agent card, a screen)')
+    assert.equal(cardHoldsKeys({ lent: true, modal: true, focusInCard: false }), true, 'modal: nothing else takes the keyboard')
+    assert.equal(cardHoldsKeys({ lent: true, modal: false, focusInCard: true }), true, 'docked, keyboard in the card')
+    assert.equal(cardHoldsKeys({ lent: true, modal: false, focusInCard: false }), false, 'docked, keyboard in the conversation or the tree')
+  })
+
+  test('without the card holding the keys every command aims at the desk, as before', () => {
+    for (const command of ['note.save', 'pane.close', 'pane.new-tab', 'font.increase', 'desk.next']) {
+      assert.equal(aim({ command, lent: false, paneOwn: true }), 'desk', `closed: ${command}`)
+      assert.equal(aim({ command, modal: false, focusInCard: false, paneOwn: true }), 'desk', `docked, outside: ${command}`)
+    }
+  })
+
+  test('the tab\'s own commands and the pane-level ones aim at the card, by chord and by pick', () => {
+    assert.equal(aim({ command: 'note.save', paneOwn: true }), 'card')
+    assert.equal(aim({ command: 'markdown.preview', paneOwn: true, modal: false }), 'card', 'docked, keyboard in the card')
+    for (const command of PEEK_PANE_COMMANDS) assert.equal(aim({ command }), 'card', command)
+    assert.equal(aim({ command: 'pane.rename', key: false }), 'card', 'a pick from the palette aims at the card')
+  })
+
+  test('the structure is quiet by chord and stays on the desk when picked', () => {
+    for (const command of ['pane.new-tab', 'pane.new', 'pane.reopen-closed', 'pane.duplicate.pane.right', 'pane.split-empty.pane.left', 'pane.close', 'pane.move', 'pane.next-tab', 'pane.go.3', 'frame.close-tabs', 'desk.new', 'desk.next']) {
+      assert.equal(isStructureCommand(command), true, command)
+      assert.equal(aim({ command, paneOwn: true }), 'mute', `chord, modal: ${command}`)
+      assert.equal(aim({ command, modal: false }), 'mute', `chord, docked in the card: ${command}`)
+      assert.equal(aim({ command, key: false }), 'desk', `pick: ${command}`)
+    }
+    for (const command of ['note.save', 'font.increase', 'pane.copy-link', 'peek.close']) assert.equal(isStructureCommand(command), false, command)
+  })
+
+  test('the card\'s own few run as always; the rest of the table is quiet by chord', () => {
+    for (const command of ['peek.close', 'palette.show', 'drawer.toggle']) assert.equal(aim({ command }), 'desk', command)
+    for (const command of ['theme.pick', 'sessions.search', 'app.quit-all', 'pane.rename']) assert.equal(aim({ command }), 'mute', command)
+  })
+
+  test('a command is the pane\'s own when its rule needs the pane\'s type, flags or focus, not just "a pane"', () => {
+    const ctx = (o: Partial<CommandContext>): CommandContext => ({ pane: true, desks: 1, drawerOpen: false, focus: 'none', flags: new Set(), ...o })
+    const save = commandFromContribution({ command: 'note.save', title: 's', when: 'focus == editor' }, () => {}).when
+    assert.equal(paneOwns(save, ctx({ focus: 'editor', paneType: 'note' })), true, 'Ctrl+S in the card\'s editor')
+    assert.equal(paneOwns(save, ctx({ focus: 'terminal', paneType: 'terminal' })), false, 'not in a terminal')
+    const preview = commandFromContribution({ command: 'markdown.preview', title: 'p', when: 'markdown.note' }, () => {}).when
+    assert.equal(paneOwns(preview, ctx({ flags: new Set(['markdown.note']) })), true, 'a flag of the type')
+    assert.equal(paneOwns(c => c.paneType === 'channel', ctx({ paneType: 'channel' })), true, 'the type itself')
+    assert.equal(paneOwns(c => c.pane, ctx({ paneType: 'note', focus: 'editor' })), false, 'only "a pane": everybody\'s')
+    assert.equal(paneOwns(undefined, ctx({ paneType: 'note' })), false, 'no rule: nobody\'s')
   })
 })

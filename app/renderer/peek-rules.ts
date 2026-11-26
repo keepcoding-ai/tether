@@ -6,6 +6,7 @@
 // A slot has one terminal and one pty size: without a tab the card attaches its own terminal and detaches on close; with
 // a tab the card borrows the tab's terminal and gives it back on close (never two views of the same slot at once).
 import type { SlotKind, SlotState } from '../../src/daemon/protocol.ts'
+import type { CommandContext } from './commands.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { escAction, type EscAction, type EscInput } from './drawer-rules.ts'
 import { GO_PANE_LABEL } from './manager-menu-rules.ts'
@@ -208,6 +209,78 @@ export function peekKeeps(command: string): boolean {
 export function screenOwns(when: ((flags: ReadonlySet<string>) => boolean) | undefined, base: ReadonlySet<string>, screenFlags: readonly string[]): boolean {
   if (!when || screenFlags.length === 0) return false
   return when(new Set([...base, ...screenFlags])) && !when(base)
+}
+
+// ---------- the command target while a pane is in the card ----------
+// With a tab lent to the card and the keyboard in the card, the card's pane is the target of the pane's commands (the
+// context `when` rules read, `ui.panes.activeId`, the pane-level app commands): Ctrl+S saves the note in the card, not the
+// desk's active tab. The commands that change the structure (new tab, split, duplicate, move, close, the frames and desks)
+// never act on the lent pane: their chords are quiet with the keyboard in the card, and from the palette they keep acting on
+// the desk. Docked (the Regency), the keyboard leaving the card (the conversation, the tree) gives the target back to the desk.
+
+/** Where a command run lands: the desk's active pane (as without a card), the pane in the card, or nowhere (its chord is quiet). */
+export type CommandAim = 'desk' | 'card' | 'mute'
+
+export interface CardKeyboard {
+  /** The card is open and shows a lent tab (not an agent's own terminal, not a system screen: those keep their rules). */
+  lent: boolean
+  /** The card is modal (outside the Regency): nothing else of the window takes the keyboard. */
+  modal: boolean
+  /** The keyboard's last non-transient place is inside the card (the palette's field and the menus do not move it). */
+  focusInCard: boolean
+}
+
+/** Whether the pane in the card is the command target now: a lent tab, and the keyboard in the card (always, when modal). */
+export function cardHoldsKeys(k: CardKeyboard): boolean {
+  return k.lent && (k.modal || k.focusInCard)
+}
+
+/**
+ * The app commands that act on the pane the keyboard aims at and change nothing of the layout: the terminal's zoom (the font
+ * of every terminal, the one in the card included) and copying what the pane points to. Their chords fire in the card.
+ */
+export const PEEK_PANE_COMMANDS: readonly string[] = ['font.increase', 'font.decrease', 'font.reset', 'pane.copy-folder', 'pane.open-folder', 'pane.copy-link']
+
+const STRUCTURE_PREFIXES: readonly string[] = ['pane.new', 'pane.duplicate.', 'pane.split-empty.', 'pane.go.', 'frame.', 'desk.']
+const STRUCTURE_COMMANDS: readonly string[] = ['pane.reopen-closed', 'pane.next-tab', 'pane.previous-tab', 'pane.last', 'pane.move', 'pane.close']
+
+/** A command that changes the structure (tabs, frames, desks) or walks it: never aimed at a lent pane. */
+export function isStructureCommand(command: string): boolean {
+  return STRUCTURE_COMMANDS.includes(command) || STRUCTURE_PREFIXES.some(p => command.startsWith(p))
+}
+
+export interface CommandAimInput extends CardKeyboard {
+  command: string
+  /** The command came from a chord (else the palette, a menu, the CLI: an explicit pick). */
+  key: boolean
+  /** The command is the pane's own: its `when` holds only thanks to the pane in the card (paneOwns). */
+  paneOwn: boolean
+}
+
+/**
+ * Who a command aims at. Without a lent tab holding the keyboard, the desk, as always. With one: a structure command's chord
+ * is quiet and its explicit run stays on the desk; the card's own few (peekKeeps) run as they always did; every other
+ * explicit run aims at the card; a chord aims at the card only for the pane's own commands and PEEK_PANE_COMMANDS, and the
+ * rest of the table stays quiet, as with a dialog up.
+ */
+export function commandAim(i: CommandAimInput): CommandAim {
+  if (!cardHoldsKeys(i)) return 'desk'
+  if (isStructureCommand(i.command)) return i.key ? 'mute' : 'desk'
+  if (peekKeeps(i.command)) return 'desk'
+  if (!i.key) return 'card'
+  return i.paneOwn || PEEK_PANE_COMMANDS.includes(i.command) ? 'card' : 'mute'
+}
+
+/**
+ * Whether a command is the pane's own: its `when` holds with the pane's context (its type, its flags, the keyboard in its
+ * editor or terminal) and not with a bare pane of no type and no focus (`note.save` is `focus == editor`; a rule that only
+ * asks for "a pane" is everybody's). A command without a rule is nobody's own.
+ */
+export function paneOwns(when: ((ctx: CommandContext) => boolean) | undefined, ctx: CommandContext): boolean {
+  if (!when) return false
+  const { paneType: _type, unread: _unread, keybindings: _keys, ...rest } = ctx
+  const bare: CommandContext = { ...rest, pane: true, flags: new Set<string>(), focus: 'none' }
+  return when(ctx) && !when(bare)
 }
 
 // ---------- a system screen in the card ----------

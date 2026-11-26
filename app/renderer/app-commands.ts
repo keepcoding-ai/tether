@@ -29,8 +29,12 @@ export interface CommandHost {
   splitEmpty(target: Target, origin: EmptyOrigin): void
   /** A new desk after the current one, holding one empty pane. */
   newEmptyDesk(): void
-  /** The pane the pane-level commands act on (the current desk's active pane), or undefined. */
-  activePane(): string | undefined
+  /**
+   * The pane the pane-level commands act on, or undefined: the tab lent to the peek card while the keyboard is in the card,
+   * else the current desk's active pane. `'desk'`: always the desk's (the structure commands, move and close, never act on a
+   * lent tab: peek-rules.ts isStructureCommand).
+   */
+  activePane(scope?: 'desk'): string | undefined
   renamePane(id: string): void
   switchProfile(id: string): void
   /** "Reiniciar agente": relaunch the pane's agent resuming the same session (the daemon refuses shells and unreported sessions). */
@@ -123,6 +127,7 @@ const TAB_POSITIONS = DESK_POSITIONS
 export function appCommands(host: CommandHost): Command[] {
   const pane = { when: (ctx: { pane: boolean }) => ctx.pane }
   const withPane = (f: (id: string) => void) => (): void => { const id = host.activePane(); if (id) f(id) }
+  const withDeskPane = (f: (id: string) => void) => (): void => { const id = host.activePane('desk'); if (id) f(id) }
   const duplicates = (['pane', 'frame', 'desk'] as const).flatMap(level => DIRECTIONS.map((direction: Direction): Command => ({
     id: `pane.duplicate.${level}.${direction}`,
     title: `${DUPLICATE_LABEL} ${LEVEL_WORDING[level]}${PLACEMENT_LABEL[direction]}`,
@@ -173,8 +178,8 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.copy-link', title: 'Copiar link do painel', group: GROUP.pane, icon: 'link', ...pane, run: withPane(id => host.copyLink(id)) },
     { id: 'pane.copy-folder', title: 'Copiar pasta do painel', group: GROUP.pane, icon: 'copy', ...pane, run: withPane(id => host.copyFolder(id)) },
     { id: 'pane.open-folder', title: 'Abrir pasta do painel no Explorer', group: GROUP.pane, icon: 'folder-open', ...pane, run: withPane(id => host.openFolder(id)) },
-    { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withPane(id => host.movePane(id)) },
-    { id: 'pane.close', title: 'Fechar painel…', group: GROUP.pane, icon: 'x', ...pane, run: withPane(id => host.closePane(id)) },
+    { id: 'pane.move', title: 'Mover painel…', group: GROUP.pane, icon: 'arrow-square-out', ...pane, run: withDeskPane(id => host.movePane(id)) },
+    { id: 'pane.close', title: 'Fechar painel…', group: GROUP.pane, icon: 'x', ...pane, run: withDeskPane(id => host.closePane(id)) },
     // (the note commands come from the note extension: extensions/note/manifest.ts)
     // ----- desk -----
     { id: 'desk.new', title: 'Nova mesa', group: GROUP.desk, icon: 'cards', when: ctx => !ctx.drawerOpen, run: () => host.createDesk('after') },
