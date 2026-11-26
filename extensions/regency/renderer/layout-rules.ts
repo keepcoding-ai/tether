@@ -1,6 +1,7 @@
 // The Regency's layout, pure: what the pane keeps in its parameters (chosen channel, mode, folded desks...) and the ruler of
 // the four tiers by the pane's width. No DOM. The search text is not kept here: it lives only in the open pane.
 import { TREE_FILTERS, type TreeFilter } from '../model.ts'
+import { DEFAULT_SYSTEM_SECTION, isSystemSection, type SystemSection } from '../system-rules.ts'
 
 export type RegencyMode = 'manage' | 'immersion'
 export type NarrowTab = 'waiting' | 'conversation' | 'tether'
@@ -20,6 +21,10 @@ export interface RegencyLayout {
   view: RegencyView
   /** The state filter of the tree. */
   filter: TreeFilter
+  /** The open section of "Sistema", remembered (absent: never opened, it opens on the first). */
+  system?: SystemSection
+  /** The right column shows "Sistema" instead of the tether's (absent: the tether's). */
+  column?: 'system'
 }
 
 export const DEFAULT_LAYOUT: Readonly<RegencyLayout> = {
@@ -43,6 +48,8 @@ export function readLayout(params: unknown): RegencyLayout {
     narrowTab: NARROW_TABS.find(t => t === p.narrowTab) ?? DEFAULT_LAYOUT.narrowTab,
     view: p.view === 'agent' ? 'agent' : 'desk',
     filter: TREE_FILTERS.find(f => f === p.filter) ?? 'all',
+    ...(isSystemSection(p.system) ? { system: p.system } : {}),
+    ...(p.column === 'system' ? { column: 'system' as const } : {}),
   }
 }
 
@@ -79,6 +86,24 @@ export function openingTab(saved: NarrowTab, waiting: number): NarrowTab {
 export const setView = (l: RegencyLayout, view: RegencyView): RegencyLayout => ({ ...l, view })
 
 export const setFilter = (l: RegencyLayout, filter: TreeFilter): RegencyLayout => ({ ...l, filter })
+
+/** Which column the right side shows. */
+export const rightColumnOf = (l: RegencyLayout): 'tether' | 'system' => (l.column === 'system' ? 'system' : 'tether')
+
+/** The section "Sistema" shows: the remembered one, or the first. */
+export const systemSectionOf = (l: RegencyLayout): SystemSection => l.system ?? DEFAULT_SYSTEM_SECTION
+
+/** "Sistema" takes the right column, on the given section or the remembered one. */
+export const openSystem = (l: RegencyLayout, section?: SystemSection): RegencyLayout => ({ ...l, column: 'system', system: section ?? systemSectionOf(l) })
+
+/** Changes the open section (and keeps it); it also brings the column if it was not showing. */
+export const setSystemSection = (l: RegencyLayout, section: SystemSection): RegencyLayout => openSystem(l, section)
+
+/** "‹ Tether": the tether's column comes back; the section stays remembered. */
+export function backToTether(l: RegencyLayout): RegencyLayout {
+  const { column: _drop, ...rest } = l
+  return rest
+}
 
 /** The tier by the pane's width in px: mobile < 768, tablet < 1280, desktop < 2560, wide from there. */
 export function tierOf(widthPx: number): Tier {
