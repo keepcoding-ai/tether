@@ -272,6 +272,26 @@ export function commandAim(i: CommandAimInput): CommandAim {
 }
 
 /**
+ * The chords an extension listens to on the document itself, outside the command table (the browser's Ctrl+L, edit the active
+ * tab's address, and Ctrl+T, a new tab on the Browser desk). They act on the desk's active tab, which sits BEHIND the card: with
+ * a lent tab holding the keyboard they are muted like a structure chord (the card's own tab has no address field in view).
+ */
+export const CARD_MUTED_CHORDS: readonly string[] = ['l', 't']
+
+export interface ChordPress {
+  key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean
+  /** The press is in a terminal: the program owns Ctrl+L and Ctrl+T (xterm sends and cancels them itself), nothing to swallow. */
+  inTerminal?: boolean
+}
+
+/** Whether a key press is one of CARD_MUTED_CHORDS while the card holds the keyboard (cardHoldsKeys): the card swallows it. */
+export function cardMutesChord(k: CardKeyboard, ev: ChordPress): boolean {
+  if (!cardHoldsKeys(k) || ev.inTerminal) return false
+  if (!ev.ctrlKey || ev.shiftKey || ev.altKey || ev.metaKey) return false
+  return CARD_MUTED_CHORDS.includes(ev.key.toLowerCase())
+}
+
+/**
  * Whether a command is the pane's own: its `when` holds with the pane's context (its type, its flags, the keyboard in its
  * editor or terminal) and not with a bare pane of no type and no focus (`note.save` is `focus == editor`; a rule that only
  * asks for "a pane" is everybody's). A command without a rule is nobody's own.

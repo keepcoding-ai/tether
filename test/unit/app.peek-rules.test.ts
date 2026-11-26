@@ -7,6 +7,7 @@ import {
   PEEK_SCREEN_COMMANDS, paneCardFoot, paneCardHead, paneRefusalText, paneRoute, peekDismiss, peekEscAction, peekFoot, peekHeader, peekKeeps, peekLabel, peekMenuPlan,
   peekOpenButton, peekRoute, quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, screenOwns, tabInView, type PaneCardFacts,
   cardHoldsKeys, commandAim, isStructureCommand, paneOwns, PEEK_PANE_COMMANDS, type CommandAimInput,
+  CARD_MUTED_CHORDS, cardMutesChord, type ChordPress,
 } from '../../app/renderer/peek-rules.ts'
 import { shortcutHint } from '../../app/renderer/shortcuts.ts'
 import { commandFromContribution, type CommandContext } from '../../app/renderer/commands.ts'
@@ -319,5 +320,28 @@ describe('the command target with a tab in the card', () => {
     assert.equal(paneOwns(c => c.paneType === 'channel', ctx({ paneType: 'channel' })), true, 'the type itself')
     assert.equal(paneOwns(c => c.pane, ctx({ paneType: 'note', focus: 'editor' })), false, 'only "a pane": everybody\'s')
     assert.equal(paneOwns(undefined, ctx({ paneType: 'note' })), false, 'no rule: nobody\'s')
+  })
+})
+
+describe('the document chords of extensions with a tab in the card (Ctrl+L, Ctrl+T)', () => {
+  const press = (key: string, o: Partial<ChordPress> = {}): ChordPress => ({ key, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, ...o })
+  const holds = { lent: true, modal: true, focusInCard: true }
+
+  test('the card holding the keyboard swallows Ctrl+L and Ctrl+T: they would act on the tab behind it', () => {
+    assert.deepEqual([...CARD_MUTED_CHORDS], ['l', 't'])
+    assert.equal(cardMutesChord(holds, press('l')), true)
+    assert.equal(cardMutesChord(holds, press('L')), true, 'Caps Lock')
+    assert.equal(cardMutesChord(holds, press('t')), true)
+    assert.equal(cardMutesChord({ lent: true, modal: false, focusInCard: true }, press('l')), true, 'docked, keyboard in the card')
+  })
+
+  test('without the card holding the keyboard, other chords, or in a terminal, nothing is swallowed', () => {
+    assert.equal(cardMutesChord({ lent: false, modal: true, focusInCard: true }, press('l')), false, 'no lent tab')
+    assert.equal(cardMutesChord({ lent: true, modal: false, focusInCard: false }, press('l')), false, 'docked, keyboard in the conversation')
+    assert.equal(cardMutesChord(holds, press('l', { shiftKey: true })), false)
+    assert.equal(cardMutesChord(holds, press('l', { altKey: true })), false)
+    assert.equal(cardMutesChord(holds, press('l', { ctrlKey: false })), false)
+    assert.equal(cardMutesChord(holds, press('k')), false)
+    assert.equal(cardMutesChord(holds, press('l', { inTerminal: true })), false, 'the program owns it (clear screen)')
   })
 })

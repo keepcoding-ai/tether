@@ -42,7 +42,7 @@ import { emblemNode, type MakeIcon } from './door/tab-emblem-rules.ts'
 import type { TerminalPanel } from './panel.ts'
 import type { LendRefusal } from './pane-loan-rules.ts'
 import {
-  backButton, closeTip, dockedBox, lentNotice, paneCardFoot, paneCardHead, paneRefusalText, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton,
+  backButton, cardMutesChord, closeTip, dockedBox, lentNotice, paneCardFoot, paneCardHead, paneRefusalText, peekDismiss, peekFoot, peekHeader, peekLabel, peekMenuPlan, peekOpenButton,
   quickEscCloses, screenFoot, screenMenuPlan, screenOpenButton, screenOpenPlan, type PaneCardFacts, type PeekMenuItem, type PeekOpenButton, type PeekTop, type QuickEscPlace,
 } from './peek-rules.ts'
 import { lentNoticeElement, type ShellLoan } from './pane-shell.ts'
@@ -293,6 +293,15 @@ export class PeekCard {
     // Tab goes round inside the card: the header's buttons, then the content, then the buttons again. (Inside the terminal
     // Tab is the program's: xterm sends it, so it never gets here.)
     this.root.addEventListener('keydown', ev => this.trapTab(ev))
+    // The document-level chords of extensions that aim at the desk's active tab (peek-rules.ts CARD_MUTED_CHORDS): with a lent tab
+    // holding the keyboard they would act on the tab behind the card. Swallowed first (capture): their listeners skip a
+    // prevented event.
+    document.addEventListener('keydown', ev => {
+      const a = document.activeElement
+      const inTerminal = ev.target instanceof Element && ev.target.closest('.xterm') !== null
+      const keys = { lent: this.isOpen && !!this.lentPane, modal: this.isModal, focusInCard: !!a && a !== document.body && this.root.contains(a) }
+      if (cardMutesChord(keys, { key: ev.key, ctrlKey: ev.ctrlKey, shiftKey: ev.shiftKey, altKey: ev.altKey, metaKey: ev.metaKey, inTerminal })) ev.preventDefault()
+    }, true)
     this.buildPaneChrome()
     document.body.append(this.root)
   }
