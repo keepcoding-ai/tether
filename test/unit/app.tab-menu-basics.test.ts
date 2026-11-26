@@ -1,7 +1,7 @@
 // The floor of every tab's menu (app/renderer/tab-menu-basics.ts): whatever a pane type draws, the menu has the link and a close.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from '../../app/renderer/tab-menu-basics.ts'
+import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withRowBeforeFloor, withTabMenuBasics } from '../../app/renderer/tab-menu-basics.ts'
 
 type Item = { label: string }
 type E = Item | 'sep'
@@ -34,6 +34,17 @@ describe('withTabMenuBasics', () => {
   })
   test('what is missing goes after a separator, the type\'s entries untouched', () => {
     assert.deepEqual(labels(withTabMenuBasics([{ label: 'Mover…' }], SEP, basics)), ['Mover…', '—', LINK_LABEL, CLOSE_LABEL])
+  })
+  test('withRowBeforeFloor: the row joins the group before the close, so no row comes after the floor', () => {
+    const row: Item = { label: 'Espiar' }
+    for (const [name, menu] of Object.entries(TYPE_MENUS)) {
+      const out = labels(withTabMenuBasics(withRowBeforeFloor(menu, SEP, row), SEP, basics))
+      assert.equal(out.filter(l => l === 'Espiar').length, 1, name)
+      const closeAt = out.findIndex(isCloseLabel)
+      assert.ok(out.indexOf('Espiar') < closeAt, `${name}: ${out.join(', ')}`)
+    }
+    assert.deepEqual(labels(withRowBeforeFloor([{ label: 'Mover…' }, SEP, { label: 'Fechar nota' }], SEP, row)), ['Mover…', 'Espiar', '—', 'Fechar nota'])
+    assert.deepEqual(labels(withRowBeforeFloor([], SEP, row)), ['Espiar'])
   })
   test('close labels', () => {
     for (const l of ['Fechar', 'Fechar painel…', 'Fechar guia']) assert.ok(isCloseLabel(l))

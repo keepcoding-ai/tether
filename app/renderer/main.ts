@@ -43,7 +43,7 @@ import { bulkCloseSituation, forgetEndedSituation, stopHeldSituation, turnState 
 import { closedSessionsOf, closedSignature, type ClosedSession } from './closed-sessions-rules.ts'
 import { createSessionsMenu, type SessionsMenu } from './sessions-menu.ts'
 import { setupToolbarOverflow } from './toolbar-overflow.ts'
-import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withTabMenuBasics } from './tab-menu-basics.ts'
+import { CLOSE_LABEL, LINK_LABEL, isCloseLabel, withRowBeforeFloor, withTabMenuBasics } from './tab-menu-basics.ts'
 import type { SearchTab } from './session-search-rules.ts'
 import { setupSessionSearch, type SessionSearch } from './session-search.ts'
 import { ICON_NAMES, icon, KIND_ICON, type IconName } from './icons.ts'
@@ -3618,11 +3618,12 @@ function typeMenuEntries(id: string): MenuEntry[] {
     menuCapture = out
     try { type.tabMenu(id, 0, 0) } catch (err) { console.error('tabMenu', err) } finally { menuCapture = undefined; padSection = section }
   }
-  const pinned = out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
-  // Every tab can be peeked at, as with Alt+click (the hint names it): the same card for any type.
+  let pinned = out.map(e => e === SEP || 'heading' in e || e.pin || !COMMON_PINS[e.label] ? e : { ...e, pin: COMMON_PINS[e.label] })
+  // Every tab can be peeked at, as with Alt+click (the hint names it): the same card for any type. It sits in the
+  // see/open group, before the floor (the close is always the last act).
   if (!pinned.some(e => e !== SEP && 'label' in e && e.label === PEEK_LABEL)) {
-    if (pinned.length > 0) pinned.push(SEP)
-    pinned.push({ icon: 'eye', label: PEEK_LABEL, trail: Object.assign(document.createElement('kbd'), { textContent: peekKey(IS_MAC) }), run: () => peekPane(id) })
+    const peek: MenuEntry = { icon: 'eye', label: PEEK_LABEL, trail: Object.assign(document.createElement('kbd'), { textContent: peekKey(IS_MAC) }), run: () => peekPane(id) }
+    pinned = withRowBeforeFloor<MenuEntry>(pinned, SEP, peek)
   }
   return withTabMenuBasics<MenuEntry>(pinned, SEP, {
     link: { icon: 'link', label: LINK_LABEL, pin: 'icon', run: () => copyPaneLink(id) },

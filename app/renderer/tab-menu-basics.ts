@@ -12,6 +12,19 @@ export function isCloseLabel(label: string): boolean {
 }
 
 /**
+ * Adds a row of the "see / open" group so that the close stays the menu's last act: the row goes at the end of the group
+ * that precedes the first close (before its separator); a menu with no close of its own gets the row in a group of its own
+ * at the end (the floor is appended after it).
+ */
+export function withRowBeforeFloor<E>(entries: readonly E[], sep: E, row: E): E[] {
+  const closeAt = entries.findIndex(e => !!e && typeof e === 'object' && 'label' in e && isCloseLabel(String((e as BasicItem).label)))
+  if (closeAt < 0) return entries.length > 0 ? [...entries, sep, row] : [row]
+  let at = closeAt
+  while (at > 0 && entries[at - 1] === sep) at--
+  return [...entries.slice(0, at), row, ...entries.slice(at)]
+}
+
+/**
  * The type's entries plus what is missing of the floor: the link and the close, after a separator when the type drew
  * anything. `sep` is the menu's separator value; entries without a label (separators, headings) are kept as they are.
  */
