@@ -113,3 +113,99 @@ export function managerPaneEntries<E>(base: readonly E[], top: readonly E[], par
   }
   return tidy([...rows, sep, ...parts.extra, sep, full.close, full.go], sep)
 }
+
+// ---------------------------------------------------------------- the menu in blocks (`groups`)
+
+/** The titles of the blocks of a pane's menu in blocks. */
+export const AGENT_BLOCK = (name: string): string => `O agente ${name}`
+export const PANE_BLOCK = 'Esta guia'
+export const OWNER_BLOCK = (owner: string): string => `Quem manda aqui: ${owner}`
+/** The gestures of the frame and of the status bar: the menu in blocks has none (they are the tab's, never a list's). */
+export const FRAME_GESTURES: readonly RegExp[] = [
+  /^Novo painel/, /^Duplicar /, /^Novo quadro/, /^(Mostrar|Ocultar) barra de status$/, /^Dividir /,
+]
+/** Every close row of the pane's own menu ("Fechar painel…", "Fechar"): the block has one, "Fechar guia". */
+const CLOSE_ROW = /^Fechar\b/
+/** The pane's own rows that are about the agent that runs in it, in the agent block's order (the caller's rows fit in by label). */
+export const AGENT_ROWS: readonly RegExp[] = [
+  /^Falar com /, /^O que .+ tem$/, /^Juntar a um canal/, /^Dar uma mesa nova/, /^Ver guias d/, /^Trocar perfil/, /^Reiniciar agente/,
+]
+/** The tab block's order: these first, by rank; the pane type's own rows after them, as its menu has them. */
+const PANE_ROWS: readonly RegExp[] = [
+  /^Espiar$/, /^Renomear/, /^Mover…$/, /^Emblema…$/, /^(Hibernar|Acordar) guia$/, /^Marcar como /, /^Copiar link do painel$/,
+]
+/** The ownership block's line that says only what its title says ("Comandada por X, pela mesa"): left out. */
+const SAME_AS_TITLE: readonly RegExp[] = [/^Comandada por [^·]+$/]
+/** The agent's own section of the ownership rows (what it owns, "Pausar X em tudo"): it goes to the agent block. */
+const AGENT_OWNS = /^(É dono de|Pausada em tudo)/
+
+const rankOf = (label: string | undefined, rules: readonly RegExp[]): number => {
+  const i = label === undefined ? -1 : rules.findIndex(r => r.test(label))
+  return i < 0 ? rules.length : i
+}
+
+export interface ManagerGroups<E> {
+  /** The block's title row (an information line). */
+  heading(text: string): E
+  /** The text of an information line (undefined for any other row). */
+  headingOf(e: E): string | undefined
+  /** The agent's name when the pane runs one: its rows get a block of their own, first. */
+  agent?: string
+  /** Who commands the pane ("você" when nobody else): the title of the ownership block. */
+  owner: string
+  /** The caller's "Espiar" (its own quick view and key), in place of the tab's. */
+  peek?: E
+}
+
+/**
+ * A pane's menu for a manager in blocks with a title: "O agente <nome>" (the agent's rows and the caller's), "Esta guia"
+ * (see, name, place, sleep, mark, link, the type's own rows, one "Fechar guia") and "Quem manda aqui: <dono>" (the ownership
+ * rows, `top`), then "Ir até a guia" alone and last. The frame's gestures and the other close rows are left out.
+ */
+export function managerGroupedEntries<E>(
+  base: readonly E[], top: readonly E[], parts: ManagerPaneParts<E> & { goLast: NonNullable<ManagerPaneParts<E>['goLast']> }, groups: ManagerGroups<E>,
+  sep: E, labelOf: (e: E) => string | undefined,
+): E[] {
+  const full = parts.goLast
+  const isHeading = (e: E): boolean => e !== sep && groups.headingOf(e) !== undefined
+  const agent: E[] = []
+  const known: E[] = []
+  const own: E[] = []
+  for (const e of withRename(base, parts.rename, labelOf)) {
+    const label = labelOf(e)
+    if (label !== undefined && (CLOSE_ROW.test(label) || FRAME_GESTURES.some(r => r.test(label)))) continue
+    if (label !== undefined && groups.peek !== undefined && /^Espiar$/.test(label)) { known.push(groups.peek); continue }
+    if (groups.agent !== undefined && label !== undefined && rankOf(label, AGENT_ROWS) < AGENT_ROWS.length) agent.push(e)
+    else if (label !== undefined && rankOf(label, PANE_ROWS) < PANE_ROWS.length) known.push(e)
+    else own.push(e)
+  }
+  if (groups.peek !== undefined && !known.includes(groups.peek)) known.push(groups.peek)
+  if (full.wake !== undefined) known.push(full.wake)
+  if (full.emblem !== undefined) known.push(full.emblem)
+  for (const e of parts.extra) (groups.agent !== undefined ? agent : own).push(e)
+  agent.sort((a, b) => rankOf(labelOf(a), AGENT_ROWS) - rankOf(labelOf(b), AGENT_ROWS))
+  known.sort((a, b) => rankOf(labelOf(a), PANE_ROWS) - rankOf(labelOf(b), PANE_ROWS))
+
+  // The ownership rows come in groups; the one about what the agent itself owns goes to the agent's block.
+  const chunks: E[][] = [[]]
+  for (const e of top) { if (e === sep) chunks.push([]); else chunks[chunks.length - 1]!.push(e) }
+  const owns: E[] = []
+  const rule: E[] = []
+  for (const c of chunks) {
+    if (c.length === 0) continue
+    const first = c.find(isHeading)
+    const text = first !== undefined ? headingText(first, groups) : undefined
+    if (groups.agent !== undefined && text !== undefined && AGENT_OWNS.test(text)) owns.push(sep, ...c)
+    else rule.push(...(rule.length > 0 ? [sep] : []), ...c.filter(e => !(isHeading(e) && SAME_AS_TITLE.some(r => r.test(headingText(e, groups) ?? '')))))
+  }
+
+  const out: E[] = []
+  if (groups.agent !== undefined && agent.length + owns.length > 0) out.push(groups.heading(AGENT_BLOCK(groups.agent)), ...agent, ...owns, sep)
+  const ownRows = tidy(own, sep)
+  out.push(groups.heading(PANE_BLOCK), ...known, sep, ...ownRows, full.close, sep)
+  if (rule.some(e => e !== sep && !isHeading(e))) out.push(groups.heading(OWNER_BLOCK(groups.owner)), ...rule, sep)
+  out.push(full.go)
+  return tidy(out, sep)
+}
+
+const headingText = <E>(e: E, groups: ManagerGroups<E>): string | undefined => groups.headingOf(e)

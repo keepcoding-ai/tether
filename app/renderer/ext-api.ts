@@ -150,6 +150,12 @@ export interface TabMenuOptions {
    * "Fechar guia"; "Acordar guia" for a sleeping pane and "Emblema…" join the menu. Without it the manager's menu is as before.
    */
   goLast?: true
+  /**
+   * With `goLast`, the menu in blocks with a title (manager-menu-rules.ts, managerGroupedEntries): "O agente <agent>" (its
+   * rows and `extra`), "Esta guia", "Quem manda aqui: <owner>"; the frame's gestures and "Fechar painel…" leave the menu.
+   * `peek`: the caller's "Espiar" (shown with `peekHint`) in place of the tab's.
+   */
+  groups?: { agent?: string; owner: string; peek?: () => void; peekHint?: string }
 }
 /**
  * A desk pill's menu for a view that manages desks apart from the strip: aimed at its desk, it never brings it forward.

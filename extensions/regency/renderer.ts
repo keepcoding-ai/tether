@@ -371,13 +371,25 @@ export function activate(ui: TetherUi): Disposable[] {
       extra.push(
         off
           ? { icon: 'chats-circle', label: `Falar com ${name} (${off})`, disabled: true, run: () => {} }
-          : { icon: 'chats-circle', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
+          : { icon: 'chats-circle', label: `Falar com ${name}`, run: () => talk(target) },
         { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
       )
       // "Dar uma mesa nova…": the card of one step (name and colour); giving needs for-agents.
       if (ownerBoard.active) extra.push({ icon: 'cards', label: GIVE_NEW_DESK_LABEL, run: () => { livePane()?.openCreate({ forAgent: id, forName: name }, key) } })
     }
-    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
+    // In blocks: the agent's, the tab's, who commands it; Space (the row's key) is the quick view's, so "Espiar" shows it.
+    const groups = { ...(target.kind === 'agent' ? { agent: nameOf(id) } : {}), owner: commanderOf(id), peek: () => openQuickView(target), peekHint: 'Espaço' }
+    ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, groups, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
+  }
+
+  /** Who commands a pane, for the title "Quem manda aqui: …": its own owner, else its desk's, else the person. */
+  const commanderOf = (paneId: string): string => {
+    if (!ownerBoard.active) return 'você'
+    const own = ownerOf(ownerBoard.paneOwner(paneId))
+    if (own) return own.name
+    const desk = ui.desks.tree().desks.find(d => d.panes.some(p => p.id === paneId))
+    const o = desk ? ownerOf(ownerBoard.deskOwner(desk.id)) : undefined
+    return o && o.id !== paneId ? o.name : 'você'
   }
 
   // ---------------------------------------------------------------- "+ Novo"
