@@ -39,9 +39,11 @@ export const USAGE = `uso: tether <comando> [opções]
 
   ls [--json]                         lista os slots (--json: estado bruto)
   show <slot>                         vínculo e histórico de eventos do slot
-  new <claude|soul|hands|shell> [--profile p] [--name n] [--cwd p] [--here] [-- args do agente]
+  new <claude|soul|hands|shell> [--profile p] [--name n] [--cwd p] [--desk d] [--here] [-- args do agente]
                                       cria um slot e abre o agente nele (--profile: perfil de
-                                      lançamento, pelo nome ou id; dispensa o agente)
+                                      lançamento, pelo nome ou id; dispensa o agente; --desk: a
+                                      mesa, pelo id ou nome, onde a guia nasce sem tirar a pessoa
+                                      da mesa dela; a mesa precisa existir e estar acordada)
   open <slot> [--new|--resume-anyway] [--here]
                                       retoma o slot (--new: nova sessão)
   attach <slot>                       anexa este terminal ao slot (Ctrl+] solta)
@@ -370,9 +372,12 @@ function parseKind(x: string | undefined): SlotKind {
 }
 
 async function cmdNew(args: string[]): Promise<number> {
-  const p = parseArgs(args, { valued: ['name', 'cwd', 'profile'], flags: ['here'] })
+  const p = parseArgs(args, { valued: ['name', 'cwd', 'profile', 'desk'], flags: ['here'] })
   const ctx = context()
   const here = p.flags.has('here')
+  const desk = p.options.desk
+  if (desk !== undefined && !desk) throw new UsageError('--desk precisa do id ou do nome da mesa')
+  if (desk !== undefined && here) throw new UsageError('--desk pede o tetherd: não combina com --here')
   const client = here ? undefined : await tryConnect(ctx)
   try {
     // The profile names the agent; a kind given as well must agree with it.
@@ -389,10 +394,11 @@ async function cmdNew(args: string[]): Promise<number> {
     if (!existsSync(cwd)) throw new Error(`a pasta não existe: ${cwd}`)
     const name = p.options.name
     if (client) {
-      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true, ...(profile ? { profileId: profile.id } : {}) })
+      const reply = await client.request({ t: 'create', kind, cwd, ...(name ? { name } : {}), args: p.rest, start: true, ...(profile ? { profileId: profile.id } : {}), ...(desk ? { desk } : {}) })
       out(slotCreatedLine(reply.slot!))
       return 0
     }
+    if (desk !== undefined) throw new Error('tetherd parado: --desk precisa do tetherd para pedir a guia na mesa')
     if (!here) err('tetherd parado: rodando neste terminal\n')
     const meta: SlotMeta = { v: 1, slotId: newSlotId(ctx.home), agent: kind, cwd, args: p.rest, createdAt: new Date().toISOString() }
     if (name) meta.name = name

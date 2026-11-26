@@ -201,7 +201,11 @@ export type Request =
   /** Test only (needs TETHER_TEST_BLOCK=1 in the daemon env): replies ok, then blocks the event loop for `ms` (max 30000). */
   | { t: 'debug-block'; id: number; ms: number }
   /** `profileId`: the launch profile (must be of `kind`); its args/env apply on every start, the slot keeps a snapshot. */
-  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string }
+  /**
+   * `desk`: the desk (its id, or its unique name) the slot's pane should be born in, without moving the person (it becomes
+   * `paneRequest`, which the app serves). Refused when the desk map is known and has no such desk, or the desk sleeps. Absent: as before.
+   */
+  | { t: 'create'; id: number; kind: SlotKind; cwd: string; name?: string; args?: string[]; start?: boolean; profileId?: string; desk?: string }
   /** Start the slot's process: resumes the binding; `choice: 'new'` starts a new session instead. */
   | { t: 'start'; id: number; slotId: string; choice?: 'resume' | 'new' }
   /**

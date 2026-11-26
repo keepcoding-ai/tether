@@ -107,6 +107,8 @@ export class DoorHost implements DoorSeams {
 
   resumeSuspended(slotId: string, why: string): boolean { return this.suspend.resume(slotId, why) }
 
+  deskRequest(ref: string): { deskId: string } { return this.desks.requestForTarget(ref) }
+
   input(slotId: string, data: string, origin: InputOrigin, mark?: InputMark): void { this.delivery.input(slotId, data, origin, mark);this.slotsService.input(slotId, data, origin) }
 
   /**

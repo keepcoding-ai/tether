@@ -15,6 +15,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { DisposableStore } from '../../app/shared/vscode-lifecycle.ts'
+import { DaemonClient } from '../../src/daemon/client.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { SlotPort } from '../../src/daemon/door/port.ts'
 import type { DoorSlots } from '../../src/daemon/door/types.ts'
@@ -116,6 +117,26 @@ test('door pane: a pane the daemon asks for', { timeout: 300_000 }, async () => 
     assert.notEqual(await page.evaluate(() => window.__tether.currentPane()), a.slotId, 'the asked pane was not brought to the front')
     await page.evaluate(() => window.__tether.switchDesk('desk-1'))
     await page.waitForFunction(() => window.__tether.activeDesk() === 'desk-1')
+
+    // ---- 2b. the pipe's `create { desk }` (a remote client): born in that desk by its name, the person stays put ----
+    console.log('step 2b')
+    const remote = await DaemonClient.open(pipe, 'test')
+    try {
+      const deskName = (await page.evaluate(() => window.__tether.desks())).find(d => d.id === 'desk-2')!.name
+      const activeNow = await page.evaluate(() => ({ active: window.__tether.activeId(), current: window.__tether.currentPane() }))
+      const made = (await remote.request({ t: 'create', kind: 'shell', cwd, desk: deskName })).slot!
+      await page.waitForFunction(id => window.__tether.panelIds().includes(id), made.slotId)
+      assert.equal(await deskOf(page, made.slotId), 'desk-2')
+      assert.equal(await page.evaluate(() => window.__tether.activeDesk()), 'desk-1', 'the visible desk did not change')
+      assert.deepEqual(await page.evaluate(() => ({ active: window.__tether.activeId(), current: window.__tether.currentPane() })), activeNow, 'the active pane did not change')
+      await waitUntil(() => !slotState(made.slotId)?.paneRequest, 20_000, 'the daemon cleared the remote request')
+      // A desk that sleeps is refused with a reason, and no slot is born.
+      const count = slots.list().length
+      await assert.rejects(remote.request({ t: 'create', kind: 'shell', cwd, desk: 'desk-3' }), /dormindo/)
+      assert.equal(slots.list().length, count)
+    } finally {
+      remote.close()
+    }
 
     // ---- 3. a stale request for a slot that has a pane elsewhere: nothing moves ----
     console.log('step 3')

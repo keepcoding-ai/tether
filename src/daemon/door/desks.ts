@@ -114,6 +114,22 @@ export class DeskService implements DoorDesks {
     return { deskId }
   }
 
+  /**
+   * The `paneRequest` for a remote `create { desk }`: `ref` is a desk id, or else a desk name that only one desk has. Stricter
+   * than `paneRequestFor`: the person is not at the app, so a sleeping desk is refused too. With no map yet, taken as asked.
+   */
+  requestForTarget(ref: string): { deskId: string } {
+    const map = this.current
+    if (!map) return { deskId: ref }
+    const found = map.desks.find((d) => d.id === ref)
+    const byName = found ? [] : map.desks.filter((d) => d.name === ref)
+    if (byName.length > 1) throw new DoorError('bad-request', `há mais de uma mesa chamada "${ref}": use o id`)
+    const desk = found ?? byName[0]
+    if (!desk) throw new DoorError('bad-request', `a mesa ${ref} não existe`)
+    if (desk.asleep) throw new DoorError('bad-request', `a mesa "${desk.name}" está dormindo`)
+    return { deskId: desk.id }
+  }
+
   // ---- the pipe's `desk-map` ---------------------------------------------------------------------
 
   readonly handleMap: DoorRequestHandler = async (req): Promise<DoorReplyBody> => {
