@@ -107,18 +107,18 @@ describe('the tab menu (section 3)', () => {
   })
   test('(3) given to another: Atrium sees', () => {
     assert.deepEqual(labels(paneMenu(facts(base), 'g')), [
-      '# Dada a Kai · Atrium vê', 'Assumir o comando [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai [icon]', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…',
+      '# Dada a Kai · Atrium vê', 'Assumir o comando [icon]', 'Pausar Kai nesta guia [icon]', 'Ir para Kai [icon]', 'Dar a outro agente…', 'Voltar para a mesa (tira de Kai)', 'O que Kai pode nesta guia…',
     ])
   })
   test('(4) the agent\'s own pane that also owns another: the owner\'s section, then the pane\'s own rows', () => {
     assert.deepEqual(labels(paneMenu(facts(base), 'K')), [
       '# É dono de 1 guia em kai-aware', 'Pausar Kai em tudo [icon]', 'O que é de Kai >', '  kai-aware › codex · conferência (guia)',
-      '---', '# Dada a Kai, que roda nela (comanda a si mesmo)', 'Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Revogar (volta para a mesa)',
+      '---', '# Dada a Kai, que roda nela (comanda a si mesmo)', 'Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Tirar de Kai (volta para a mesa)',
     ])
   })
   test('(4) with nothing else owned: just the pane rows', () => {
     const s: Spec = { ...base, paneOwner: { K: own('K') } }
-    assert.deepEqual(labels(paneMenu(facts(s), 'K')), ['# Dada a Kai, que roda nela (comanda a si mesmo)', 'Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Revogar (volta para a mesa)'])
+    assert.deepEqual(labels(paneMenu(facts(s), 'K')), ['# Dada a Kai, que roda nela (comanda a si mesmo)', 'Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Tirar de Kai (volta para a mesa)'])
   })
   test('(5) waiting for the owner: "Ir para" and "Tomar e responder eu" first', () => {
     const w = { c1: { kind: 'waiting' as const, at: '2026-11-21T14:05:00' } }

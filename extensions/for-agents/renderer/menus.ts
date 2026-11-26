@@ -229,7 +229,7 @@ export function paneMenu(f: MenuFacts, paneId: string): Row[] {
         if (w) pane1.push({ kind: 'info', text: INFO.paneWaits(n, waitingWhat(w.kind), w.at ? clockOfFacts(f, w.at) : '') }, goTo, take, pause, ...tail)
         else pane1.push({ kind: 'info', text: INFO.paneGiven(n, eff.viewer !== undefined ? f.nameOf(eff.viewer) : undefined) }, take, pause, goTo, ...tail)
       } else {
-        pane1.push({ kind: 'info', text: INFO.paneSelf(n) }, pause, inventory, item('arrow-u-up-left', L.revokeSelf, { do: 'revoke', target: t }))
+        pane1.push({ kind: 'info', text: INFO.paneSelf(n) }, pause, inventory, item('arrow-u-up-left', L.revokeSelf(n), { do: 'revoke', target: t }))
       }
     }
   }

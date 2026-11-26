@@ -248,10 +248,10 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     await until(() => heldBy(G) === byK && routeOf(G) === K, 'the pane given to Kai is held by Kai and routed to Kai')
     assert.equal(heldBy(C1), byA, 'the others stay with Atrium')
     const givenMenu = await openTab(G)
-    const givenRows = ['# Dada a Kai · Atrium vê', 'Assumir o comando', 'Pausar Kai nesta guia', 'Ir para Kai', 'Dar a outro agente…', 'Voltar para a mesa (revoga Kai)', 'O que Kai pode nesta guia…']
+    const givenRows = ['# Dada a Kai · Atrium vê', 'Assumir o comando', 'Pausar Kai nesta guia', 'Ir para Kai', 'Dar a outro agente…', 'Voltar para a mesa (tira de Kai)', 'O que Kai pode nesta guia…']
     assert.deepEqual(givenMenu.slice(0, 7), givenRows)
     await shot('aba-dada', '#ctx-menu', `.tether-tab[data-slot="${G}"]`)
-    await choose('Voltar para a mesa (revoga Kai)')
+    await choose('Voltar para a mesa (tira de Kai)')
     await until(() => obj('pane', G, 'owner') === undefined && heldBy(G) === byA && routeOf(G) === A, 'revoked: back to the desk\'s owner')
     // Back to Kai, for the next states.
     await openTab(G); await choose('Dar esta guia a outro agente…')
@@ -280,7 +280,7 @@ test('for-agents gestures: menus by state, giving with the picker and the dialog
     assert.equal(routeOf(K), undefined, 'the own pane has no route: its request goes to the person')
     const selfMenu = await openTab(K)
     assert.deepEqual(selfMenu.slice(0, 5), ['# É dono de 1 guia em kai-aware', 'Pausar Kai em tudo', 'O que é de Kai', '—', '# Dada a Kai, que roda nela (comanda a si mesmo)'])
-    assert.deepEqual(selfMenu.slice(5, 8), ['Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Revogar (volta para a mesa)'])
+    assert.deepEqual(selfMenu.slice(5, 8), ['Pausar Kai em si mesmo', 'O que Kai pode em si…', 'Tirar de Kai (volta para a mesa)'])
     await shot('aba-propria', '#ctx-menu', `.tether-tab[data-slot="${K}"]`)
     await closeMenu()
 
