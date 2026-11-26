@@ -17,6 +17,7 @@ import * as conductorSoul from './conductor-soul/daemon.ts'
 import * as conductorCodex from './conductor-codex/daemon.ts'
 import * as channels from './channels/daemon.ts'
 import * as sync from './sync/daemon.ts'
+import * as remote from './remote/daemon.ts'
 
 export const extensions: readonly ExtensionEntry<TetherDaemon>[] = [
   { manifest: claude.manifest, activate: claude.activate },
@@ -33,4 +34,5 @@ export const extensions: readonly ExtensionEntry<TetherDaemon>[] = [
   { manifest: conductorCodex.manifest, activate: conductorCodex.activate },
   { manifest: channels.manifest, activate: channels.activate },
   { manifest: sync.manifest, activate: sync.activate },
+  { manifest: remote.manifest, activate: remote.activate },
 ]

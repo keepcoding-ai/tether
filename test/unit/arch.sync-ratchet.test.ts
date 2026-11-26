@@ -156,11 +156,12 @@ function extensionEntries(file: string): string[] {
   return readdirSync(extDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => join(extDir, d.name, file))
 }
 
-// Roots: the daemon main plus every extensions/<id>/daemon.ts (ext-host loads them through extensions/index.daemon.ts).
+// Roots: the daemon main plus every extensions/<id>/daemon.ts (ext-host loads them through extensions/index.daemon.ts),
+// and the helpers that carry live traffic in a loop of their own: the pane host (ptyd) and the remote portal (remoted).
 const TETHERD: Loop = {
   name: 'tetherd',
   baseline: join(HERE, 'arch.sync-ratchet.baseline.json'),
-  entries: () => [join(ROOT, 'src/daemon/main.ts'), join(ROOT, 'src/ptyd/main.ts'), ...extensionEntries('daemon.ts')].filter((f) => existsSync(f)),
+  entries: () => [join(ROOT, 'src/daemon/main.ts'), join(ROOT, 'src/ptyd/main.ts'), join(ROOT, 'src/remoted/main.ts'), ...extensionEntries('daemon.ts')].filter((f) => existsSync(f)),
 }
 // Roots: the Electron main process plus every extensions/<id>/main.ts (index.main.ts loads them in that process).
 const MAIN: Loop = {

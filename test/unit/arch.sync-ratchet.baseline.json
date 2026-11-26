@@ -36,6 +36,14 @@
     "extensions/web-bridge/warmup.ts": {
       "max": 1,
       "reason": "detached launch of the bridge daemon (stdio to a log fd, own process tree): same shape as the ptyd / procd launch"
+    },
+    "extensions/remote/daemon/portal.ts": {
+      "max": 1,
+      "reason": "launch of the remote portal, once per switch-on: it needs a stdin for its credential (fio-spec 1.5) and an IPC channel, which neither a worker nor PowerShell Start-Process can hand over"
+    },
+    "src/remoted/notice.ts": {
+      "max": 1,
+      "reason": "the portal's native notice (a PowerShell toast) per pairing begun, failed or done; runs in the portal's own loop, never in tetherd's"
     }
   }
 }
