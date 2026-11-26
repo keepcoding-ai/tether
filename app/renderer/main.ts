@@ -4727,8 +4727,8 @@ declare global {
       /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
       peek(slotId: string): void
       peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; screen?: string; screenType?: string; under?: string; underRouted?: boolean }
-      /** The quick view's lending (lendPane) into a test host fixed over the window (`.pane-loan-test-host`): 'lent' or why not. */
-      lendPane(paneId: string): 'lent' | LendRefusal
+      /** The quick view's lending (lendPane) into a test host fixed over the window (`.pane-loan-test-host`): 'ok' or why not. */
+      lendPane(paneId: string): 'ok' | LendRefusal
       /** Gives back a pane the hook lent; false when the hook holds no loan of it. */
       giveBackPane(paneId: string): boolean
       /** A pane's loan: its shell's state (absent = no shell), whether the hook holds it, how many times its loan was lost. */
@@ -4951,7 +4951,7 @@ function setupTestHooks(): void {
       const loan = lendPane(paneId, host, () => { done(); testLost.set(paneId, (testLost.get(paneId) ?? 0) + 1) })
       if (typeof loan === 'string') { host.remove(); return loan }
       testLoans.set(paneId, { loan, done })
-      return 'lent'
+      return 'ok'
     },
     giveBackPane: paneId => {
       const held = testLoans.get(paneId)

@@ -77,6 +77,7 @@ export class PaneShell implements IContentRenderer {
 
   init(params: GroupPanelPartInitParameters): void {
     this.paneId = params.api.id
+    this.element.dataset.pane = this.paneId
     this.content.init(params)
   }
 
