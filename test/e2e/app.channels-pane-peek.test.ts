@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
@@ -36,11 +36,12 @@ type Hooks = {
   createDesk(side: 'before' | 'after', relativeTo?: string): string
   switchDesk(id: string): void
   movePaneToDesk(slotId: string, deskId: string): void
-  peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean }
+  peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; pane?: string }
+  openNote(path: string): Promise<void>
   ext: { channels: { run(id: string, arg?: unknown): void } }
 }
 declare const window: { __tether: Hooks }
-declare const document: { querySelector(s: string): { clientWidth: number; closest(s: string): { classList: { contains(c: string): boolean } } | null } | null }
+declare const document: { querySelector(s: string): { clientWidth: number; closest(s: string): { classList: { contains(c: string): boolean }; getAttribute(n: string): string | null } | null } | null }
 
 const require = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..', '..')
@@ -177,7 +178,8 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     console.log('step 3')
     await pane(hz).locator(`.ch-mrow[data-member="${b}"] button.ch-agent`).click({ modifiers: ['Alt'] })
     await page.waitForSelector('#peek[data-open="true"]')
-    await page.waitForFunction(id => window.__tether.peekState().slotId === id, b)
+    // (b has a tab, on another desk: the card is the quick view's card of that tab, not the agent's own.)
+    await page.waitForFunction(id => window.__tether.peekState().pane === id, b)
     assert.equal(await page.evaluate(() => window.__tether.activeDesk()), home1, 'the person stays on the desk she was on')
     await page.screenshot({ path: join(SHOTS, 'e3-alt-clique-nome.png') })
     await page.click('#peek .peek-close')
@@ -189,6 +191,24 @@ test('channel pane: the agent name goes to the guia, peeks, and has the menu of 
     await page.waitForFunction(id => document.querySelector(`.tether-tab[data-slot="${id}"]`)?.closest('.dv-tab')?.classList.contains('dv-active-tab') === true, a)
     assert.equal(await isActiveTab(a), true)
     assert.equal((await page.evaluate(() => window.__tether.peekState())).open, false, 'a plain click opens no card')
+
+    // ---- 4b. Alt+click on the CHANNEL's own tab (a tab of any type), now in the background: the card holds the live channel ----
+    console.log('step 4b')
+    // The channel sits in a group of its own: a note opened after a click on its tab joins that group and takes the front.
+    const chTab = page.locator(`.ch-tab[data-channel="${hz}"]`)
+    const chPane = await page.evaluate(id => window.__tether.panelIds().find(p => p.includes(id))!, hz)
+    await chTab.click()
+    const notePath = join(home, 'canal-espiar.md')
+    writeFileSync(notePath, '# Nota\n')
+    await page.evaluate(p => window.__tether.openNote(p), notePath)
+    await page.waitForFunction(id => document.querySelector(`.ch-tab[data-channel="${id}"]`)?.closest('.dv-tab')?.classList.contains('dv-active-tab') === false, hz)
+    await chTab.click({ modifiers: ['Alt'] })
+    await page.waitForSelector('#peek[data-open="true"]')
+    await page.waitForFunction(id => window.__tether.peekState().pane === id, chPane)
+    await page.waitForSelector(`#peek .ch-pane[data-channel="${hz}"]`)
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+    await page.evaluate(id => window.__tether.ext.channels.run('channels.open', { channel: id }), hz) // the later steps start from the channel in front
 
     // ---- 5. an author that left the channel keeps the way and the link only ----
     console.log('step 5')

@@ -1,6 +1,6 @@
 // E2E of the peek card's keyboard side (slice E4), all by keys where a key exists (hidden window, private home/pipe, real tetherd,
 // shells only, CLAUDE* stripped):
-//   1. the palette offers "Espiar agente…" (Ctrl+Shift+P): the picker lists only the live sessions off screen, Enter opens the card;
+//   1. the palette offers "Espiar guia…" (Ctrl+Shift+P): the picker lists every tab and the live sessions with none, Enter opens the card;
 //      "Fechar o cartão de espiar" is in the palette only with the card open;
 //   2. with the card open an app chord (Ctrl+Tab, which switches desks) does nothing; the palette still opens and its
 //      "Fechar o cartão de espiar" closes the card; the chord Ctrl+Shift+O closes it too;
@@ -138,11 +138,14 @@ test('cartão de espiar pelo teclado: comandos, chords quietas, foco preso, foco
     assert.equal(await page.evaluate(() => window.__tether.palette().shown.includes('peek.close')), false, '"Fechar o cartão de espiar" is not offered with the card closed')
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !window.__tether.palette().open)
-    await paletteFind(page, 'Espiar agente', 'peek.pick')
+    await paletteFind(page, 'Espiar guia', 'peek.pick')
     assert.equal(await page.evaluate(() => window.__tether.palette().shown.includes('peek.close')), false)
     await page.keyboard.press('Enter')
     await page.waitForSelector('dialog.picker[open]')
-    assert.equal(await page.locator('dialog.picker .pk-item').count(), 1, 'only the session no tab shows is listed (the one in view is not)')
+    // "Espiar guia…" lists every tab (the one in view too) and, last, in "Sem guia", the session no tab shows.
+    const rows = await page.locator('dialog.picker .pk-item').count()
+    assert.equal(rows, 2, 'the tab in view and the session no tab shows are listed')
+    await page.keyboard.press('ArrowDown')
     await page.keyboard.press('Enter')
     await waitPeek(page, b)
     await page.waitForFunction(() => !!document.activeElement?.closest('#peek .xterm'))

@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -16,7 +16,9 @@ import { killElectron } from './electron.ts'
 type Hooks = {
   panelIds(): string[]
   connection(): { connected: boolean; pid?: number } | undefined
-  peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean }
+  peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; pane?: string; paneLent?: boolean }
+  openNote(path: string): Promise<void>
+  notes(): { id: string; path: string }[]
 }
 type El = { classList: { contains(c: string): boolean }; closest(s: string): El | null; dataset: Record<string, string> }
 declare const window: { __tether: Hooks }
@@ -126,6 +128,33 @@ test('espiar pela aba: Alt+clique numa aba de fundo abre o cartão sem ativá-la
     await page.waitForSelector('#ctx-menu li', { state: 'detached' })
     assert.equal((await page.evaluate(() => window.__tether.peekState())).open, false)
     assert.equal(await isActiveTab(page, front), true)
+
+    // ---- 5. a NOTE tab (not a slot's): Alt+click on it in the background opens the card with the live note, without activating it ----
+    console.log('step 5')
+    const notePath = join(home, 'espiar.md')
+    writeFileSync(notePath, '# Espiar\n\nlinha de antes\n')
+    await page.evaluate(p => window.__tether.openNote(p), notePath)
+    await page.waitForFunction(() => window.__tether.notes().length === 1)
+    const noteId = await page.evaluate(() => window.__tether.notes()[0]!.id)
+    const noteTab = page.locator('.tether-tab.note')
+    await noteTab.waitFor()
+    await createShell(page, home) // the note goes to the background of its group
+    await page.waitForFunction(() => document.querySelector('.tether-tab.note')?.closest('.dv-tab')?.classList.contains('dv-active-tab') === false)
+    await noteTab.click({ modifiers: ['Alt'] })
+    await page.waitForSelector('#peek[data-open="true"]')
+    await page.waitForFunction(id => { const s = window.__tether.peekState(); return s.open && s.pane === id && s.paneLent === true }, noteId)
+    await page.waitForSelector('#peek .note-panel .monaco-editor')
+    assert.equal(await page.evaluate(() => document.querySelector('.tether-tab.note')?.closest('.dv-tab')?.classList.contains('dv-active-tab')), false, 'the note tab was not activated by the Alt+click')
+    await page.click('#peek .peek-close')
+    await page.waitForSelector('#peek', { state: 'hidden' })
+
+    // ---- 6. the menu of a non-slot tab has "Espiar" with the same hint ----
+    console.log('step 6')
+    await noteTab.click({ button: 'right' })
+    await page.waitForSelector('#ctx-menu li')
+    const noteLabels = (await page.locator('#ctx-menu li').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim())
+    assert.ok(noteLabels.some(l => /^Espiar\s*Alt\+clique$/.test(l)), `note tab menu: ${noteLabels.join(' | ')}`)
+    await page.keyboard.press('Escape')
   } finally {
     console.log('teardown')
     if (app) await killElectron(app, root).catch(() => {})
