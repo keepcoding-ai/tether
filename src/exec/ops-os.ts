@@ -8,7 +8,7 @@ import type { Socket } from 'node:net'
 import { chmod, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkDacl, ensurePrivateDir, sidMemory, system32 } from '../../extensions/browser/private-dir.ts'
+import { checkDacl, ensurePrivateDir, keyDaclProblem, sidMemory, system32 } from '../../extensions/browser/private-dir.ts'
 import { parseProcessTable, type ProcRow } from '../daemon/memory.ts'
 import { planFor } from '../daemon/proc-launch-sync.ts'
 import { parseLsof, parseNetstat, type Listener } from '../daemon/ports.ts'
@@ -326,10 +326,37 @@ async function userSid(): Promise<string> {
   return sidMemory.sid
 }
 
-/** A key file readable by its user only: Windows, a protected DACL with the user and SYSTEM; elsewhere mode 0600. Throws when it cannot. */
+/** The DACL of a file or folder as SDDL (`icacls /save`, the same in every system language); undefined when unreadable. */
+async function sddlOf(path: string): Promise<string | undefined> {
+  const tmp = await mkdtemp(join(tmpdir(), 'tether-acl-'))
+  try {
+    const file = join(tmp, 'acl')
+    await runFile(system32('icacls.exe'), [path, '/save', file, '/q'])
+    return (await readFile(file)).toString('utf16le').replace(/^﻿/, '').split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith('D:'))
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+}
+
+/**
+ * A key file readable by its user only. Windows: a protected DACL with the user and SYSTEM (`/grant:r` replaces only the
+ * entries of the SIDs it names, so the result is read back and any other entry refuses), and the user as owner (the owner keeps
+ * WRITE_DAC whatever the DACL says; `/setowner` to oneself needs only the F just granted). Elsewhere mode 0600, checked.
+ * Throws, saying what is wrong, when the file does not end up private.
+ */
 async function restrictKeyFile(path: string): Promise<null> {
-  if (process.platform !== 'win32') { await chmod(path, 0o600); return null }
-  await runFile(system32('icacls.exe'), [path, '/inheritance:r', '/grant:r', `*${await userSid()}:(F)`, '*S-1-5-18:(F)', '/q'])
+  if (process.platform !== 'win32') {
+    await chmod(path, 0o600)
+    if (((await stat(path)).mode & 0o077) !== 0) throw new Error('o arquivo continua aberto a outros usuários')
+    return null
+  }
+  const sid = await userSid()
+  await runFile(system32('icacls.exe'), [path, '/inheritance:r', '/grant:r', `*${sid}:(F)`, '*S-1-5-18:(F)', '/q'])
+  await runFile(system32('icacls.exe'), [path, '/setowner', `*${sid}`, '/q'])
+  const sddl = await sddlOf(path)
+  if (!sddl) throw new Error('não consegui ler de volta a ACL do arquivo')
+  const problem = keyDaclProblem(sddl, sid)
+  if (problem) throw new Error(problem)
   return null
 }
 
@@ -344,16 +371,9 @@ const PRIVATE_FOLDER_TRUSTED = new Set(['SY', 'S-1-5-18', 'BA', 'S-1-5-32-544', 
 async function isPrivateFolder(dir: string): Promise<boolean> {
   try {
     if (process.platform !== 'win32') return ((await stat(dir)).mode & 0o077) === 0
-    const tmp = await mkdtemp(join(tmpdir(), 'tether-acl-'))
-    try {
-      const file = join(tmp, 'acl')
-      await runFile(system32('icacls.exe'), [dir, '/save', file, '/q'])
-      const sddl = (await readFile(file)).toString('utf16le').replace(/^﻿/, '').split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith('D:'))
-      if (!sddl) return false
-      return checkDacl(sddl, await userSid()).others.every((who) => PRIVATE_FOLDER_TRUSTED.has(who))
-    } finally {
-      await rm(tmp, { recursive: true, force: true })
-    }
+    const sddl = await sddlOf(dir)
+    if (!sddl) return false
+    return checkDacl(sddl, await userSid()).others.every((who) => PRIVATE_FOLDER_TRUSTED.has(who))
   } catch {
     return false
   }

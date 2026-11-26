@@ -6,7 +6,7 @@ import { chmod, rm } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { processStartTime } from '../core/liveness.ts'
 import { encode, guessId, LineParser } from '../daemon/ndjson.ts'
-import { clientProof, daemonProof, fillKeyFile, hostKeyPath, isNonce, newNonce, prepareKeyFile, sameProof, servePipeHome, unservePipeHome } from '../daemon/pipe-key.ts'
+import { clientProof, daemonProof, discardKeyFile, fillKeyFile, hostKeyPath, isNonce, newNonce, prepareKeyFile, sameProof, servePipeHome, unservePipeHome } from '../daemon/pipe-key.ts'
 import { killTree, spawnPty, type PtyHandle } from '../daemon/pty.ts'
 import { Scrollback } from '../daemon/scrollback.ts'
 import { makePrioritySetter, prioritiesEnabled, PRIORITY_BELOW_NORMAL, type SetPriority } from './priority.ts'
@@ -187,19 +187,25 @@ export class ProcHost {
   async listen(): Promise<void> {
     // The key file first: one that cannot be private stops the host before it serves anything (pipe-key.ts).
     const keyPath = hostKeyPath(this.home, this.pipe)
-    await prepareKeyFile(this.home, keyPath, this.log)
-    if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
-    if (process.platform !== 'win32') await rm(this.pipe, { force: true }) // a socket file left by a dead host
-    await new Promise<void>((resolve, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(this.pipe, () => { this.server.off('error', reject); resolve() })
-    })
+    const staged = await prepareKeyFile(this.home, keyPath, this.log)
+    try {
+      if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
+      if (process.platform !== 'win32') await rm(this.pipe, { force: true }) // a socket file left by a dead host
+      await new Promise<void>((resolve, reject) => {
+        this.server.once('error', reject)
+        this.server.listen(this.pipe, () => { this.server.off('error', reject); resolve() })
+      })
+    } catch (e) {
+      await discardKeyFile(staged)
+      throw e
+    }
     try {
       if (process.platform !== 'win32') await chmod(this.pipe, 0o600)
       // Only the owner of the pipe draws the key: a host that lost the race never replaces the winner's.
-      this.key = fillKeyFile(keyPath)
+      this.key = fillKeyFile(keyPath, staged)
       await this.key
     } catch (e) {
+      await discardKeyFile(staged)
       this.server.close()
       throw e
     }

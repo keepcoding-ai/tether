@@ -3,11 +3,11 @@
 // user already, and otherwise refuses to start with a message saying what to do.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, readFileSync } from 'node:fs'
+import { chmodSync, existsSync, readdirSync } from 'node:fs'
 import { connect } from 'node:net'
 import { afterEach, describe, test } from 'node:test'
 import { DaemonClient } from '../../src/daemon/client.ts'
-import { folderIsPrivate, KeyNotPrivateError, pipeKeyPath } from '../../src/daemon/pipe-key.ts'
+import { folderIsPrivate, KeyNotPrivateError, PIPE_KEY_FILE, pipeKeyPath } from '../../src/daemon/pipe-key.ts'
 import { startDaemon } from '../../src/daemon/server.ts'
 import { removeHome, tempHome, uniquePipe } from './daemon.helpers.ts'
 
@@ -58,7 +58,8 @@ describe('key file that cannot be made private', () => {
     await assert.rejects(startDaemon({ home, pipe, memoryIntervalMs: 0 }), (e: Error) => e instanceof KeyNotPrivateError
       && /recusei subir/.test(e.message) && /TETHER_HOME/.test(e.message) && e.message.includes(home))
     assert.equal(await answers(pipe), false, 'nothing listens on the pipe')
-    assert.equal(readFileSync(pipeKeyPath(home), 'utf8'), '', 'no key was written')
+    assert.equal(existsSync(pipeKeyPath(home)), false, 'no key was written')
+    assert.deepEqual(readdirSync(home).filter((n) => n.startsWith(PIPE_KEY_FILE)), [], 'no staged key file is left behind')
   })
 
   test('the ACL fails but the folder is private to the user: the key is written there, tetherd serves, and it is logged', async () => {

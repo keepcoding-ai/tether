@@ -35,6 +35,21 @@ export function checkDacl(sddl: string, owner: string): DaclCheck {
   return { protected: flags.includes('P'), others: [...others] }
 }
 
+/** Besides the user, who may hold access to a pipe's key file: SYSTEM and Administrators (the custom of a private folder). */
+const KEY_FILE_TRUSTED = new Set(['SY', 'S-1-5-18', 'BA', 'S-1-5-32-544'])
+
+/**
+ * What is wrong with a key file's DACL read back after it was restricted, or undefined when it is private: protected (nothing
+ * inherited from an open folder) and every allow entry the user's, SYSTEM's or Administrators'. Pure.
+ */
+export function keyDaclProblem(sddl: string, owner: string): string | undefined {
+  const c = checkDacl(sddl, owner)
+  if (!c.protected) return 'a ACL do arquivo ainda herda da pasta'
+  const others = c.others.filter((who) => !KEY_FILE_TRUSTED.has(who))
+  if (others.length > 0) return `o arquivo ainda concede acesso a ${others.join(', ')}`
+  return undefined
+}
+
 // ---- warm-up: the same check, without blocking the loop ----
 // The first ensurePrivateDir of a folder costs a `whoami` and several `icacls` (hundreds of ms on Windows) inside the launch of
 // an agent. warmPrivateDirs does that work on the executor at boot and fills the same `done` set, so a launch finds the

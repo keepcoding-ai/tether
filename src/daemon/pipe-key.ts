@@ -13,7 +13,7 @@
 // The two labels keep one side's answer from ever serving as the other's. The key is a secret: it never goes into a log
 // line, an error message, a reply or stdout; only its path does.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { open, readFile, writeFile } from 'node:fs/promises'
+import { open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentExecutor } from '../agents/agent-exec.ts'
 
@@ -112,7 +112,10 @@ export function readPipeKey(home: string): Promise<Buffer | undefined> {
 /** Bench only: TETHER_TEST_KEY_ACL_FAIL=1 makes restricting the key file fail, to prove what happens then. */
 const ENV_TEST_ACL_FAIL = 'TETHER_TEST_KEY_ACL_FAIL'
 
-/** The key file's DACL becomes the user and SYSTEM, no inheritance (the home may inherit "Users: read"); 0600 elsewhere. */
+/**
+ * The key file's DACL becomes the user and SYSTEM, no inheritance, the user as owner, read back and checked (an open home
+ * gives the file nothing); 0600 elsewhere. Throws when the file does not end up private.
+ */
 async function restrictKeyFile(path: string): Promise<void> {
   if (process.env[ENV_TEST_ACL_FAIL] === '1') throw new Error(`falha simulada (${ENV_TEST_ACL_FAIL}=1)`)
   await agentExecutor().run('restrictKeyFile', [path])
@@ -135,28 +138,55 @@ export class KeyNotPrivateError extends Error {
 }
 
 /**
- * Makes `path` (in `home`) ready to hold a key: created when missing (an existing key is left as it is) and made private to
- * the user. When that fails, it is accepted only if the folder is private to the user already (the default home is);
- * otherwise KeyNotPrivateError, with what to do. Runs before the process serves anything, so a refusal leaves nothing behind.
+ * Makes a key file ready for `path` (in `home`) and returns its staged path, `<path>.<pid>-<rand>.new`: a NEW file (`wx`, so
+ * nothing planted is ever reused: a file another account left at the key's path, with its own entries and its own owner, is
+ * replaced by the rename in fillKeyFile, never written into), restricted to the user and read back (restrictKeyFile). When
+ * that fails, it is accepted only if the folder is private to the user already (the default home is); otherwise the staged
+ * file is removed and KeyNotPrivateError says what to do. Runs before the process serves anything, so a refusal serves nothing.
+ * The key's own path is not touched here: a process that then loses the pipe's race never removes the winner's key.
  */
-export async function prepareKeyFile(home: string, path: string, log: (msg: string) => void): Promise<void> {
-  const fh = await open(path, 'a', 0o600)
+export async function prepareKeyFile(home: string, path: string, log: (msg: string) => void): Promise<string> {
+  const staged = `${path}.${process.pid}-${randomBytes(4).toString('hex')}.new`
+  const fh = await open(staged, 'wx', 0o600)
   await fh.close()
   try {
-    await restrictKeyFile(path)
+    await restrictKeyFile(staged)
   } catch (e) {
     const why = (e as Error).message
     if (!(await folderIsPrivate(home))) {
+      await discardKeyFile(staged)
       throw new KeyNotPrivateError(`não consegui deixar ${path} legível só por você (${why}), e a pasta ${home} não é privada: `
         + 'recusei subir, porque outra conta da máquina poderia ler a chave. Corrija as permissões da pasta ou aponte TETHER_HOME para uma pasta só sua')
     }
     log(`key: could not restrict ${path} (${why}); the folder ${home} is private to the user, so the key is written there`)
   }
+  return staged
 }
 
-/** Draws a key into a file prepareKeyFile made ready. Called once the process owns its pipe: one that lost the race never replaces the winner's key. */
-export async function fillKeyFile(path: string): Promise<Buffer> {
+/** Removes a staged key file that will not be used (the process failed to serve); a missing one is fine. */
+export async function discardKeyFile(staged: string): Promise<void> {
+  await unlink(staged).catch(() => {})
+}
+
+/**
+ * Draws a key into the file prepareKeyFile staged and puts it at `path`, replacing whatever was there (the old key, or a file
+ * someone planted). Called once the process owns its pipe: one that lost the race never replaces the winner's. A client reads
+ * either the whole old key or the whole new one, never half a file. Throws (and the caller stops serving) when the rename fails.
+ */
+export async function fillKeyFile(path: string, staged: string): Promise<Buffer> {
   const key = randomBytes(32)
-  await writeFile(path, key.toString('hex'), { encoding: 'utf8', mode: 0o600 })
-  return key
+  await writeFile(staged, key.toString('hex'), { encoding: 'utf8', mode: 0o600 })
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(staged, path)
+      return key
+    } catch (e) {
+      // Windows: a reader that opened the old key without delete sharing holds it for a moment.
+      if (attempt >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) {
+        await discardKeyFile(staged)
+        throw new KeyNotPrivateError(`não consegui pôr a chave nova em ${path} (${(e as Error).message}): recusei servir. Apague o arquivo e suba de novo`)
+      }
+      await new Promise((r) => setTimeout(r, 50))
+    }
+  }
 }

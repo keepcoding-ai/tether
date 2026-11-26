@@ -30,7 +30,7 @@ import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
-import { clientProof, daemonProof, fillKeyFile, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
+import { clientProof, daemonProof, discardKeyFile, fillKeyFile, folderIsPrivate, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
 import { isPortalCredential } from './handshake.ts'
 import {
   KILL_WAIT_CAP_MS,
@@ -608,7 +608,20 @@ class DaemonImpl implements Daemon {
   async listen(): Promise<void> {
     await mkdir(slotsDir(this.home), { recursive: true })
     // First of all: a key that cannot be private stops the boot here, before anything is watched, reaped or served.
-    await prepareKeyFile(this.home, pipeKeyPath(this.home), this.log)
+    const staged = await prepareKeyFile(this.home, pipeKeyPath(this.home), this.log)
+    // An open home is not refused (the key file carries its own checked ACL), but what else it holds (profiles.json with its
+    // values) is as open as the folder: said once in the log, off the boot's path.
+    void folderIsPrivate(this.home).then((p) => { if (!p) this.log(`home: ${this.home} is not private to the user; other accounts of the machine may read what it holds (profiles, recipes)`) })
+    try {
+      await this.boot(staged)
+    } catch (e) {
+      await discardKeyFile(staged)
+      throw e
+    }
+  }
+
+  /** The boot once the key file is staged (`staged`): what listen does after prepareKeyFile. */
+  private async boot(staged: string): Promise<void> {
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     this.fsProbe?.('slots:scan')
     const scan = await scanSlotsAsync(this.home)
@@ -648,7 +661,7 @@ class DaemonImpl implements Daemon {
       })
       if (process.platform !== 'win32') await chmod(this.pipe, 0o600)
       // Only the owner of the pipe draws the key: a tetherd that lost the race never replaces the winner's.
-      this.pipeKey = fillKeyFile(pipeKeyPath(this.home))
+      this.pipeKey = fillKeyFile(pipeKeyPath(this.home), staged)
       await this.pipeKey
       servePipeHome(this.pipe, this.home)
     } catch (e) {
