@@ -98,7 +98,7 @@ function treeRow(cls: string, target: Target, label: string, key: string, kind: 
 }
 
 /** A button of a row's `.rg-acts` (the pane reads `data-action`; a click on it never folds nor goes to the row's target). */
-export interface RowAct { action: 'row-menu' | 'row-talk' | 'row-sleep' | 'row-wake'; icon: string; tip: string }
+export interface RowAct { action: 'row-menu' | 'row-talk' | 'row-sleep' | 'row-wake' | 'row-new'; icon: string; tip: string }
 
 const MENU_ACT: RowAct = { action: 'row-menu', icon: 'dots-three', tip: 'Mais ações (menu da linha)' }
 
@@ -274,7 +274,9 @@ function deskRow(d: TreeDeskRow): HTMLElement {
   const sleep: RowAct[] = d.kind !== 'queue' ? [] : d.asleep
     ? [{ action: 'row-wake', icon: 'sun', tip: `Acordar a mesa ${d.name}` }]
     : [{ action: 'row-sleep', icon: 'moon', tip: `Pôr a mesa ${d.name} para dormir` }]
-  r.append(n, el('span', 'rg-sp'), acts([...sleep, MENU_ACT]))
+  // "+": a new pane in this desk (the "+ Novo" card with the desk fixed); only an awake desk of the queue takes one.
+  const add: RowAct[] = d.kind === 'queue' && !d.asleep ? [{ action: 'row-new', icon: 'plus', tip: `Nova guia na mesa ${d.name}` }] : []
+  r.append(n, el('span', 'rg-sp'), acts([...add, ...sleep, MENU_ACT]))
   return r
 }
 

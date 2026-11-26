@@ -5,8 +5,14 @@ import type { ContextMenuItem, ContextMenuRow, Disposable, TetherUi, TreePane, W
 import type { IdentityInput } from '../../app/renderer/agent-identity.ts'
 import { GO_DESK_LABEL, WAKE_DESK_LABEL } from '../../app/renderer/manager-menu-rules.ts'
 import type { ITabRenderer } from 'dockview-core'
+import type { HueName } from '../../app/shared/palette.ts'
+import { WEB_PANE_PREFIX } from '../browser/manifest.ts'
+import { browserEmbeds } from '../browser/renderer/embed.ts'
 import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
+import { planOf, runPlan, type CreateDraft, type CreateFixed, type CreateState } from './create-rules.ts'
+import { createRunner, type CreateSeams } from './renderer/create-run.ts'
+import { CreateCard, type CreateRunEnd, type CreateViewHost } from './renderer/create-view.ts'
 import type { Ownership } from '../for-agents/rules.ts'
 import { CMD, DESK_ID, REGENCY_COMPONENT, REGENCY_LAYOUT, REGENCY_PANE_ID, REGENCY_TAB, REGENCY_TITLE, manifest } from './manifest.ts'
 import {
@@ -27,6 +33,9 @@ const HIBERNATE_DESK_LABEL = 'Hibernar mesa'
 const REOPEN_LABEL = 'Reabrir em…'
 const FORGET_LABEL = 'Esquecer…'
 const NEW_DESK = '\u0000new-desk'
+/** The rows "+ Novo" puts in a desk's menu and in an agent's menu. */
+const NEW_IN_DESK_LABEL = 'Nova guia nesta mesa'
+const GIVE_NEW_DESK_LABEL = 'Dar uma mesa nova…'
 
 export function activate(ui: TetherUi): Disposable[] {
   const panes = new Set<RegencyPane>()
@@ -338,8 +347,10 @@ export function activate(ui: TetherUi): Disposable[] {
         ui.menus.context(x, y, [{ icon: 'arrow-right', label: GO_DESK_LABEL, run: () => { ui.desks.reveal(desk.id) } }])
         return
       }
+      // "Nova guia nesta mesa": the "+ Novo" card with this desk fixed (an awake desk only takes one).
+      const add: ContextMenuRow[] = desk.asleep ? [] : [{ icon: 'plus', label: NEW_IN_DESK_LABEL, run: () => { livePane()?.openCreate({ deskId: desk.id }, key) } }]
       ui.desks.showMenu(desk.id, x, y, undefined, {
-        from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'desk', name => ui.desks.rename(desk.id, name)),
+        from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'desk', name => ui.desks.rename(desk.id, name)), extra: add,
       })
       return
     }
@@ -358,11 +369,101 @@ export function activate(ui: TetherUi): Disposable[] {
           : { icon: 'chats-circle', label: `Falar com ${name}`, hint: 'Espaço', run: () => talk(target) },
         { icon: 'tray', label: `O que ${name} tem`, run: () => { livePane()?.showAgent(id) } },
       )
+      // "Dar uma mesa nova…": the card of one step (name and colour); giving needs for-agents.
+      if (ownerBoard.active) extra.push({ icon: 'cards', label: GIVE_NEW_DESK_LABEL, run: () => { livePane()?.openCreate({ forAgent: id, forName: name }, key) } })
     }
     ui.panes.showTabMenu(id, x, y, undefined, { from: 'manager', goLast: true, onWake: woke, rename: renameIn(key, 'pane', name => ui.panes.rename(id, name)), extra })
   }
 
+  // ---------------------------------------------------------------- "+ Novo"
+
+  /** How long a give waits for the owner board to show the new owner (the command writes to the tetherd and returns). */
+  const GIVE_WAIT_MS = 5_000
+  const given = (kind: 'pane' | 'desk', id: string, to: string): boolean => {
+    const o = kind === 'desk' ? ownerBoard.deskOwner(id) : ownerBoard.paneOwner(id)
+    return !!o && !o.ended && o.owner === to
+  }
+  const waitGiven = (kind: 'pane' | 'desk', id: string, to: string): Promise<boolean> => new Promise(resolve => {
+    if (given(kind, id, to)) { resolve(true); return }
+    const sub = ownerBoard.onDidChange(() => { if (given(kind, id, to)) { clearTimeout(timer); sub.dispose(); resolve(true) } })
+    const timer = setTimeout(() => { sub.dispose(); resolve(given(kind, id, to)) }, GIVE_WAIT_MS)
+  })
+
+  /** The seams the plan's acts run on: nothing here switches desk or takes the keyboard. */
+  const seams: CreateSeams = {
+    slot: spec => ui.create.slot(spec),
+    item: spec => ui.create.item(spec),
+    desk: spec => ui.desks.create({ name: spec.name, ...(spec.color ? { color: spec.color as HueName } : {}), ...(spec.after ? { after: spec.after } : {}), stay: true }),
+    tab: opts => browserEmbeds.newTab(opts),
+    tabFor: (agent, opts) => browserEmbeds.newTabFor(agent, opts),
+    tabPane: tabId => `${WEB_PANE_PREFIX}${tabId}`,
+    channel: name => channelEmbeds.create(name),
+    join: (channelId, agent) => channelEmbeds.join(channelId, agent),
+    show: channelId => {
+      const p = livePane()
+      p?.select(channelId)
+      if (p?.tier === 'mobile') p.setTab('conversation')
+    },
+    give: async (kind, id, to) => {
+      if (!ownerBoard.active) return 'a posse dos agentes está desligada'
+      const r = await ui.commands.run('for-agents.give', { kind, id, to })
+      if (r !== 'ran') return 'a posse dos agentes está desligada'
+      return (await waitGiven(kind, id, to)) ? undefined : 'o tether não confirmou a posse'
+    },
+    move: (pane, deskId) => ui.panes.moveToDesk(pane, deskId),
+    nameOf,
+  }
+
+  const createCtx = () => ({ desks: ui.desks.tree(), channels: [...channelEmbeds.list()] })
+
+  /** Runs a ready draft: the plan in order; then the new row glows and takes the keyboard (a new channel: the centre). */
+  const runCreate = async (state: CreateState): Promise<CreateRunEnd> => {
+    const acts = planOf(state, createCtx())
+    if (acts.length === 0) return { ok: false, text: 'Nada a criar: falta escolher algo no cartão.', after: () => {} }
+    const runner = createRunner(acts, seams)
+    const run = await runPlan(acts, runner.exec)
+    lastRun = { acts: acts.map(a => a.act), ok: run.ok, done: run.done, ...(run.text !== undefined ? { text: run.text } : {}), made: { ...runner.made } }
+    const after = (): void => {
+      const pane = livePane()
+      if (!pane) return
+      if (state.draft.what === 'channel') return
+      if (run.announce) pane.announce(run.announce.paneId, run.announce.deskId, { focus: true })
+      else if (runner.made.deskId) pane.announceDesk(runner.made.deskId, { focus: true })
+    }
+    return { ok: run.ok, ...(run.text !== undefined ? { text: run.text } : {}), after }
+  }
+  let lastRun: { acts: string[]; ok: boolean; done: number; text?: string; made: object } | undefined
+
+  const cardHost: CreateViewHost = {
+    items: () => ui.create.items(),
+    desks: () => ui.desks.tree(),
+    owners: () => {
+      const owners: RegencyInput['owners'] = { desk: {}, pane: {} }
+      if (!ownerBoard.active) return owners
+      for (const d of ui.desks.tree().desks) { const o = ownerOf(ownerBoard.deskOwner(d.id)); if (o) owners.desk[d.id] = o }
+      return owners
+    },
+    channels: () => channelEmbeds.list(),
+    agents: () => ui.agents.list().filter(a => a.placed !== false && a.alive).map(a => ({ id: a.paneId, kind: a.kind, name: a.name })),
+    projects: () => ui.workspace.folders().filter(f => !f.missing).map(f => ({ path: f.path, name: f.name, pinned: f.pinned })),
+    recentFolders: () => ui.folders.recent(),
+    pickFolder: initial => ui.folders.pickFolder(initial),
+    defaultFolder: () => ui.workspace.current() ?? ui.workspace.folders().find(f => !f.missing)?.path,
+    pickList: spec => ui.pick.list(spec),
+    pickMany: spec => ui.pick.many(spec),
+    tier: () => livePane()?.tier ?? 'desktop',
+    run: runCreate,
+  }
+  const card = new CreateCard(cardHost)
+
+  /** Opens the card; an open quick view closes first (one card over the conversation at a time). */
+  const openCreate = (fixed: CreateFixed, restore: () => void): void => {
+    if (peekOpen()) { void ui.commands.run('peek.close').then(() => card.open(fixed, restore)); return }
+    card.open(fixed, restore)
+  }
+
   const host: RegencyHost = {
+    create: openCreate,
     view: viewOf,
     quickView: openQuickView,
     toggleQuick,
@@ -425,11 +526,32 @@ export function activate(ui: TetherUi): Disposable[] {
     return true
   })
   ui.test.expose('renaming', (): string | undefined => livePane()?.renamingKey)
+  /** The "+ Novo" card as it is now (open, step, draft, error, the sentence told). */
+  ui.test.expose('createView', () => card.snapshot())
+  /** Runs a draft's plan without the card (as the card's "Criar" does), then lights what was made. */
+  ui.test.expose('create', async (draft: CreateDraft, fixed: CreateFixed = {}) => {
+    const end = await runCreate({ draft, fixed, step: 'details' })
+    end.after()
+    return { ok: end.ok, ...(end.text !== undefined ? { text: end.text } : {}) }
+  })
+  /** The last plan run: its acts, how it ended and what it made. */
+  ui.test.expose('lastRun', () => lastRun)
 
   schedule()
   return [
     // The person's key or the palette: only the Regency in sight changes (hidden, it would change out of her view).
     ui.commands.registerCommand(CMD.immersion, () => { if (visible()) livePane()?.toggleMode() }),
+    // "Regência: Novo…" from the palette: the person asked for the Regency's card, so it comes to view first.
+    ui.commands.registerCommand(CMD.create, () => {
+      const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined
+      if (!visible()) ui.desks.reveal(DESK_ID)
+      requestAnimationFrame(() => {
+        const pane = livePane()
+        if (pane && opener && pane.element.contains(opener)) pane.openCreate({})
+        else openCreate({}, () => { if (opener?.isConnected) opener.focus({ preventScroll: true }); else livePane()?.focus() })
+      })
+    }),
+    { dispose: () => card.close(false) },
     ui.panes.register({
       ...REGENCY_LAYOUT, hasSlot: false, icon: 'columns',
       create: () => { const p = new RegencyPane(host); panes.add(p); schedule(); return p },

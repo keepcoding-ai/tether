@@ -13,7 +13,7 @@ export const REGENCY_TAB = 'regency-pane-tab'
 export const REGENCY_TITLE = 'Regência'
 
 /** The commands' ids. Ids never change: keybindings.json names them. */
-export const CMD = { immersion: 'regency.immersion' } as const
+export const CMD = { immersion: 'regency.immersion', create: 'regency.create' } as const
 /** The immersion's key: `Ctrl+\` is the core's (duplicate pane), so the Regency takes the one beside it. */
 export const IMMERSION_KEY = 'ctrl+shift+\\'
 
@@ -35,6 +35,7 @@ export const manifest: ExtensionManifest = {
     paneTypes: [REGENCY_LAYOUT],
     commands: [
       { command: CMD.immersion, title: 'Imersão', category: REGENCY_TITLE, icon: 'arrows-out-simple' },
+      { command: CMD.create, title: 'Novo…', category: REGENCY_TITLE, icon: 'plus' },
     ],
     keybindings: [
       { key: IMMERSION_KEY, command: CMD.immersion },

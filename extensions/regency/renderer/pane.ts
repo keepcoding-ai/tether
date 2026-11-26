@@ -12,6 +12,7 @@ import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embe
 import type { RegencyModel, StateCounts, Target, TreeFilter } from '../model.ts'
 import { CLOSED_ID, TREE_FILTERS, modelSignature } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
+import type { CreateFixed } from '../create-rules.ts'
 import {
   DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setFilter, setNarrowTab, setView, tierOf, toggleCollapsed,
   toggleMembers, toggleMode, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
@@ -69,6 +70,11 @@ export interface RegencyHost {
   gone(pane: RegencyPane): void
   /** The immersion's key as the key table shows it ('' when the person unbound it). */
   immersionKey(): string
+  /**
+   * "+ Novo" (no desk) or a desk row's "+" (`deskId`): the card of steps. `restore` gives the keyboard back to where it was
+   * when the card closes with nothing made.
+   */
+  create(fixed: CreateFixed, restore: () => void): void
 }
 
 /**
@@ -156,8 +162,13 @@ export class RegencyPane implements IContentRenderer {
   private embed: EmbeddedChannel | undefined
   private embedSub: { dispose(): void } | undefined
   private closedOpen = false
-  /** A session just reopened from "Fechadas": its new row gets a brief highlight once the tree draws it. */
-  private fresh: { id: string; until: number } | undefined
+  /**
+   * A row just made (a session reopened from "Fechadas", a pane or a desk of "+ Novo"): it gets a brief highlight once the
+   * tree draws it, by its targets (`agent:<id>`, `pane:<id>`, `desk:<id>`); `focus`: and the keyboard.
+   */
+  private fresh: { targets: readonly string[]; until: number; focus: boolean } | undefined
+  /** "+ Novo" in the heading of the tree. */
+  private readonly newBtn = el('button', 'rg-new')
   private signature = ''
   private ro: ResizeObserver | undefined
   private disposed = false
@@ -187,7 +198,15 @@ export class RegencyPane implements IContentRenderer {
     this.members.append(this.membersHead, this.membersHost)
     this.modeBtn.type = 'button'
     this.modeBtn.dataset.action = 'mode'
-    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), el('span', 'rg-sp'), this.viewSeg)
+    this.newBtn.type = 'button'
+    this.newBtn.dataset.action = 'new'
+    this.newBtn.title = 'Novo: agente, terminal, nota, navegador, mesa ou canal, sem sair da Regência (paleta: Regência: Novo…)'
+    this.newBtn.setAttribute('aria-label', 'Novo: agente, terminal, nota, navegador, mesa ou canal')
+    this.newBtn.setAttribute('aria-haspopup', 'dialog')
+    const plus = glyph('plus', 'Novo')
+    plus.setAttribute('aria-hidden', 'true')
+    this.newBtn.append(plus, el('span', '', 'Novo'))
+    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), this.newBtn, el('span', 'rg-sp'), this.viewSeg)
     this.buildTools()
     this.treeHost.setAttribute('role', 'tree')
     this.treeHost.setAttribute('aria-label', 'Tether: mesas e guias')
@@ -337,24 +356,45 @@ export class RegencyPane implements IContentRenderer {
    * A session was reopened on `deskId` from "Fechadas": the person stays where she is, and the tree shows the new row (its desk
    * and agent group open if they were folded) with a brief highlight. Nothing takes the keyboard.
    */
-  announce(slotId: string, deskId: string): void {
+  announce(slotId: string, deskId: string, opts: { focus?: boolean } = {}): void {
     let next = this.state
     for (const id of [deskId, slotId]) if (next.collapsed.includes(id)) next = toggleCollapsed(next, id)
     if (next !== this.state) this.setLayout(next)
-    this.fresh = { id: slotId, until: Date.now() + FRESH_WAIT_MS }
+    this.freshen([`agent:${slotId}`, `pane:${slotId}`], opts.focus === true)
+  }
+
+  /** A desk "+ Novo" just made: its row glows (and, with `focus`, gets the keyboard) once the tree draws it. */
+  announceDesk(deskId: string, opts: { focus?: boolean } = {}): void {
+    if (this.state.view !== 'desk') this.setLayout(setView(this.state, 'desk'))
+    this.freshen([`desk:${deskId}`], opts.focus === true)
+  }
+
+  private freshen(targets: readonly string[], focus: boolean): void {
+    // Made by "+ Novo": a search or a filter that would hide the new row goes (the person asked to see it).
+    if (focus && (this.query !== '' || this.state.filter !== 'all')) {
+      this.query = ''
+      this.searchInput.value = ''
+      if (this.state.filter !== 'all') this.setLayout(setFilter(this.state, 'all'))
+    }
+    this.fresh = { targets, until: Date.now() + FRESH_WAIT_MS, focus }
     this.repaint()
   }
 
-  /** The reopened session's row, once it is in the tree: highlighted for a moment (the style honours reduced motion). */
+  /** The new row, once it is in the tree: highlighted for a moment (the style honours reduced motion). */
   private showFresh(): void {
     const f = this.fresh
     if (!f) return
     if (Date.now() > f.until) { this.fresh = undefined; return }
-    const row = [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')].find(r => r.dataset.target === `agent:${f.id}` || r.dataset.target === `pane:${f.id}`)
+    const row = [...this.treeHost.querySelectorAll<HTMLElement>('[data-key]')].find(r => f.targets.includes(r.dataset.target ?? ''))
     if (!row) return
     this.fresh = undefined
     row.classList.add('rg-fresh')
     row.scrollIntoView({ block: 'nearest' })
+    if (f.focus && row.dataset.key) {
+      // The person made it here: the keyboard goes to its row (on the phone, the tree is the "Tether" place).
+      if (this.tier === 'mobile') this.setTab('tether')
+      this.focusRow(row.dataset.key)
+    }
     setTimeout(() => row.classList.remove('rg-fresh'), FRESH_SHOWN_MS)
   }
 
@@ -728,7 +768,7 @@ export class RegencyPane implements IContentRenderer {
     } else {
       box.push(el('p', 'rg-void-t', this.host.loading() ? 'Carregando as conversas…' : 'Nenhuma conversa ainda.'))
     }
-    box.push(el('p', 'rg-void-s', 'Para criar um canal, use "Canais: Criar canal…" na paleta de comandos.'))
+    box.push(el('p', 'rg-void-s', 'Para criar um canal, use "+ Novo" no Tether ou "Canais: Criar canal…" na paleta de comandos.'))
     this.voidBox.replaceChildren(...box)
   }
 
@@ -847,10 +887,25 @@ export class RegencyPane implements IContentRenderer {
       const r = button.getBoundingClientRect()
       this.openMenu(target, row, { x: Math.round(r.left), y: Math.round(r.bottom + 2) })
     } else if (action === 'row-talk') this.host.talk(target)
+    else if (action === 'row-new' && target.kind === 'desk') this.openCreate({ deskId: target.id }, row.dataset.key!)
     else if ((action === 'row-sleep' || action === 'row-wake') && target.kind === 'desk') this.host.sleepDesk(target.id, action === 'row-wake')
   }
 
+  /**
+   * The card of "+ Novo". Closed with nothing made, the keyboard goes back: to the button, or to the desk's row (by its key:
+   * the row a repaint replaced is found again, or the one now in its place).
+   */
+  openCreate(fixed: CreateFixed, rowKey?: string): void {
+    const at = rowKey ? this.rows.findIndex(r => r.key === rowKey) : -1
+    this.host.create(fixed, () => {
+      if (this.disposed) return
+      if (rowKey) this.focusRowNear(rowKey, at)
+      else if (this.newBtn.isConnected) this.newBtn.focus({ preventScroll: true })
+    })
+  }
+
   private act(action: string): void {
+    if (action === 'new') { this.openCreate({}); return }
     if (action.startsWith('tab:')) { this.setTab(action.slice(4) as NarrowTab); return }
     if (action === 'mode') { this.toggleMode(); return }
     if (action === 'manage' || action === 'manage-members' || action === 'manage-tether') {

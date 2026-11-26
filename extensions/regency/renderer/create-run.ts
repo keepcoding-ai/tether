@@ -99,7 +99,8 @@ export function createRunner(acts: readonly CreateAct[], seams: CreateSeams): Ac
         const r = tabTo !== undefined
           ? await seams.tabFor(tabTo, { deskId: act.deskId })
           : await seams.tab({ deskId: act.deskId, ...(act.url !== undefined ? { url: act.url } : {}) })
-        if (!r.ok) return { ok: false, error: TAB_WORDS[r.why] }
+        // The main side may answer a verdict the feed's type does not list: said as it came, never lost.
+        if (!r.ok) return { ok: false, error: TAB_WORDS[r.why] ?? (r.why === undefined ? 'o processo do navegador não respondeu' : `o navegador recusou (${String(r.why)})`) }
         const paneId = seams.tabPane(r.tabId)
         if (tabTo !== undefined) bornFor.set(paneId, tabTo)
         made.deskId = act.deskId
