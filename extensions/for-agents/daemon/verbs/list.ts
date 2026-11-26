@@ -38,6 +38,8 @@ function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string
     path: deps.api.delivery.pathOf(paneId),
     pending: deps.api.delivery.pending(paneId).length + deps.pending.count(paneId),
   }
+  const queued = deps.pending.held(paneId)
+  if (queued.length > 0) entry.queued = queued
   // 'waiting' is a permission card; telling a question from it takes the screen (`read-screen` says which).
   if (asks) entry.asks = asks === 'waiting' ? 'permission' : 'done'
   // The sleep is the app's: it publishes it in the desk map (`asleep` on the pane).

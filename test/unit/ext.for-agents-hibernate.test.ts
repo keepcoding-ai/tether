@@ -317,7 +317,7 @@ describe('for-agents: list shows the sleep the app publishes in the desk map', (
         effectiveOf: () => ({ commander: OWNER, via: 'desk', hand: 'owner' }),
         inventoryOf: () => ({}),
       },
-      pending: { count: () => 0 },
+      pending: { count: () => 0, held: () => [] },
     } as unknown as VerbDeps
     const r = await listVerb.run(deps, { slotId: OWNER, proven: true } as VerbCaller, {})
     const desk = (r.data as { desks: { asleep?: boolean; panes: { id: string; asleep?: boolean }[] }[] }).desks[0]!

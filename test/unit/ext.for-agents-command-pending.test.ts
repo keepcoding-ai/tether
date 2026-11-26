@@ -180,13 +180,15 @@ describe('PendingCommands with return', () => {
     assert.match(delivered[0]!.msg.body, /avisos do tether/)
   })
 
-  test('given up without return: dropped with nothing delivered', async () => {
+  test('given up without return: dropped, and the owner is told why', async () => {
     quietOk = false
     pending.add(PANE, OWNER, 'context', undefined)
     await fc.advance(5 * 60_000 + 1)
     await pending.flush()
     assert.equal(pending.count(PANE), 0)
-    assert.deepEqual(delivered, [])
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0]!.owner, OWNER)
+    assert.match(delivered[0]!.msg.body, /comando /context: não rodou; a guia não ficou livre em 5 min (avisos do tether na caixa)/)
   })
 
   test('dispose ends the live watches', async () => {
