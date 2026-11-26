@@ -34,6 +34,7 @@ function rig(): Rig {
     get: n => procs.get(n),
     now: () => NOW,
     start: async n => { calls.push(`start ${n}`); return reply('start') },
+    create: async (n, recipe) => { calls.push(`create ${n} ${Object.keys(recipe.env).join(',')}`); return reply('create') },
     stop: async (n, o) => { calls.push(`stop ${n} ${JSON.stringify(o)}`); return reply('stop') },
     restart: async (n, o) => { calls.push(`restart ${n} ${JSON.stringify(o)}`); return reply('restart') },
     use: async (n, d, p) => { calls.push(`use ${n} ${d} ${p}`); return reply('use') },
@@ -172,4 +173,34 @@ test('peekOutput with `over` (the Regency): the tab lent and the record built ar
   assert.deepEqual(acts.peekOutput('web', { over }), { ok: true })
   assert.deepEqual(acts.peekOutput('worker', { over }), { ok: true })
   assert.deepEqual(seen, [['pane', 'process:web', over], ['new', 'process:worker', over]])
+})
+
+test('the list gives the names of the variables (envNames), never a value; the model shows them by name', () => {
+  const feed = createProcessEmbeds()
+  feed.publish({ ...createProcessActs(rig().deps), list: () => [proc('web')], onDidChange: () => ({ dispose() {} }) })
+  assert.deepEqual(feed.list()[0]!.envNames, ['API_TOKEN'])
+  assert.deepEqual(procRowsOf(feed.list(), NOW)[0]!.envNames, ['API_TOKEN'])
+  assert.ok(!JSON.stringify(procRowsOf(feed.list(), NOW)).includes(SECRET))
+})
+
+test('create: the recipe goes in one request; a known name, a refusal and a failed start answer in words with every value masked', async () => {
+  const r = rig()
+  const acts = createProcessActs(r.deps)
+  const recipe = { command: 'node', args: ['a.js'], cwd: 'C:/work', env: { MODO: 'bancada', NOTA: SECRET }, ports: [3001] }
+  // A name the list has: refused before any request (starting it with a recipe would change its recipe).
+  assert.deepEqual(await acts.create({ name: 'web', recipe }), { refusal: 'Já existe um processo "web": escolha outro nome.', code: 'proc-exists', field: 'name' })
+  assert.deepEqual(r.calls, [])
+  assert.deepEqual(await acts.create({ name: 'novo', recipe }), { ok: true })
+  assert.deepEqual(r.calls, ['create novo MODO,NOTA'])
+  r.replies.set('create', error('port-busy', `não iniciei novo: a porta 3001 já está ocupada por node (pid 9) NOTA=${SECRET}. Escolha outra porta (tether proc ports mostra quem ouve onde), pare quem ocupa, ou inicie mesmo assim com --force`))
+  const busy = await acts.create({ name: 'novo', recipe })
+  assert.ok('refusal' in busy && busy.field === 'ports' && busy.code === 'port-busy')
+  assert.match((busy as { refusal: string }).refusal, /^Não iniciei: a porta 3001 já está ocupada por node \(pid 9\) NOTA=•••\./)
+  r.replies.set('create', error('bad-request', `env ruim: ${SECRET}`))
+  assert.ok(!JSON.stringify(await acts.create({ name: 'novo', recipe })).includes(SECRET))
+  r.replies.set('create', { t: 'ok', id: 1, proc: { ...proc('novo'), status: 'failed', error: `spawn falhou com ${SECRET}` } } as unknown as Reply)
+  const failed = await acts.create({ name: 'novo', recipe })
+  assert.deepEqual(failed, { ok: true, failed: 'novo foi registrado, mas não iniciou: spawn falhou com •••' })
+  const off = createProcessEmbeds()
+  assert.deepEqual(await off.create({ name: 'x', recipe }), { refusal: 'Os processos estão desligados.', code: 'off' })
 })

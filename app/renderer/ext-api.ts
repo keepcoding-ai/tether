@@ -39,7 +39,7 @@ import type { FrameSnapshot, PanelFrameTree } from './panel-frames.ts'
 import type { ProcActOptions, ProcAttachment, ProcsChange } from './procs-store.ts'
 import type { Reply } from '../../src/daemon/protocol.ts'
 import type { ClosedSession } from './closed-sessions-rules.ts'
-import type { ProcState } from '../../src/daemon/procs.ts'
+import type { ProcRecipe, ProcState } from '../../src/daemon/procs.ts'
 
 /** Why a panel frame became loose: the person closed its panel, or the panel went by itself. */
 export type LooseCause = 'closed' | 'lost'
@@ -917,6 +917,12 @@ export interface TetherUi {
     /** A process changed or went (`proc`, `proc-removed`), or the list was read again (a new connection to tetherd). */
     onDidChange(listener: (e: ProcsChange) => void): IDisposable
     start(name: string): Promise<Reply>
+    /**
+     * Registers a new process and starts it (`tether proc start <nome> … -- <comando…>`'s request). The values of
+     * `recipe.env` go to tetherd in this request only: nothing in the app keeps, logs or shows them, and every process the
+     * app holds (the list, the reply, `info`) carries the variables' names only.
+     */
+    create(name: string, recipe: ProcRecipe): Promise<Reply>
     stop(name: string, opts?: ProcActOptions): Promise<Reply>
     restart(name: string, opts?: ProcActOptions): Promise<Reply>
     forget(name: string, opts?: ProcActOptions): Promise<Reply>

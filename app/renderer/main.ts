@@ -5689,6 +5689,7 @@ function activateRendererExtensions(): void {
         get: name => procsStore.get(name),
         onDidChange: listener => add(procsStore.onDidChange(listener)),
         start: name => procsStore.start(name),
+        create: (name, recipe) => procsStore.create(name, recipe),
         stop: (name, opts) => procsStore.stop(name, opts),
         restart: (name, opts) => procsStore.restart(name, opts),
         forget: (name, opts) => procsStore.forget(name, opts),

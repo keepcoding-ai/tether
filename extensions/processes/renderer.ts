@@ -608,6 +608,7 @@ export function activate(ui: TetherUi): IDisposable[] {
     get: name => ui.procs.get(name),
     now: () => Date.now(),
     start: name => ui.procs.start(name),
+    create: (name, recipe) => ui.procs.create(name, recipe),
     stop: (name, opts) => ui.procs.stop(name, opts),
     restart: (name, opts) => ui.procs.restart(name, opts),
     use: (name, duration, purpose) => ui.procs.use(name, duration, purpose),

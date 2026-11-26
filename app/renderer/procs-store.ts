@@ -4,7 +4,7 @@
 // watcher. The core keeps the data; the processes extension draws it (TetherUi.procs). Requests from the app carry no
 // `by`: tetherd records the author as the person in the app.
 import type { Event as DaemonEvent, Reply } from '../../src/daemon/protocol.ts'
-import type { ProcState } from '../../src/daemon/procs.ts'
+import type { ProcEvent, ProcRecipe, ProcState } from '../../src/daemon/procs.ts'
 import type { RequestBody } from '../shared/api.ts'
 import { toDisposable, type IDisposable } from '../shared/vscode-lifecycle.ts'
 
@@ -65,18 +65,26 @@ export class ProcsStore {
     const r = await this.request({ t: 'proc-list' })
     if (r.t !== 'ok') return
     this.procs.clear()
-    for (const p of r.procs ?? []) this.procs.set(p.name, p)
+    for (const p of r.procs ?? []) this.procs.set(p.name, namesOnly(p))
     this.fire({ ...(reconnected ? { reconnected } : {}) })
   }
 
   onEvent(ev: DaemonEvent): void {
-    if (ev.t === 'proc') { this.procs.set(ev.proc.name, ev.proc); this.fire({ names: [ev.proc.name] }) }
+    if (ev.t === 'proc') { this.procs.set(ev.proc.name, namesOnly(ev.proc)); this.fire({ names: [ev.proc.name] }) }
     else if (ev.t === 'proc-removed') { if (this.procs.delete(ev.name)) this.fire({ names: [ev.name] }) }
     else if (ev.t === 'proc-data') for (const fn of this.watchers.get(ev.name) ?? []) fn(ev.data)
   }
 
   // Every act answers with tetherd's reply; a refusal is data (its message is the Portuguese text to show).
   start(name: string): Promise<Reply> { return this.request({ t: 'proc-start', name }) }
+  /**
+   * Registers and starts a new process with its recipe: the same `proc-start` as `tether proc start <nome> … -- <comando…>`.
+   * The recipe (its env values among it) goes in this request and nowhere else; the reply comes back with names only.
+   */
+  async create(name: string, recipe: ProcRecipe): Promise<Reply> {
+    const r = await this.request({ t: 'proc-start', name, recipe })
+    return r.t === 'ok' && r.proc ? { ...r, proc: namesOnly(r.proc) } : r
+  }
   stop(name: string, opts: ProcActOptions = {}): Promise<Reply> { return this.request({ t: 'proc-stop', name, ...guard(opts) }) }
   restart(name: string, opts: ProcActOptions = {}): Promise<Reply> { return this.request({ t: 'proc-restart', name, ...guard(opts) }) }
   forget(name: string, opts: ProcActOptions = {}): Promise<Reply> {
@@ -86,7 +94,10 @@ export class ProcsStore {
   use(name: string, duration: string, purpose: string): Promise<Reply> { return this.request({ t: 'proc-use', name, duration, purpose }) }
   release(name: string): Promise<Reply> { return this.request({ t: 'proc-release', name }) }
   seen(name: string): Promise<Reply> { return this.request({ t: 'proc-seen', name }) }
-  info(name: string): Promise<Reply> { return this.request({ t: 'proc-info', name }) }
+  async info(name: string): Promise<Reply> {
+    const r = await this.request({ t: 'proc-info', name })
+    return r.t === 'ok' ? { ...r, ...(r.proc ? { proc: namesOnly(r.proc) } : {}), ...(r.events ? { events: r.events.map(eventNamesOnly) } : {}) } : r
+  }
   ports(): Promise<Reply> { return this.request({ t: 'proc-ports' }) }
 
   /**
@@ -132,6 +143,29 @@ export class ProcsStore {
       try { l(e) } catch (err) { console.error('procs.onDidChange', err) }
     }
   }
+}
+
+/** What stands for an env value here: the renderer never holds one (direct replies of tetherd mask by name only). */
+const VALUE_HIDDEN = '•••'
+
+function hideValues(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const k of Object.keys(env)) out[k] = VALUE_HIDDEN
+  return out
+}
+
+/** The process with the names of its variables only (the broadcast's rule, applied to the direct replies too). */
+function namesOnly(p: ProcState): ProcState {
+  return p.card?.env ? { ...p, card: { ...p.card, env: hideValues(p.card.env) } } : p
+}
+
+/** A recipe-changed event of the history with the names of the variables only. */
+function eventNamesOnly(e: ProcEvent): ProcEvent {
+  if (!e.before?.env && !e.after?.env) return e
+  const out: ProcEvent = { ...e }
+  if (e.before?.env) out.before = { ...e.before, env: hideValues(e.before.env) }
+  if (e.after?.env) out.after = { ...e.after, env: hideValues(e.after.env) }
+  return out
 }
 
 function guard(opts: ProcActOptions): { waitMs?: number; force?: string; reason?: string } {

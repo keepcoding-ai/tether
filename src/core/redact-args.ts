@@ -6,6 +6,11 @@ const MASK = '[redacted]'
 const TOKEN_SHAPE = /\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_\w{10,}|github_pat_\w+|xox[a-z]-[\w-]+|AKIA[0-9A-Z]{12,}|eyJ[\w-]{10,}\.[\w.-]+)/g
 const LONG_BLOB = /\b[A-Za-z0-9+/_-]{40,}\b/g
 
+/** A name (an option, a `NAME=value`, an environment variable) that looks like it holds a secret: the one rule of this file. */
+export function looksSecretName(name: string): boolean {
+  return SECRET_NAME.test(name)
+}
+
 /**
  * A value on its own (a positional, or the value of an option that is not secret by name): `NAME=value` with a secret NAME,
  * or a credential shape. A value that is itself a command line (`-c "API_KEY=x run --password y"`) gets the same rules

@@ -5,11 +5,12 @@
 // The list never carries `card.env` (it may hold a secret): `toEmbedProc` drops it before any reader sees a process.
 import type { Reply } from '../../src/daemon/protocol.ts'
 import type { ProcCard, ProcState } from '../../src/daemon/procs.ts'
+import { createRefusalText, maskEcho, refusalField, type NewProcField, type NewProcRecipe, type NewProcRequest } from '../regency/new-process-rules.ts'
 import { forceReasonError, inUseRefusal, MAX_WAIT_MS, refusalText, type InUseRefusal } from '../regency/system-rules.ts'
 import { HOLD_DURATION, HOLD_PURPOSE, othersUses } from './proc-rules.ts'
 
-/** A process as a reader sees it: the same as the pad's, without the values of `env`. */
-export type EmbedProc = Omit<ProcState, 'card'> & { card: Omit<ProcCard, 'env'> }
+/** A process as a reader sees it: the same as the pad's, without `env`; `envNames` keeps only the variables' names. */
+export type EmbedProc = Omit<ProcState, 'card'> & { card: Omit<ProcCard, 'env'>; envNames: string[] }
 
 /** An act: done, or refused in plain words (pt-BR, ready to show). A refusal for others' uses carries who, until when, what for and the ways out. */
 export type ProcAct = { ok: true } | { refusal: string; inUse?: InUseRefusal }
@@ -20,9 +21,20 @@ export interface GuardedOptions {
   force?: string
 }
 
+/**
+ * "Novo processo": made and started (`failed`: registered, but the start failed, in plain words), or refused (the name's or
+ * the port's sentence, `field` where the form shows it). No text of the answer carries a value of the recipe's env.
+ */
+export type ProcCreate = { ok: true; failed?: string } | { refusal: string; code: string; field?: NewProcField }
+
 export interface ProcessEmbedActs {
   /** Starts the stored recipe. */
   start(name: string): Promise<ProcAct>
+  /**
+   * Registers and starts a new process (the CLI's `proc start <nome> … -- <comando…>`). The recipe's env values go to tetherd
+   * in that request and are not kept: the answer is masked against them.
+   */
+  create(request: NewProcRequest): Promise<ProcCreate>
   stop(name: string, opts?: GuardedOptions): Promise<ProcAct>
   restart(name: string, opts?: GuardedOptions): Promise<ProcAct>
   /** Declares the person's use (default: 15 min, "segurado pela pessoa"). */
@@ -66,10 +78,10 @@ export interface ProcessEmbedPublisher extends ProcessEmbedFeed {
   publish(source: ProcessEmbedSource): { dispose(): void }
 }
 
-/** The process without the values of its `env`. */
+/** The process without the values of its `env` (the names stay, apart). */
 export function toEmbedProc(p: ProcState): EmbedProc {
-  const { env: _env, ...card } = p.card
-  return { ...p, card }
+  const { env, ...card } = p.card
+  return { ...p, card, envNames: Object.keys(env ?? {}) }
 }
 
 const OFF = { refusal: 'Os processos estão desligados.' } as const
@@ -95,6 +107,7 @@ export function createProcessEmbeds(): ProcessEmbedPublisher {
       return { dispose: () => { listeners.delete(listener) } }
     },
     start: async name => source ? source.start(name) : OFF,
+    create: async request => source ? source.create(request) : { ...OFF, code: 'off' },
     stop: async (name, opts) => source ? source.stop(name, opts) : OFF,
     restart: async (name, opts) => source ? source.restart(name, opts) : OFF,
     hold: async (name, opts) => source ? source.hold(name, opts) : OFF,
@@ -141,6 +154,8 @@ export interface ProcessActsDeps {
   get(name: string): ProcState | undefined
   now(): number
   start(name: string): Promise<Reply>
+  /** `proc-start` with a recipe (ui.procs.create). */
+  create(name: string, recipe: NewProcRecipe): Promise<Reply>
   stop(name: string, opts: GuardedOptions): Promise<Reply>
   restart(name: string, opts: GuardedOptions): Promise<Reply>
   use(name: string, duration: string, purpose: string): Promise<Reply>
@@ -175,6 +190,21 @@ export function createProcessActs(deps: ProcessActsDeps): ProcessEmbedActs {
 
   return {
     start: async name => deps.get(name) ? answer(await deps.start(name)) : UNKNOWN,
+    async create({ name, recipe }) {
+      // A known name started with a recipe would change that process' recipe: the form refuses it, and so does the act.
+      if (deps.get(name)) return { refusal: `Já existe um processo "${name}": escolha outro nome.`, code: 'proc-exists', field: 'name' }
+      const values = Object.values(recipe.env)
+      const r = await deps.create(name, recipe)
+      if (r.t === 'error') {
+        const field = refusalField(r.code)
+        return { refusal: createRefusalText(r.code, r.message, values), code: r.code, ...(field ? { field } : {}) }
+      }
+      if (r.proc?.status === 'failed') {
+        const why = maskEcho(r.proc.error ?? '', values).trim()
+        return { ok: true, failed: why ? `${name} foi registrado, mas não iniciou: ${why}` : `${name} foi registrado, mas não iniciou.` }
+      }
+      return { ok: true }
+    },
     stop: (name, opts) => guarded('stop', name, opts),
     restart: (name, opts) => guarded('restart', name, opts),
     hold: async (name, opts = {}) => {

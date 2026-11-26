@@ -40,6 +40,8 @@ export interface SystemProcInput {
   ports?: { port: number; listening: boolean }[]
   uses?: SystemUseInput[]
   external?: boolean
+  /** The names of the recipe's environment variables (the feed gives names only, never a value). */
+  envNames?: readonly string[]
 }
 
 export interface SystemAgentInput {
@@ -94,6 +96,8 @@ export interface ProcRow {
   /** What the person may do now. */
   can: { start: boolean; stop: boolean; restart: boolean; hold: boolean; release: boolean; log: boolean }
   cwd: string
+  /** The names of its environment variables, sorted; absent when it has none. A value is never here. */
+  envNames?: string[]
 }
 
 export interface RondaRow {
@@ -235,6 +239,7 @@ function procRow(p: SystemProcInput, now: number): ProcRow {
   if (p.pid !== undefined && (p.status === 'running' || p.status === 'stopping')) row.pid = p.pid
   if (ports.length > 0) row.portsText = portsWords(ports, p.status)
   if (p.startedBy !== undefined) row.startedByText = `Iniciado por ${authorName(p.startedBy)}`
+  if (p.envNames !== undefined && p.envNames.length > 0) row.envNames = [...p.envNames].sort(byName)
   return row
 }
 
