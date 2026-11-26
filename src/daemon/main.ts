@@ -111,7 +111,10 @@ async function main(): Promise<void> {
       process.stderr.write(`tetherd: o canal ${pipe} está ocupado por um programa que não é o tetherd; feche-o ou use outro TETHER_PIPE\n`)
       return void await finish(2)
     }
-    throw e
+    // Refusals with a reason the person must read (a key that cannot be private): in the log, and on stderr below.
+    log(`cannot start: ${err.message}`)
+    process.stderr.write(`tetherd: ${err.message}\n`)
+    return void await finish(2)
   }
   writeFileSync(pidFilePath(home), `${process.pid}\n`)
   log(`started pid ${process.pid}, home ${home}, executor ${executor.mode}`)

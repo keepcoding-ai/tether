@@ -30,7 +30,7 @@ import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
-import { clientProof, daemonProof, isNonce, newNonce, sameProof, servePipeHome, unservePipeHome, writePipeKey } from './pipe-key.ts'
+import { clientProof, daemonProof, fillKeyFile, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servePipeHome, unservePipeHome } from './pipe-key.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -598,6 +598,8 @@ class DaemonImpl implements Daemon {
 
   async listen(): Promise<void> {
     await mkdir(slotsDir(this.home), { recursive: true })
+    // First of all: a key that cannot be private stops the boot here, before anything is watched, reaped or served.
+    await prepareKeyFile(this.home, pipeKeyPath(this.home), this.log)
     this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     this.fsProbe?.('slots:scan')
     const scan = await scanSlotsAsync(this.home)
@@ -637,7 +639,7 @@ class DaemonImpl implements Daemon {
       })
       if (process.platform !== 'win32') await chmod(this.pipe, 0o600)
       // Only the owner of the pipe draws the key: a tetherd that lost the race never replaces the winner's.
-      this.pipeKey = writePipeKey(this.home, this.log)
+      this.pipeKey = fillKeyFile(pipeKeyPath(this.home))
       await this.pipeKey
       servePipeHome(this.pipe, this.home)
     } catch (e) {
