@@ -447,7 +447,7 @@ export function channelMenu(c: ChannelSummary, answer: MembersAnswer | undefined
 }
 
 export const MENU = {
-  join: 'Juntar a um canal…',
+  join: 'Chamar para um canal…',
   openDesk: (name: string): string => `Abrir o canal da mesa (#${name})`,
   openAny: 'Abrir canal…',
   close: 'Encerrar canal…',

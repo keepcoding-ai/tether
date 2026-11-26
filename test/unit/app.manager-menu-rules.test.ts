@@ -126,7 +126,7 @@ describe('managerGroupedEntries (the Regency\'s menu in blocks)', () => {
     it('Novo painel…'), it('Duplicar painel à direita'), it('Duplicar painel abaixo'), it('Novo painel na borda do quadro…'), it('Novo quadro…'), 'sep',
     it('Renomear…'), it('Trocar perfil…'), it('Reiniciar agente'), it('Hibernar guia'), it('Marcar como não lido'), 'sep',
     it('Mostrar barra de status'), it('Copiar link do painel'), it('Copiar pasta'), it('Abrir pasta no Explorer'), 'sep',
-    it('Espiar'), it('Mover…'), 'sep', it('Juntar a um canal…'), 'sep', it('Fechar painel…'),
+    it('Espiar'), it('Mover…'), 'sep', it('Chamar para um canal…'), 'sep', it('Fechar painel…'),
   ]
   const OWNED = (): G[] => [{ heading: 'Comandada por conferente, pela mesa' }, it('Tomar'), it('Pausar conferente nesta guia'), it('Dar esta guia a outro agente…')]
   const fullG = { go: it(GO_PANE_LABEL, { pin: 'primary' }) as G, close: it('Fechar guia') as G, emblem: it(EMBLEM_LABEL) as G }
@@ -135,7 +135,7 @@ describe('managerGroupedEntries (the Regency\'s menu in blocks)', () => {
   test('an agent: three blocks with titles, in order; no frame gestures; one close; "Ir até a guia" last', () => {
     const out = gText(managerGroupedEntries<G>(SLOT(), OWNED(), { extra: EXTRA(), goLast: fullG }, groupsOf({ agent: 'bancada', owner: 'conferente' }), 'sep', gLabel))
     assert.deepEqual(out, [
-      `# ${AGENT_BLOCK('bancada')}`, 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…', 'Dar uma mesa nova…', 'Trocar perfil…', 'Reiniciar agente', '—',
+      `# ${AGENT_BLOCK('bancada')}`, 'Falar com bancada', 'O que bancada tem', 'Chamar para um canal…', 'Dar uma mesa nova…', 'Trocar perfil…', 'Reiniciar agente', '—',
       `# ${PANE_BLOCK}`, 'Espiar', 'Renomear…', 'Mover…', EMBLEM_LABEL, 'Hibernar guia', 'Marcar como não lido', 'Copiar link do painel', '—', 'Copiar pasta', 'Abrir pasta no Explorer', '—', 'Fechar guia', '—',
       `# ${OWNER_BLOCK('conferente')}`, 'Tomar', 'Pausar conferente nesta guia', 'Dar esta guia a outro agente…', '—',
       GO_PANE_LABEL,

@@ -128,7 +128,7 @@ export const FRAME_GESTURES: readonly RegExp[] = [
 const CLOSE_ROW = /^Fechar\b/
 /** The pane's own rows that are about the agent that runs in it, in the agent block's order (the caller's rows fit in by label). */
 export const AGENT_ROWS: readonly RegExp[] = [
-  /^Falar com /, /^O que .+ tem$/, /^Juntar a um canal/, /^Dar uma mesa nova/, /^Ver guias d/, /^Trocar perfil/, /^Reiniciar agente/,
+  /^Falar com /, /^O que .+ tem$/, /^Chamar para um canal/, /^Dar uma mesa nova/, /^Ver guias d/, /^Trocar perfil/, /^Reiniciar agente/,
 ]
 /** The tab block's order: these first, by rank; the pane type's own rows after them, as its menu has them. */
 const PANE_ROWS: readonly RegExp[] = [

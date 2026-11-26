@@ -921,7 +921,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     console.log(`agent menu: ${JSON.stringify(agentLabels)}`)
     assert.equal(agentLabels.at(-1), 'Ir até a guia')
     assert.ok(!agentLabels.includes('Focar guia'), 'no "Focar guia" on top')
-    for (const l of ['Renomear…', 'Hibernar guia', 'Fechar guia', 'Emblema…', 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…']) assert.ok(agentLabels.includes(l), `"${l}" in the agent's menu`)
+    for (const l of ['Renomear…', 'Hibernar guia', 'Fechar guia', 'Emblema…', 'Falar com bancada', 'O que bancada tem', 'Chamar para um canal…']) assert.ok(agentLabels.includes(l), `"${l}" in the agent's menu`)
     // R6, E: in blocks with a title; one close; Space beside "Espiar", nothing beside "Falar com".
     const heads = await menu.locator(':scope > li.hd').allTextContents()
     assert.equal(heads[0], 'O agente bancada')
