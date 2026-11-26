@@ -5,8 +5,8 @@
 //
 // Secrets: a variable's VALUE goes only into the request this file builds; nothing here keeps it, logs it or puts it in a
 // sentence. `maskEcho` takes the values out of any text that might echo the recipe before it is shown.
-import { parseArgs } from '../../app/renderer/args.ts'
-import { looksSecretName, looksSecretValue } from '../../src/core/redact-args.ts'
+import { formatArgs, parseArgs } from '../../app/renderer/args.ts'
+import { looksSecretName, looksSecretValue, MASK, redactArgs } from '../../src/core/redact-args.ts'
 
 /** The process name tetherd accepts: the same as PROC_NAME_RE (src/daemon/procs.ts, a node module the renderer does not load). */
 export const PROC_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
@@ -47,7 +47,7 @@ export interface NewProcRecipe {
 export interface NewProcRequest { name: string; recipe: NewProcRecipe }
 
 export type NewProcCheck =
-  | { ok: true; request: NewProcRequest; secretNames: string[] }
+  | { ok: true; request: NewProcRequest; secretNames: string[]; commandSecret: boolean }
   | { ok: false; field: NewProcField; error: string; envIndex?: number }
 
 // ---------------------------------------------------------------- the fields
@@ -113,11 +113,31 @@ export function secretNames(rows: readonly NewProcEnvRow[]): string[] {
   return filledRows(rows).filter(x => x.row.name.trim() !== '' && (looksSecretName(x.row.name.trim()) || looksSecretValue(x.row.value))).map(x => x.row.name.trim())
 }
 
-/** The question before creating with secret-looking names; the default answer is going back. */
-export function secretQuestion(names: readonly string[]): string {
+/**
+ * The question before creating with secret-looking names, or with a command line that looks like it carries a secret
+ * (`command`); the default answer is going back. Names only: no value and no word of the command is in it.
+ */
+export function secretQuestion(names: readonly string[], command = false): string {
+  if (names.length === 0) return 'O comando parece levar um segredo. Segredo não vai digitado na linha: use, por exemplo, `dotenvx run -- …`. Criar mesmo assim?'
   const list = names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}`
   const verb = names.length < 2 ? 'parece um segredo' : 'parecem segredos'
-  return `${list} ${verb}. Segredo vai no próprio comando, por exemplo \`dotenvx run -- …\`. Criar mesmo assim?`
+  const also = command ? ', e o comando também parece levar um' : ''
+  return `${list} ${verb}${also}. Segredo vai no próprio comando, por exemplo \`dotenvx run -- …\`. Criar mesmo assim?`
+}
+
+/** Whether the command line carries something the argument mask would hide (core/redact-args.ts): a token, a password… */
+function commandLooksSecret(argv: readonly string[]): boolean {
+  return redactArgs(argv).some((a, i) => a !== argv[i])
+}
+
+/**
+ * The command line as the form may keep showing it once it was sent: every part the argument mask hides becomes the mask
+ * (VALUE_MASK), the rest as typed. A line with nothing to hide comes back as it is.
+ */
+export function maskedCommand(text: string): string {
+  const argv = parseArgs(text)
+  if (!commandLooksSecret(argv)) return text
+  return formatArgs(redactArgs(argv).map(a => a.split(MASK).join(VALUE_MASK)))
 }
 
 // ---------------------------------------------------------------- the whole form
@@ -128,6 +148,7 @@ export function checkNewProc(form: NewProcForm, existing: readonly string[]): Ne
   if (nameErr) return { ok: false, field: 'name', error: nameErr }
   const cmd = splitCommand(form.command)
   if ('error' in cmd) return { ok: false, field: 'command', error: cmd.error }
+  if (form.command.includes(VALUE_MASK)) return { ok: false, field: 'command', error: `Digite de novo o trecho do comando que foi apagado (${VALUE_MASK}).` }
   const cwd = form.cwd.trim()
   if (cwd === '') return { ok: false, field: 'cwd', error: 'Escolha a pasta em que o processo roda.' }
   if (!isAbsoluteFolder(cwd)) return { ok: false, field: 'cwd', error: 'A pasta precisa ser um caminho completo (ex.: C:\\projetos\\web).' }
@@ -142,6 +163,7 @@ export function checkNewProc(form: NewProcForm, existing: readonly string[]): Ne
     ok: true,
     request: { name: form.name.trim(), recipe: { command: cmd.command, args: cmd.args, cwd, env, ports: ports.ports, ...(description ? { description } : {}) } },
     secretNames: secretNames(form.env),
+    commandSecret: commandLooksSecret([cmd.command, ...cmd.args]),
   }
 }
 

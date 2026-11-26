@@ -68,6 +68,7 @@ const CARD = 'dialog.rg-np'
 const CANARY = 'canario-r7c-0b5e1d'
 const CANARY_TOKEN = 'canario-r7c-token-77aa'
 const CANARY_BUSY = 'canario-r7c-busy-c3f2'
+const CANARY_CMD = 'canario-r7c-cmd-Q9x2'
 
 /** A harmless process: listens on its port, says which variables it got (the canary by its length only), ticks. */
 const FIXTURE = `
@@ -365,10 +366,27 @@ test('regency: Novo processo (form, variables by name only, the canary nowhere, 
     assert.equal(await page.locator(`${CARD} .rg-cr-fl[data-field="ports"] .rg-cr-err[role="alert"]`).isVisible(), true)
     assert.deepEqual(await pageHas(CANARY_BUSY), [])
     assert.equal(await proc('r7-busy'), undefined, 'refused before registering')
+    // A secret in the command line (Temper r7, T9): the same question in its own words; after the refusal the field shows
+    // the line with that part masked, and the secret is nowhere on the page.
+    await page.fill(`${CARD} input[data-f="command"]`, `node "${fixture}" --token ${CANARY_CMD}`)
+    await page.click(`${CARD} [data-do="create"]`)
+    await until('the command question', async () => (await np()).phase === 'asking')
+    assert.equal((await np()).question, 'O comando parece levar um segredo. Segredo não vai digitado na linha: use, por exemplo, `dotenvx run -- …`. Criar mesmo assim?')
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.do), 'ask-back', '"Voltar" has the keyboard')
+    await page.click(`${CARD} [data-do="ask-go"]`)
+    await until('the port refused again', async () => { const s = await np(); return s.phase === 'edit' && s.errorField === 'ports' && /trecho secreto/.test(s.error ?? '') }, 20_000)
+    v = await np()
+    assert.ok(v.command.startsWith('node ') && v.command.endsWith(' --token •••') && !v.command.includes(CANARY_CMD), `the secret part of the command is masked in its field: ${v.command.replace(CANARY_CMD, '<CANARY>')}`)
+    assert.match(v.error ?? '', /O trecho secreto do comando foi apagado \(•••\): digite-o de novo\.$/)
+    assert.deepEqual(await pageHas(CANARY_CMD), [], 'the command\'s secret is not in the DOM, an input, an attribute or the URL')
+    await page.click(`${CARD} [data-do="create"]`)
+    await until('the masked command refused', async () => (await np()).errorField === 'command')
+    assert.equal((await np()).error, 'Digite de novo o trecho do comando que foi apagado (•••).')
+    assert.equal(await proc('r7-busy'), undefined, 'still nothing made')
     await page.keyboard.press('Escape')
     await page.waitForSelector(CARD, { state: 'detached' })
     assert.deepEqual(await heapHas([CANARY, CANARY_TOKEN, CANARY_BUSY]), [], 'no canary in the renderer\'s heap')
-    assert.ok(!broadcasts.join('\n').includes(CANARY_TOKEN) && !broadcasts.join('\n').includes(CANARY_BUSY), 'not in any broadcast')
+    assert.ok(!broadcasts.join('\n').includes(CANARY_TOKEN) && !broadcasts.join('\n').includes(CANARY_BUSY) && !broadcasts.join('\n').includes(CANARY_CMD), 'not in any broadcast')
     assert.ok(![...logs, ...consoleLines].join('\n').match(new RegExp(`${CANARY_TOKEN}|${CANARY_BUSY}`)), 'not in any log')
 
     // ---- 6. the phone: the whole screen, 44 px ----

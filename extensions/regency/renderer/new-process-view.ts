@@ -13,7 +13,7 @@
 // The form's body is built once per opening and never drawn again: what the person typed stays in place under a question.
 import type { PickItem, PickSpec } from '../../../app/renderer/ext-api.ts'
 import type { ProcCreate } from '../../processes/embed.ts'
-import { checkNewProc, ENV_WARNING, secretQuestion, type NewProcField, type NewProcForm, type NewProcRequest } from '../new-process-rules.ts'
+import { checkNewProc, ENV_WARNING, maskedCommand, secretQuestion, VALUE_MASK, type NewProcField, type NewProcForm, type NewProcRequest } from '../new-process-rules.ts'
 import { el, glyph } from './columns.ts'
 
 export interface NewProcessHost {
@@ -309,14 +309,17 @@ export class NewProcessCard {
     if (!this.dialog || this.phase === 'running' || this.picking) return
     const checked = checkNewProc(this.read(), this.host.existing())
     if (!checked.ok) { this.showError(checked.field, checked.error, checked.envIndex); return }
-    if (checked.secretNames.length > 0 && !confirmed) { this.ask(checked.secretNames); return }
-    void this.send(checked.request)
+    if ((checked.secretNames.length > 0 || checked.commandSecret) && !confirmed) { this.ask(checked.secretNames, checked.commandSecret); return }
+    void this.send(checked.request, checked.commandSecret)
   }
 
-  private async send(request: NewProcRequest): Promise<void> {
+  private async send(request: NewProcRequest, commandSecret: boolean): Promise<void> {
     const typed = Object.values(request.recipe.env).some(v => v !== '')
-    // The values leave the screen before the request goes; from here on only `request` (this call's) holds them.
+    // The values leave the screen before the request goes; from here on only `request` (this call's) holds them. A secret
+    // in the command line goes the same way: the field keeps the line with that part masked (sent again as it is, it is refused).
     this.clearValues()
+    const cmd = this.dialog?.querySelector<HTMLInputElement>('input[data-f="command"]')
+    if (commandSecret && cmd) cmd.value = maskedCommand(cmd.value)
     this.setPhase('running')
     let r: ProcCreate
     try {
@@ -332,14 +335,15 @@ export class NewProcessCard {
       return
     }
     this.setPhase('edit')
-    const again = typed ? ' Os valores das variáveis foram apagados: digite-os de novo.' : ''
+    const again = (typed ? ' Os valores das variáveis foram apagados: digite-os de novo.' : '')
+      + (commandSecret ? ` O trecho secreto do comando foi apagado (${VALUE_MASK}): digite-o de novo.` : '')
     this.showError((r.field ?? 'general') as NewProcField | 'general', r.refusal + again)
   }
 
-  private ask(names: readonly string[]): void {
+  private ask(names: readonly string[], command: boolean): void {
     const box = this.dialog?.querySelector<HTMLElement>('.rg-np-ask')
     if (!box) return
-    const text = secretQuestion(names)
+    const text = secretQuestion(names, command)
     box.replaceChildren()
     const g = glyph('shield-warning', 'Atenção')
     g.setAttribute('aria-hidden', 'true')
@@ -348,7 +352,7 @@ export class NewProcessCard {
     box.setAttribute('aria-labelledby', q.id)
     const btns = el('div', 'rg-np-ask-b')
     btns.append(
-      this.textButton('ask-go', 'Criar mesmo assim', 'Criar com essas variáveis', false, true),
+      this.textButton('ask-go', 'Criar mesmo assim', names.length > 0 ? 'Criar com essas variáveis' : 'Criar com esse comando', false, true),
       this.textButton('ask-back', 'Voltar', 'Voltar ao formulário (Enter, Esc)', true),
     )
     box.append(g, q, btns)

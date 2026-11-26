@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { looksSecretName, redactArgs } from '../../src/core/redact-args.ts'
 import { PROC_NAME_RE } from '../../src/daemon/procs.ts'
 import {
-  checkNewProc, createRefusalText, ENV_WARNING, envError, isAbsoluteFolder, maskEcho, PROC_NAME, parsePorts, procNameError, refusalField,
+  checkNewProc, createRefusalText, ENV_WARNING, envError, isAbsoluteFolder, maskEcho, maskedCommand, PROC_NAME, parsePorts, procNameError, refusalField,
   secretNames, secretQuestion, splitCommand, VALUE_MASK, type NewProcForm,
 } from '../../extensions/regency/new-process-rules.ts'
 
@@ -111,10 +111,36 @@ test('the whole form: field by field in the order drawn, then the request the CL
       recipe: { command: 'node', args: ['server.js', '--port', '3000'], cwd: 'C:\\work', env: { MODO: 'bancada', API_TOKEN: CANARY }, ports: [3000], description: 'servidor de teste' },
     },
     secretNames: ['API_TOKEN'],
+    commandSecret: false,
   })
   // No description, no ports: the keys stay out / empty, as the CLI sends them.
   const plain = checkNewProc(form({ ports: '' }), [])
   assert.ok(plain.ok && !('description' in plain.request.recipe) && plain.request.recipe.ports.length === 0)
+})
+
+test('Temper r7 T9: a secret in the command asks the same question, with its own words', () => {
+  const c = checkNewProc(form({ command: 'node srv.js --token sk-live-abcdefghij --password hunter22' }), [])
+  assert.ok(c.ok && c.commandSecret && c.secretNames.length === 0)
+  for (const cmd of ['psql postgres://app:hunter22@db/app', 'mysql -uroot -pHunter22', 'curl -H "X-Api-Key: abc123" https://x', 'tool /p:hunter22']) {
+    const r = checkNewProc(form({ command: cmd }), [])
+    assert.ok(r.ok && r.commandSecret, cmd)
+  }
+  for (const cmd of ['npm run dev', 'node server.js --port 3000', 'serve -p 3000', 'tsc -p tsconfig.json', 'msbuild /p:Configuration=Release']) {
+    const r = checkNewProc(form({ command: cmd }), [])
+    assert.ok(r.ok && !r.commandSecret, cmd)
+  }
+  assert.equal(secretQuestion([], true), 'O comando parece levar um segredo. Segredo não vai digitado na linha: use, por exemplo, `dotenvx run -- …`. Criar mesmo assim?')
+  assert.match(secretQuestion(['API_TOKEN'], true), /^API_TOKEN parece um segredo, e o comando também parece levar um\. /)
+  assert.ok(!secretQuestion([], true).includes('hunter22'))
+})
+
+test('after a refusal the command shows its secret masked, and a masked command is not sent as it is', () => {
+  const shown = maskedCommand('node srv.js --token sk-live-abcdefghij --password "hunter 22" --port 3000')
+  assert.equal(shown, `node srv.js --token ${VALUE_MASK} --password ${VALUE_MASK} --port 3000`)
+  assert.ok(!shown.includes('sk-live') && !shown.includes('hunter'))
+  assert.equal(maskedCommand('npm run dev'), 'npm run dev')
+  const again = checkNewProc(form({ command: shown }), [])
+  assert.deepEqual(again, { ok: false, field: 'command', error: `Digite de novo o trecho do comando que foi apagado (${VALUE_MASK}).` })
 })
 
 test('maskEcho takes every typed value (long enough) out of a text, the longest first', () => {
