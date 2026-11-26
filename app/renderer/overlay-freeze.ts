@@ -8,10 +8,29 @@
 // `data-open`), not hooked in each open/close path: every way an overlay opens or closes (key, click, Esc, outside click, a
 // command, the overlay's own code throwing halfway) ends in that state, so the hold can never be left behind by a path that
 // forgot to let go. One MutationObserver; the reading runs in a microtask, before the next paint.
-import type { FreezeRegistry } from '../shared/freeze-rules.ts'
+import type { Container, FreezeRegistry } from '../shared/freeze-rules.ts'
 
-/** The overlays that freeze, each with the reason it holds under. Order is irrelevant: each match is one hold. */
-const FREEZING: { reason: string; matches(): Element[] }[] = [
+/**
+ * The union of what a hold spares: a surface inside any of `parts` stays alive. Parts that are absent are skipped; none
+ * left = nothing spared. The modal card spares its own body (the browser's page lent to it) and freezes everything behind;
+ * the open drawer spares itself and the card above it (the card is drawn over the drawer, so the drawer's hold must not
+ * freeze the card's page; the card's own hold freezes the drawer's surfaces). A menu or a dialog opened over the card
+ * spares nothing: the card's page freezes under it like any other.
+ */
+export function sparing<E>(...parts: readonly (Container<E> | null | undefined)[]): Container<E> | undefined {
+  const present = parts.filter((p): p is Container<E> => !!p)
+  if (present.length === 0) return undefined
+  return { contains: el => present.some(p => p.contains(el)) }
+}
+
+/** The peek card's layer (peek.ts), read when a hold asks (it is built after the watcher starts). */
+const peekLayer = (): Element | null => document.getElementById('peek')
+
+/**
+ * The overlays that freeze, each with the reason it holds under and what it spares (`spares`, optional: the overlay's own
+ * surfaces). Order is irrelevant: each match is one hold.
+ */
+const FREEZING: { reason: string; matches(): Element[]; spares?(el: Element): Container<Element> | undefined }[] = [
   // Every modal dialog: the palette, the chooser ("Novo"), the profiles and terminal-theme dialogs, ask/confirm, move.
   { reason: 'dialog', matches: () => [...document.querySelectorAll('dialog[open]')].filter(d => d.matches(':modal')) },
   // Menus: the ≡ menu, the theme menu, every context menu (tab, desk, pad, status icon) and their submenus.
@@ -22,9 +41,10 @@ const FREEZING: { reason: string; matches(): Element[] }[] = [
   { reason: 'popover', matches: () => visible('.pinned .popover') },
   // The "no connection to tetherd" card covers the whole window.
   { reason: 'dialog', matches: () => visible('#overlay:not([hidden])') },
-  // The peek card (peek.ts): over everything, the open drawer included; it holds no native surface of its own. Docked (the
-  // quick view over the Regency's conversation) it is not modal: the window around it stays live, nothing freezes.
-  { reason: 'peek', matches: () => [...document.querySelectorAll('#peek[data-open="true"]:not([data-mode="docked"])')] },
+  // The peek card (peek.ts): over everything, the open drawer included. A surface lent to it (the browser's page in the
+  // quick view) lives inside it and is spared; everything behind freezes. Docked (the quick view over the Regency's
+  // conversation) it is not modal: the window around it stays live, nothing freezes, and its own page sits inside its body.
+  { reason: 'peek', matches: () => [...document.querySelectorAll('#peek[data-open="true"]:not([data-mode="docked"])')], spares: el => sparing(el) },
 ]
 
 function visible(selector: string): Element[] {
@@ -84,9 +104,10 @@ export function watchOverlays(registry: FreezeRegistry<Element>, drawer: HTMLEle
 
   const read = (): void => {
     const want = new Map<string, () => () => void>()
-    for (const o of FREEZING) for (const el of o.matches()) want.set(keyOf(o.reason, el), () => registry.hold(o.reason))
-    // The open drawer is an overlay the person opened over the desk: the desk behind freezes, the drawer's own surfaces live.
-    if (drawer.dataset.open === 'true') want.set('drawer', () => registry.hold('drawer', drawer))
+    for (const o of FREEZING) for (const el of o.matches()) want.set(keyOf(o.reason, el), () => registry.hold(o.reason, o.spares?.(el)))
+    // The open drawer is an overlay the person opened over the desk: the desk behind freezes, the drawer's own surfaces live,
+    // and so does a page in the peek card, which is drawn over the drawer.
+    if (drawer.dataset.open === 'true') want.set('drawer', () => registry.hold('drawer', sparing<Element>(drawer, { contains: el => peekLayer()?.contains(el) ?? false })))
     for (const [k, release] of held) if (!want.has(k) && !k.startsWith('drag')) { release(); held.delete(k) }
     for (const [k, take] of want) if (!held.has(k)) held.set(k, take())
   }

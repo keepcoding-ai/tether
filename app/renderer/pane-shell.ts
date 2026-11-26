@@ -25,9 +25,15 @@ export interface PaneLendHooks {
   takeBack(): void
 }
 
-/** A loan in course: `part` is what sits in the host; `giveBack` puts it home (once; nothing after the pane is gone). */
+/**
+ * A loan in course: `part` is what sits in the host; `giveBack` puts it home (once; nothing after the pane is gone). A
+ * `fresh` one is a copy (pane-fresh.ts): the tab was never touched, `giveBack` disposes the copy, and `focus` gives the
+ * keyboard to the copy (the type's own focus aims at the tab's instance).
+ */
 export interface ShellLoan {
   readonly part: HTMLElement
+  readonly fresh?: boolean
+  focus?(): void
   giveBack(): void
 }
 
@@ -63,6 +69,8 @@ export class PaneShell implements IContentRenderer {
   private shown: boolean | undefined
   /** What the content was last told (onShow / onHide), so it is never told twice the same. */
   private told: boolean | undefined
+  /** Who hears the pane go away without holding its content (a `fresh` copy shown elsewhere). */
+  private readonly goneL = new Set<() => void>()
 
   constructor(content: IContentRenderer) {
     this.content = content
@@ -130,12 +138,21 @@ export class PaneShell implements IContentRenderer {
     return { part, giveBack: () => { if (this.loan === loan) this.giveBack() } }
   }
 
+  /** `gone` runs once when the pane is disposed (a copy of it shown elsewhere closes then); the returned function forgets it. */
+  whenGone(gone: () => void): () => void {
+    this.goneL.add(gone)
+    return () => { this.goneL.delete(gone) }
+  }
+
   dispose(): void {
     const step = loanStep(this.state, 'dispose')
     this.state = step.state
     const loan = this.loan
     this.loan = undefined
     loan?.observer?.disconnect()
+    const gone = [...this.goneL]
+    this.goneL.clear()
+    for (const g of gone) { try { g() } catch (e) { console.error('pane-shell.whenGone', e) } }
     try {
       this.content.dispose?.()
     } finally {

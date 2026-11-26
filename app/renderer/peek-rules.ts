@@ -332,9 +332,10 @@ export function screenFoot(hints: readonly string[], back?: string): string {
 // goes inert, as before); over the Regency it is docked on the conversation without a veil, and what is around it stays usable.
 
 /**
- *   lend    the tab is not in view: its content comes to the card (the tab shows "sendo espiada" meanwhile);
+ *   lend    the tab is not in view: its content comes to the card (the tab shows "sendo espiada" meanwhile), or, for a
+ *           `peek: 'fresh'` type, a copy of it (the tab stays as it is);
  *   reveal  the tab is in view right now: only the keyboard goes there (lending it would leave a hole where the person looks);
- *   refuse  its type does not lend (`peek: 'none' | 'fresh'`): the card opens with the reason and "Ir até a guia";
+ *   refuse  its type does not lend (`peek: 'none'`): the card opens with the reason and "Ir até a guia";
  *   slot    no tab, a live slot: the agent's own card, the way it always opened (a terminal built for the card);
  *   none    no tab and nothing live behind the id.
  */
@@ -353,7 +354,7 @@ export interface PaneRouteInput {
 export function paneRoute(i: PaneRouteInput): PaneRoute {
   if (!i.hasTab) return peekRoute(i.slot, false) === 'card' ? 'slot' : 'none'
   if (i.inView) return 'reveal'
-  return i.plan === 'none' || i.plan === 'fresh' ? 'refuse' : 'lend'
+  return i.plan === 'none' ? 'refuse' : 'lend'
 }
 
 /** What the header says the pane is, by its type id (an agent's terminal is "agente", a plain one "terminal"). */
@@ -433,7 +434,7 @@ export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'p
 /** The sentence in the card's body when the pane could not come (its type does not lend yet, it is gone, or held elsewhere). */
 export function paneRefusalText(why: LendRefusal): string {
   switch (why) {
-    case 'none': case 'fresh': return 'Ainda não dá para espiar este tipo de guia.'
+    case 'none': return 'Ainda não dá para espiar este tipo de guia.'
     case 'lent': return 'Esta guia já está sendo espiada em outro lugar.'
     case 'unknown': return 'Esta guia não existe mais.'
   }

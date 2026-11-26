@@ -2,7 +2,7 @@
 // state machine (lend, give back, the pane closed while lent, lending twice), and why a lend is refused.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { lendRefusal, loanStep, paneLendPlan, type LoanEvent, type LoanState } from '../../app/renderer/pane-loan-rules.ts'
+import { FRESH_SEPARATOR, freshCopyOf, lendRefusal, loanStep, paneLendPlan, type LoanEvent, type LoanState } from '../../app/renderer/pane-loan-rules.ts'
 import { paneLentNotice } from '../../app/renderer/peek-rules.ts'
 
 const fn = (): void => {}
@@ -66,10 +66,37 @@ describe('why a lend is refused', () => {
     assert.equal(lendRefusal('gone', 'move'), 'unknown')
     assert.equal(lendRefusal(undefined, 'none'), 'unknown')
   })
-  test("a type that is 'fresh' or 'none' is never lent", () => {
-    assert.equal(lendRefusal('home', 'fresh'), 'fresh')
+  test("a type that is 'none' is never lent", () => {
     assert.equal(lendRefusal('home', 'none'), 'none')
     assert.equal(lendRefusal('lent', 'none'), 'none')
+  })
+  test("a 'fresh' type gets a copy while its pane lives: its tab never leaves home, so it is never 'lent'", () => {
+    assert.equal(lendRefusal('home', 'fresh'), undefined)
+    assert.equal(lendRefusal('lent', 'fresh'), undefined)
+    assert.equal(lendRefusal('gone', 'fresh'), 'unknown')
+    assert.equal(lendRefusal(undefined, 'fresh'), 'unknown')
+  })
+})
+
+describe("the 'fresh' plan: the copy a type builds for the card", () => {
+  test("its own id, never the tab's; copies told apart", () => {
+    const a = freshCopyOf({ id: 'preview:ab12', title: 'pagina.html', params: {} }, 1)
+    const b = freshCopyOf({ id: 'preview:ab12', title: 'pagina.html', params: {} }, 2)
+    assert.notEqual(a.id, 'preview:ab12')
+    assert.ok(a.id.startsWith(`preview:ab12${FRESH_SEPARATOR}`))
+    assert.notEqual(a.id, b.id)
+  })
+  test("the tab's title, or its id when it has none", () => {
+    assert.equal(freshCopyOf({ id: 'p:1', title: 'pagina.html' }, 1).title, 'pagina.html')
+    assert.equal(freshCopyOf({ id: 'p:1' }, 1).title, 'p:1')
+  })
+  test("a deep copy of the tab's params: what the copy writes never reaches the tab's", () => {
+    const params = { preview: { path: 'C:/x/pagina.html', kind: 'html', scroll: { x: 0, y: 120 } } }
+    const copy = freshCopyOf({ id: 'p:1', params }, 1)
+    assert.deepEqual(copy.params, params)
+    ;(copy.params.preview as { scroll: { y: number } }).scroll.y = 999
+    assert.equal(params.preview.scroll.y, 120, 'the tab keeps its scroll')
+    assert.deepEqual(freshCopyOf({ id: 'p:1' }, 1).params, {}, 'no params: an empty object')
   })
 })
 

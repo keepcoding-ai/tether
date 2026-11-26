@@ -199,10 +199,10 @@ describe('the chord', () => {
 describe('the quick view of a pane', () => {
   const facts = (over: Partial<PaneCardFacts> = {}): PaneCardFacts => ({ title: 'plano.md', typeId: 'note', agent: false, place: 'Mesa 2', color: 'teal', asleep: false, deskAsleep: false, ...over })
 
-  test('a tab out of view is lent; in view it only gets the keyboard; a type that does not lend is refused with its reason', () => {
-    for (const plan of ['move', 'custom'] as const) assert.equal(paneRoute({ hasTab: true, inView: false, plan }), 'lend', plan)
+  test('a tab out of view is lent (a fresh type: a copy); in view it only gets the keyboard; a type that does not lend is refused with its reason', () => {
+    for (const plan of ['move', 'custom', 'fresh'] as const) assert.equal(paneRoute({ hasTab: true, inView: false, plan }), 'lend', plan)
     for (const plan of ['move', 'custom', 'none', 'fresh'] as const) assert.equal(paneRoute({ hasTab: true, inView: true, plan }), 'reveal', plan)
-    for (const plan of ['none', 'fresh'] as const) assert.equal(paneRoute({ hasTab: true, inView: false, plan }), 'refuse', plan)
+    assert.equal(paneRoute({ hasTab: true, inView: false, plan: 'none' }), 'refuse')
   })
   test('without a tab: a live slot keeps the agent\'s own card; anything else goes nowhere', () => {
     assert.equal(paneRoute({ hasTab: false, inView: false, slot: { status: 'running' }, plan: 'none' }), 'slot')
@@ -240,7 +240,6 @@ describe('the quick view of a pane', () => {
   })
   test('a refusal says why in a sentence', () => {
     assert.equal(paneRefusalText('none'), 'Ainda não dá para espiar este tipo de guia.')
-    assert.equal(paneRefusalText('fresh'), 'Ainda não dá para espiar este tipo de guia.')
     assert.equal(paneRefusalText('unknown'), 'Esta guia não existe mais.')
     assert.match(paneRefusalText('lent'), /sendo espiada/)
   })

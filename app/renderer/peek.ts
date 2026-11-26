@@ -25,7 +25,9 @@
 // under a header and over a foot that are the card's and the same for every type (peek-rules.ts paneCardHead/paneCardFoot):
 // the type's icon or the agent's identity, the title, the type's tag, "em <mesa>" with its colour, the extensions' emblems
 // (the owner's seal), the state, ✕; the tab's menu at the left of the foot, "Acordar" while it sleeps and "Ir até a guia" at
-// the right. Its body is only the pane's content. Two ways to show it:
+// the right. Its body is only the pane's content; for a type that declares `peek: 'fresh'` (the HTML preview) it is a copy
+// the type built (pane-fresh.ts), and the tab stays as it was, with no notice and no eye. A native surface in the body (the
+// browser's page) lives on: the modal card's freeze spares what is inside it (overlay-freeze.ts). Two ways to show it:
 //   - modal (no `over`): the card of always, over the dimmed, inert window;
 //   - docked (`over`: the Regency's conversation): no veil, nothing inert, no trapped Tab; it sits at the top right of
 //     `over` (peek-rules.ts dockedBox) and follows its size; `over` leaving the screen closes it. Esc closes only in the
@@ -406,7 +408,8 @@ export class PeekCard {
       holder.append(reasonElement(paneRefusalText(got)))
     } else {
       view.loan = got
-      this.host.onPaneLendChange(paneId, true)
+      // A copy (`fresh`) leaves the tab as it was: no eye on it.
+      if (!got.fresh) this.host.onPaneLendChange(paneId, true)
     }
     this.placeDocked()
     // `over` was not on screen: the card closed at once (the pane is back in its tab).
@@ -814,7 +817,7 @@ export class PeekCard {
     v.loan = undefined
     if (loan) {
       loan.giveBack()
-      this.host.onPaneLendChange(v.paneId, false)
+      if (!loan.fresh) this.host.onPaneLendChange(v.paneId, false)
     }
     v.holder.remove()
   }
@@ -945,7 +948,9 @@ export class PeekCard {
       if (this.current !== cur || !cur) return
       if (cur.kind === 'screen') cur.screen.focus()
       else if (cur.kind === 'pane') {
-        if (cur.loan) this.host.focusPane(cur.paneId)
+        // A copy takes the keyboard itself: the type's focus aims at the tab's instance.
+        if (cur.loan?.focus) cur.loan.focus()
+        else if (cur.loan) this.host.focusPane(cur.paneId)
         // A type without a focus of its own (or one that focuses elsewhere): the body itself holds the keyboard (Tab goes on
         // from there); a pane that could not come, "Ir até a guia".
         if (!this.card.contains(document.activeElement)) {

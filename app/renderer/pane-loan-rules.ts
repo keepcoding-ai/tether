@@ -4,7 +4,8 @@
 // `createComponent`). Lending takes the live content out of the shell into a host outside dockview (the quick view's card),
 // leaves the "sendo espiada" notice in its place, and gives it back later. The default needs nothing from the pane type:
 // the same instance moves (`'lend'`). A type declares only what departs from that:
-//   - `peek: 'fresh'`  the quick view builds a second instance instead (a `<webview>` reloads when it changes parent);
+//   - `peek: 'fresh'`  the quick view builds a COPY instead, through the type's own `create()` with a copy of the tab's
+//                      params (pane-fresh.ts): the tab is never touched (a `<webview>` reloads when it changes parent);
 //   - `peek: 'none'`   the pane is only revealed, never lent;
 //   - `lend`/`takeBack` hooks: the type moves a part of itself (the terminal keeps its status bar in the tab).
 
@@ -62,12 +63,36 @@ export function loanStep(state: LoanState, event: LoanEvent): LoanStep {
   }
 }
 
-/** Why a lend was refused: the pane is unknown or gone, already lent, or its type does not lend (`fresh`, `none`). */
-export type LendRefusal = 'unknown' | 'lent' | 'fresh' | 'none'
+/** Why a lend was refused: the pane is unknown or gone, already lent, or its type does not lend (`none`). */
+export type LendRefusal = 'unknown' | 'lent' | 'none'
 
-/** The refusal of a lend in a state, by plan; undefined = it goes ahead. */
+/**
+ * The refusal of a lend in a state, by plan; undefined = it goes ahead. A `fresh` type is never refused for being lent: its
+ * tab stays home (the card holds a copy), so a copy can always be made while the pane lives.
+ */
 export function lendRefusal(state: LoanState | undefined, plan: LendPlan): LendRefusal | undefined {
   if (state === undefined || state === 'gone') return 'unknown'
-  if (plan === 'fresh' || plan === 'none') return plan
+  if (plan === 'none') return plan
+  if (plan === 'fresh') return undefined
   return state === 'lent' ? 'lent' : undefined
 }
+
+/** A pane as the copy starts from it: its id, title and params (a dockview panel has the same fields). */
+export interface FreshSource {
+  id: string
+  title?: string | undefined
+  params?: Record<string, unknown> | undefined
+}
+
+/**
+ * What a `fresh` copy of a pane is born with: an id of its own (never the tab's: the type's maps are keyed by it, and the
+ * copy must not take the tab's place in them), the tab's title, and a deep copy of its params (what the copy writes to its
+ * own params never reaches the tab's, nor the layout). `n` tells copies apart.
+ */
+export function freshCopyOf(pane: FreshSource, n: number): { id: string; title: string; params: Record<string, unknown> } {
+  const params = pane.params ? JSON.parse(JSON.stringify(pane.params)) as Record<string, unknown> : {}
+  return { id: `${pane.id}${FRESH_SEPARATOR}${n.toString(36)}`, title: pane.title ?? pane.id, params }
+}
+
+/** What separates a copy's id from its tab's (`preview:ab12~peek-1`): no pane id of any type has it. */
+export const FRESH_SEPARATOR = '~peek-'
