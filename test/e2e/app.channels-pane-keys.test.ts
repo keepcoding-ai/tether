@@ -192,7 +192,7 @@ test('channel pane: the whole management by keyboard, with the attributes of the
     // The box that is off says it: its name carries the reason and a live note announces the switch (a disabled field cannot take the focus to say it).
     assert.equal(v0.composer?.enabled, false)
     assert.equal(v0.composer?.label, 'Mensagem para o canal, desligada: ninguém ouve ainda')
-    assert.equal(v0.composer?.note, 'A caixa de fala está desligada: ninguém ouve ainda. Junte um agente para falar.')
+    assert.equal(v0.composer?.note, 'A caixa de fala está desligada: ninguém ouve ainda. Chame um agente para falar.')
     // The slot also holds the poll form's own (hidden) warning region; the box's note is the one that announces the switch.
     assert.equal(await pane(hz).locator('.ch-composer-slot .ch-sr[role="status"]').count(), 1)
     assert.equal(await pane(hz).locator('.ch-composer-slot .ch-send').getAttribute('title'), 'Ninguém ouve ainda')

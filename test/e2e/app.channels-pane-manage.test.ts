@@ -145,7 +145,7 @@ test('channel pane: join, mute and remove from the pane itself', { timeout: 420_
     await pane(hz).waitFor()
     await pane(hz).locator('.ch-nobody').waitFor()
     assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Ninguém aqui ainda\./)
-    assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Junte um agente para a conversa começar/)
+    assert.match(await pane(hz).locator('.ch-nobody').innerText(), /Chame um agente para a conversa começar/)
     // G2: no members, no column and no "Membros" button; the speaking box is off with its own words until someone hears.
     const empty = (await view(hz))!
     assert.equal(empty.empty, true)
