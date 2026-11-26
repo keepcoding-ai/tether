@@ -100,6 +100,7 @@ type Hooks = {
       menuAsks(): { target: { kind: string; id: string }; anchor: string }[]
       menu(key: string): boolean
       renaming(): string | undefined
+      create(draft: { what: string; kind?: string; deskId?: string; cwd?: string }): Promise<{ ok: boolean; text?: string }>
     }
   }
 }
@@ -308,7 +309,10 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const waitRow = page.locator(`.rg-wait[data-target="channel:${extra}"]`)
     await waitRow.waitFor()
     assert.equal(await waitRow.getAttribute('data-reason'), 'to-you')
-    assert.match((await waitRow.textContent()) ?? '', /1 fala para você/)
+    // R6, L: the card shows what is asked (who and the first line), the count of the kind in the tooltip.
+    await until('the card says what is asked', async () => (await waitRow.locator('.rg-w2').textContent()) === 'conferente: Posso seguir com a migração?')
+    assert.match((await waitRow.locator('.rg-w2').getAttribute('title')) ?? '', /^conferente: Posso seguir com a migração\? · 1 fala para você$/)
+    assert.equal(await waitRow.locator('.rg-w1').textContent(), `#${(await model()).conversations.open.find(c => c.target.id === extra)?.name ?? ''}`)
     assert.ok((await model()).waiting.some(w => w.key === `channel:${extra}:to-you`))
     assert.equal(await page.locator(`.rg-conv[data-target="channel:${extra}"] .rg-tome`).count(), 1, 'the conversation says "para você"')
     assert.deepEqual(await state(), before, 'the line to her moves nothing')
@@ -326,6 +330,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.deepEqual(w, [`channel:${extra}:to-you`, `agent:${a}:agent-waiting`], 'who waits longest comes first')
     assert.equal(await page.locator('.rg-waiting .cnt').textContent(), '2')
     await page.screenshot({ path: join(SHOTS, 'tres-colunas.png') })
+    await page.locator('.rg-left').screenshot({ path: join(SHOTS, 'esperam-o-que-pede.png') })
 
     // The click on the channel's call: it goes to the centre and, seen there, the call goes.
     await waitRow.click()
@@ -396,6 +401,10 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.ok(waitingNow > 0)
     assert.equal(await page.locator('.rg-edge-cnt').textContent(), String(waitingNow), 'the left edge keeps the count')
     assert.match((await page.locator('.rg-edge-l').getAttribute('class')) ?? '', /\blit\b/, 'and lights: someone waits')
+    // R6, Q: the bell and the number; the words are the tooltip's, never vertical text on the edge.
+    assert.equal((await page.locator('.rg-edge-l').innerText()).trim(), String(waitingNow), 'only the number on the edge')
+    assert.match((await page.locator('.rg-edge-l').getAttribute('title')) ?? '', /esperam? você · voltar a Gerir$/)
+    await page.screenshot({ path: join(SHOTS, 'imersao.png') })
     assert.equal(await page.locator(`.rg-center .ch-pane[data-channel="${extra}"]`).isVisible(), true, 'the conversation stays')
     await waitUntil(() => saved().includes('"mode":"immersion"'), 10_000, 'the mode reached layout.json')
     await page.screenshot({ path: join(SHOTS, 'r1-imersao.png') })
@@ -815,6 +824,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(deskLabels.at(-1), 'Ir até a mesa', '"Ir até a mesa" last')
     for (const l of ['Renomear', 'Cor…', 'Mudar de lugar', 'Nova mesa antes', 'Nova mesa depois', 'Hibernar mesa', 'Fechar mesa…']) assert.ok(deskLabels.includes(l), `"${l}" in the desk menu`)
     assert.ok(deskLabels.some(l => /^(Dar|Tomar|Revogar|Pausar)/.test(l)), 'the for-agents rows come along')
+    await page.screenshot({ path: join(SHOTS, 'menu-mesa.png') })
     assert.equal(await focusedKey(), null, 'the menu has the keyboard')
     await page.screenshot({ path: join(SHOTS, 'r2-menu-mesa.png') })
     // "Renomear": a field in the row; a repaint by an event keeps it; Enter keeps the name; the keyboard back on the row.
@@ -912,7 +922,18 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(agentLabels.at(-1), 'Ir até a guia')
     assert.ok(!agentLabels.includes('Focar guia'), 'no "Focar guia" on top')
     for (const l of ['Renomear…', 'Hibernar guia', 'Fechar guia', 'Emblema…', 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…']) assert.ok(agentLabels.includes(l), `"${l}" in the agent's menu`)
+    // R6, E: in blocks with a title; one close; Space beside "Espiar", nothing beside "Falar com".
+    const heads = await menu.locator(':scope > li.hd').allTextContents()
+    assert.equal(heads[0], 'O agente bancada')
+    assert.ok(heads.includes('Esta guia'), JSON.stringify(heads))
+    assert.ok(heads.some(h => h.startsWith('Quem manda aqui: ')), JSON.stringify(heads))
+    assert.equal(agentLabels.filter(l => /^Fechar/.test(l)).length, 1, 'one close: "Fechar guia"')
+    assert.equal(await items.filter({ hasText: /^Espiar/ }).locator('kbd').textContent(), 'Espaço')
+    assert.equal(await items.filter({ hasText: /^Falar com bancada/ }).locator('kbd').count(), 0)
+    const order = (l: string): number => agentLabels.indexOf(l)
+    assert.ok(order('Falar com bancada') < order('Espiar') && order('Espiar') < order('Fechar guia') && order('Fechar guia') < order('Ir até a guia'), 'agent, then this tab, "Ir até a guia" last')
     await page.screenshot({ path: join(SHOTS, 'r2-menu-agente.png') })
+    await page.screenshot({ path: join(SHOTS, 'menu-agente.png') })
     // "Renomear…" in the row: the slot's name.
     await pick('Renomear…')
     const bField = bRow.locator('.rg-rename')
@@ -968,18 +989,28 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     console.log(`pane menu: ${JSON.stringify(paneLabels)}`)
     assert.equal(paneLabels.at(-1), 'Ir até a guia')
     assert.ok(!paneLabels.includes('Focar guia'))
+    assert.ok(!paneLabels.includes('Fechar painel') && !paneLabels.includes('Fechar painel…'), 'no "Fechar painel" in the Regency')
+    assert.equal(paneLabels.filter(l => l === 'Fechar guia').length, 1)
+    assert.equal((await menu.locator(':scope > li.hd').allTextContents()).includes('Esta guia'), true)
     await page.screenshot({ path: join(SHOTS, 'r2-menu-guia.png') })
+    await page.screenshot({ path: join(SHOTS, 'menu-guia.png') })
     await closeMenu()
     const n0 = await paneCount()
     const ids0 = await page.evaluate(() => window.__tether.panelIds())
+    // The frame's gestures are the tab's, not the Regency's (R6, E): no "Duplicar", "Novo quadro" nor the status bar here.
     await bRow.click({ button: 'right' })
     await menu.waitFor()
-    await pick('Duplicar painel à direita')
+    const frameless = await labels()
+    for (const l of ['Duplicar painel à direita', 'Duplicar painel abaixo', 'Novo quadro…', 'Novo painel…', 'Mostrar barra de status', 'Fechar painel…']) assert.ok(!frameless.includes(l), `"${l}" is not in the Regency's menu`)
+    await closeMenu()
+    // A second pane on b's desk to close below ("+ Novo" makes it, as the person would now).
+    const second = await page.evaluate(([d, cwd]) => window.__tether.ext.regency.create({ what: 'terminal', kind: 'shell', deskId: d!, cwd: cwd! }), [desk2, home] as const)
+    assert.ok(second.ok, `the second pane was made (${second.text ?? ''})`)
     await until('the copy came', async () => (await paneCount()) === n0 + 1)
     const copy = (await page.evaluate(() => window.__tether.panelIds())).find(id => !ids0.includes(id))!
-    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), copy), desk2, 'on the original\'s desk')
+    assert.equal(await page.evaluate(p => window.__tether.deskOf(p), copy), desk2, 'on b\'s desk')
     await page.waitForTimeout(400)
-    await stays('duplicate')
+    await stays('second pane')
     // "Mover…" the channel's tab to desk2.
     await cRow.click({ button: 'right' })
     await menu.waitFor()
@@ -1125,6 +1156,17 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     const offered = await page.locator('.pk-list li.pk-item .pk-label').allTextContents()
     assert.deepEqual(offered.sort(), [...awake.map(d => d.name), 'Nova mesa'].sort(), 'awake desks, then "Nova mesa"')
     await page.screenshot({ path: join(SHOTS, 'r2-fechadas-reabrir.png') })
+    // R6: the box is opaque with a shadow; the see-through look of r2-fechadas-reabrir was the 160 ms fade-in (pk-in) caught
+    // mid-way: once it ends, the computed opacity is 1 and the background has no transparency.
+    await page.waitForTimeout(400)
+    const look = await page.evaluate(() => {
+      const s = (globalThis as unknown as { getComputedStyle(e: unknown): { opacity: string; backgroundColor: string; boxShadow: string } }).getComputedStyle(document.querySelector('dialog.picker[open]'))
+      return { opacity: s.opacity, bg: s.backgroundColor, shadow: s.boxShadow }
+    })
+    assert.equal(look.opacity, '1', JSON.stringify(look))
+    assert.match(look.bg, /^rgb\(/, `an opaque background (${look.bg})`)
+    assert.notEqual(look.shadow, 'none')
+    await page.screenshot({ path: join(SHOTS, 'reabrir-em.png') })
     const target = awake.find(d => d.target.id !== queueDesk)!
     await pk.filter({ has: page.locator('.pk-label', { hasText: new RegExp(`^${target.name}$`) }) }).click()
     await until('reopened on the chosen desk', async () => (await page.evaluate(i => window.__tether.deskOf(i), x1)) === target.target.id)

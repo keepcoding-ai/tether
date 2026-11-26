@@ -136,7 +136,7 @@ describe('managerGroupedEntries (the Regency\'s menu in blocks)', () => {
     const out = gText(managerGroupedEntries<G>(SLOT(), OWNED(), { extra: EXTRA(), goLast: fullG }, groupsOf({ agent: 'bancada', owner: 'conferente' }), 'sep', gLabel))
     assert.deepEqual(out, [
       `# ${AGENT_BLOCK('bancada')}`, 'Falar com bancada', 'O que bancada tem', 'Juntar a um canal…', 'Dar uma mesa nova…', 'Trocar perfil…', 'Reiniciar agente', '—',
-      `# ${PANE_BLOCK}`, 'Espiar', 'Renomear…', 'Mover…', EMBLEM_LABEL, 'Hibernar guia', 'Marcar como não lido', 'Copiar link do painel', '—', 'Copiar pasta', 'Abrir pasta no Explorer', 'Fechar guia', '—',
+      `# ${PANE_BLOCK}`, 'Espiar', 'Renomear…', 'Mover…', EMBLEM_LABEL, 'Hibernar guia', 'Marcar como não lido', 'Copiar link do painel', '—', 'Copiar pasta', 'Abrir pasta no Explorer', '—', 'Fechar guia', '—',
       `# ${OWNER_BLOCK('conferente')}`, 'Tomar', 'Pausar conferente nesta guia', 'Dar esta guia a outro agente…', '—',
       GO_PANE_LABEL,
     ])
@@ -161,7 +161,7 @@ describe('managerGroupedEntries (the Regency\'s menu in blocks)', () => {
     assert.equal(plain[0], `# ${PANE_BLOCK}`)
     assert.ok(!plain.some(l => l.startsWith('# O agente') || l.startsWith('# Quem manda')))
     assert.ok(!plain.includes('Fechar painel'))
-    assert.deepEqual(plain.slice(-3), ['Fechar guia', '—', GO_PANE_LABEL])
+    assert.deepEqual(plain.slice(-4), ['—', 'Fechar guia', '—', GO_PANE_LABEL], 'the close in a group of its own, after "Encerrar canal…"')
     assert.ok(plain.includes('Encerrar canal…') && plain.includes('# Dono: Você · 2 membros'))
   })
 })

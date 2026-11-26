@@ -202,7 +202,8 @@ export function managerGroupedEntries<E>(
   const out: E[] = []
   if (groups.agent !== undefined && agent.length + owns.length > 0) out.push(groups.heading(AGENT_BLOCK(groups.agent)), ...agent, ...owns, sep)
   const ownRows = tidy(own, sep)
-  out.push(groups.heading(PANE_BLOCK), ...known, sep, ...ownRows, full.close, sep)
+  // The close keeps a group of its own: a type's last row may be a danger one ("Encerrar canal…").
+  out.push(groups.heading(PANE_BLOCK), ...known, sep, ...ownRows, sep, full.close, sep)
   if (rule.some(e => e !== sep && !isHeading(e))) out.push(groups.heading(OWNER_BLOCK(groups.owner)), ...rule, sep)
   out.push(full.go)
   return tidy(out, sep)
