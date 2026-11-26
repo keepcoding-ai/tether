@@ -211,6 +211,42 @@ export interface DeskView {
   panes: readonly string[]
 }
 
+/** The tree of desks and panes (`desks.tree`): the queue desks, the system desks and the drawer, in that order. */
+export interface DeskTree {
+  desks: TreeDesk[]
+}
+
+/** A desk of the tree. `kind` tells the queue's desks from the system desks (a pill beside the drawer's) and the drawer. */
+export interface TreeDesk {
+  id: string
+  name: string
+  color: string
+  kind: 'queue' | 'system' | 'drawer'
+  asleep: boolean
+  /** The icon of a system desk's pill, when it has one. */
+  icon?: string
+  panes: TreePane[]
+}
+
+/** A pane of the tree, with the flags that are set (the others are absent). */
+export interface TreePane {
+  id: string
+  /** The pane type's id ('agent', 'note', 'browser', ...), 'unknown' when no type holds it. */
+  type: string
+  icon: string
+  title: string
+  /** The terminal's attention merged with the extensions' seals. */
+  attention?: 'done' | 'waiting'
+  /** What the seal says: the terminal's line and the extensions' messages. */
+  lines?: string[]
+  /** A turn is in progress. */
+  busy?: true
+  /** The pane was hibernated. */
+  asleep?: true
+  /** The agent's process is gone (it can be started again). */
+  exited?: true
+}
+
 /**
  * An extension's seal on a queue desk's pill: a small glyph in its own colour and a tooltip line. One per extension per desk.
  * It never counts in the orange attention count.
@@ -476,6 +512,13 @@ export interface TetherUi {
     activeId(): string
     /** A desk was added, removed, renamed, recoloured, moved, put to sleep or woken, or the visible desk changed. */
     onDidChange(listener: () => void): IDisposable
+    /**
+     * Every desk and its panes: the queue's, then the system desks, then the drawer (`kind` tells them apart), each pane with
+     * its type, icon, title and state. A snapshot, built when asked.
+     */
+    tree(): DeskTree
+    /** The tree changed (a desk, a pane, a title, an attention, a busy or sleeping or exited state). Heard only on an actual change. */
+    onDidChangeTree(listener: () => void): IDisposable
     /** This extension's seal on a queue desk's pill; `undefined` removes it. It goes with the extension. */
     setSeal(deskId: string, seal: DeskSeal | undefined): void
     /** This extension's rows in a desk pill's menu (headings and submenus too), in a group of their own before "Hibernar mesa". */

@@ -88,7 +88,9 @@ import { MenuId, flatItems, type MenuItem as RegistryMenuItem } from '../shared/
 import { appMenuHtml, coreMenuRegistry, menuItemOf } from './app-menu.ts'
 import { attachSubmenus } from './menu-submenus.ts'
 import { compareFolders, deriveFolders, EMPTY_WORKSPACE, folderOf, isEmptyChange, moveFolder, openFolder as openWorkspaceFolder, pathKey, pinnedInOrder, readWorkspace, togglePin, unpinFolder, workspaceCommands, type PaneSource, type ProjectFolder, type WorkspaceState } from './workspace.ts'
-import type { DeskView, PaneInfo, PickItem } from './ext-api.ts'
+import type { DeskTree, DeskView, PaneInfo, PickItem } from './ext-api.ts'
+import { deskTreeOf, type TreePaneFacts } from './desk-tree-rules.ts'
+import type { DeskInfo } from './desks.ts'
 import { DoorHost, withDeskMenuGroup, withPaneMenuItems, withPaneMenuTop, type DeskSleep } from './door/host.ts'
 import { ExtensionsPanel, ExtensionsTab, type ExtensionsHost } from './extensions-panel.ts'
 import { type EmblemHost, emblemOfPanel, initEmblems, openEmblemMenu, personEmblemOf } from './tab-emblems.ts'
@@ -1074,7 +1076,7 @@ function renderStrip(): void {
   const line = tinted ? deskTokens(tinted.color).fill : undefined
   if (line !== undefined && $('workbench').style.getPropertyValue('--desk-line-color') !== line) $('workbench').style.setProperty('--desk-line-color', line)
   renderDrawerButton()
-  door.stripRendered(() => ({ desks: deskViews(), activeId: desks.activeDeskId }))
+  door.stripRendered(() => ({ desks: deskViews(), activeId: desks.activeDeskId }), deskTree)
 }
 
 /** The pane the user is looking at: the active pane of the visible desk (the drawer's while it is open), with the window focused. */
@@ -1267,6 +1269,38 @@ function deskViews(): DeskView[] {
   return desks.desks.map(d => {
     const padPanes = [...framePads].filter(p => p.deskId === d.id || (p.panelId !== undefined && desks.deskOf(p.panelId) === d.id)).flatMap(p => p.desk.panels.map(x => x.id))
     return { id: d.id, name: d.name, color: d.color, asleep: d.asleep === true, panes: [...(desks.desk(d.id)?.panels ?? []).map(p => p.id), ...padPanes] }
+  })
+}
+
+/** What the tree shows of one pane (TetherUi.desks.tree). */
+function treeFactsOf(id: string): TreePaneFacts | undefined {
+  const panel = findPanel(id)
+  if (!panel) return undefined
+  const s = slots.get(id)
+  const type = liveTypeOf(paneTypes, id)
+  const lines = attentionLines(s?.attention, seals.messages(id), s?.attentionHeld)
+  const attention = paneAttention(id)
+  return {
+    type: type?.id ?? 'unknown',
+    icon: s ? KIND_ICON[s.kind] ?? 'terminal-window' : (type?.icon as IconName | undefined) ?? 'question',
+    title: panel.api.title ?? id,
+    ...(attention ? { attention } : {}),
+    lines,
+    busy: s?.turn === 'busy',
+    asleep: asleepPanes.has(id),
+    exited: !!s && effectiveStatus(s) === 'exited',
+  }
+}
+
+/** The queue desks, the system desks and the drawer with their panes (TetherUi.desks.tree). */
+function deskTree(): DeskTree {
+  const source = (d: DeskInfo, icon?: string) => ({ id: d.id, name: d.name, color: d.color, ...(d.asleep ? { asleep: true } : {}), ...(icon ? { icon } : {}), panes: deskPanes(d.id).map(p => p.id) })
+  const meta = drawer.desk.meta
+  return deskTreeOf({
+    queue: desks.desks.map(d => source(d)),
+    system: desks.systemDesks.map(d => source(d, systemIcons.get(d.id))),
+    drawer: { id: meta.id, name: meta.name, color: meta.color, panes: drawer.desk.panels.map(p => p.id) },
+    pane: treeFactsOf,
   })
 }
 
@@ -4942,6 +4976,8 @@ function activateRendererExtensions(): void {
         list: () => deskViews(),
         activeId: () => desks.activeDeskId,
         onDidChange: listener => add(door.onDesksChange(listener)),
+        tree: () => deskTree(),
+        onDidChangeTree: listener => add(door.onTreeChange(listener)),
         setSeal: (deskId, seal) => door.setSeal(id, deskId, seal),
         menu: provider => add(door.deskMenu(id, provider)),
         hibernate: (deskId, opts) => door.hibernateDesk(deskId, opts?.spare),

@@ -2,7 +2,8 @@
 // (state applied, slots listed, layout saved, strip rendered, the two menus, the daemon's `desks` and `object` events) and
 // the TetherUi blocks of the door (desks, pane emblems and menus, pick, objects) are served from here. The rules live in
 // files of their own next to this one; this file wires them and stays free of DOM work at import, so the unit tests load it.
-import type { ContextMenuRow, DeskSeal, DeskView, PaneHeadItem, PaneInfo, PaneSlotFacts, PickManySpec, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
+import { treeSignature } from '../desk-tree-rules.ts'
+import type { ContextMenuRow, DeskSeal, DeskTree, DeskView, PaneHeadItem, PaneInfo, PaneSlotFacts, PickManySpec, PickSpec, TabEmblem, TabMenuPlace } from '../ext-api.ts'
 import type { ExtObjects } from '../../shared/api.ts'
 import type { DeskMap, SlotState } from '../../../src/daemon/protocol.ts'
 import { toDisposable, type IDisposable } from '../../shared/vscode-lifecycle.ts'
@@ -88,6 +89,9 @@ export class DoorHost {
   private readonly stamps = new AttentionStamps()
   /** The desks as the last strip drawing showed them. */
   private deskSignature: string | undefined
+  private readonly treeListeners = new Set<() => void>()
+  /** The tree of desks and panes as the last strip drawing showed it. */
+  private treeSig: string | undefined
 
   // ---------- seams main.ts calls ----------
 
@@ -147,11 +151,18 @@ export class DoorHost {
    * The desk strip was drawn again: the queue, the visible desk, a name, a colour, a desk's sleep or its panes may have
    * changed. The listeners hear only an actual change.
    */
-  stripRendered(view: () => { desks: readonly DeskView[]; activeId: string }): void {
+  stripRendered(view: () => { desks: readonly DeskView[]; activeId: string }, tree?: () => DeskTree): void {
     const signature = JSON.stringify(view())
-    if (signature === this.deskSignature) return
-    this.deskSignature = signature
-    for (const l of [...this.deskListeners]) { try { l() } catch (err) { console.error('desks.onDidChange', err) } }
+    if (signature !== this.deskSignature) {
+      this.deskSignature = signature
+      for (const l of [...this.deskListeners]) { try { l() } catch (err) { console.error('desks.onDidChange', err) } }
+    }
+    // The tree has its own signature: a title, an attention or a busy state change it with no change of the desks above.
+    if (!tree || this.treeListeners.size === 0) return
+    const sig = treeSignature(tree())
+    if (sig === this.treeSig) return
+    this.treeSig = sig
+    for (const l of [...this.treeListeners]) { try { l() } catch (err) { console.error('desks.onDidChangeTree', err) } }
   }
 
   /** The daemon's `desks` event. */
@@ -187,6 +198,11 @@ export class DoorHost {
     const entry = { ext, fn, top: opts?.place === 'top' }
     this.paneMenus.add(entry)
     return toDisposable(() => { this.paneMenus.delete(entry) })
+  }
+
+  onTreeChange(listener: () => void): IDisposable {
+    this.treeListeners.add(listener)
+    return toDisposable(() => { this.treeListeners.delete(listener) })
   }
 
   onDesksChange(listener: () => void): IDisposable {
