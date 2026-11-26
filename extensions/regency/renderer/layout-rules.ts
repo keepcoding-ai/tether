@@ -1,5 +1,6 @@
 // The Regency's layout, pure: what the pane keeps in its parameters (chosen channel, mode, folded desks...) and the ruler of
-// the four tiers by the pane's width. No DOM, no import.
+// the four tiers by the pane's width. No DOM. The search text is not kept here: it lives only in the open pane.
+import { TREE_FILTERS, type TreeFilter } from '../model.ts'
 
 export type RegencyMode = 'manage' | 'immersion'
 export type NarrowTab = 'waiting' | 'conversation' | 'tether'
@@ -17,10 +18,12 @@ export interface RegencyLayout {
   narrowTab: NarrowTab
   /** "Por mesa" or "Por agente". */
   view: RegencyView
+  /** The state filter of the tree. */
+  filter: TreeFilter
 }
 
 export const DEFAULT_LAYOUT: Readonly<RegencyLayout> = {
-  mode: 'manage', membersOpen: false, collapsed: [], narrowTab: 'waiting', view: 'desk',
+  mode: 'manage', membersOpen: false, collapsed: [], narrowTab: 'waiting', view: 'desk', filter: 'all',
 }
 
 const NARROW_TABS: readonly NarrowTab[] = ['waiting', 'conversation', 'tether']
@@ -39,6 +42,7 @@ export function readLayout(params: unknown): RegencyLayout {
     collapsed,
     narrowTab: NARROW_TABS.find(t => t === p.narrowTab) ?? DEFAULT_LAYOUT.narrowTab,
     view: p.view === 'agent' ? 'agent' : 'desk',
+    filter: TREE_FILTERS.find(f => f === p.filter) ?? 'all',
   }
 }
 
@@ -72,7 +76,9 @@ export function openingTab(saved: NarrowTab, waiting: number): NarrowTab {
   return saved === 'tether' ? 'tether' : 'conversation'
 }
 
-export const setView =(l: RegencyLayout, view: RegencyView): RegencyLayout => ({ ...l, view })
+export const setView = (l: RegencyLayout, view: RegencyView): RegencyLayout => ({ ...l, view })
+
+export const setFilter = (l: RegencyLayout, filter: TreeFilter): RegencyLayout => ({ ...l, filter })
 
 /** The tier by the pane's width in px: mobile < 768, tablet < 1280, desktop < 2560, wide from there. */
 export function tierOf(widthPx: number): Tier {

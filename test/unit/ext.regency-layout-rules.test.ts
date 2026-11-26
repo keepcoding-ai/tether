@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setNarrowTab, setView, tierOf, toggleCollapsed, toggleMembers, toggleMode,
+  DEFAULT_LAYOUT, layoutParams, openingTab, readLayout, selectChannel, setFilter, setNarrowTab, setView, tierOf, toggleCollapsed, toggleMembers, toggleMode,
 } from '../../extensions/regency/renderer/layout-rules.ts'
 
 describe('readLayout', () => {
@@ -13,7 +13,18 @@ describe('readLayout', () => {
 
   test('reads valid params and drops bad collapsed entries and repeats', () => {
     const l = readLayout({ channelId: 'c1', mode: 'immersion', membersOpen: true, collapsed: ['d1', 4, 'd1', '', 'd2'], narrowTab: 'tether', view: 'agent' })
-    assert.deepEqual(l, { channelId: 'c1', mode: 'immersion', membersOpen: true, collapsed: ['d1', 'd2'], narrowTab: 'tether', view: 'agent' })
+    assert.deepEqual(l, { channelId: 'c1', mode: 'immersion', membersOpen: true, collapsed: ['d1', 'd2'], narrowTab: 'tether', view: 'agent', filter: 'all' })
+  })
+
+  test('the filter: default "all", invalid falls to it, valid is kept, and it round trips; the search is not kept', () => {
+    assert.equal(DEFAULT_LAYOUT.filter, 'all')
+    for (const bad of ['', 'nope', 3, null, 'WAITING']) assert.equal(readLayout({ filter: bad }).filter, 'all')
+    for (const f of ['all', 'waiting', 'busy', 'asleep'] as const) assert.equal(readLayout({ filter: f }).filter, f)
+    const l = setFilter(setView(DEFAULT_LAYOUT, 'agent'), 'asleep')
+    assert.deepEqual(readLayout(JSON.parse(JSON.stringify(layoutParams(l)))), l)
+    assert.equal('query' in layoutParams(readLayout({ filter: 'busy', query: 'obra' })), false)
+    assert.equal(l.filter, 'asleep')
+    assert.equal(DEFAULT_LAYOUT.filter, 'all')
   })
 
   test('the default does not alias: a read never shares the default array', () => {

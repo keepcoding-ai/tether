@@ -4,8 +4,20 @@
 import type { DeskTree } from '../../app/renderer/ext-api.ts'
 import type { ChannelSummary } from '../channels/daemon/requests.ts'
 
-export type TargetKind = 'desk' | 'pane' | 'channel' | 'agent'
+export type TargetKind = 'desk' | 'pane' | 'channel' | 'agent' | 'session'
 export interface Target { kind: TargetKind; id: string }
+
+/** The state filter of the tree ("Tudo", "Esperam você", "Trabalham", "Dormem"). */
+export type TreeFilter = 'all' | 'waiting' | 'busy' | 'asleep'
+export const TREE_FILTERS: readonly TreeFilter[] = ['all', 'waiting', 'busy', 'asleep']
+
+/** The fold id of "Fechadas" in `collapsed` (desks are `desk-…`, groups are a pane id or `you`: no collision). */
+export const CLOSED_ID = 'closed'
+/** The most rows "Fechadas" holds (the core caps it too; the rest lives in the Sessions menu). */
+export const CLOSED_LIMIT = 50
+
+/** An ended session with no tab, as the core hands it over (newest first). */
+export interface ClosedInput { slotId: string; kind: string; name: string; title?: string; endedAt?: string }
 
 /** The marks of one channel, as counts (same shape as the channels feed). */
 export interface ChannelMarksInput { unread: number; toMe: number; asks: number; owed: number }
@@ -38,6 +50,12 @@ export interface RegencyInput {
   collapsed: string[]
   /** The Regency's own desk, left out of the tree and of "Esperam você". */
   selfDeskId?: string
+  /** Ended sessions with no tab, newest first. Absent = none. */
+  closed?: ClosedInput[]
+  /** Which panes the tree shows (default `'all'`). Does not touch `waiting` or `conversations`. */
+  filter?: TreeFilter
+  /** Search text over the tree (default none). Not kept in the layout. */
+  query?: string
 }
 
 export type WaitingReason = 'agent-waiting' | 'seal' | 'to-you' | 'reaction-asks' | 'poll-owed'
@@ -106,6 +124,8 @@ export interface AgentPaneRow extends Omit<TreePaneRow, 'ownerBadge'> {
 }
 
 export interface AgentGroupRow {
+  /** Marks the group header apart from the agent's own pane row (both carry `{ kind: 'agent', id }`). */
+  group: true
   /** `{ kind: 'agent', id }` for an agent; `{ kind: 'agent', id: YOU_ID }` for the person. */
   target: Target
   name: string
@@ -115,6 +135,18 @@ export interface AgentGroupRow {
   panes: AgentPaneRow[]
 }
 
+/** An ended session (only sessions, never notes or previews). */
+export interface ClosedRow {
+  target: Target
+  name: string
+  title: string
+  kind: string
+  endedAt?: string
+}
+
+/** "Fechadas": `count` is the rows that pass the filter, `rows` is empty when folded. */
+export interface ClosedSection { collapsed: boolean; count: number; rows: ClosedRow[] }
+
 export interface RegencyModel {
   waiting: WaitingItem[]
   conversations: { open: ConvRow[]; closed: ConvRow[] }
@@ -122,7 +154,12 @@ export interface RegencyModel {
   tree: TreeDeskRow[]
   /** "Por agente". */
   byAgent: AgentGroupRow[]
+  /** The foot of the tree. */
+  closed: ClosedSection
 }
+
+/** The panes counted by state, before any filter or search (the chips). */
+export type StateCounts = Record<TreeFilter, number>
 
 /** The id of the group of panes that have no agent. */
 export const YOU_ID = 'you'
@@ -211,24 +248,73 @@ function paneRow(input: RegencyInput, deskId: string, pane: DeskTree['desks'][nu
   }
 }
 
+type RawPane = DeskTree['desks'][number]['panes'][number]
+
+/** Search text: no case, no accent, no edge spaces. */
+export function foldText(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim()
+}
+
+const queryOf = (input: RegencyInput): string => foldText(input.query ?? '')
+const filterOf = (input: RegencyInput): TreeFilter => input.filter ?? 'all'
+/** With a filter or a search the folds do not apply: the result stays in view. */
+const isActive = (input: RegencyInput): boolean => filterOf(input) !== 'all' || queryOf(input) !== ''
+
+function inState(filter: TreeFilter, pane: RawPane, deskAsleep: boolean): boolean {
+  if (filter === 'waiting') return pane.attention === 'waiting'
+  if (filter === 'busy') return pane.busy === true
+  if (filter === 'asleep') return pane.asleep === true || deskAsleep
+  return true
+}
+
+const hit = (query: string, texts: Array<string | undefined>): boolean =>
+  texts.some(t => t !== undefined && foldText(t).includes(query))
+
+/** What a pane answers to in the search: its title, its agent's name and the emblem's name. */
+function paneHit(input: RegencyInput, query: string, pane: RawPane): boolean {
+  const agent = agentOf(input, pane.id)
+  return hit(query, [pane.title, agent?.name, agent?.emblem?.name])
+}
+
+/** The panes by state, before any filter or search: the numbers on the chips. */
+export function stateCounts(input: RegencyInput): StateCounts {
+  const counts: StateCounts = { all: 0, waiting: 0, busy: 0, asleep: 0 }
+  for (const desk of visibleDesks(input)) {
+    for (const pane of desk.panes) {
+      counts.all++
+      for (const f of TREE_FILTERS) if (f !== 'all' && inState(f, pane, desk.asleep)) counts[f]++
+    }
+  }
+  return counts
+}
+
 /** "Por mesa": every desk of the queue, then the system ones and the drawer, the Regency's own left out. */
 export function treeOf(input: RegencyInput): TreeDeskRow[] {
   const folded = new Set(input.collapsed)
-  return visibleDesks(input).map(desk => {
+  const filter = filterOf(input), query = queryOf(input), active = isActive(input)
+  const rows: TreeDeskRow[] = []
+  for (const desk of visibleDesks(input)) {
     const deskOwner = input.owners.desk[desk.id]
-    const collapsed = folded.has(desk.id)
-    const panes: TreePaneRow[] = collapsed ? [] : desk.panes.map(pane => {
+    // A desk whose name matches shows all its panes (that pass the filter); a pane that matches shows its desk.
+    const deskHit = query !== '' && hit(query, [desk.name])
+    const shown = active
+      ? desk.panes.filter(p => inState(filter, p, desk.asleep) && (query === '' || deskHit || paneHit(input, query, p)))
+      : desk.panes
+    if (active && shown.length === 0 && !(filter === 'all' && deskHit)) continue
+    const collapsed = !active && folded.has(desk.id)
+    const panes: TreePaneRow[] = collapsed ? [] : shown.map(pane => {
       const own = input.owners.pane[pane.id]
       const differs = own !== undefined && own.id !== deskOwner?.id
       return { ...paneRow(input, desk.id, pane), ...(differs ? { ownerBadge: own.name } : {}) }
     })
-    return {
+    rows.push({
       target: { kind: 'desk' as const, id: desk.id }, name: desk.name, color: desk.color, kind: desk.kind,
       ...(desk.icon !== undefined ? { icon: desk.icon } : {}),
-      asleep: desk.asleep, collapsed, paneCount: desk.panes.length, panes,
+      asleep: desk.asleep, collapsed, paneCount: shown.length, panes,
       ...(deskOwner ? { owner: deskOwner.name } : {}),
-    }
-  })
+    })
+  }
+  return rows
 }
 
 /**
@@ -237,28 +323,59 @@ export function treeOf(input: RegencyInput): TreeDeskRow[] {
  */
 export function agentTreeOf(input: RegencyInput): AgentGroupRow[] {
   const folded = new Set(input.collapsed)
-  const groups = new Map<string, { name: string; you: boolean; panes: AgentPaneRow[] }>()
+  const filter = filterOf(input), query = queryOf(input), active = isActive(input)
+  const groups = new Map<string, { name: string; you: boolean; panes: Array<{ row: AgentPaneRow; raw: RawPane; deskHit: boolean }> }>()
   groups.set(YOU_ID, { name: YOU_NAME, you: true, panes: [] })
   for (const desk of visibleDesks(input)) {
+    const deskHit = query !== '' && hit(query, [desk.name])
     for (const pane of desk.panes) {
+      if (active && !inState(filter, pane, desk.asleep)) continue
       const owner = input.owners.pane[pane.id] ?? input.owners.desk[desk.id]
       const id = owner?.id ?? YOU_ID
       let group = groups.get(id)
       if (!group) { group = { name: owner!.name, you: false, panes: [] }; groups.set(id, group) }
-      group.panes.push({ ...paneRow(input, desk.id, pane), deskName: desk.name, deskColor: desk.color })
+      group.panes.push({ row: { ...paneRow(input, desk.id, pane), deskName: desk.name, deskColor: desk.color }, raw: pane, deskHit })
     }
   }
-  return [...groups].map(([id, g]) => {
-    const collapsed = folded.has(id)
-    return {
-      target: { kind: 'agent' as const, id }, name: g.name, you: g.you, collapsed,
-      paneCount: g.panes.length, panes: collapsed ? [] : g.panes,
-    }
-  })
+  const out: AgentGroupRow[] = []
+  for (const [id, g] of groups) {
+    // A group whose owner's name matches shows all its panes; so does a pane whose desk's name matches.
+    const groupHit = query !== '' && hit(query, [g.name])
+    const shown = (query === '' || groupHit ? g.panes : g.panes.filter(p => p.deskHit || paneHit(input, query, p.raw))).map(p => p.row)
+    if (active && shown.length === 0) continue
+    const collapsed = !active && folded.has(id)
+    out.push({
+      group: true, target: { kind: 'agent' as const, id }, name: g.name, you: g.you, collapsed,
+      paneCount: shown.length, panes: collapsed ? [] : shown,
+    })
+  }
+  return out
+}
+
+/** "Fechadas": the ended sessions that fit the search (no state filter applies to them: with one on, none show). */
+export function closedOf(input: RegencyInput): ClosedSection {
+  const query = queryOf(input)
+  const rows: ClosedRow[] = filterOf(input) !== 'all' ? [] : (input.closed ?? [])
+    .filter(c => query === '' || hit(query, [c.name, c.title, c.kind]))
+    .slice(0, CLOSED_LIMIT)
+    .map(c => ({
+      target: { kind: 'session' as const, id: c.slotId }, name: c.name, title: c.title ?? c.name, kind: c.kind,
+      ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}),
+    }))
+  const collapsed = query === '' && input.collapsed.includes(CLOSED_ID)
+  return { collapsed, count: rows.length, rows: collapsed ? [] : rows }
 }
 
 export function regencyModelOf(input: RegencyInput): RegencyModel {
-  return { waiting: waitingOf(input), conversations: conversationsOf(input), tree: treeOf(input), byAgent: agentTreeOf(input) }
+  return {
+    waiting: waitingOf(input), conversations: conversationsOf(input), tree: treeOf(input), byAgent: agentTreeOf(input),
+    closed: closedOf(input),
+  }
+}
+
+/** The model of one view: the same as `regencyModelOf` with the filter and the search given apart from the input. */
+export function filterModel(input: RegencyInput, opts: { filter?: TreeFilter; query?: string }): RegencyModel {
+  return regencyModelOf({ ...input, filter: opts.filter ?? 'all', query: opts.query ?? '' })
 }
 
 /** Equal models give equal signatures (the builders write keys in a fixed order): the screen repaints only on a change. */
