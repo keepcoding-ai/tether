@@ -14,10 +14,13 @@ import { CLOSED_ID, TREE_FILTERS, modelSignature, safeName } from '../model.ts'
 import { REGENCY_TITLE } from '../manifest.ts'
 import type { CreateFixed } from '../create-rules.ts'
 import {
-  DEFAULT_LAYOUT, backToTether, layoutParams, openSystem, openingTab, readLayout, rightColumnOf, selectChannel, setFilter, setNarrowTab,
-  setSystemSection, setView, systemSectionOf, tierOf, toggleCollapsed, toggleMembers, toggleMode, type NarrowTab, type RegencyLayout,
-  type RegencyMode, type RegencyView,
+  DEFAULT_LAYOUT, backToTether, layoutOnTier, layoutParams, openSystemOn, openingTab, otherSide, readLayout, rightColumnOf, selectChannel,
+  setFilter, setNarrowTab, setSystemSection, setTabletSide, setView, systemSectionOf, systemShownOf, tabletSideOf, tierOf, tierStep,
+  toggleCollapsed, toggleMembers, toggleMode, treeColumnOf, type NarrowTab, type RegencyLayout, type RegencyMode, type RegencyView,
+  type TabletSide, type Tier,
 } from './layout-rules.ts'
+import { systemSummary } from '../system-rules.ts'
+import { paintSummary } from './summary-view.ts'
 import {
   el, glyph, paintConversations, paintFaces, paintTree, paintWaiting, targetOf, type ColumnsContext,
 } from './columns.ts'
@@ -195,6 +198,20 @@ export class RegencyPane implements IContentRenderer {
   private fresh: { targets: readonly string[]; until: number; focus: boolean } | undefined
   /** "+ Novo" in the heading of the tree. */
   private readonly newBtn = el('button', 'rg-new')
+  /** Tablet: the switch on top of the one side column ("Esperam você", with its count always in view, or "Tether"). */
+  private readonly sideSeg = el('div', 'rg-side-seg')
+  /** Tablet: the thin rail at the right edge whose button brings the other place as a panel over the conversation. */
+  private readonly sheetRail = el('div', 'rg-trail')
+  private readonly sheetBtn = el('button', 'rg-trail-b')
+  private readonly sheetCount = el('span', 'cnt rg-trail-cnt')
+  /** The panel over the conversation is up (tablet only; never kept: it is a moment's look). */
+  private sheetOpen = false
+  /** TV: the quick view's fixed column beside the conversation (the card sits in it), with its empty state. */
+  private readonly quickCol = el('section', 'rg-col rg-qcol')
+  /** TV: the rail of "Sistema", always in view: the summary over the sections. */
+  private readonly sysRail = el('aside', 'rg-col rg-srail')
+  private readonly sumHost = el('div', 'rg-sum')
+  private sumSignature = ''
   private signature = ''
   private ro: ResizeObserver | undefined
   private disposed = false
@@ -243,7 +260,9 @@ export class RegencyPane implements IContentRenderer {
     this.right.append(this.members, this.treeHd, this.tools, this.treeHost, this.reservedHost, this.sysView.element)
     this.buildEdges()
     this.buildTabBar()
-    this.element.append(this.left, this.edgeLeft, this.center, this.right, this.edgeRight, this.tabBar)
+    this.buildTiers()
+    // The DOM order is the TV's columns' order; each tier shows and places what its design asks (regency.css).
+    this.element.append(this.left, this.edgeLeft, this.sideSeg, this.center, this.quickCol, this.right, this.sysRail, this.sheetRail, this.edgeRight, this.tabBar)
     this.sysBtn.type = 'button'
     this.sysBtn.dataset.action = 'system'
     this.sysBtn.dataset.place = 'system'
@@ -272,15 +291,25 @@ export class RegencyPane implements IContentRenderer {
     })
     this.ro = new ResizeObserver(() => {
       const w = this.element.clientWidth
-      if (w > 0) this.element.dataset.tier = tierOf(w)
+      if (w > 0) this.applyTier(w)
       this.placeConversations()
     })
     this.ro.observe(this.element)
+    this.ro.observe(this.quickCol)
+    // Tablet: Esc in the panel over the conversation (or on its button) closes it, once nothing inside took the key.
+    this.element.addEventListener('keydown', ev => {
+      if (ev.key !== 'Escape' || ev.defaultPrevented || !this.sheetOpen) return
+      const t = ev.target instanceof Node ? ev.target : null
+      if (!t || !(this.sheetEl().contains(t) || this.sheetBtn.contains(t))) return
+      ev.preventDefault()
+      this.setSheet(false, true)
+    })
     this.paintMode()
     this.paintTabs()
     this.paintVoid()
     this.paintMembersHead()
     this.paintTools()
+    this.paintSide()
   }
 
   /** "Por mesa" or "Por agente", kept in the layout. */
@@ -308,7 +337,192 @@ export class RegencyPane implements IContentRenderer {
   get searchText(): string { return this.query }
 
   /** The tier the pane is drawn in now (the ruler of four, by the pane's width). */
-  get tier(): string { return this.element.dataset.tier ?? 'desktop' }
+  get tier(): Tier { return (this.element.dataset.tier as Tier | undefined) ?? 'desktop' }
+
+  /** The tablet's panel over the conversation is up. */
+  get sheetShown(): boolean { return this.sheetOpen }
+
+  // ---------------------------------------------------------------- the four tiers
+
+  /**
+   * The pane's width decides the tier (the ruler of four), and only it. A change of tier moves nothing out of the DOM but
+   * "Sistema" (its rail on the TV): what is open (the card, "+ Novo", a menu, "Sistema") stays, and the keyboard with it.
+   */
+  private applyTier(width: number): void {
+    const next = tierOf(width)
+    const step = tierStep(width)
+    if (step) { if (this.element.dataset.step !== step) this.element.dataset.step = step }
+    else delete this.element.dataset.step
+    if (this.element.dataset.tier === next) { this.placeQuickColumn(); return }
+    const focusIn = this.focusPlace()
+    const active = document.activeElement
+    this.element.dataset.tier = next
+    const l = layoutOnTier(this.state, next, focusIn)
+    if (l !== this.state) this.setLayout(l)
+    if (next !== 'tablet') this.setSheet(false, false)
+    this.placeSystem()
+    this.paintSide()
+    this.paintColumn()
+    this.paintSystem()
+    this.placeQuickColumn()
+    // A move of "Sistema" between its column and its rail takes the keyboard from it: it goes back to the same element.
+    if (active instanceof HTMLElement && active !== document.activeElement && active.isConnected && this.element.contains(active)) active.focus({ preventScroll: true })
+  }
+
+  /** Where the keyboard is among the side places (for the tier's change). */
+  private focusPlace(): 'waiting' | 'tether' | 'system' | undefined {
+    const a = document.activeElement
+    if (!(a instanceof HTMLElement)) return undefined
+    if (this.sysView.element.contains(a)) return 'system'
+    if (this.left.contains(a)) return 'waiting'
+    if (this.right.contains(a)) return 'tether'
+    return undefined
+  }
+
+  /** "Sistema" lives in the tree's column, or in its own rail on the TV. */
+  private placeSystem(): void {
+    const host = this.tier === 'wide' ? this.sysRail : this.right
+    if (this.sysView.element.parentElement !== host) host.append(this.sysView.element)
+  }
+
+  /** The tablet's switch, its panel's button and the counts on them. */
+  private buildTiers(): void {
+    this.sideSeg.setAttribute('role', 'radiogroup')
+    this.sideSeg.setAttribute('aria-label', 'O que a coluna mostra')
+    const seg = (side: TabletSide, label: string, name: string, tip: string): HTMLButtonElement => {
+      const b = el('button', 'rg-side-b')
+      b.type = 'button'
+      b.dataset.action = `side:${side}`
+      b.dataset.side = side
+      b.title = tip
+      b.setAttribute('role', 'radio')
+      const g = glyph(name, label)
+      g.setAttribute('aria-hidden', 'true')
+      b.append(g, el('span', 'rg-side-t', label))
+      if (side === 'waiting') b.append(el('span', 'cnt rg-side-cnt'))
+      return b
+    }
+    this.sideSeg.append(
+      seg('waiting', 'Esperam você', 'bell', 'A coluna mostra quem espera você e as conversas'),
+      seg('tether', 'Tether', 'tree-view', 'A coluna mostra as mesas e guias do tether'),
+    )
+    this.sheetBtn.type = 'button'
+    this.sheetBtn.dataset.action = 'sheet'
+    this.sheetBtn.setAttribute('aria-expanded', 'false')
+    this.sheetRail.append(this.sheetBtn)
+    this.sheetCount.hidden = true
+    this.quickCol.setAttribute('aria-label', 'Visão rápida')
+    this.quickCol.dataset.open = 'false'
+    const empty = el('div', 'rg-qcol-empty')
+    const eye = glyph('sidebar-simple', 'Visão rápida')
+    eye.setAttribute('aria-hidden', 'true')
+    empty.append(eye, el('p', 'rg-void-t', 'Clique numa guia para vê-la aqui'), el('p', 'rg-void-s', 'Espaço numa linha da árvore também espia; Enter vai até a guia.'))
+    this.quickCol.append(empty)
+    this.sysRail.setAttribute('aria-label', 'Sistema')
+    this.sysRail.append(this.sumHost)
+  }
+
+  /** The tablet's side column and the button of the other place (its icon, its words and, for who waits, the count). */
+  private paintSide(): void {
+    const side = tabletSideOf(this.state)
+    if (this.element.dataset.side !== side) this.element.dataset.side = side
+    for (const b of this.sideSeg.querySelectorAll<HTMLElement>('.rg-side-b')) b.setAttribute('aria-checked', String(b.dataset.side === side))
+    const other = otherSide(side)
+    if (this.sheetBtn.dataset.other === other) return
+    this.sheetBtn.dataset.other = other
+    const tip = other === 'tether' ? 'Abrir o Tether por cima da conversa' : 'Abrir Esperam você e Conversas por cima da conversa'
+    this.sheetBtn.title = tip
+    this.sheetBtn.setAttribute('aria-label', tip)
+    const g = glyph(other === 'tether' ? 'tree-view' : 'bell', tip)
+    g.setAttribute('aria-hidden', 'true')
+    this.sheetBtn.replaceChildren(g, this.sheetCount)
+    this.paintCounts()
+  }
+
+  /** The tablet's side column shows `side` (kept in the layout); the panel over the conversation closes. */
+  setSide(side: TabletSide): void {
+    this.setSheet(false, false)
+    if (tabletSideOf(this.state) === side) return
+    this.setLayout(setTabletSide(this.state, side))
+    this.paintSide()
+  }
+
+  /** The place in the panel over the conversation: the one the side column does not show. */
+  private sheetEl(): HTMLElement { return tabletSideOf(this.state) === 'tether' ? this.left : this.right }
+
+  /**
+   * The tablet's panel over the conversation (it does not push it): opened by the rail's button, closed by it, by Esc and by a
+   * press outside it. `focus`: opening, the keyboard goes into it; closing, back to the button.
+   */
+  setSheet(open: boolean, focus: boolean): void {
+    if (open && this.tier !== 'tablet') return
+    if (this.sheetOpen === open) return
+    this.sheetOpen = open
+    if (open) this.element.dataset.sheet = 'open'
+    else delete this.element.dataset.sheet
+    this.sheetBtn.setAttribute('aria-expanded', String(open))
+    if (open) {
+      document.addEventListener('pointerdown', this.onOutside, true)
+      if (focus) {
+        const sheet = this.sheetEl()
+        const first = sheet.querySelector<HTMLElement>('.rg-tree [data-key][tabindex="0"]') ?? sheet.querySelector<HTMLElement>('[data-target], button')
+        first?.focus({ preventScroll: true })
+      }
+    } else {
+      document.removeEventListener('pointerdown', this.onOutside, true)
+      if (focus) this.sheetBtn.focus({ preventScroll: true })
+    }
+  }
+
+  /** A press outside the panel closes it (a menu, the card or a dialog it opened are not outside). */
+  private readonly onOutside = (ev: PointerEvent): void => {
+    const t = ev.target instanceof Element ? ev.target : null
+    if (!t || this.sheetEl().contains(t) || this.sheetBtn.contains(t) || t.closest('#ctx-menu, #peek, dialog')) return
+    this.setSheet(false, false)
+  }
+
+  /**
+   * A row picked in the panel over the conversation (a conversation chosen, a quick view): the panel steps away so what was
+   * picked is seen, and the keyboard goes to the panel's button.
+   */
+  private afterPick(row: HTMLElement): void {
+    if (!this.sheetOpen || !this.sheetEl().contains(row)) return
+    this.setSheet(false, false)
+    this.sheetBtn.focus({ preventScroll: true })
+  }
+
+  /** The tree is about to get the keyboard (a row the person made or asked for): on the tablet, the side column shows it. */
+  private revealTree(): void {
+    if (this.tier === 'tablet' && tabletSideOf(this.state) !== 'tether') this.setSide('tether')
+  }
+
+  /**
+   * TV: the docked card fills the quick view's column. The core docks it over the conversation (quickAnchor); regency.css,
+   * on the TV only, moves it by these four values to the column (the card's own place and size come back on any other tier).
+   */
+  private placeQuickColumn(): void {
+    if (this.tier !== 'wide') return
+    const r = this.quickCol.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) return
+    const s = document.documentElement.style
+    const gap = 8
+    const set = (k: string, v: number): void => { const px = `${Math.round(v)}px`; if (s.getPropertyValue(k) !== px) s.setProperty(k, px) }
+    set('--rg-qcol-left', r.left + gap)
+    set('--rg-qcol-top', r.top + gap)
+    set('--rg-qcol-width', r.width - 2 * gap)
+    set('--rg-qcol-height', r.height - 2 * gap)
+  }
+
+  /** What the E2E reads of the tiers: the tier, its step, the tablet's side and panel, the TV's quick column. */
+  tierSnapshot(): { tier: Tier; step?: string; side: TabletSide; sheet: boolean; quickOpen: boolean } {
+    return {
+      tier: this.tier,
+      ...(this.element.dataset.step ? { step: this.element.dataset.step } : {}),
+      side: tabletSideOf(this.state),
+      sheet: this.sheetOpen,
+      quickOpen: this.quickCol.dataset.open === 'true',
+    }
+  }
 
   /**
    * What the quick view docks on: the conversation's body under its bar (the bar's actions stay in reach), else the
@@ -324,9 +538,13 @@ export class RegencyPane implements IContentRenderer {
     if (this.state.mode === mode) return
     // The keyboard leaves a column that folds into an edge for the conversation, never for the page's body.
     const active = document.activeElement
-    const lost = active instanceof HTMLElement && (this.left.contains(active) || this.right.contains(active))
+    const lost = active instanceof HTMLElement && (this.left.contains(active) || this.right.contains(active) || this.sysRail.contains(active))
     this.setLayout(toggleMode(this.state))
     this.paintMode()
+    this.setSheet(false, false)
+    this.paintColumn()
+    this.paintSystem()
+    this.placeQuickColumn()
     if (lost && mode === 'immersion') this.focus()
   }
 
@@ -434,6 +652,7 @@ export class RegencyPane implements IContentRenderer {
     if (f.focus && row.dataset.key) {
       // The person made it here: the keyboard goes to its row (on the phone, the tree is the "Tether" place).
       if (this.tier === 'mobile') this.setTab('tether')
+      this.revealTree()
       this.focusRow(row.dataset.key)
     }
     setTimeout(() => row.classList.remove('rg-fresh'), FRESH_SHOWN_MS)
@@ -446,24 +665,30 @@ export class RegencyPane implements IContentRenderer {
   setShown(on: boolean): void {
     this.element.classList.toggle('off', !on)
     this.onScreen = on
-    this.sysView.setShown(on && rightColumnOf(this.state) === 'system')
+    this.sysView.setShown(on && systemShownOf(this.state, this.tier))
   }
 
   // ---------------------------------------------------------------- "Sistema"
 
-  /** "Sistema" takes the right column (on `section`, or the one kept); the conversation in the centre does not move. */
+  /**
+   * "Sistema" takes the right column (on `section`, or the one kept); the conversation in the centre does not move. On the
+   * tablet it enters by the side column; on the TV its rail is always there and only the section changes.
+   */
   openSystemColumn(section?: SystemSection): void {
-    const had = this.right.contains(document.activeElement)
-    this.setLayout(openSystem(this.state, section))
+    const tier = this.tier
+    const had = this.right.contains(document.activeElement) || this.sysRail.contains(document.activeElement)
+    this.setLayout(openSystemOn(this.state, tier, section))
+    if (tier === 'tablet') { this.setSheet(false, false); this.paintSide() }
     this.paintColumn()
     this.paintSystem()
-    if (had || document.activeElement === document.body) this.sysView.focusTab()
+    if (had || document.activeElement === document.body || document.activeElement === null) this.sysView.focusTab()
   }
 
   /** The open section of "Sistema" (kept in the layout). */
   setSystemSection(section: SystemSection): void {
-    if (rightColumnOf(this.state) === 'system' && systemSectionOf(this.state) === section) return
-    this.setLayout(setSystemSection(this.state, section))
+    const tier = this.tier
+    if (systemShownOf(this.state, tier) && systemSectionOf(this.state) === section) return
+    this.setLayout(tier === 'wide' ? openSystemOn(this.state, tier, section) : setSystemSection(this.state, section))
     this.paintColumn()
     this.paintSystem()
   }
@@ -478,10 +703,10 @@ export class RegencyPane implements IContentRenderer {
 
   /** The right column shows the tree or "Sistema"; the one clock of "Sistema" runs only while it is on screen. */
   private paintColumn(): void {
-    const sys = rightColumnOf(this.state) === 'system'
-    this.right.dataset.column = sys ? 'system' : 'tether'
+    const sys = treeColumnOf(this.state, this.tier) === 'system'
+    if (this.right.dataset.column !== (sys ? 'system' : 'tether')) this.right.dataset.column = sys ? 'system' : 'tether'
     this.right.setAttribute('aria-label', sys ? 'Sistema' : 'Neste canal e o Tether')
-    this.sysView.setShown(sys && this.onScreen)
+    this.sysView.setShown(systemShownOf(this.state, this.tier) && this.onScreen)
   }
 
   /** The red dot on the foot and on the edge, and the open section when "Sistema" shows. */
@@ -496,13 +721,18 @@ export class RegencyPane implements IContentRenderer {
     }
     this.sysDotText.hidden = !dot.show
     if (this.sysDotText.textContent !== dot.text) this.sysDotText.textContent = dot.text
-    if (rightColumnOf(this.state) === 'system') this.sysView.paint(systemSectionOf(this.state), model)
+    if (systemShownOf(this.state, this.tier)) this.sysView.paint(systemSectionOf(this.state), model)
+    if (this.tier === 'wide') {
+      const sum = systemSummary(model)
+      const sig = JSON.stringify(sum)
+      if (sig !== this.sumSignature) { this.sumSignature = sig; paintSummary(this.sumHost, sum) }
+    }
   }
 
-  /** What the E2E reads of "Sistema": the column, the section, the dots and the rows as drawn. */
+  /** What the E2E reads of "Sistema": the column (`rail` on the TV), the section, the dots and the rows as drawn. */
   systemSnapshot(): { column: string; section: SystemSection; dot: { foot: boolean; edge: boolean; tip: string }; view: ReturnType<SystemView['snapshot']> } {
     return {
-      column: rightColumnOf(this.state),
+      column: this.tier === 'wide' ? 'rail' : rightColumnOf(this.state),
       section: systemSectionOf(this.state),
       dot: { foot: !this.sysDot.hidden, edge: !this.edgeSysDot.hidden, tip: this.sysBtn.title },
       view: this.sysView.snapshot(),
@@ -595,6 +825,7 @@ export class RegencyPane implements IContentRenderer {
       if (this.state.filter !== 'all') this.setLayout(setFilter(this.state, 'all'))
       this.repaint()
     }
+    this.revealTree()
     this.focusRow(key)
   }
 
@@ -605,6 +836,7 @@ export class RegencyPane implements IContentRenderer {
 
   dispose(): void {
     this.disposed = true
+    document.removeEventListener('pointerdown', this.onOutside, true)
     this.ro?.disconnect()
     this.menuWatch?.disconnect()
     this.sysView.dispose()
@@ -844,6 +1076,13 @@ export class RegencyPane implements IContentRenderer {
     this.edgeLeft.title = said
     const cnt = this.tabBar.querySelector<HTMLElement>('.rg-tab-cnt')
     if (cnt) { cnt.textContent = text; cnt.hidden = n === 0; cnt.title = n === 1 ? '1 espera você' : `${n} esperam você` }
+    // The tablet: the count on the switch is always in view, whatever the column shows; on the panel's button while it is who waits.
+    const seg = this.sideSeg.querySelector<HTMLElement>('.rg-side-cnt')
+    if (seg) { seg.textContent = text; seg.hidden = n === 0; seg.title = cnt?.title ?? '' }
+    const waitingOut = this.sheetBtn.dataset.other === 'waiting' && n > 0
+    this.sheetCount.textContent = text
+    this.sheetCount.hidden = !waitingOut
+    this.sheetBtn.classList.toggle('lit', waitingOut)
   }
 
   private context(): ColumnsContext {
@@ -1011,8 +1250,8 @@ export class RegencyPane implements IContentRenderer {
     switch (step.type) {
       case 'focus': this.focusRow(step.key); break
       case 'toggle': this.focusKey = step.key; this.fold(step.foldId, step.open); break
-      case 'quick': this.host.quickView(step.target); break
-      case 'go': this.host.go(step.target); break
+      case 'quick': this.host.quickView(step.target); this.afterPick(row); break
+      case 'go': this.afterPick(row); this.host.go(step.target); break
       case 'menu': this.openMenu(step.target, row); break
       case 'clear-search': this.setQuery(''); break
       case 'clear-filter': this.setFilter('all'); break
@@ -1086,6 +1325,14 @@ export class RegencyPane implements IContentRenderer {
     if (action === 'search') { if (this.searchOpen && this.query === '') this.closeSearch(); else this.openSearch(); return }
     if (action === 'convs') { this.convsOpen = !this.convsOpen; this.repaint(); return }
     if (action.startsWith('tab:')) { this.setTab(action.slice(4) as NarrowTab); return }
+    if (action.startsWith('side:')) { this.setSide(action.slice(5) === 'tether' ? 'tether' : 'waiting'); return }
+    if (action === 'sheet') { this.setSheet(!this.sheetOpen, true); return }
+    if (action.startsWith('sys:')) {
+      const section = action.slice(4) as SystemSection
+      this.setSystemSection(section)
+      this.sysView.focusTab()
+      return
+    }
     if (action === 'mode') { this.toggleMode(); return }
     if (action === 'system') { this.openSystemColumn(); return }
     if (action === 'manage-system') { this.setMode('manage'); this.openSystemColumn(); this.sysView.focusTab(); return }
@@ -1094,7 +1341,7 @@ export class RegencyPane implements IContentRenderer {
       // The edge's "Neste canal" and "Tether" are the tree's column: "Sistema" gives it back.
       if (action !== 'manage') this.closeSystem()
       if (action === 'manage-members' && !this.state.membersOpen && this.embed) { this.setLayout(toggleMembers(this.state)); this.paintMembersHead() }
-      if (action === 'manage-tether') this.treeHost.querySelector<HTMLElement>('[data-key][tabindex="0"]')?.focus({ preventScroll: true })
+      if (action === 'manage-tether') { this.revealTree(); this.treeHost.querySelector<HTMLElement>('[data-key][tabindex="0"]')?.focus({ preventScroll: true }) }
       return
     }
     if (action.startsWith('view:')) { this.setView(action.slice(5) === 'agent' ? 'agent' : 'desk'); return }
@@ -1137,18 +1384,22 @@ export class RegencyPane implements IContentRenderer {
       if (phone) { this.convsOpen = false; this.setTab('conversation') }
       this.select(target.id)
       if (phone) this.repaint()
+      this.afterPick(row)
     }
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
     // An ended session has nowhere to go: its row opens its menu (reopen, forget).
     else if (target.kind === 'session') this.openMenu(target, row)
     // A pane or an agent: the click is the quick view over the conversation (the person stays here); Enter goes to the tab.
-    else if (!byEnter && (target.kind === 'pane' || target.kind === 'agent')) this.host.toggleQuick(target)
-    else this.host.go(target)
+    else if (!byEnter && (target.kind === 'pane' || target.kind === 'agent')) { this.host.toggleQuick(target); this.afterPick(row) }
+    else { this.afterPick(row); this.host.go(target) }
   }
 
   /** Marks the row whose pane is in the quick view's card (class and `aria-current`); no card, no mark. */
   markQuick(): void {
     const id = this.host.quicked()
+    // The TV's column: open while a pane is in the card (the card fills it), its empty state otherwise.
+    this.quickCol.dataset.open = String(id !== undefined)
+    this.placeQuickColumn()
     for (const r of this.element.querySelectorAll<HTMLElement>(QUICK_ROWS)) {
       const on = id !== undefined && targetOf(r.dataset.target)?.id === id
       r.classList.toggle('rg-peeked', on)

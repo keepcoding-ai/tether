@@ -645,6 +645,8 @@ export function activate(ui: TetherUi): Disposable[] {
   ui.test.expose('toast', () => toast.shown)
   /** "Sistema" as drawn: the column, the section, the red dots and the rows. */
   ui.test.expose('system', () => livePane()?.systemSnapshot())
+  /** The four tiers as drawn: the tier, the tablet's step, side and panel, the TV's quick column. */
+  ui.test.expose('tiers', () => livePane()?.tierSnapshot())
   /** The pure model of "Sistema" now (what the screen paints). */
   ui.test.expose('systemModel', () => systemModel())
   /** Opens "Sistema" on a section (or the kept one), as the foot's button does; `false` goes back to the tree. */

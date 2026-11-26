@@ -5,12 +5,10 @@
    keeps 4.5:1 or more on every surface it sits on, the hovered row included (measured: dark 5.2:1, light 5.0:1 on --bg-hover;
    the theme's --fg-dim alone falls to 4.3:1 there). No opacity on text: it would take the contrast back below. */
 .rg, dialog.rg-cr { --fg-dim: color-mix(in srgb, var(--fg) 75%, var(--bg-2)); }
-.rg[data-tier="wide"] { grid-template-columns: 240px minmax(0, 1fr) 420px; }
-/* The tablet follows the desktop for now, with narrower sides (its own design comes later). */
-.rg[data-tier="tablet"] { grid-template-columns: 180px minmax(0, 1fr) 260px; }
 .rg [hidden] { display: none !important; }
-/* The edges (immersion) and the bottom bar (phone) are out of the layout unless their mode or tier asks. */
-.rg > .rg-edge, .rg > .rg-tabbar { display: none; }
+/* The edges (immersion), the bottom bar (phone), the tablet's switch and rail, the TV's quick column and rail of "Sistema"
+   are out of the layout unless their mode or tier asks. */
+.rg > .rg-edge, .rg > .rg-tabbar, .rg > .rg-side-seg, .rg > .rg-trail, .rg > .rg-qcol, .rg > .rg-srail { display: none; }
 
 /* Immersion: the side columns become thin edges; one click on either goes back to "Gerir". */
 .rg[data-mode="immersion"] { grid-template-columns: 42px minmax(0, 1fr) 42px; }
@@ -50,8 +48,8 @@
 .rg .rg-tab .rg-ic { color: inherit; }
 .rg .rg-tab .rg-ic svg { width: 16px; height: 16px; }
 .rg-tab-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Touch: every row of the lists is a 44 px target on the phone. */
-.rg[data-tier="mobile"] :is(.rg-wait, .rg-conv, .rg-desk, .rg-pane, .rg-tg) { min-height: 44px; }
+/* Touch: every row of the lists is a 44 px target on the phone and on the tablet. */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) :is(.rg-wait, .rg-conv, .rg-desk, .rg-pane, .rg-tg) { min-height: 44px; }
 .rg-col { min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .rg-left { border-right: 1px solid var(--border); background: var(--bg-2); }
 .rg-right { border-left: 1px solid var(--border); background: var(--bg-2); }
@@ -144,7 +142,7 @@
 .rg-own > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rg-st { flex: none; font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 /* While the row's buttons show over its right end, its state steps aside (no half word under them). */
-.rg:not([data-tier="mobile"]) :is(.rg-pane, .rg-agent):is(:hover, :focus-within, :focus):has(> .rg-acts:not(:empty)) > .rg-st { visibility: hidden; }
+.rg:not([data-tier="mobile"]):not([data-tier="tablet"]) :is(.rg-pane, .rg-agent):is(:hover, :focus-within, :focus):has(> .rg-acts:not(:empty)) > .rg-st { visibility: hidden; }
 .rg-st.wait { color: var(--x-alert); font-weight: 600; }
 .rg-st.work { color: color-mix(in srgb, var(--ok) 70%, var(--fg)); }
 .rg-st.off { color: var(--fg-dim); font-style: italic; }
@@ -159,10 +157,11 @@
 .rg .rg-act .rg-ic { color: inherit; }
 .rg .rg-act .rg-ic svg { width: 14px; height: 14px; }
 .rg-act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rg[data-tier="mobile"] .rg-acts:not(:empty) { position: static; transform: none; display: inline-flex; padding-left: 0; background: none; margin: -8px -4px -8px 0; }
-.rg[data-tier="mobile"] .rg-act { width: 44px; height: 44px; }
-/* On the phone a row has one button, the "⋯" (its menu holds the rest): no row of small icons to miss with a thumb. */
-.rg[data-tier="mobile"] .rg-act:not([data-action="row-menu"]) { display: none; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-acts:not(:empty) { position: static; transform: none; display: inline-flex; padding-left: 0; background: none; margin: -8px -4px -8px 0; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-act { width: 44px; height: 44px; }
+/* On the phone and the tablet a row has one button, the "⋯" (its menu holds the rest): no row of small icons to miss with a
+   finger, nothing that waits for a hover. */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-act:not([data-action="row-menu"]) { display: none; }
 /* A row's name being typed in place. */
 .rg .rg-rename { flex: 1 1 0; min-width: 8em; height: 22px; margin: -2px 0; padding: 0 6px; border-radius: 4px; border: 1px solid var(--accent); outline: none; background: var(--bg); color: var(--fg);
   font-family: inherit; font-size: 12.5px; font-weight: 500; letter-spacing: normal; }
@@ -212,8 +211,8 @@
 .rg .rg-vazia-b .rg-ic { color: inherit; }
 .rg .rg-vazia-b .rg-ic svg { width: 12px; height: 12px; }
 .rg-vazia-b:focus-visible, .rg-shelf-b:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rg[data-tier="mobile"] .rg-vazia { min-height: 44px; }
-.rg[data-tier="mobile"] .rg-vazia-b { height: 44px; padding: 0 12px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-vazia { min-height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-vazia-b { height: 44px; padding: 0 12px; }
 
 /* The empty Browser and drawer: one quiet line at the tree's foot, each a small button to its desk's menu. */
 .rg-shelf { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 8px 6px 0; padding: 6px 6px 2px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--fg-dim); }
@@ -223,7 +222,7 @@
 .rg .rg-shelf-b .rg-ic { color: inherit; }
 .rg .rg-shelf-b .rg-ic svg { width: 12px; height: 12px; }
 .rg-shelf + .rg-group[data-closed] .rg-cl-head { margin-top: 4px; }
-.rg[data-tier="mobile"] .rg-shelf-b { height: 44px; padding: 0 14px 0 10px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-shelf-b { height: 44px; padding: 0 14px 0 10px; }
 
 /* The phone: "Conversas" over the conversation (the tab "Conversa"), folding into one line; the channel takes the rest. */
 .rg[data-tier="mobile"] .rg-center > .rg-convs { flex: none; max-height: 45%; overflow: auto; border-bottom: 1px solid var(--border); background: var(--bg-2); padding-bottom: 4px; }
@@ -252,19 +251,19 @@
 .rg-dsk > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rg-dsk .rg-swatch { width: 7px; height: 7px; border-radius: 1.5px; }
 
-/* The phone: the tools are 44 px targets; the chips scroll sideways in one line. */
-.rg[data-tier="mobile"] .rg-agent { min-height: 44px; }
-.rg[data-tier="mobile"] .rg-seg-b { height: 44px; padding: 0 12px; font-size: 12.5px; }
-.rg[data-tier="mobile"] .rg-seg { padding: 0; }
-.rg[data-tier="mobile"] .rg-search { height: 46px; padding-right: 0; }
-.rg[data-tier="mobile"] .rg-search-open { width: 44px; height: 44px; }
-.rg[data-tier="mobile"] .rg-search-in { font-size: 14px; }
-.rg[data-tier="mobile"] .rg-search-x { width: 44px; height: 44px; }
-/* The five chips do not fit a phone: one line that scrolls sideways, with its scrollbar in view (the last chip is reached,
-   never cut without a sign). */
-.rg[data-tier="mobile"] .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fg-dim) transparent; margin: 0 -8px; padding: 0 8px 6px; scroll-padding-inline: 8px; }
-.rg[data-tier="mobile"] .rg-chips::after { content: ''; flex: none; width: 2px; }
-.rg[data-tier="mobile"] .rg-chip { height: 44px; padding: 0 14px; font-size: 12.5px; }
+/* The phone and the tablet: the tools are 44 px targets; the chips scroll sideways in one line. */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-agent { min-height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-seg-b { height: 44px; padding: 0 12px; font-size: 12.5px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-seg { padding: 0; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-search { height: 46px; padding-right: 0; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-search-open { width: 44px; height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-search-in { font-size: 14px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-search-x { width: 44px; height: 44px; }
+/* The five chips do not fit a phone (nor a tablet's side column): one line that scrolls sideways, with its scrollbar in view
+   (the last chip is reached, never cut without a sign). */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fg-dim) transparent; margin: 0 -8px; padding: 0 8px 6px; scroll-padding-inline: 8px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-chips::after { content: ''; flex: none; width: 2px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-chip { height: 44px; padding: 0 14px; font-size: 12.5px; }
 
 /* "Fechadas", the tree's last group: the head folds; each ended session is one line (identity, title, how long ago). */
 .rg-cl-head, .rg-cl { position: relative; display: flex; align-items: center; gap: 6px; margin: 0 6px; padding: 4px 6px; border-radius: 6px; min-height: 28px; min-width: 0; cursor: pointer; }
@@ -279,8 +278,8 @@
 .rg-ago { flex: none; font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 .rg-cl-empty { padding-left: 26px; }
 :is(.rg-cl):is(:hover, :focus-within, :focus) > .rg-acts:not(:empty) { display: inline-flex; }
-.rg:not([data-tier="mobile"]) .rg-cl:is(:hover, :focus-within, :focus) > .rg-ago { visibility: hidden; }
-.rg[data-tier="mobile"] :is(.rg-cl-head, .rg-cl) { min-height: 44px; }
+.rg:not([data-tier="mobile"]):not([data-tier="tablet"]) .rg-cl:is(:hover, :focus-within, :focus) > .rg-ago { visibility: hidden; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) :is(.rg-cl-head, .rg-cl) { min-height: 44px; }
 /* The row of a session just reopened: a brief glow (reduced motion: the same highlight, still). */
 .rg-fresh { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 @media (prefers-reduced-motion: no-preference) {
@@ -294,7 +293,7 @@
 .rg-new:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 .rg-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rg .rg-new .rg-ic { color: inherit; }
-.rg[data-tier="mobile"] .rg-new { height: 44px; padding: 0 14px 0 10px; font-size: 13px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-new { height: 44px; padding: 0 14px 0 10px; font-size: 13px; }
 
 /* The card of "+ Novo" (create-view.ts): a modal dialog on the page's body, outside the pane. Desktop, tablet and TV: centred,
    of contained width. The phone: a sheet from the bottom, the whole width, 44 px targets. */
@@ -494,14 +493,15 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-sr-reason { display: flex; flex-direction: column; gap: 6px; }
 .rg-sr-err { margin: 0; font-size: 11px; color: var(--err); }
 
-/* The phone: "Sistema" lives in "Tether"; every target is 44 px. */
-.rg[data-tier="mobile"] :is(.rg-sys-open, .rg-sys-back, .rg-sys-tab) { min-height: 44px; }
-.rg[data-tier="mobile"] .rg-sys-ib { width: 44px; height: 44px; }
-.rg[data-tier="mobile"] .rg-sys-btn { height: 44px; }
-.rg[data-tier="mobile"] .rg-sr-x :is(input, select) { height: 44px; font-size: 14px; }
-.rg[data-tier="mobile"] .rg-sr-h { grid-template-columns: auto minmax(0, 1fr); }
-.rg[data-tier="mobile"] .rg-sr.ronda .rg-sr-h { grid-template-columns: minmax(0, 1fr); }
-.rg[data-tier="mobile"] .rg-sr-a { grid-column: 1 / -1; justify-self: end; flex-wrap: wrap; }
+/* The phone: "Sistema" lives in "Tether"; every target is 44 px (on the tablet too). */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) :is(.rg-sys-open, .rg-sys-back, .rg-sys-tab) { min-height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sys-ib { width: 44px; height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sys-btn { height: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sr-x :is(input, select) { height: 44px; font-size: 14px; }
+/* A row's 44 px buttons take their own line under the name and state (the tablet's side column is as narrow as a phone). */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sr-h { grid-template-columns: auto minmax(0, 1fr); }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sr.ronda .rg-sr-h { grid-template-columns: minmax(0, 1fr); }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sr-a { grid-column: 1 / -1; justify-self: end; flex-wrap: wrap; }
 .tether-tab.regency .rg-pin { color: var(--fg-dim); }
 .tether-tab.regency .rg-pin svg { width: 12px; height: 12px; }
 
@@ -517,7 +517,7 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-toast-x:hover { background: var(--bg-hover); color: var(--fg); }
 .rg-toast-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rg[data-tier="mobile"] .rg-toast { top: 12px; }
-.rg[data-tier="mobile"] .rg-toast :is(.rg-btn, .rg-toast-x) { min-height: 44px; min-width: 44px; }
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-toast :is(.rg-btn, .rg-toast-x) { min-height: 44px; min-width: 44px; }
 @media (prefers-reduced-motion: no-preference) {
   .rg-toast:not([hidden]) { animation: rg-toast-in .18s ease-out; }
 }
@@ -538,3 +538,88 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-btn.rg-btn-q:hover { background: var(--bg-hover); color: var(--fg); }
 .rg-void .rg-btn .rg-ic svg { width: 13px; height: 13px; }
 .rg .rg-btn .rg-ic { color: inherit; }
+
+/* ---------------------------------------------------------------- the tablet (pane 768 to 1279 px)
+   Two columns: one side column and the conversation. The side column shows "Esperam você" + "Conversas" or "Tether", chosen
+   by the switch on top of it (the count of who waits always in view); the other comes as a panel over the conversation (it
+   does not push it) from the rail at the right edge. Touch: 44 px targets, nothing waits for a hover. Denser from 1024 px. */
+.rg[data-tier="tablet"][data-mode="manage"] { --rg-side-w: 288px; --rg-sheet-w: 320px; grid-template-columns: var(--rg-side-w) minmax(0, 1fr) 48px; grid-template-rows: auto minmax(0, 1fr); }
+.rg[data-tier="tablet"][data-step="lg"][data-mode="manage"] { --rg-side-w: 340px; --rg-sheet-w: 380px; }
+.rg[data-tier="tablet"][data-mode="manage"] > .rg-side-seg { display: flex; grid-column: 1; grid-row: 1; }
+.rg[data-tier="tablet"][data-mode="manage"] > .rg-center { grid-column: 2; grid-row: 1 / 3; }
+.rg[data-tier="tablet"][data-mode="manage"] > .rg-trail { display: flex; grid-column: 3; grid-row: 1 / 3; }
+.rg[data-tier="tablet"][data-mode="manage"][data-side="waiting"] > .rg-left,
+.rg[data-tier="tablet"][data-mode="manage"][data-side="tether"] > .rg-right { grid-column: 1; grid-row: 2; border-left: 0; border-right: 1px solid var(--border); }
+.rg[data-tier="tablet"][data-mode="manage"][data-side="waiting"] > .rg-right,
+.rg[data-tier="tablet"][data-mode="manage"][data-side="tether"] > .rg-left { display: none; }
+/* The other place, on demand: over the conversation's right side, beside the rail that opened it. */
+.rg[data-tier="tablet"][data-mode="manage"][data-sheet="open"][data-side="waiting"] > .rg-right,
+.rg[data-tier="tablet"][data-mode="manage"][data-sheet="open"][data-side="tether"] > .rg-left {
+  display: flex; position: absolute; z-index: 25; top: 0; bottom: 0; right: 48px; width: min(var(--rg-sheet-w), calc(100% - 48px - 160px));
+  border: 0; border-left: 1px solid var(--border); background: var(--bg-2); box-shadow: -10px 0 28px rgba(0, 0, 0, .28);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rg[data-tier="tablet"][data-sheet="open"] > :is(.rg-left, .rg-right) { animation: rg-sheet-in .16s ease-out; }
+}
+@keyframes rg-sheet-in { from { transform: translateX(24px); opacity: .5; } to { transform: none; opacity: 1; } }
+.rg-side-seg { gap: 4px; padding: 6px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.rg-side-b { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px;
+  background: none; color: var(--fg-dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.rg-side-b[aria-checked="true"] { background: var(--bg-hover); border-color: var(--border); color: var(--fg); font-weight: 600; }
+.rg-side-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg .rg-side-b .rg-ic, .rg .rg-trail-b .rg-ic { color: inherit; }
+.rg .rg-side-b .rg-ic svg, .rg .rg-trail-b .rg-ic svg { width: 16px; height: 16px; }
+.rg-trail { flex-direction: column; align-items: center; gap: 6px; padding: 6px 0; border-left: 1px solid var(--border); background: var(--bg-2); }
+.rg-trail-b { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg-dim); cursor: pointer; }
+.rg-trail-b[aria-expanded="true"] { background: var(--bg-hover); color: var(--fg); }
+.rg .rg-trail-b.lit .rg-ic { color: var(--x-alert); }
+.rg-trail-cnt { position: absolute; top: 2px; right: 0; }
+.rg-side-b:focus-visible, .rg-trail-b:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The tree's heading in a column of 288 px: the view's switch takes its own line, the immersion's switch a 44 px target. */
+.rg[data-tier="tablet"] .rg-hd { flex-wrap: wrap; row-gap: 6px; }
+.rg[data-tier="tablet"] .rg-hd > .rg-seg { order: 9; flex: 1 1 100%; }
+.rg[data-tier="tablet"] .rg-hd > .rg-seg > .rg-seg-b { flex: 1 1 0; justify-content: center; }
+.rg[data-tier="tablet"] .rg-mode { width: 44px; height: 44px; margin: -10px -6px -10px 0; }
+.rg[data-tier="tablet"] .rg-btn { height: 44px; padding: 0 16px; font-size: 13px; }
+/* Immersion on the tablet: the same edges, as touch targets. */
+.rg[data-tier="tablet"][data-mode="immersion"] { grid-template-columns: 48px minmax(0, 1fr) 48px; }
+.rg[data-tier="tablet"] .rg-edge-b { width: 44px; height: 44px; }
+
+/* ---------------------------------------------------------------- the TV / wide (pane from 2560 px)
+   The width works: who waits and the conversations; the conversation at a reading measure; the quick view as a fixed column
+   beside it (the card fills it); the tree; the rail of "Sistema", always in view. No gap in the middle, nothing stretched. */
+.rg[data-tier="wide"][data-mode="manage"] { grid-template-columns: 300px 760px minmax(420px, 1fr) 380px 340px; }
+.rg[data-tier="wide"][data-mode="manage"] > .rg-qcol { display: flex; }
+.rg[data-tier="wide"][data-mode="manage"] > .rg-srail { display: flex; }
+/* "Sistema" has its rail here: the tree's foot does not carry it. */
+.rg[data-tier="wide"] .rg-right > .rg-reserved { display: none; }
+.rg-qcol { border-left: 1px solid var(--border); background: color-mix(in srgb, var(--bg-2) 55%, var(--frame-bg)); }
+.rg-qcol-empty { margin: auto; max-width: 300px; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--fg-dim); }
+.rg-qcol-empty .rg-ic svg { width: 28px; height: 28px; }
+.rg-qcol[data-open="true"] > .rg-qcol-empty { visibility: hidden; }
+.rg-srail { border-left: 1px solid var(--border); background: var(--bg-2); overflow: hidden; }
+.rg-srail > .rg-sys { display: flex; border-top: 1px solid var(--border); }
+.rg-srail .rg-sys-back { display: none; }
+.rg-sum { flex: none; max-height: 42%; overflow: auto; padding: 6px 0 8px; }
+.rg-sum-h { display: flex; align-items: center; gap: 6px; width: calc(100% - 12px); margin: 4px 6px 2px; padding: 5px 6px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  font: inherit; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-dim); text-align: left; }
+.rg-sum-h:hover { background: var(--bg-hover); color: var(--fg); }
+.rg-sum-h:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rg .rg-sum-h .rg-ic { color: inherit; }
+.rg-sum-ht { flex: 1 1 auto; min-width: 0; }
+.rg-sum-l { margin: 0; padding: 0 12px; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.rg-sum-r { display: grid; grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr); align-items: center; gap: 7px; min-height: 22px; font-size: 12px; }
+.rg-sum-r.ronda { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
+.rg-sum-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--fg); }
+.rg-sum-s { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--fg-dim); text-align: right; }
+.rg-sum-r.ok > .rg-sr-dot { color: color-mix(in srgb, var(--ok) 80%, var(--fg)); }
+.rg-sum-r.warn > .rg-sr-dot { color: var(--warn); }
+.rg-sum-r.bad > .rg-sr-dot, .rg-sum-r.bad > .rg-sum-s { color: var(--err); }
+.rg-sum-r.off > .rg-sr-dot { color: var(--fg-dim); }
+.rg-sum-e { margin: 0 16px 4px; font-size: 11.5px; color: var(--fg-dim); }
+.rg-sum-fell { display: flex; align-items: center; gap: 7px; margin: 2px 8px 6px; padding: 6px 9px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--err);
+  border: 1px solid color-mix(in srgb, var(--err) 45%, var(--border)); background: color-mix(in srgb, var(--err) 10%, transparent); }
+/* The docked card fills the quick view's column (pane.ts placeQuickColumn writes its box); only on the TV, outside immersion. */
+:root:has(.rg[data-tier="wide"][data-mode="manage"]:not(.off)) #peek[data-mode="docked"] > .peek-card {
+  left: var(--rg-qcol-left) !important; top: var(--rg-qcol-top) !important; width: var(--rg-qcol-width) !important; height: var(--rg-qcol-height) !important;
+}
