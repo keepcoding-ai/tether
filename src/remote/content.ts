@@ -201,6 +201,10 @@ export function decodeEvt(b: Uint8Array): Evt {
   return { evt: r.u16(), body: r.rest() }
 }
 
+/**
+ * A BIN frame is valid only in the session it was written in (E-4): the record layer refuses it anywhere else, and a
+ * client must not write it again after reconnecting. A key that changes state outside a terminal goes as REQ + actId.
+ */
 export interface Bin { stream: number; data: Bytes }
 
 export const encodeBin = (x: Bin): Bytes => concat(u32(x.stream), x.data)

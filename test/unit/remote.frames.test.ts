@@ -3,7 +3,7 @@
 // are named with their number.
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { audBytes, isValidAudBytes } from '../../src/remote/aud.ts'
+import { audBytes, isValidAudBytes, relayUrlAllowed } from '../../src/remote/aud.ts'
 import {
   ascii, b64url, base32, concat, ctEqual, fromB64url, fromHex, lp16, lp8, Reader, toHex, u16, u32, u64, u8, utf8, WireError,
 } from '../../src/remote/bytes.ts'
@@ -87,6 +87,14 @@ describe('remote bytes', () => {
     assert.equal(isValidAudBytes(fromHex('61c3a9')), false, 'not ASCII')
     assert.equal(code(() => audBytes('RELAY')), 'malformed')
     assert.equal(code(() => audBytes('')), 'malformed')
+  })
+
+  test('transport: wss everywhere, ws only for localhost (B-8)', () => {
+    for (const ok of ['wss://relay.example/v1/device', 'wss://relay.example:8443/v1/house', 'ws://localhost:8787/v1/device', 'wss://localhost/v1/house'])
+      assert.equal(relayUrlAllowed(ok), true, ok)
+    for (const bad of ['ws://relay.example/v1/device', 'ws://127.0.0.1:8787/v1/device', 'ws://localhost.evil.example/v1/device', 'http://localhost:8787',
+      'https://relay.example', 'ws://user@localhost:8787/', 'relay.example', ''])
+      assert.equal(relayUrlAllowed(bad), false, bad)
   })
 })
 

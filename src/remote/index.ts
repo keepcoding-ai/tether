@@ -6,7 +6,7 @@
 export { WireError, toHex, fromHex, b64url, fromB64url, base32, concat, equal, ctEqual, randomBytes } from './bytes.ts'
 export type { Bytes, WireErrorCode } from './bytes.ts'
 export * from './constants.ts'
-export { audBytes, audFromBytes, isValidAudBytes } from './aud.ts'
+export { audBytes, audFromBytes, isValidAudBytes, relayUrlAllowed } from './aud.ts'
 
 // Frames (spec 2)
 export {
@@ -30,10 +30,10 @@ export {
 } from './keys.ts'
 export type { KeyCert, CertRole, AdmitTicket, KeyRotate } from './keys.ts'
 
-// Session and its handshake (spec 4)
-export { Session, DeviceHandshake, HouseHandshake } from './session.ts'
+// Session and its handshake (spec 4). A session is only ever handed out by a handshake or a pairing.
+export { DeviceHandshake, HouseHandshake } from './session.ts'
 export type {
-  SessionEffect, SessionRole, AppContentType, DeviceHsEffect, DeviceHsFailure, HsDoneInfo, DeviceHandshakeInit,
+  Session, SessionEffect, SessionRole, AppContentType, DeviceHsEffect, DeviceHsFailure, HsDoneInfo, DeviceHandshakeInit,
   HouseHsEffect, HouseHandshakeInit, DeviceRecord, DeviceLookup,
 } from './session.ts'
 

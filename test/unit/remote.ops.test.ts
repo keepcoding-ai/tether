@@ -213,11 +213,12 @@ describe('remote module purity', () => {
 
   test('the public surface carries the machines and none of the test seam', () => {
     const names = Object.keys(remote)
-    for (const expected of ['DeviceHandshake', 'HouseHandshake', 'DevicePairing', 'HousePairing', 'Session', 'encodeOuter', 'decodeOuter',
+    for (const expected of ['DeviceHandshake', 'HouseHandshake', 'DevicePairing', 'HousePairing', 'relayUrlAllowed', 'encodeOuter', 'decodeOuter',
       'verifyHouseAuth', 'verifyDeviceAdmit', 'buildHouseAuth', 'buildDeviceAdmit', 'DenyList', 'issueKeyCert', 'issueAdmitTicket',
       'selfTest', 'generateRoleKey', 'OPS', 'ActCache', 'derToP1363', 'verifyKeyRotate', 'houseKeysDistinct', 'WIRE_VERSION'])
       assert.ok(names.includes(expected), `${expected} is exported`)
-    for (const hidden of ['systemEntropy', 'fixedEntropy', 'generateVectors', 'checkVectors', 'Secret', 'OneShotKey', 'hkdf', 'ecdhBits', 'sealRecordAt', 'RecordChannel'])
+    for (const hidden of ['systemEntropy', 'fixedEntropy', 'fixedSigner', 'generateVectors', 'checkVectors', 'Secret', 'OneShotKey', 'hkdf', 'ecdhBits',
+      'sealRecordAt', 'RecordChannel', 'Session', 'ownerOf'])
       assert.equal(names.includes(hidden), false, `${hidden} must not be public`)
     const index = readFileSync(join(REMOTE_DIR, 'index.ts'), 'utf8')
     assert.equal(/from\s+'\.\/testing\.ts'/.test(index), false)

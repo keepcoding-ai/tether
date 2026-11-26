@@ -39,6 +39,26 @@ export type SessionEffect =
 
 export interface ControlEvent { ctype: ControlType; content: Bytes }
 
+/**
+ * What only the machine that owns a gated session may do with it: read the control record the gate waits for, write
+ * HS_DONE / PAIR_DONE / PAIR_ACK, and open the gate. It is not part of the session's own surface and `ownerOf` is not
+ * exported by index.ts, so the code that merely uses a session cannot skip a gate.
+ */
+export interface SessionOwner {
+  /** Like `receive`, but also hands back the control record a gated session was waiting for. */
+  receive(frame: Uint8Array, nowMs: number): Promise<{ effects: SessionEffect[]; control?: ControlEvent }>
+  /** HS_DONE is always record 0 of the house (spec 4.2 rule 8). */
+  sendControl(ctype: ControlType, content: Uint8Array): Promise<Bytes>
+  open(freshPair: boolean): void
+  allowAck(): void
+}
+
+const owners = new WeakMap<object, SessionOwner>()
+
+export function ownerOf(session: Session): SessionOwner {
+  return owners.get(session) ?? fail('bad-state', 'not a session of this module')
+}
+
 const isApp = (c: ContentType): c is AppContentType => c === 'REQ' || c === 'RES' || c === 'EVT' || c === 'BIN'
 
 /**
@@ -69,6 +89,16 @@ export class Session {
     this.#gate = init.gate
     this.#lastRecvMs = init.nowMs
     this.#lastPingMs = init.nowMs
+    owners.set(this, {
+      receive: (frame, nowMs) => this.#serial.run(() => this.#recv(frame, nowMs)),
+      sendControl: (ctype, content) => this.#serial.run(async () => {
+        if (this.#closed) fail('bad-state', 'the session is closed')
+        if (ctype === 'HS_DONE' && this.#ch.sent !== 0) fail('bad-state', 'HS_DONE must be record 0')
+        return (await this.#ch.seal(ctype, content)).frame
+      }),
+      open: freshPair => { this.#gate = 'open'; this.#freshPair = freshPair },
+      allowAck: () => { this.#ackAllowed = true },
+    })
   }
 
   get state(): 'gated' | 'open' | 'closed' { return this.#closed ? 'closed' : this.#gate === 'open' ? 'open' : 'gated' }
@@ -80,7 +110,7 @@ export class Session {
 
   /** Feeds one inner frame that arrived on the route. */
   receive(frame: Uint8Array, nowMs: number): Promise<SessionEffect[]> {
-    return this._receive(frame, nowMs).then(r => r.effects)
+    return this.#serial.run(() => this.#recv(frame, nowMs)).then(r => r.effects)
   }
 
   /** Sends application content. Only on an open session, and only a type this role may write. */
@@ -116,25 +146,6 @@ export class Session {
 
   /** Ends the session without writing anything (the route is already gone, or the owner gave up). */
   drop(reason: string): SessionEffect[] { return this.#die(reason) }
-
-  // -- for the machines that own a gated session (handshake and pairing) --------------------------------------
-
-  /** Like `receive`, but also hands back the control record a gated session was waiting for. */
-  _receive(frame: Uint8Array, nowMs: number): Promise<{ effects: SessionEffect[]; control?: ControlEvent }> {
-    return this.#serial.run(() => this.#recv(frame, nowMs))
-  }
-
-  /** Writes HS_DONE, PAIR_DONE or PAIR_ACK. HS_DONE is always record 0 of the house (spec 4.2 rule 8). */
-  _sendControl(ctype: ControlType, content: Uint8Array): Promise<Bytes> {
-    return this.#serial.run(async () => {
-      if (this.#closed) fail('bad-state', 'the session is closed')
-      if (ctype === 'HS_DONE' && this.#ch.sent !== 0) fail('bad-state', 'HS_DONE must be record 0')
-      return (await this.#ch.seal(ctype, content)).frame
-    })
-  }
-
-  _open(freshPair: boolean): void { this.#gate = 'open'; this.#freshPair = freshPair }
-  _allowAck(): void { this.#ackAllowed = true }
 
   // -- internals ---------------------------------------------------------------------------------------------------
 
@@ -373,7 +384,7 @@ export class DeviceHandshake {
 
   async #onHsDone(frame: Uint8Array, nowMs: number): Promise<DeviceHsEffect[]> {
     const session = this.#session!
-    const r = await session._receive(frame, nowMs)
+    const r = await ownerOf(session).receive(frame, nowMs)
     if (!r.control) return this.#fail('protocol')
     const done = decodeHsDone(r.control.content)
     if (done.houseMaxVer < this.#ver) return this.#fail('protocol')
@@ -383,7 +394,7 @@ export class DeviceHandshake {
       this.#session = undefined
       return [...sends, ...this.#fail('version-downgrade')]
     }
-    session._open(false)
+    ownerOf(session).open(false)
     this.#state = 'done'
     this.#session = undefined
     const info: HsDoneInfo = {
@@ -551,7 +562,7 @@ export class HouseHandshake {
       houseMaxVer: this.#init.houseMaxVer ?? highestSupported(), now: Math.floor(nowMs / 1000), presence: again.presence,
       elevUntil: again.elevUntil,
     })
-    const hsDone = await session._sendControl('HS_DONE', done)
+    const hsDone = await ownerOf(session).sendControl('HS_DONE', done)
     const ver = p.ver
     this.#drop()
     this.#state = 'done'

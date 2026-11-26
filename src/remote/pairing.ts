@@ -25,7 +25,7 @@ import {
 import { decodeInner, encodeInner, HS_FAIL_FRAME, innerTypeOf } from './frames.ts'
 import { deviceIdOf, houseIdOf, parseAdmitTicket } from './keys.ts'
 import { RecordChannel, type RecordLimits } from './record.ts'
-import { Session } from './session.ts'
+import { ownerOf, Session } from './session.ts'
 import { houseConfirmOf, pair as TH, sasOf, th2 as TH2 } from './transcript.ts'
 
 const highestSupported = (): number => Math.max(...SUPPORTED_VERSIONS)
@@ -250,7 +250,7 @@ export class DevicePairing {
 
   async #onRecord(frame: Uint8Array, nowMs: number): Promise<DevicePairEffect[]> {
     const end = this.#end!
-    const r = await end.session._receive(frame, nowMs)
+    const r = await ownerOf(end.session).receive(frame, nowMs)
     const closed = r.effects.find(e => e.t === 'closed')
     if (closed) return this.#fail(closed.t === 'closed' && closed.by === 'peer' ? 'closed' : 'protocol')
     const out: DevicePairEffect[] = r.effects.flatMap(e => (e.t === 'send' ? [e] : []))
@@ -267,8 +267,8 @@ export class DevicePairing {
       const sends = (await end.session.close(CLOSE.protocol, nowMs)).flatMap(e => (e.t === 'send' ? [e] : []))
       return [...sends, ...this.#fail('version-downgrade')]
     }
-    end.session._open(true)
-    const ack = await end.session._sendControl('PAIR_ACK', new Uint8Array(0))
+    ownerOf(end.session).open(true)
+    const ack = await ownerOf(end.session).sendControl('PAIR_ACK', new Uint8Array(0))
     const result: PairResult = {
       pubH: end.pubH, houseId: end.houseId, deviceId, admitTicket: done.admitTicket, houseName: done.houseName,
       ver: this.#ver, houseMaxVer: done.houseMaxVer, houseNow: done.now,
@@ -483,11 +483,11 @@ export class HousePairing {
       a.z.destroy()
       a.z = undefined
       this.#wipeSecrets()
-      const frame = await a.session._sendControl('PAIR_DONE', encodePairDone({
+      const frame = await ownerOf(a.session).sendControl('PAIR_DONE', encodePairDone({
         houseMaxVer: this.#init.houseMaxVer ?? highestSupported(), now: Math.floor(o.nowMs / 1000), houseConfirm,
         deviceId: a.device.deviceId, admitTicket: concat(o.admitTicket), houseName: o.houseName,
       }))
-      a.session._allowAck()
+      ownerOf(a.session).allowAck()
       this.#ackDeadlineMs = o.nowMs + PAIR_ACK_WAIT_MS
       return [{ t: 'send', route: a.route, frame }]
     })
@@ -636,12 +636,12 @@ export class HousePairing {
   /** After P4 only heartbeats and CLOSE are accepted, until the PAIR_ACK that answers PAIR_DONE. Anything else burns. */
   async #onRecord(frame: Uint8Array, nowMs: number): Promise<HousePairEffect[]> {
     const a = this.#active!
-    const r = await a.session!._receive(frame, nowMs)
+    const r = await ownerOf(a.session!).receive(frame, nowMs)
     if (r.effects.some(e => e.t === 'closed')) return this.#burn(r.effects.some(e => e.t === 'closed' && e.by === 'peer') ? 'route-closed' : 'protocol', nowMs)
     const out: HousePairEffect[] = r.effects.flatMap(e => (e.t === 'send' ? [{ t: 'send' as const, route: a.route, frame: e.frame }] : []))
     if (!r.control) return out
     if (r.control.content.length !== 0) return this.#burn('protocol', nowMs)
-    a.session!._open(true)
+    ownerOf(a.session!).open(true)
     this.#state = 'done'
     this.#doneRoute = a.route
     this.#active = undefined

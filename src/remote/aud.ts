@@ -22,6 +22,17 @@ export function audBytes(aud: string): Bytes {
   return b
 }
 
+/**
+ * The transport rule (spec 0.3 rule 4, B-8): `wss://` everywhere; `ws://` only for `localhost`. There is no mode
+ * without the cipher on any address, `localhost` included: this only says which socket may carry it.
+ */
+export function relayUrlAllowed(url: string): boolean {
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  if (u.username !== '' || u.password !== '') return false
+  return u.protocol === 'wss:' || (u.protocol === 'ws:' && u.hostname === 'localhost')
+}
+
 /** The string of an `aud` read from the wire; throws on anything outside the rule. */
 export function audFromBytes(b: Uint8Array): string {
   if (!isValidAudBytes(b)) fail('malformed', 'aud outside 1..253 printable lowercase ASCII')

@@ -12,8 +12,8 @@ import { decodeInner, encodeInner, HS_FAIL_FRAME } from '../../src/remote/frames
 import { deviceIdOf, houseIdOf } from '../../src/remote/keys.ts'
 import { RecordChannel, recordAad, recordNonce, sealRecordAt, type RecordLimits } from '../../src/remote/record.ts'
 import {
-  DeviceHandshake, HouseHandshake, Session, type DeviceHsEffect, type DeviceRecord, type HouseHsEffect, type SessionEffect,
-  type SessionGate,
+  DeviceHandshake, HouseHandshake, ownerOf, Session, type DeviceHsEffect, type DeviceRecord, type HouseHsEffect,
+  type SessionEffect, type SessionGate,
 } from '../../src/remote/session.ts'
 import { session as TH, th2 as TH2 } from '../../src/remote/transcript.ts'
 
@@ -238,17 +238,17 @@ describe('remote session', () => {
     const done = encodeHsDone({ houseMaxVer: 1, now: 1, presence: 0, elevUntil: 0 })
     const notFirst = await rawPair({ deviceGate: 'await-hs-done' })
     const ping = (await notFirst.hc.seal('PING', encodePing(0))).frame
-    assert.equal(closedOf((await notFirst.device._receive(ping, NOW)).effects)?.by, 'local', 'a PING in the place of HS_DONE')
+    assert.equal(closedOf((await ownerOf(notFirst.device).receive(ping, NOW)).effects)?.by, 'local', 'a PING in the place of HS_DONE')
 
     const late = await rawPair({ deviceGate: 'await-hs-done' })
     await late.hc.seal('PING', encodePing(0))
-    const r = await late.device._receive((await late.hc.seal('HS_DONE', done)).frame, NOW)
+    const r = await ownerOf(late.device).receive((await late.hc.seal('HS_DONE', done)).frame, NOW)
     assert.equal(closedOf(r.effects)?.by, 'local', 'HS_DONE at counter 1 (and counter 0 was withheld)')
 
     const twice = await rawPair({ deviceGate: 'await-hs-done' })
-    const first = await twice.device._receive((await twice.hc.seal('HS_DONE', done)).frame, NOW)
+    const first = await ownerOf(twice.device).receive((await twice.hc.seal('HS_DONE', done)).frame, NOW)
     assert.equal(first.control?.ctype, 'HS_DONE')
-    twice.device._open(false)
+    ownerOf(twice.device).open(false)
     assert.equal(closedOf(await twice.device.receive((await twice.hc.seal('HS_DONE', done)).frame, NOW))?.by, 'local')
 
     const before = await rawPair({ deviceGate: 'await-pair-done' })
@@ -446,6 +446,12 @@ describe('remote session handshake', () => {
     const forA = one(await da.send('REQ', utf8('{}'), NOW))
     assert.equal(closedOf(await hb.receive(forA, NOW))?.by, 'local', 'a record of session A does not open in session B')
     assert.equal((await ha.receive(forA, NOW))[0]?.t, 'record')
+    // E-4: a BIN frame is valid only in the session it was written in. Replayed after a reconnection (a new
+    // handshake of the same device with the same house) it does not open, so a recorded Enter cannot be typed twice.
+    const keys = one(await da.send('BIN', concat(new Uint8Array(4), utf8('rm -rf x\r')), NOW))
+    assert.equal((await ha.receive(keys, NOW))[0]?.t, 'record')
+    const reconnect = await connect(w)
+    assert.equal(closedOf(await established(reconnect.houseEffects).receive(keys, NOW))?.by, 'local')
   })
 
   test('3: HS2 signed by another key, or reused from another session, is a hard error and HS3 is never sent', async () => {
