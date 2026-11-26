@@ -48,8 +48,16 @@ declare const window: {
     closePanel(id: string): void
     movePaneToDrawer(id: string): void
     drawer(): { open: boolean; panes: string[] }
+    processesEmbed(op: string, name?: string, arg?: Record<string, unknown>): Promise<EmbedAnswer>
+    activeDesk(): string
+    createDesk(side: 'before' | 'after', relativeTo?: string): string
+    switchDesk(id: string): void
+    desks(): { id: string; panes: string[] }[]
+    panelIds(): string[]
+    peekState(): { open: boolean; screen?: string; screenType?: string }
   }
 }
+type EmbedAnswer = { ok?: true; refusal?: string; active?: boolean; names?: string[]; hasEnv?: boolean; json?: string }
 declare const document: { documentElement: { dataset: Record<string, string> }; activeElement: { dataset?: Record<string, string> } | null; querySelector(s: string): unknown }
 
 const CLI = join(root, 'bin', 'tether.mjs')
@@ -299,6 +307,60 @@ test('processes pad and output pane: empty, live list, acts, attention, looking 
     assert.equal(await proc('worker'), undefined)
     await until('the pane says forgotten', async () => (await output('worker'))?.forgotten)
     assert.match((await output('worker')).card, /processo esquecido/)
+
+    // ---- the feed (the Regency's "Sistema"): the list without env, the record on another desk, a peek with no tab, stop and start ----
+    const feed = (op: string, name?: string, arg?: Record<string, unknown>): Promise<EmbedAnswer> => win.evaluate(a => window.__tether.processesEmbed(a.op, a.name, a.arg), { op, name, arg })
+    const read = await feed('read')
+    assert.equal(read.active, true)
+    assert.ok(read.names!.includes('web') && !read.names!.includes('worker'), 'the feed lists what the pad lists')
+    assert.equal(read.hasEnv, false, 'no env in the feed')
+    const here = await win.evaluate(() => window.__tether.activeDesk())
+    const other = await win.evaluate(h => window.__tether.createDesk('after', h), here)
+    await win.evaluate(h => window.__tether.switchDesk(h), here)
+    await win.waitForFunction(h => window.__tether.activeDesk() === h, here)
+    await win.evaluate(() => window.__tether.closePanel('process:web'))
+    await until('web record closed', async () => (await output('web')) === null)
+    const panesOf = (deskId: string): Promise<string[]> => win.evaluate(d => window.__tether.desks().find(x => x.id === d)?.panes ?? [], deskId)
+    // The record as a tab on the other desk: the desk in view does not change.
+    assert.deepEqual(await feed('output', 'web', { deskId: other }), { ok: true })
+    assert.ok((await panesOf(other)).includes('process:web'), 'the record is a tab on the other desk')
+    assert.equal(await win.evaluate(() => window.__tether.activeDesk()), here, 'the person was not moved')
+    assert.match((await feed('output', 'web', { deskId: other })).refusal ?? '', /já está aberto como guia/)
+    assert.match((await feed('output', 'nope-proc', { deskId: other })).refusal ?? '', /não existe mais/)
+    await win.evaluate(() => window.__tether.closePanel('process:web'))
+    await until('the tab left the other desk', async () => !(await panesOf(other)).includes('process:web'))
+    // A peek with no tab: the card shows the lines arriving, and no `process:` pane is in the layout.
+    assert.deepEqual(await feed('peekOutput', 'web'), { ok: true })
+    await until('the card is the record', async () => { const s = await win.evaluate(() => window.__tether.peekState()); return s.open && s.screenType === 'process' })
+    const first = await until('lines in the card', async () => { const x = await output('web'); return x && /tick \d+/.test(x.text) ? x : undefined })
+    await until('lines keep arriving in the card', async () => ticks((await output('web')).text) > ticks(first.text) + 2)
+    assert.ok(!(await win.evaluate(() => window.__tether.panelIds())).includes('process:web'), 'no pane of the record in the layout')
+    assert.ok(!(await win.evaluate(() => window.__tether.drawer())).panes.includes('process:web'), 'nor in the drawer')
+    assert.equal(await win.evaluate(() => window.__tether.activeDesk()), here)
+    await win.click('#peek .peek-close')
+    await win.waitForSelector('#peek', { state: 'hidden' })
+    await until('the card record is gone', async () => (await output('web')) === null)
+    // Stop and start by the feed, as the person.
+    const runBefore = (await proc('web'))!.run!
+    assert.deepEqual(await feed('stop', 'web'), { ok: true })
+    await until('web stopped by the feed', async () => (await proc('web'))?.status === 'stopped')
+    assert.equal((await history('web')).filter(e => e.kind === 'stop-requested').at(-1)?.by?.kind, 'app')
+    assert.deepEqual(await feed('start', 'web'), { ok: true })
+    await until('web started by the feed', async () => { const p = await proc('web'); return p?.status === 'running' && p.run === runBefore + 1 })
+    await track('web')
+    // Others' uses refuse with who, until when and what for; waiting is not forced.
+    await ok(['proc', 'use', 'web', '10m', 'e2e do checkout', '--as', 'kai'])
+    await until('the use is in the feed', async () => JSON.parse((await feed('read')).json!).some((p: { name: string; uses?: unknown[] }) => p.name === 'web' && p.uses?.length))
+    const refused = await feed('stop', 'web') as { refusal: string; inUse?: { lines: string[]; exits: { id: string }[] } }
+    assert.match(refused.refusal, /parar "web"/)
+    assert.match(refused.inUse!.lines.join('\n'), /kai usa até daqui a .*e2e do checkout/)
+    assert.deepEqual(refused.inUse!.exits.map(e => e.id), ['wait', 'force', 'cancel'])
+    assert.equal((await proc('web'))!.status, 'running', 'the refusal stopped nothing')
+    assert.match((await feed('stop', 'web', { force: ' ' })).refusal ?? '', /motivo/)
+    assert.deepEqual(await feed('stop', 'web', { force: 'e2e do feed' }), { ok: true })
+    await until('web stopped over the use', async () => (await proc('web'))?.status === 'stopped')
+    assert.equal((await history('web')).filter(e => e.kind === 'forced').at(-1)?.reason, 'e2e do feed')
+    await ok(['proc', 'release', 'web', '--as', 'kai'])
   } finally {
     outside?.close()
     try {
