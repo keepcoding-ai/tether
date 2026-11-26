@@ -1,0 +1,174 @@
+/* The remote web client's skeleton. Designed at 390 px (phone): one thing per screen, targets of at least 44 px.
+   The wider tiers are derived below with the least intent that keeps the reading right: tablet (768) centres a
+   column, desktop (1280) widens it a little, TV (2560) scales the whole type ramp and lays the list in columns, so the
+   width does not become an empty middle. Colours are tokens by intent, the same names and values as the app's
+   (app/renderer/styles.css), dark first and light by the system's scheme. */
+
+:root {
+  --bg: #1b1b1f;
+  --bg-2: #232329;
+  --bg-3: #2c2c34;
+  --fg: #d8d8dc;
+  --fg-dim: #9a9aa3;
+  --accent: #6aa6ff;
+  --accent-hover: #86b7ff;
+  --on-accent: #0d1320;
+  --border: #35353d;
+  --ok: #5fcf80;
+  --warn: #e6b450;
+  --err: #ef6a6a;
+  --radius: 10px;
+  --gutter: 16px;
+  --column: 100%;
+  --target: 2.75rem; /* 44 px at the phone's 16 px */
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec;
+    --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
+    --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
+    color-scheme: light;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { font-size: 100%; -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 1rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.app {
+  width: min(var(--column), 100%);
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 24px) calc(env(safe-area-inset-right, 0px) + var(--gutter))
+    calc(env(safe-area-inset-bottom, 0px) + 24px) calc(env(safe-area-inset-left, 0px) + var(--gutter));
+}
+
+.screen { display: flex; flex-direction: column; gap: 1rem; }
+
+.screen-head { display: flex; flex-direction: column; gap: .25rem; }
+.eyebrow { margin: 0; color: var(--fg-dim); font-size: .8125rem; letter-spacing: .02em; }
+h1 { margin: 0; font-size: 1.5rem; line-height: 1.25; font-weight: 600; }
+.lead { margin: 0; color: var(--fg); }
+.fine { margin: 0; color: var(--fg-dim); font-size: .875rem; }
+
+.stack { display: flex; flex-direction: column; gap: .75rem; }
+.field-label { font-size: .875rem; color: var(--fg-dim); }
+
+input[type="text"] {
+  min-height: 3.25rem;
+  padding: 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  font: 500 1.375rem/1 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: .06em;
+  width: 100%;
+}
+input[type="text"]::placeholder { color: var(--fg-dim); opacity: .6; }
+input[type="text"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+.btn {
+  min-height: var(--target);
+  padding: 0 1.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  width: 100%;
+}
+.btn--primary { background: var(--accent); color: var(--on-accent); }
+.btn--primary:hover { background: var(--accent-hover); }
+.btn--quiet { background: transparent; color: var(--accent); border-color: var(--border); }
+.btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+.notice {
+  margin: 0;
+  padding: .75rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  background: var(--bg-2);
+}
+.notice--ok { border-left-color: var(--ok); }
+.notice--warn { border-left-color: var(--warn); }
+.notice--err { border-left-color: var(--err); }
+
+.status { margin: 0; display: flex; align-items: center; gap: .5rem; color: var(--fg-dim); }
+.dot { flex: none; width: .625rem; height: .625rem; border-radius: 50%; background: var(--fg-dim); }
+.dot--ok { background: var(--ok); }
+.dot--warn { background: var(--warn); }
+.dot--err { background: var(--err); }
+.dot--wait { background: var(--accent); }
+
+.sas {
+  margin: .5rem 0;
+  padding: 1.25rem 0;
+  text-align: center;
+  font: 600 2.75rem/1 ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: .12em;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.list-head .meta { margin: 0; display: flex; align-items: center; gap: .5rem; color: var(--fg-dim); font-size: .875rem; min-width: 0; }
+.meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.waiting { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.waiting-item {
+  min-height: 3.5rem;
+  padding: .75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: .125rem;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+.wi-name { font-weight: 600; overflow-wrap: anywhere; }
+.wi-meta { display: flex; gap: .375rem; color: var(--fg-dim); font-size: .875rem; }
+
+.empty { padding: 2rem 0; display: flex; flex-direction: column; gap: .25rem; }
+.empty-title { margin: 0; font-size: 1.125rem; }
+
+/* Tablet: the column stops following the edge; the forms keep a reading width. */
+@media (min-width: 768px) {
+  :root { --column: 36rem; --gutter: 24px; }
+  .app { padding-top: 48px; }
+  .btn { width: auto; align-self: flex-start; min-width: 12rem; }
+}
+
+/* Desktop: a slightly larger ramp and a wider list column; still one column. */
+@media (min-width: 1280px) {
+  html { font-size: 106.25%; }
+  :root { --column: 44rem; }
+  .app { padding-top: 64px; }
+}
+
+/* TV, read from across the room: the whole ramp grows, the list takes the width in columns of cards. */
+@media (min-width: 2000px) {
+  html { font-size: 175%; }
+  :root { --column: min(88vw, 84rem); --gutter: 48px; --radius: 16px; }
+  .screen:not(.screen--list) { max-width: 40rem; margin-inline: auto; }
+  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 1rem; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .btn { transition: background-color .12s ease; }
+}
