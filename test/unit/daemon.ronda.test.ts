@@ -14,6 +14,7 @@ import { DaemonError } from '../../src/daemon/client.ts'
 import type { RondaChannelAgent } from '../../src/daemon/ronda-channel.ts'
 import { applyChange, buildChannelText, buildNudgeText, criterionStimulus, formatInterval, parseInterval, RONDA_DEFAULT_NUDGE, RondaError } from '../../src/daemon/ronda.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { DoorHost } from '../../src/daemon/door/host.ts'
 import { describeRonda } from '../../src/cli/ronda.ts'
 import { rondaLabel, rondaTooltip } from '../../app/renderer/ronda-rules.ts'
 import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
@@ -103,11 +104,11 @@ describe('ronda: daemon clock, through the channel', () => {
     for (const d of daemons) await d.close()
     for (const h of homes) await removeHome(h)
   })
-  async function boot(home = tempHome(), adapters: Record<string, AgentAdapter> = { claude: fakeAgent('claude') }): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
+  async function boot(home = tempHome(), adapters: Record<string, AgentAdapter> = { claude: fakeAgent('claude') }, door?: DoorHost): Promise<{ home: string; daemon: Daemon; rec: Recorder }> {
     if (!homes.includes(home)) homes.push(home)
     const daemon = await startDaemon({
       home, pipe: uniquePipe(home), readyFallbackMs: 300, minAgentAgeMs: 0, memoryIntervalMs: 0, rondaAllowSeconds: true, rondaRetryMs: 200,
-      adapters, channelOf: (agent) => (agent === 'claude' ? channelOf() : undefined), log: (m) => logs.push(m),
+      adapters, channelOf: (agent) => (agent === 'claude' ? channelOf() : undefined), log: (m) => logs.push(m), ...(door ? { door } : {}),
     })
     daemons.push(daemon)
     return { home, daemon, rec: await Recorder.connect(daemon.pipe) }
@@ -177,6 +178,24 @@ describe('ronda: daemon clock, through the channel', () => {
     assert.equal(got?.nudge, 'Extra do teste.')
     assert.equal(got?.channel, 'none', 'not running in this daemon yet')
     second.rec.close()
+  })
+
+  test('a claimed window holds a due ronda (blocker `claimed`); once released it goes on the retry', async () => {
+    const door = new DoorHost({ log: (m) => logs.push(m) })
+    const { home, rec } = await boot(undefined, undefined, door)
+    const { slot } = await rec.client.request({ t: 'create', kind: 'claude', cwd: home, start: true })
+    const id = slot!.slotId
+    await rec.client.request({ t: 'attach', slotId: id, cols: 300, rows: 30 })
+    await waitUntil(() => listening(rec, id) >= 1, 30_000, 'the agent listening on its channel')
+    const claim = door.delivery.claim(id, 'comando /compact')
+    await rec.client.request({ t: 'ronda-set', slotId: id, interval: '1s' })
+    await waitUntil(() => logs.includes(`slot ${id}: ronda due, waiting (claimed)`), 10_000, 'due while claimed')
+    await sleep(800)
+    assert.equal(sent(id), 0, 'nothing sent through several retries while claimed')
+    claim.release(false)
+    await waitUntil(() => sent(id) >= 1, 10_000, 'ronda on the retry after the release')
+    assert.equal(received(rec, id).length, 1)
+    rec.close()
   })
 
   test('no channel, no ronda: a shell and an agent without one are refused with the reason', async () => {
