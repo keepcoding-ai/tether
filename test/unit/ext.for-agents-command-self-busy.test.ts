@@ -26,6 +26,9 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
   const events: string[] = []
   const logs: string[] = []
   const delivered: unknown[] = []
+  /** The claims and releases, in the order they happened, with the deliveries to the owner among them. */
+  const order: string[] = []
+  let proven = true
   let slot: { turn?: 'busy' | 'idle'; slotId: string; kind: string; status: string }
   let reg: { dispose(): void }
   let fc: ReturnType<typeof fakeClock>
@@ -35,12 +38,12 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
     id: 'sbfake',
     match: (t) => (t.paneId.startsWith('sb-') ? 1000 : undefined),
     capabilities: [{ id: 'command', label: 'c' }],
-    command: async (_ctx, name) => { events.push(`type:${name}`); return { value: undefined, proven: true } },
+    command: async (_ctx, name) => { events.push(`type:${name}`); return { value: undefined, proven } },
     detect: async () => ({ state: 'idle' }),
   }
 
   beforeEach(() => {
-    events.length = 0; logs.length = 0; delivered.length = 0
+    events.length = 0; logs.length = 0; delivered.length = 0; order.length = 0; proven = true
     slot = { slotId: PANE, kind: 'shell', status: 'running', turn: 'busy' }
     reg = conductorRegistry.register(fake)
     fc = fakeClock()
@@ -54,7 +57,11 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
           userTypedAt: () => undefined,
         },
         desks: { map: () => undefined },
-        delivery: { quiet: () => true, deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); return { id: 'r1', state: 'delivered' } } },
+        delivery: {
+          quiet: () => true,
+          deliver: async (owner: string, msg: never) => { delivered.push({ owner, msg }); order.push('deliver'); return { id: 'r1', state: 'delivered' } },
+          claim: (id: string) => { order.push(`claim:${id}`); return { release: (typed: boolean) => { order.push(`release:${id}:${typed}`) } } },
+        },
         agents: { get: () => undefined },
         io: {}, home: '', log: (l: string) => { logs.push(l) },
       },
@@ -112,6 +119,54 @@ describe('PendingCommands: a command of oneself on a pane that stays busy', () =
     assert.deepEqual(events, ['type:compact'])
     assert.equal(pending.count(PANE), 0)
     assert.ok(!logs.some((l) => l.includes('descartado')))
+  })
+
+  test('the window is claimed once per pane: a repeated request renews only the deadline; released (false) before the drop notice', async () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    fc.advance(4 * MIN); await pending.flush()
+    pending.add(PANE, PANE, 'compact', undefined)
+    assert.deepEqual(order, [`claim:${PANE}`], 'one claim, not renewed by the repeat')
+    for (let i = 0; i < 6; i++) { fc.advance(MIN); await pending.flush() }
+    assert.deepEqual(order, [`claim:${PANE}`, `release:${PANE}:false`, 'deliver'], 'nothing typed: no settle; released before the owner is told')
+  })
+
+  test('released (typed) once the command ran and the pane has nothing more; a second command on the pane keeps the claim', async () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    pending.add(PANE, PANE, 'clear', undefined)
+    assert.deepEqual(order, [`claim:${PANE}`])
+    delete slot.turn
+    await pending.flush()
+    assert.deepEqual(events, ['type:compact'])
+    assert.deepEqual(order, [`claim:${PANE}`], 'clear still waits under the same claim')
+    await pending.flush()
+    assert.deepEqual(events, ['type:compact', 'type:clear'])
+    assert.deepEqual(order, [`claim:${PANE}`, `release:${PANE}:true`])
+  })
+
+  test('dispose releases the claims it holds', () => {
+    pending.add(PANE, PANE, 'compact', undefined)
+    pending.dispose().dispose()
+    assert.deepEqual(order, [`claim:${PANE}`, `release:${PANE}:false`])
+  })
+
+  test('not proven by the probe: back to the head once (new deadline, after a pause); the second time the owner is told', async () => {
+    proven = false
+    pending.add(PANE, PANE, 'compact', undefined)
+    pending.add(PANE, PANE, 'clear', undefined)
+    delete slot.turn
+    await pending.flush()
+    assert.deepEqual(events, ['type:compact'])
+    assert.deepEqual(pending.held(PANE).map((h) => h.name), ['compact', 'clear'], 'back at the head')
+    assert.equal(pending.held(PANE)[0]!.since, new Date(fc.clock.now()).toISOString(), 'a new deadline')
+    await pending.flush()
+    assert.deepEqual(events, ['type:compact'], 'not again at once')
+    assert.match(pending.held(PANE)[0]!.heldBy ?? '', /nova tentativa/)
+    fc.advance(2_000); await pending.flush()
+    assert.deepEqual(events, ['type:compact', 'type:compact'], 'the one retry')
+    assert.equal(delivered.length, 1)
+    assert.equal((delivered[0] as { msg: { body: string } }).msg.body, 'comando /compact: não rodou; a sonda não viu o comando na guia em duas tentativas')
+    assert.deepEqual(pending.held(PANE).map((h) => h.name), ['clear'], 'given up; the next one waits')
+    assert.deepEqual(order, [`claim:${PANE}`, 'deliver'], 'the claim stays for clear')
   })
 
   test('real AttentionState: done with a background subagent keeps the turn busy', () => {
