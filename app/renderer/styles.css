@@ -659,6 +659,23 @@ body:not([data-builder="true"]) .frame-dock:has(.dv-sash) { border-color: transp
 :root[data-theme="light"] .dv-theme-tether { --surface-lift: 0%; }
 .dv-groupview { --group-body: var(--surface-content); --frame-bg: var(--group-body); --dv-group-view-background-color: var(--group-body); }
 .dv-groupview:has(> .dv-content-container .panel) { --group-body: var(--surface-term); }
+/* --- tab bar with a fill of its own on every group: between the window ground and the body, so it never reads as a
+   footer of the group above; the active tab takes the body's colour (it opens into it) and carries a line under it:
+   the desk's colour on the active group, the same line faded on the others. --- */
+.dv-groupview {
+  --group-tabs: color-mix(in srgb, var(--desk-bg) 55%, var(--group-body));
+  --dv-tabs-and-actions-container-background-color: var(--group-tabs);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--group-body);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--group-body);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--group-tabs);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--group-tabs);
+  --tab-underline: color-mix(in srgb, var(--desk-line-color, var(--accent)) 40%, transparent);
+}
+.dv-groupview.dv-active-group { --tab-underline: var(--desk-line-color, var(--accent)); }
+.dv-groupview > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
+  background-image: linear-gradient(var(--tab-underline), var(--tab-underline));
+  background-repeat: no-repeat; background-position: left bottom; background-size: 100% 2px;
+}
 /* --- builder mode (builder-mode.ts): the "+" exist only here, the content is inert and dimmed, the tabs only drag ---
    Outside the mode the "+" are in the DOM but never shown: nothing appears on hover over a tab, a scrollbar or a sash. */
 body:not([data-builder="true"]) .edge-plus { display: none; }
