@@ -520,7 +520,7 @@ export class PeekCard {
    */
   open(slotId: string, lend?: TerminalPanel, from?: HTMLElement): void {
     // A pane in the card (docked or not) goes back to its tab first: a slot opens in the modal card of always.
-    if (this.current?.kind === 'pane') from ??= this.reset()
+    if (this.current?.kind === 'pane' || this.dock) from ??= this.reset()
     if (this.under?.slotId === slotId) { this.back(); return }
     if ((this.current?.kind === 'slot' && this.current.slotId === slotId) || lend?.isLent) { this.focusContent(); return }
     const opening = !this.current
@@ -543,11 +543,20 @@ export class PeekCard {
    * Shows a system screen the host built. Over an agent it stacks one level (the agent stays under it, hidden at the same
    * size); over a screen it replaces it (the agent under stays). The same screen again only gets the keyboard.
    */
-  openScreen(screen: PeekScreen, from?: HTMLElement): void {
+  openScreen(screen: PeekScreen, from?: HTMLElement, over?: HTMLElement): void {
     if (this.current?.kind === 'pane') from ??= this.reset()
-    if (this.current?.kind === 'screen' && this.current.screen.paneId === screen.paneId) { this.focusContent(); return }
+    // Docked (`over`, a screen the Regency asked for) or modal: a card in the other mode closes first.
+    if (this.current && this.dock?.over !== over) from ??= this.reset()
+    if (this.current?.kind === 'screen' && this.current.screen.paneId === screen.paneId) { if (!over) this.focusContent(); return }
     const opening = !this.current
-    if (opening) this.rememberReturn(from)
+    if (opening) {
+      this.rememberReturn(from)
+      if (over) this.startDock(over)
+    }
+    if (over) {
+      this.opener = from ?? this.activeOutside()
+      if (this.opener) this.returnTo = this.opener
+    }
     const plan = screenOpenPlan(this.top)
     if (plan.under && this.current?.kind === 'slot') {
       this.under = this.current
@@ -560,9 +569,14 @@ export class PeekCard {
     wrap.className = 'peek-screen'
     wrap.dataset.screen = screen.typeId
     wrap.append(screen.element)
-    this.current = { kind: 'screen', screen, wrap }
+    const view: ScreenView = { kind: 'screen', screen, wrap }
+    this.current = view
     this.body.append(wrap)
-    this.shown(opening)
+    if (!over) { this.shown(opening); return }
+    this.placeDocked()
+    // `over` was not on screen: the card closed at once. Docked, the keyboard stays where it was (the row, the button).
+    if (this.current !== view) return
+    this.shown(opening, false)
   }
 
   /** "← <agent>", or closing a screen over an agent: the screen goes, the agent under it is shown again as it was. */

@@ -1949,8 +1949,8 @@ function peekNew(typeId: string, spec?: PeekNewSpec, from?: HTMLElement): string
   const id = spec?.id
   if (id !== undefined) {
     if (!id || (type.idPrefix && !id.startsWith(type.idPrefix))) return undefined
-    if (findPanel(id)) { peekPane(id, { from: from ?? menuRunOwner }); return id }
-    if (peekCard.screenId === id) { requestAnimationFrame(() => type.focus?.(id)); return id }
+    if (findPanel(id)) { peekPane(id, { from: from ?? menuRunOwner, ...(spec?.over ? { over: spec.over, focus: false } : {}) }); return id }
+    if (peekCard.screenId === id) { if (!spec?.over) requestAnimationFrame(() => type.focus?.(id)); return id }
   } else {
     const tab = allPanels().find(p => type.has(p.id))
     if (tab) { peekCard.close({ restoreFocus: false }); revealPane(tab.id); return tab.id }
@@ -1972,7 +1972,7 @@ function peekNew(typeId: string, spec?: PeekNewSpec, from?: HTMLElement): string
     paneId, typeId, title: options.title ?? typeId, icon: type.icon as IconName, element: content.element,
     focus: () => type.focus?.(paneId),
     dispose: () => content.dispose?.(),
-  }, from ?? menuRunOwner)
+  }, from ?? menuRunOwner, spec?.over)
   return paneId
 }
 let peekSeq = 0

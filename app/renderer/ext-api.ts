@@ -128,6 +128,8 @@ export interface PeekNewSpec {
   id?: string
   title?: string
   params?: Record<string, unknown>
+  /** Docks the card on that element (the Regency's conversation), as `PeekPaneRequest.over`; the keyboard stays where it is. */
+  over?: HTMLElement
 }
 
 /** Where an extension's rows go in a pane's menu: before its floor (the default) or as the menu's first group. */

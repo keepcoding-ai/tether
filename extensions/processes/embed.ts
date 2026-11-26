@@ -34,9 +34,15 @@ export interface ProcessEmbedActs {
    * desk is unknown or the record already has a tab.
    */
   output(name: string, opts: { deskId: string; timeline?: boolean }): ProcAct
-  /** Peeks the record with no tab (a tab that already exists is lent to the card). */
-  peekOutput(name: string): ProcAct
+  /**
+   * Peeks the record with no tab (a tab that already exists is lent to the card). `over`: the card docks on that element (the
+   * Regency's conversation), as every quick view the Regency opens; the keyboard stays where it is.
+   */
+  peekOutput(name: string, opts?: PeekOver): ProcAct
 }
+
+/** Where the quick view docks (the Regency's conversation); absent: the modal card of always. */
+export interface PeekOver { over?: HTMLElement }
 
 /** What the processes extension gives the feed while it is on. */
 export interface ProcessEmbedSource extends ProcessEmbedActs {
@@ -94,7 +100,7 @@ export function createProcessEmbeds(): ProcessEmbedPublisher {
     hold: async (name, opts) => source ? source.hold(name, opts) : OFF,
     release: async name => source ? source.release(name) : OFF,
     output: (name, opts) => source ? source.output(name, opts) : OFF,
-    peekOutput: name => source ? source.peekOutput(name) : OFF,
+    peekOutput: (name, opts) => source ? source.peekOutput(name, opts) : OFF,
     publish(next) {
       unpublish()
       source = next
@@ -125,10 +131,10 @@ export interface ProcessPanesPort {
   has(paneId: string): boolean
   /** Adds the record's tab to a desk without switching to it; false when refused (unknown desk). */
   openOnDesk(name: string, deskId: string, timeline: boolean): boolean
-  /** Lends an existing tab to the quick view card. */
-  peekPane(paneId: string): void
-  /** Builds the record in the card with no tab; false for an unknown type. */
-  peekNew(name: string, paneId: string): boolean
+  /** Lends an existing tab to the quick view card (docked on `opts.over` when given). */
+  peekPane(paneId: string, opts?: PeekOver): void
+  /** Builds the record in the card with no tab (docked on `opts.over` when given); false for an unknown type. */
+  peekNew(name: string, paneId: string, opts?: PeekOver): boolean
 }
 
 export interface ProcessActsDeps {
@@ -182,11 +188,12 @@ export function createProcessActs(deps: ProcessActsDeps): ProcessEmbedActs {
       if (deps.panes.has(deps.paneIdOf(name))) return { refusal: `O registro de "${name}" já está aberto como guia.` }
       return deps.panes.openOnDesk(name, deskId, timeline !== false) ? { ok: true } : { refusal: 'Não foi possível abrir o registro nessa mesa.' }
     },
-    peekOutput(name) {
+    peekOutput(name, opts) {
       if (!deps.get(name)) return UNKNOWN
       const id = deps.paneIdOf(name)
-      if (deps.panes.has(id)) { deps.panes.peekPane(id); return { ok: true } }
-      return deps.panes.peekNew(name, id) ? { ok: true } : { refusal: 'Não foi possível espiar o registro.' }
+      if (deps.panes.has(id)) { if (opts?.over) deps.panes.peekPane(id, opts); else deps.panes.peekPane(id); return { ok: true } }
+      const made = opts?.over ? deps.panes.peekNew(name, id, opts) : deps.panes.peekNew(name, id)
+      return made ? { ok: true } : { refusal: 'Não foi possível espiar o registro.' }
     },
   }
 }
