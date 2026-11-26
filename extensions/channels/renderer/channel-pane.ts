@@ -38,8 +38,9 @@ import { isPeekModifier } from '../../../app/renderer/link-open.ts'
 import { agentHue } from '../../../app/shared/agent-color.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
 import { channelSpans, HASH_TEXT, mentionSpans } from './mentions.ts'
-import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
+import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuEntry, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
 import type { Marks } from './marks.ts'
+import type { EmbeddedChannel, EmbedOptions } from './embed.ts'
 import {
   agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
   MODERATOR_ARIA, muteBar, olderCursor, rowsOf, unreadLabel, waitsLabel, type HistoryPage, type MemberRow, type MembersAnswer, type Row, type Timeline,
@@ -174,7 +175,26 @@ export interface ChannelPanes {
   /** Opens the channel's pane, or brings the one that exists forward (P3). */
   open(channelId: string, name?: string): void
   snapshot(channelId: string): PaneSnapshot | undefined
+  /** The channel's view outside the dockview (the Regency's centre): the same view as the tab, with no tab of its own. */
+  mountEmbed(host: HTMLElement, channelId: string, opts?: EmbedOptions): EmbeddedChannel
 }
+
+/**
+ * Where a channel's view lives: a tab of the dockview (`pane`, the `api` wrapped as it always was) or embedded in another
+ * extension's surface (`embed`: no tab title to set, its menu has no "Fechar painel", "Mover" nor the pane's link).
+ */
+interface ChannelHost {
+  readonly kind: 'pane' | 'embed'
+  /** The pane id the core knows the channel by (`channel:<id>`), for both kinds. */
+  readonly id: string
+  title(): string | undefined
+  setTitle(title: string): void
+  showMenu(x: number, y: number, opener?: HTMLElement): void
+}
+
+/** The menu rows an embedded view leaves out: they act on a tab it does not have. */
+const EMBED_OMITS: ReadonlySet<ChannelMenuId> = new Set<ChannelMenuId>(['link', 'move', 'closePane'])
+const OPEN_AS_TAB = 'Abrir como guia'
 
 export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () => readonly ChannelSummary[] = () => []): ChannelPanes {
   /** The channels a "#" can name: the open ones (a closed channel is plain text). */
@@ -188,7 +208,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     kept.set(channelId, k)
     while (kept.size > KEPT_MAX) kept.delete(kept.keys().next().value as string)
   }
-  const paneOf = (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId)
+  /** The view of a channel, the tab before an embedded one (the tests and the snapshot read the tab when there is one). */
+  const paneOf = (channelId: string): ChannelPane | undefined => tabOf(channelId) ?? [...live].find(p => p.channelId === channelId)
+  /** Only the tab: what the core asks about (`has`, the tab's menu, the active pane) is never an embedded view. */
+  const tabOf = (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId && p.kind === 'pane')
   const paneHolding = (node: Node): ChannelPane | undefined => [...live].find(p => p.element.contains(node))
   /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
   const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
@@ -238,7 +261,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   class ChannelPane implements IContentRenderer {
     readonly element = el('div', 'ch-pane')
     channelId = ''
-    private api: GroupPanelPartInitParameters['api'] | undefined
+    private host: ChannelHost | undefined
+    /** The members' column lives here instead of beside the conversation (an embedded view's option). */
+    private membersHost: HTMLElement | undefined
+    private readonly memberListeners = new Set<() => void>()
     private timeline: Timeline = emptyTimeline()
     private answer: MembersAnswer | undefined
     private error = ''
@@ -407,9 +433,23 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.dropZone.hidden = false
     }
 
+    get kind(): ChannelHost['kind'] { return this.host?.kind ?? 'pane' }
+
     init(p: GroupPanelPartInitParameters): void {
-      this.api = p.api
-      this.channelId = String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(p.api.id))
+      const api = p.api
+      this.attach({
+        kind: 'pane', id: api.id,
+        title: () => api.title,
+        setTitle: t => api.setTitle(t),
+        showMenu: (x, y, opener) => ui.panes.showTabMenu(api.id, x, y, opener),
+      }, String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(api.id)))
+    }
+
+    /** Builds the view for `channelId` on `host`, a tab (`init`) or an embedded place (`mountEmbed`). */
+    attach(host: ChannelHost, channelId: string, opts: EmbedOptions = {}): void {
+      this.host = host
+      this.membersHost = opts.membersHost
+      this.channelId = channelId
       this.element.dataset.channel = this.channelId
       const k = kept.get(this.channelId)
       if (k) { this.timeline = k.timeline; this.tallies = new Map(k.tallies); this.pollStates = new Map(k.polls); this.floor = k.floor; this.stick = k.stick; this.lastTop = k.scrollTop; this.pendingScroll = k.stick ? 'end' : k.scrollTop }
@@ -476,7 +516,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.msgs.tabIndex = 0
       // The Tab visits the strip or the column of members BEFORE the conversation (bar, members, conversation, box): the DOM has that
       // order, and the CSS puts the column on the right in the wide composition and the strip and list above the conversation in the narrow one.
-      this.body.append(this.fold, this.side, this.conv)
+      if (this.membersHost) {
+        this.body.append(this.fold, this.conv)
+        this.membersHost.append(this.side)
+      } else this.body.append(this.fold, this.side, this.conv)
       this.element.addEventListener('focusin', ev => { if (!this.side.contains(ev.target as Node)) this.memberReturn = undefined })
       this.overlays = new MutationObserver(recs => {
         for (const r of recs) {
@@ -526,7 +569,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // The emblem the person put on a member's tab shows at the right of its row: redraw the list when one changes.
       this.subs.push(ui.panes.onDidChangeMarks(paneId => {
         if (this.disposed || !this.answer) return
-        if (paneId === undefined || this.answer.members.some(m => m.id === paneId)) this.paintMembers()
+        if (paneId === undefined || this.answer.members.some(m => m.id === paneId)) { this.paintMembers(); this.membersChanged() }
       }))
       this.paint()
       void this.load()
@@ -549,6 +592,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.contentRo?.disconnect()
       this.overlays?.disconnect()
       for (const s of this.subs) s.dispose()
+      this.memberListeners.clear()
       live.delete(this)
       // A pane that moved to another desk is rebuilt: its place is what the new one starts from.
       // (The scroll is read from the last scroll event: by now the element has left the page and says 0.)
@@ -618,6 +662,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.paint()
       if (this.loaded && this.stick && this.pendingScroll === undefined) this.scrollEnd()
       this.checkSeen()
+      if (this.answer) this.membersChanged()
     }
 
     private async refreshMembers(): Promise<void> {
@@ -636,8 +681,27 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         if (this.noMembers() !== this.drewNoMembers || this.isClosed() !== this.drewClosed) this.paintMsgs()
         else this.paintPolls()
         this.focusJoinIfEmptied()
+        this.membersChanged()
       } catch { /* the next event asks again */ }
     }
+
+    /** The members as the column draws them, for an embedded view's host. */
+    memberList(): MemberRow[] { return this.answer ? memberRows(this.answer, id => ui.panes.personEmblem(id), noDesk) : [] }
+
+    onDidChangeMembers(listener: () => void): { dispose(): void } {
+      this.memberListeners.add(listener)
+      return { dispose: () => { this.memberListeners.delete(listener) } }
+    }
+
+    private membersChanged(): void {
+      for (const l of [...this.memberListeners]) { try { l() } catch (e) { console.error('channel members listener', e) } }
+    }
+
+    /** The keyboard goes to the conversation. */
+    focusView(): void { this.msgs.focus() }
+
+    /** The members' column (taken out of a host it was given to when the embedded view goes). */
+    sideElement(): HTMLElement { return this.side }
 
     private scheduleMembers(): void {
       if (this.membersTimer || this.disposed) return
@@ -1238,7 +1302,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private syncTitle(): void {
       if (!this.answer) return
       const title = `#${this.answer.channel.name}`
-      if (this.api && this.api.title !== title) this.api.setTitle(title)
+      if (this.host && this.host.title() !== title) this.host.setTitle(title)
     }
 
     /** Asks the commands to join an agent to this channel: they open straight on the agent picker. */
@@ -1290,9 +1354,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     private openMenu(opener: HTMLElement): void {
-      if (!this.api) return
+      if (!this.host) return
       const r = opener.getBoundingClientRect()
-      ui.panes.showTabMenu(this.api.id, r.left, r.bottom, opener)
+      this.host.showMenu(r.left, r.bottom, opener)
     }
 
     /** After "Tirar" emptied the list the row that held the focus is gone: the focus goes to the accent "Juntar agente…". */
@@ -1332,7 +1396,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private paintHead(): void {
       this.paintBar()
       this.titleBox.replaceChildren()
-      if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.api?.title ?? '')); return }
+      if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.host?.title() ?? '')); return }
       const h = headerOf(this.answer)
       const sub = el('span', 'ch-sub')
       sub.append(`${this.answer.members.length === 1 ? '1 membro' : `${this.answer.members.length} membros`} · dono: `)
@@ -1356,7 +1420,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     /** The column is drawn when the person has it open and somebody is in the channel (a lone "Você" says nothing). */
-    private sideShown(): boolean { return this.membersOpen && !this.nobodyListed() }
+    private sideShown(): boolean { return (this.membersHost !== undefined || this.membersOpen) && !this.nobodyListed() }
 
     /** Nobody is in the channel, open or closed: the column and the "Membros" button have nothing to say. */
     private nobodyListed(): boolean { return this.answer !== undefined && this.answer.members.length === 0 }
@@ -1364,9 +1428,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private paintSide(): void {
       const shown = this.sideShown()
       this.side.hidden = !shown
-      this.element.classList.toggle('members-off', !shown)
+      // A column in another host leaves the conversation the whole width; showing it is that host's (no "Membros" button here).
+      this.element.classList.toggle('members-off', !shown || this.membersHost !== undefined)
       if (this.membersBtn) {
-        this.membersBtn.hidden = this.nobodyListed()
+        this.membersBtn.hidden = this.nobodyListed() || this.membersHost !== undefined
         this.membersBtn.classList.toggle('on', shown)
         this.membersBtn.setAttribute('aria-pressed', String(shown))
       }
@@ -1374,7 +1439,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     /** The strip is drawn only in the narrow composition, with somebody in an open channel. */
-    private foldShown(): boolean { return this.isNarrow() && this.answer !== undefined && !this.isClosed() && this.answer.members.length > 0 }
+    private foldShown(): boolean { return this.membersHost === undefined && this.isNarrow() && this.answer !== undefined && !this.isClosed() && this.answer.members.length > 0 }
 
     private paintFold(): void {
       const show = this.foldShown()
@@ -1502,9 +1567,19 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         move: () => ui.panes.move(paneId),
         closePane: () => ui.panes.close(paneId),
       }
-      return channelMenu(answer.channel, answer, { membersOpen: this.sideShown() }).map((e): ContextMenuRow =>
+      const rowOf = (e: ChannelMenuEntry): ContextMenuRow =>
         e === 'sep' || 'heading' in e ? e
-          : { icon: e.icon, label: e.label, run: run[e.id], ...(e.danger ? { danger: true } : {}), ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(e.disabled ? { disabled: true } : {}) })
+          : { icon: e.icon, label: e.label, run: run[e.id], ...(e.danger ? { danger: true } : {}), ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(e.disabled ? { disabled: true } : {}) }
+      const entries = channelMenu(answer.channel, answer, { membersOpen: this.sideShown() })
+      if (this.kind === 'pane') return entries.map(rowOf)
+      // Embedded: no tab to link, move or close (and no members' toggle when the column lives in the host); "Abrir como guia"
+      // opens the channel's tab, or brings the one that exists forward (P3).
+      const omit = (id: ChannelMenuId): boolean => EMBED_OMITS.has(id) || (id === 'members' && this.membersHost !== undefined)
+      return entries.flatMap((e): ContextMenuRow[] => {
+        if (e === 'sep' || 'heading' in e) return [rowOf(e)]
+        if (omit(e.id)) return []
+        return e.id === 'channelLink' ? [{ icon: 'arrow-square-out', label: OPEN_AS_TAB, run: () => open(channel, answer.channel.name) }, rowOf(e)] : [rowOf(e)]
+      })
     }
 
     /** Opens the poll form above the speaking box (the box's button, `/enquete`, the palette and the "⋯" menu land here). */
@@ -2557,7 +2632,34 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   // The palette's rows to react to the focused speech (what has a key has a menu): they act on the channel pane that is active.
   const activeChannelPane = (): ChannelPane | undefined => {
     const id = ui.panes.activeId()
-    return id !== undefined && id.startsWith(CHANNEL_PANE_PREFIX) ? paneOf(channelIdOfPane(id)) : undefined
+    return id !== undefined && id.startsWith(CHANNEL_PANE_PREFIX) ? tabOf(channelIdOfPane(id)) : undefined
+  }
+
+  const mountEmbed = (host: HTMLElement, channelId: string, opts: EmbedOptions = {}): EmbeddedChannel => {
+    const view = new ChannelPane()
+    const name = (): string | undefined => { const c = channelList().find(x => x.id === channelId); return c ? `#${c.name}` : undefined }
+    host.append(view.element)
+    view.attach({
+      kind: 'embed', id: channelPaneId(channelId),
+      title: name,
+      setTitle: () => {},
+      showMenu: (x, y) => ui.menus.context(x, y, view.menuRows(channelPaneId(channelId)) as ContextMenuEntry[]),
+    }, channelId, opts)
+    let gone = false
+    return {
+      element: view.element,
+      channelId,
+      members: () => view.memberList(),
+      onDidChangeMembers: listener => view.onDidChangeMembers(listener),
+      focus: () => view.focusView(),
+      dispose: () => {
+        if (gone) return
+        gone = true
+        view.dispose()
+        view.element.remove()
+        if (opts.membersHost) view.sideElement().remove()
+      },
+    }
   }
   const inChannel = (ctx: { paneType?: string }): boolean => ctx.paneType === type.id
   const reactRows = [
@@ -2582,10 +2684,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       ...type, hasSlot: false, icon: 'chats-circle',
       create: () => new ChannelPane(),
       createTab: () => new ChannelTab() as unknown as ITabRenderer,
-      has: id => id.startsWith(CHANNEL_PANE_PREFIX) && paneOf(channelIdOfPane(id)) !== undefined,
+      has: id => id.startsWith(CHANNEL_PANE_PREFIX) && tabOf(channelIdOfPane(id)) !== undefined,
       // The channel's one menu, from `channelMenu` (texts.ts): the tab's right click and the bar's "⋯" both land here.
       // The menu takes headings (the core's `fromExtMenu`); only the declared parameter type of `context` leaves them out.
-      tabMenu: (id, x, y) => ui.menus.context(x, y, (paneOf(channelIdOfPane(id))?.menuRows(id) ?? []) as ContextMenuEntry[]),
+      tabMenu: (id, x, y) => ui.menus.context(x, y, (tabOf(channelIdOfPane(id))?.menuRows(id) ?? []) as ContextMenuEntry[]),
     }),
     ui.daemon.onEvent<LineEvent>('line', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onLine(ev) }),
     ui.daemon.onEvent<ChannelEvent>('channel', ev => { for (const p of live) if (p.channelId === ev.channel.id) p.onChannel() }),
@@ -2597,10 +2699,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   // Read at window.__tether.ext.channels.<name>.
   ui.test.expose('open', open)
   ui.test.expose('view', (channelId: string): PaneSnapshot | undefined => paneOf(channelId)?.snapshot())
+  // The embedded view of a channel (the Regency's centre), apart from its tab.
+  ui.test.expose('embedView', (channelId: string): PaneSnapshot | undefined => [...live].find(p => p.channelId === channelId && p.kind === 'embed')?.snapshot())
   ui.test.expose('wearEmblem', (paneId: string, emblemId: string | undefined): void => { ui.panes.find(paneId)?.api.updateParameters({ emblem: emblemId }) })
   ui.test.expose('kept',(channelId: string): boolean => kept.has(channelId))
   ui.test.expose('scrollTo', (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top))
   ui.test.expose('loadOlder', (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve())
 
-  return { disposables, open, snapshot: channelId => paneOf(channelId)?.snapshot() }
+  return { disposables, open, snapshot: channelId => paneOf(channelId)?.snapshot(), mountEmbed }
 }

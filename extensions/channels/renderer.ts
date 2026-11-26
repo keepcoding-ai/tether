@@ -5,6 +5,7 @@ import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
 import { createChannelPanes } from './renderer/channel-pane.ts'
 import { createCommands, createDirectory } from './renderer/commands.ts'
 import { holds } from './renderer/holds.ts'
+import { channelEmbeds } from './renderer/embed.ts'
 import { createMarks } from './renderer/marks.ts'
 import { createMenus } from './renderer/menus.ts'
 import { createStatus } from './renderer/status.ts'
@@ -26,7 +27,16 @@ export function activate(ui: TetherUi): Disposable[] {
       else void ui.dialogs.ask(failedDialog('Abrir canal', 'unknown-channel')).catch(() => undefined)
     },
   })
+  // Feed C: what the Regency reads of the channels (the directory, the marks as counts) and the channel's view it embeds.
+  // The marks notify after each directory refresh too (their sync asks the directory), so one subscription covers both.
+  const feed = channelEmbeds.publish({
+    list: directory.list,
+    marksOf: id => ({ unread: marks.of(id).unread, toMe: marks.of(id).toMe, asks: marks.asksOf(id).length, owed: marks.owedOf(id).length }),
+    onDidChange: marks.onDidChange,
+    mount: (host, channelId, opts) => panes.mountEmbed(host, channelId, opts),
+  })
   return [
+    feed,
     links,
     ...directory.disposables, ...marks.disposables, ...panes.disposables,
     ...createStatus(ui, marks, directory.list),
