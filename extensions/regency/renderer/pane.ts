@@ -28,7 +28,7 @@ export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; q
 export interface RegencyHost {
   /** The model narrowed by `q`, and the panes counted by state before any filter (the chips). */
   view(q: TreeQuery): { model: RegencyModel; counts: StateCounts }
-  /** Space on a row: the one place that opens a target's quick view. */
+  /** Space on a row of the tree, a click (or Space) on a pane or an agent in "Esperam você": the one place that opens a target's quick view. */
   quickView(target: Target): void
   /**
    * The Menu key, Shift+F10, a right click or the row's "⋯": the one place that opens the row's menu, at `at` (page
@@ -237,6 +237,12 @@ export class RegencyPane implements IContentRenderer {
 
   /** The tier the pane is drawn in now (the ruler of four, by the pane's width). */
   get tier(): string { return this.element.dataset.tier ?? 'desktop' }
+
+  /** What the quick view docks on: the conversation column, or the whole pane when the column is not on screen (the phone's other tabs). */
+  quickAnchor(): HTMLElement {
+    const r = this.center.getBoundingClientRect()
+    return r.width > 0 && r.height > 0 ? this.center : this.element
+  }
 
   /** "Gerir" or "Imersão", kept in the pane's layout. */
   setMode(mode: RegencyMode): void {
@@ -775,7 +781,7 @@ export class RegencyPane implements IContentRenderer {
     if (ev.key !== 'Enter' && ev.key !== ' ') return
     if (!t.dataset.target) return
     ev.preventDefault()
-    this.activate(t)
+    this.activate(t, false, ev.key === 'Enter')
   }
 
   /** The tree's keys, by the pure rule (tree-keys.ts). */
@@ -851,7 +857,8 @@ export class RegencyPane implements IContentRenderer {
     else if (action === 'choose') void this.host.pickChannel().then(id => { if (id) this.select(id) })
   }
 
-  private activate(row: HTMLElement, onCaret = false): void {
+  /** A click (or Space) on a row; `byEnter`: Enter, which goes to the target where a click on "Esperam você" only spies it. */
+  private activate(row: HTMLElement, onCaret = false, byEnter = false): void {
     if (row.dataset.key) this.focusKey = row.dataset.key
     // A desk or "Você" folds; an agent's line goes to its pane and folds only by its caret.
     if (row.dataset.row === 'closed-head') { this.setClosedOpen(row.getAttribute('aria-expanded') !== 'true'); return }
@@ -871,6 +878,8 @@ export class RegencyPane implements IContentRenderer {
     else if (target.kind === 'desk') { this.setLayout(toggleCollapsed(this.state, target.id)); this.signature = ''; this.paint() }
     // An ended session has nowhere to go: its row opens its menu (reopen, forget).
     else if (target.kind === 'session') this.openMenu(target, row)
+    // A pane or an agent that waits for the person: the click spies it over the conversation, the person stays here.
+    else if (!byEnter && this.waitHost.contains(row) && (target.kind === 'pane' || target.kind === 'agent')) this.host.quickView(target)
     else this.host.go(target)
   }
 }

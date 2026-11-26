@@ -71,6 +71,43 @@ button.peek-back .label { white-space: nowrap; overflow: hidden; text-overflow: 
 .tether-tab[data-spied="true"] .text { opacity: .75; }
 .peek-foot { flex: none; padding: 6px 14px; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* The quick view of a pane (peek.ts openPane): the same header and foot for every type, the pane's content alone in the body. */
+.qv-head { gap: 8px; }
+.qv-head .peek-id { gap: 7px; }
+.qv-type { flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--fg-dim); white-space: nowrap; }
+.qv-where { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
+.qv-where[hidden] { display: none; }
+.qv-where .qv-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--qv-desk, var(--fg-dim)); }
+.qv-where .qv-where-t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qv-head .ext-emblems[hidden] { display: none; }
+.peek-state.asleep .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-dim); }
+.peek-state.asleep { font-style: italic; }
+button.qv-close { width: 30px; padding: 0; justify-content: center; font-weight: 400; flex: none; }
+.qv-foot { display: flex; align-items: center; gap: 8px; flex: none; min-height: 38px; padding: 4px 8px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--fg-dim); }
+.qv-foot .qv-sp { flex: 1; }
+.qv-foot .qv-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qv-foot .qv-note { color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qv-foot .qv-note[hidden] { display: none; }
+.qv-menu .ph { width: 16px; height: 16px; }
+button.qv-go, button.qv-wake { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; font-size: 12px; flex: none; }
+button.qv-go { background: transparent; border-color: transparent; color: var(--fg-dim); }
+button.qv-go:hover { color: var(--fg); background: var(--bg-hover, var(--bg-3)); }
+button.qv-go .ph, button.qv-wake .ph { width: 14px; height: 14px; }
+button.qv-wake[hidden] { display: none; }
+/* The pane's content fills the body as it filled its tab (the id wins over the content's own `position`). */
+.peek-body > .peek-pane { position: absolute; inset: 0; overflow: hidden; background: var(--frame-bg); }
+#peek .peek-pane > :not(.qv-reason) { position: absolute; inset: 0; }
+.qv-reason { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.qv-reason .ill { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--bg-3); color: var(--fg-dim); }
+.qv-reason .ill .ph { width: 24px; height: 24px; }
+.qv-reason p { margin: 0; max-width: 340px; line-height: 1.5; }
+/* Docked over the Regency's conversation: no veil, the window behind takes the pointer; only the card does. */
+.peek-layer[data-mode="docked"] { background: transparent; pointer-events: none; }
+.peek-layer[data-mode="docked"] > .peek-card { inset: auto; pointer-events: auto; border-radius: 10px; box-shadow: var(--dlg-shadow, var(--drawer-shadow)); }
+/* A tab whose content is in the card: the discreet eye (a slot's tab draws its own, panel.ts). */
+.peek-tab-eye { display: inline-flex; flex: none; align-items: center; color: var(--fg-dim); }
+.peek-tab-eye .ph { width: 12px; height: 12px; }
+
 /* A small window: the margin shrinks to 6 px (still a margin that closes), the header wraps and "Abrir nesta mesa" is an icon. */
 @media (max-width: 560px), (max-height: 420px) {
   .peek-card { inset: 6px; }

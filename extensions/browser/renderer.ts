@@ -1674,6 +1674,8 @@ export function activate(ui: TetherUi): IDisposable[] {
       create: () => new Panel(), createTab: () => new Tab() as unknown as ITabRenderer, has: id => panels.has(id),
       tabMenu: showWebMenu,
       searchTextOf: id => panels.get(id)?.padTab()?.url || undefined,
+      // The page is a native surface placed by the pane's rectangle: the quick view lends it once the freeze spares the card.
+      peek: 'none',
     }),
     ui.links.provideBrowser({
       open: (url, opts) => {

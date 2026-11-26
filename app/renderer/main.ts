@@ -104,9 +104,9 @@ import { extensionRows } from './extensions-list.ts'
 import { agentPaneChanges, agentPaneOf, loosePaneOf, type AgentPane } from './agent-panes.ts'
 import { trackedTab } from './tab-tracking.ts'
 import { PROBE } from './panel.ts'
-import { PeekCard, type PeekHost } from './peek.ts'
+import { PeekCard, type PeekHost, type PeekPaneFacts, type PeekPaneOptions } from './peek.ts'
 import type { MenuSpec, PlaceHost } from './place-menu.ts'
-import { lentNotice, paneLentNotice, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
+import { lentNotice, paneLentNotice, paneRoute, PEEK_CLOSE_COMMAND, peekEscAction, peekHeader, peekKeeps, peekRoute, screenOwns, tabInView, type TabPlace } from './peek-rules.ts'
 import { installPerfCollector, perfData } from './perf-collector.ts'
 import { extendProbe } from '../../src/core/perf-probe.ts'
 import { effectiveStatus, KIND_LABEL, SlotTab, STATUS_LABEL, TerminalPanel, panelTitle, type PanelAction, type PanelHost, type SlotError } from './panel.ts'
@@ -406,7 +406,7 @@ const host: PanelHost = {
   daemonReady: () => daemonReadyPromise,
   fontsReady: () => appearanceReady,
   queuePosition: id => queue.position(id),
-  lentTip: id => peekCard?.lentSlot === id ? lentNotice('').tip : undefined,
+  lentTip: id => peekCard?.lentSlot === id ? lentNotice('').tip : peekCard?.lentPane === id ? paneLentNotice('').tip : undefined,
   onPeek: id => peek(id),
 }
 
@@ -631,7 +631,12 @@ function setupDock(): void {
     deskHost: () => deskHost(),
     onDesksChange: () => { renderStrip(); sidebars?.syncDesks(desks.allDeskIds); scheduleSave() },
     onBeforeSwitch: () => { surfaceHosts.suspendAll() },
-    onSwitch: id => { if (desks.desks.find(d => d.id === id)?.asleep) wakeDesk(id); focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab() },
+    onSwitch: id => {
+      if (desks.desks.find(d => d.id === id)?.asleep) wakeDesk(id)
+      focusActivePane(); notifyActivePane(); notifySystemDeskActive(); scheduleKeyboardTab()
+      // A quick view docked on the desk that left the screen closes (peek.ts checkDock), once the switch has laid out.
+      requestAnimationFrame(() => peekCard?.checkDock())
+    },
     paneOptions: panel => paneTypes.optionsOf(panel),
   }, DOCK_THEME)
   desks.fromEmpty()
@@ -1085,6 +1090,8 @@ function renderStrip(): void {
   if (line !== undefined && $('workbench').style.getPropertyValue('--desk-line-color') !== line) $('workbench').style.setProperty('--desk-line-color', line)
   renderDrawerButton()
   door.stripRendered(() => ({ desks: deskViews(), activeId: desks.activeDeskId }), deskTree)
+  // A pane in the quick view: its desk may have gone to sleep or woken, been renamed or recoloured.
+  if (peekCard?.paneId) peekCard.render()
 }
 
 /** The pane the user is looking at: the active pane of the visible desk (the drawer's while it is open), with the window focused. */
@@ -1201,9 +1208,9 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void,
 /**
  * Waking a desk: back in the capsule, the panes its hibernation put to sleep (`deskSleptPanes`) resume through `start`
  * (the daemon queues agents beyond 3 at once); panes that were already hibernated before stay asleep. `spare` (an owner's
- * wake through the door) stay as they are. Returns the panes started.
+ * wake through the door) stay as they are. Returns the panes started. `settled` runs once every start has answered.
  */
-function wakeDesk(id: string, spare: ReadonlySet<string> = new Set(), report?: (answer: WakeAnswer) => void): string[] {
+function wakeDesk(id: string, spare: ReadonlySet<string> = new Set(), report?: (answer: WakeAnswer) => void, settled?: () => void): string[] {
   if (desks.desks.find(d => d.id === id)?.asleep) desks.setAsleep(id, false)
   const started: string[] = []
   const answers: Promise<WakeAnswer>[] = []
@@ -1211,7 +1218,7 @@ function wakeDesk(id: string, spare: ReadonlySet<string> = new Set(), report?: (
     if (spare.has(p.id) || !deskSleptPanes.delete(p.id)) continue
     if (asleepPanes.has(p.id)) { started.push(p.id); answers.push(startSlot(p.id)) }
   }
-  if (report) void Promise.all(answers).then(all => { const refused = all.find(a => !a.ok); if (refused) report(refused) })
+  if (report || settled) void Promise.all(answers).then(all => { const refused = all.find(a => !a.ok); if (refused) report?.(refused); settled?.() })
   scheduleSave()
   return started
 }
@@ -1552,7 +1559,8 @@ function focusedDeskPane(): string | undefined {
 function setDrawerOpen(open: boolean): void {
   if (open === drawer.isOpen || (open && !layoutRestored)) return
   // The peek card sits over the drawer and owns the inert state of what is behind it: the drawer stays as it is meanwhile.
-  if (peekCard?.isOpen) return
+  // A docked quick view is not modal: the drawer opens over the Regency, and the card it would sit over goes.
+  if (peekCard?.isOpen) { if (peekCard.isModal) return; peekCard.close({ restoreFocus: false }) }
   lastEsc = undefined
   scheduleKeyboardTab()
   // A surface in the drawer goes before the drawer does, not a frame after.
@@ -1688,6 +1696,76 @@ function peek(slotId: string, from?: HTMLElement): void {
   const lend = route === 'lend' ? panels.get(slotId) : undefined
   if (route === 'reveal' || (route === 'lend' && !lend)) { peekCard?.close(); revealPane(slotId); return }
   if (route === 'lend' || route === 'card') peekCard?.open(slotId, lend, from)
+}
+
+/**
+ * The quick view of ANY pane (TetherUi `panes.peekPane`): a tab of any type, out of view, comes alive to the card (lendPane)
+ * under the same header and over the same foot for every type; a tab in view only gets the keyboard; a type that does not
+ * lend shows why, with "Ir até a guia"; an id with no tab but a live slot opens the agent's own card (`peek`, as always).
+ * `over` docks the card on that element without a veil (the Regency's conversation); without it the card is modal.
+ */
+function peekPane(paneId: string, opts: PeekPaneOptions = {}): void {
+  if (!peekCard) return
+  const tab = findPanel(paneId)
+  const route = paneRoute({ hasTab: !!tab, inView: !!tab && tabInView(tabPlaceOf(paneId, tab)), slot: slots.get(paneId), plan: paneLendPlan(liveTypeOf(paneTypes, paneId)) })
+  if (route === 'none') return
+  if (route === 'slot') { peek(paneId, opts.from); return }
+  if (route === 'reveal') { peekCard.close({ restoreFocus: false }); revealPane(paneId); return }
+  peekCard.openPane(paneId, { ...opts, from: opts.from ?? menuRunOwner })
+}
+
+/** What the quick view's header and foot show of a pane now (peek.ts PeekPaneFacts). */
+function quickFactsOf(paneId: string): PeekPaneFacts | undefined {
+  const facts = treeFactsOf(paneId)
+  if (!facts) return undefined
+  const s = slots.get(paneId)
+  const desk = paneDeskOf(paneId)
+  return {
+    title: facts.title, typeId: facts.type, agent: !!s && s.kind !== 'shell', place: describePane(paneId)?.place, color: desk?.color,
+    ...(s ? { slot: peekHeader(s, Date.now()), slotKind: s.kind } : {}),
+    asleep: facts.asleep === true, deskAsleep: desk?.asleep === true, icon: facts.icon as IconName, emblems: door.emblemsOf(paneId),
+  }
+}
+
+/** The desk a pane belongs to (the drawer's own, a pad's desk or its panel's), with its colour and whether it sleeps. */
+function paneDeskOf(paneId: string): { id: string; color: string; asleep?: boolean } | undefined {
+  if (inDrawer(paneId)) return drawer.desk.meta
+  const pad = framePadOf(paneId)
+  const id = pad ? pad.deskId ?? (pad.panelId ? desks.deskOf(pad.panelId) : undefined) : desks.deskOf(paneId)
+  return id ? desks.desks.find(d => d.id === id) ?? desks.systemDesks.find(d => d.id === id) : undefined
+}
+
+/** "Acordar" in the quick view: the desk wakes whole, or the pane alone; the answer is the refusal's sentence, or nothing. */
+function wakeQuickPane(paneId: string, what: 'desk' | 'pane'): Promise<string | undefined> {
+  const said = (a: WakeAnswer): string | undefined => a.ok ? undefined : a.why === 'unconfirmed' ? 'Esta guia precisa da sua escolha (retomar ou começar de novo) na própria guia.' : a.message
+  const deskId = paneDeskOf(paneId)?.id
+  if (what === 'desk' && deskId && desks.desks.some(d => d.id === deskId && d.asleep)) {
+    return new Promise(resolve => {
+      let refusal: string | undefined
+      wakeDesk(deskId, new Set(), a => { refusal = said(a) }, () => { renderStrip(); resolve(refusal) })
+    })
+  }
+  if (!slots.has(paneId)) return Promise.resolve(undefined)
+  return startSlot(paneId).then(said)
+}
+
+/** A pane's tab shows the discreet eye while its content is in the card (a slot's tab draws its own: SlotTab, lentTip). */
+function paintPaneEye(paneId: string, lent: boolean): void {
+  if (slots.has(paneId)) { tabs.get(paneId)?.render(); return }
+  const tab = findPanel(paneId)?.view.tab.element
+  if (!tab) return
+  let eye = tab.querySelector<HTMLElement>(':scope > .peek-tab-eye')
+  if (lent && !eye) {
+    eye = document.createElement('span')
+    eye.className = 'peek-tab-eye'
+    eye.title = paneLentNotice('').tip
+    eye.append(icon('eye'))
+    tab.insertBefore(eye, tab.querySelector(':scope > .close, :scope > button.close'))
+    tab.dataset.spied = 'true'
+  } else if (!lent) {
+    eye?.remove()
+    delete tab.dataset.spied
+  }
 }
 
 /** The element that owns the context menu whose item is running right now (set around `item.run()`): where a peek the item opens gives the keyboard back. */
@@ -1869,7 +1947,17 @@ function peekHost(): PeekHost {
     onLendChange: slotId => { tabs.get(slotId)?.render() },
     closeHint: () => shortcutHint(PEEK_CLOSE_COMMAND),
     toggleHint: () => shortcutHint('drawer.toggle'),
-    onOpenChange: open => {
+    lendPane,
+    paneFacts: quickFactsOf,
+    paneMenu: (paneId, x, y, opener) => showPaneMenu(paneId, x, y, opener, { from: 'manager', goLast: true }),
+    goToPane: paneId => revealPane(paneId),
+    wakePane: wakeQuickPane,
+    focusPane,
+    terminalOf: tabTerminal,
+    onPaneLendChange: paintPaneEye,
+    onOpenChange: (open, modal) => {
+      // Docked (the quick view over the Regency): nothing behind changes; only the body's class says a card is up.
+      if (!modal) { document.body.classList.toggle('peek-open', open); return }
       if (open) {
         // Menus of the toolbar belong to the window behind: they close, they do not float over the card.
         $('app-menu').hidden = true
@@ -1892,8 +1980,9 @@ function peekHost(): PeekHost {
 /** Esc anywhere but a terminal while the card is open (its header, its buttons): closes the card, never the drawer under it. */
 function peekEscapeOutside(ev: KeyboardEvent): void {
   if (ev.defaultPrevented || (ev.target as Element | null)?.closest?.('.xterm')) return
-  // One rule: Esc in the card's content (a terminal, or a screen's list, field or button) never closes the card.
-  if (peekCard?.inContent(ev.target instanceof Node ? ev.target : null)) return
+  // One rule: Esc in the card's content (a terminal, or a screen's or pane's list, field or button) never closes the card;
+  // docked, an Esc outside the card stays where it is, except on the row that opened it (peek-rules.ts quickEscCloses).
+  if (!peekCard?.escClosesAt(ev.target instanceof Node ? ev.target : null)) return
   if (peekEscAction({ blocked: escBlocked(), focus: { in: 'chrome' }, now: performance.now(), lastEsc: undefined }) !== 'close') return
   ev.preventDefault()
   peekCard?.dismiss()
@@ -1916,7 +2005,7 @@ function peekYieldsTo(panel: TerminalPanel): TerminalPanel {
  * pane's type (pane-loan-rules.ts): by default the whole content moves; a type with `lend`/`takeBack` moves its own part
  * (the terminal: its body, the status bar stays); `peek: 'fresh' | 'none'` is refused. `lost` runs if the pane goes away
  * while lent (closed, moved to another desk): its content has left the host then, and nothing comes back. A desk that
- * hibernates keeps its panes mounted, so the loan goes on. Only the test hook calls it for now (the card is the next slice).
+ * hibernates keeps its panes mounted, so the loan goes on. The quick view's card (peekPane) and a test hook call it.
  */
 function lendPane(paneId: string, host: HTMLElement, lost: () => void): ShellLoan | LendRefusal {
   const shell = paneShells.get(paneId)
@@ -2489,6 +2578,9 @@ function applyState(slot: SlotState): void {
     // A lent terminal goes back to its tab when the session ends: the tab shows the end, never a tab without a terminal.
     if (peekCard.lentSlot === slot.slotId && effectiveStatus(slot) === 'exited') peekCard.dropSlot(slot.slotId)
     else peekCard.render()
+  } else if (peekCard?.paneId === slot.slotId) {
+    // A slot's pane in the quick view stays there through its states (ended included: the tab shows the end, so does the card).
+    peekCard.render()
   }
   refreshSessions()
   refreshSessionsDialog()
@@ -2733,7 +2825,7 @@ function focusedPaneIds(): Set<string> {
   const keyboard = (document.activeElement as Element | null)?.closest?.('.panel')?.getAttribute('data-slot-id')
   if (keyboard) ids.add(keyboard)
   // A tab's terminal lent to the peek card is on screen in the person's hands (outside its `.panel` meanwhile).
-  const lent = peekCard?.lentSlot
+  const lent = peekCard?.lentSlot ?? peekCard?.lentPane
   if (lent) ids.add(lent)
   return ids
 }
@@ -2928,6 +3020,8 @@ function openSlot(slotId: string, start = true): void {
  * through openSlot (which also restarts an ended agent), any other the same way: its place opens, its tab is activated.
  */
 function revealPane(id: string): void {
+  // The pane in the quick view goes back to its tab first: what comes forward is the tab whole.
+  if (peekCard?.paneId === id) peekCard.close({ restoreFocus: false })
   if (slots.has(id)) { openSlot(id); requestAnimationFrame(() => focusPane(id)); return }
   const panel = findPanel(id)
   if (!panel) return
@@ -4293,8 +4387,9 @@ const extensionsHost: ExtensionsHost = {
 
 const dispatcher = new ChordDispatcher({
   modalOpen,
-  // The peek card open: only the palette and the card's own close keep their chords (peek-rules.ts PEEK_KEEPS).
-  keeps: () => peekCard?.isOpen ? peekChordKeeps : undefined,
+  // The peek card open: only the palette and the card's own close keep their chords (peek-rules.ts PEEK_KEEPS). Docked, the
+  // filter holds only while the keyboard is in the card: the conversation and the tree around it keep every chord.
+  keeps: () => peekCard?.isOpen && (peekCard.isModal || peekCard.contains(document.activeElement)) ? peekChordKeeps : undefined,
   editorChord: (first, second) => { const id = currentDesk().activePanel?.id; return !!id && !!liveTypeOf(paneTypes, id)?.editorChord?.(id, first, second) },
 })
 let pill: ChordPill
@@ -4726,7 +4821,13 @@ declare global {
       runCommand(id: string): Promise<'ran' | 'unknown' | 'unavailable'>
       /** TetherUi `panes.peek`, and the card's state: open, the slot it shows, whether its terminal is the routed one. */
       peek(slotId: string): void
-      peekState(): { open: boolean; slotId?: string; routed: boolean; lent: boolean; screen?: string; screenType?: string; under?: string; underRouted?: boolean }
+      peekState(): {
+        open: boolean; slotId?: string; routed: boolean; lent: boolean; screen?: string; screenType?: string; under?: string; underRouted?: boolean
+        /** The quick view of a pane: the pane shown, whether its content is in the card, why not, and modal or docked. */
+        pane?: string; paneLent?: boolean; refusal?: LendRefusal; mode?: 'modal' | 'docked'
+      }
+      /** TetherUi `panes.peekPane`, modal (docked: `over` is the element of that selector). */
+      peekPane(paneId: string, over?: string): void
       /** The quick view's lending (lendPane) into a test host fixed over the window (`.pane-loan-test-host`): 'ok' or why not. */
       lendPane(paneId: string): 'ok' | LendRefusal
       /** Gives back a pane the hook lent; false when the hook holds no loan of it. */
@@ -4936,10 +5037,18 @@ function setupTestHooks(): void {
       const slotId = peekCard?.slotId
       const screen = peekCard?.screenId
       const under = peekCard?.underSlot
+      const pane = peekCard?.paneId
+      const refusal = peekCard?.paneRefusal
       return {
         open: !!peekCard?.isOpen, ...(slotId ? { slotId } : {}), routed: !!slotId && panels.get(slotId) === peekCard?.panel, lent: !!peekCard?.lentSlot,
         ...(screen ? { screen, screenType: peekCard!.screenType! } : {}), ...(under ? { under, underRouted: !!panels.get(under) } : {}),
+        ...(pane ? { pane, paneLent: peekCard?.lentPane === pane } : {}), ...(refusal ? { refusal } : {}),
+        ...(peekCard?.isOpen ? { mode: peekCard.isModal ? 'modal' as const : 'docked' as const } : {}),
       }
+    },
+    peekPane: (paneId, over) => {
+      const el = over ? document.querySelector<HTMLElement>(over) ?? undefined : undefined
+      peekPane(paneId, el ? { over: el } : {})
     },
     lendPane: paneId => {
       const host = document.createElement('div')
@@ -5163,6 +5272,7 @@ function activateRendererExtensions(): void {
         reveal: paneId => revealPane(paneId),
         moveToDesk: (paneId, deskId) => movePaneToDesk(paneId, deskId),
         peek: slotId => peek(slotId),
+        peekPane: (paneId, opts) => peekPane(paneId, { ...(opts?.over ? { over: opts.over } : {}), ...(opts?.focus === false ? { focus: false } : {}) }),
         peekScreen: typeId => peekScreen(typeId),
         peekedScreen: () => peekCard?.screenId,
         copyLink: paneId => copyPaneLink(paneId),

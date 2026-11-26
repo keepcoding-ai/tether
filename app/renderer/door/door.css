@@ -30,22 +30,22 @@
 .seg .desk-seal .ph { width: 11px; height: 11px; flex: none; }
 
 /* The tab's emblems of extensions (and the same emblems on a card of a view that lists panes, .pf-r-head): on the right, after the title and before the state marks. Hidden while empty. */
-:is(.tether-tab, .pf-r-head) .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
-:is(.tether-tab, .pf-r-head) .ext-emblems[hidden] { display: none; }
-:is(.tether-tab, .pf-r-head) .ext-emblem {
+:is(.tether-tab, .pf-r-head, .qv-head) .ext-emblems { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+:is(.tether-tab, .pf-r-head, .qv-head) .ext-emblems[hidden] { display: none; }
+:is(.tether-tab, .pf-r-head, .qv-head) .ext-emblem {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px;
   color: var(--fg-dim); background: color-mix(in srgb, currentColor 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
   font: inherit; line-height: 0;
 }
-:is(.tether-tab, .pf-r-head) .ext-emblem.hued {
+:is(.tether-tab, .pf-r-head, .qv-head) .ext-emblem.hued {
   color: hsl(var(--emblem-hue) var(--mark-s) var(--mark-fg-l));
   background: hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-bg-a));
   box-shadow: inset 0 0 0 1px hsl(var(--emblem-hue) var(--mark-s) 50% / var(--mark-line-a));
 }
-:is(.tether-tab, .pf-r-head) button.ext-emblem { cursor: pointer; }
-:is(.tether-tab, .pf-r-head) button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
-:is(.tether-tab, .pf-r-head) button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-:is(.tether-tab, .pf-r-head) .ext-emblem .ph { width: 11px; height: 11px; }
+:is(.tether-tab, .pf-r-head, .qv-head) button.ext-emblem { cursor: pointer; }
+:is(.tether-tab, .pf-r-head, .qv-head) button.ext-emblem:hover { background: hsl(var(--emblem-hue, 0) var(--mark-s) 50% / .3); }
+:is(.tether-tab, .pf-r-head, .qv-head) button.ext-emblem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:is(.tether-tab, .pf-r-head, .qv-head) .ext-emblem .ph { width: 11px; height: 11px; }
 
 /* An attention that waits for an agent owner, not for the person (SlotState.attentionFor): a diamond in the owner's colour on the
    tab, in place of the orange dot. A shape no other mark of the tether uses; the hue (0-359, agentHue of the owner) is --attn-hue. */

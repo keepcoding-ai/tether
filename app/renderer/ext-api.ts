@@ -108,6 +108,15 @@ export type ContextMenuRow = ContextMenuEntry | ContextMenuHeading
  */
 export type WakeAnswer = { paneId: string } & ({ ok: true } | { ok: false; why: 'unconfirmed' | 'refused'; message: string })
 
+/**
+ * How a pane's quick view opens (`panes.peekPane`): `over` docks the card on that element (the Regency's conversation),
+ * without a veil; `focus: false` leaves the keyboard where it is (docked only: a modal card always takes it).
+ */
+export interface PeekPaneRequest {
+  over?: HTMLElement
+  focus?: boolean
+}
+
 /** Where an extension's rows go in a pane's menu: before its floor (the default) or as the menu's first group. */
 export interface TabMenuPlace { place?: 'top' }
 /**
@@ -440,6 +449,14 @@ export interface TetherUi {
      * over everything, the drawer included); a slot with a tab is revealed there. An unknown or ended slot without a tab: nothing.
      */
     peek(slotId: string): void
+    /**
+     * The quick view of ANY pane (a tab of any type, on any desk, the drawer or a pad): its live content comes to the card,
+     * under a header and over a foot that are the same for every type (the tab's menu, "Ir até a guia"), and the tab shows
+     * "sendo espiada" until the card closes or another pane takes its place. A tab in view only gets the keyboard; a type that
+     * does not lend yet shows the reason; an id with no tab but a live slot opens the agent's own card (`peek`). With `over`
+     * the card is docked on that element, not modal (no veil, what is around stays usable); without it, modal as always.
+     */
+    peekPane(paneId: string, opts?: PeekPaneRequest): void
     /**
      * Shows a system screen (a registered pane type without a slot, by its type id: 'settings', 'keybindings') in the peek
      * card, ONE instance: a live tab of the type is brought forward instead (the card closes); the one already in the card

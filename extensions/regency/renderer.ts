@@ -169,14 +169,17 @@ export function activate(ui: TetherUi): Disposable[] {
   }
 
   /**
-   * The one place that opens the quick view of a target (the slice of the quick view replaces its inside): a live agent
-   * in the peek card, a system screen in the card; any other kind, nothing yet.
+   * The one place that opens the quick view of a target: an agent's or any pane's tab, alive in the card docked over the
+   * conversation (not modal: the conversation, its box and the tree stay usable; another target takes the card's place).
+   * A system screen keeps its own card; an agent with no tab, the agent's own card (the core decides: `peekPane`).
+   * `focus`: the keyboard goes into the card ("Falar com"); else it stays on the row (Space, a click in "Esperam você").
    */
-  const openQuickView = (t: Target): void => {
-    if (t.kind === 'agent') { ui.panes.peek(t.id); return }
-    if (t.kind !== 'pane') return
-    const type = ui.panes.describe(t.id)?.type
-    if (type && SCREEN_TYPES.has(type)) ui.panes.peekScreen(type)
+  const openQuickView = (t: Target, focus = false): void => {
+    if (t.kind !== 'agent' && t.kind !== 'pane') return
+    const type = t.kind === 'pane' ? ui.panes.describe(t.id)?.type : undefined
+    if (type && SCREEN_TYPES.has(type)) { ui.panes.peekScreen(type); return }
+    const over = livePane()?.quickAnchor()
+    ui.panes.peekPane(t.id, { ...(over ? { over } : {}), focus })
   }
 
   /** A gesture the core or the tetherd did not take: said in a dialog, never silently. */
@@ -213,8 +216,8 @@ export function activate(ui: TetherUi): Disposable[] {
   }
 
   /**
-   * "Falar com": the agent's quick view, the keyboard in its terminal (the peek card lends the tab's terminal; the Regency
-   * stays). Asleep or ended it has no terminal to lend: the peek would bring its tab forward instead, so it says why.
+   * "Falar com": the agent's quick view, the keyboard in its terminal (the card docked over the conversation holds the tab's
+   * terminal; the Regency stays). Asleep or ended there is nobody to talk to: it says why instead.
    */
   const talk = (t: Target): void => {
     if (t.kind !== 'agent') return
@@ -222,7 +225,7 @@ export function activate(ui: TetherUi): Disposable[] {
     const name = nameOf(t.id)
     if (p?.asleep) { refuse(`${name} está dormindo`, 'Acorde a guia (menu da linha, "Acordar guia") para falar com o agente.'); return }
     if (p?.exited) { refuse(`${name} está encerrado`, 'A sessão terminou: reinicie o agente para falar com ele.'); return }
-    ui.panes.peek(t.id)
+    openQuickView(t, true)
   }
 
   /** The desk's moon or sun: the core's own row of the desk's menu, so the question and the rules are the pill's. */
