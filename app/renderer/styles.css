@@ -209,6 +209,9 @@ body { display: flex; flex-direction: column; }
 /* Mesas fixas: só ícone (settings ui.fixedDeskLabel = 'icon'); the name stays in the title. */
 body.fixed-icon-only .seg.gav .pill-name { display: none; }
 body.fixed-icon-only .seg.gav { padding: 0 9px; }
+/* The capsule is short of room (desk-switch.ts fitCapsule): the fixed pills drop to their icons, the active one keeps its name. */
+#desk-switch.pills-compact .seg.gav:not([aria-pressed="true"]):not([aria-expanded="true"]) .pill-name { display: none; }
+#desk-switch.pills-compact .seg.gav:not([aria-pressed="true"]):not([aria-expanded="true"]) { padding: 0 9px; }
 .seg.desk-more .more-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--x-alert); }
 /* Dragging a segment to reorder (desk-switch.ts): the held one follows the pointer on X, the others make room. */
 .seg[data-desk] { touch-action: none; }

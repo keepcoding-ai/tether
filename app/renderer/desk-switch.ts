@@ -21,7 +21,7 @@
 // (the "+N" swapping who is visible) slides the surviving segments to their new places (FLIP, 320 ms) unless
 // the person asked for reduced motion.
 import { DESK_HUES, deskTokens, type DeskHue, type DeskInfo, MAX_DESK_NAME } from './desks.ts'
-import { fitDesks, measureKey, overflowDesks, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type SegView } from './desk-switch-rules.ts'
+import { fitCapsule, measureKey, overflowDesks, paintKey, pickFromOverflow, structureKey, touchUsed, type LastUsed, type SegView } from './desk-switch-rules.ts'
 import { ICON_NAMES, icon, type IconName } from './icons.ts'
 import { pillMark, type Badge } from './seal-rules.ts'
 import { deskSeals, type PlacedSeal } from './door/desk-seal-rules.ts'
@@ -162,6 +162,9 @@ export class DeskSwitch {
     const ro = new ResizeObserver(() => this.schedule())
     ro.observe(bar)
     for (const s of sides) ro.observe(s)
+    // The open Gaveta keeps its name when the pills shrink, so its width changes with it: fit again.
+    const drawer = element.querySelector('#btn-drawer')
+    if (drawer) new MutationObserver(() => this.schedule()).observe(drawer, { attributes: true, attributeFilter: ['aria-expanded'] })
   }
 
   render(desks: readonly DeskInfo[], active: string, mark: (deskId: string) => DeskMark): void {
@@ -213,6 +216,7 @@ export class DeskSwitch {
       b.dataset.system = p.id
       b.setAttribute('aria-pressed', String(p.active))
       b.title = `${p.title}${p.hint ? ` (${p.hint})` : ''}${p.active ? ' — clique para voltar à mesa anterior' : ''}`
+      b.setAttribute('aria-label', p.title) // the name may be hidden (icon-only pills): it stays for the screen reader
       let glyph: SVGSVGElement
       try { glyph = icon(p.icon ?? 'cards') } catch { glyph = icon('cards') } // an unknown icon name must not take the capsule down
       const name = document.createElement('span'); name.className = 'pill-name'; name.textContent = p.title
@@ -264,7 +268,12 @@ export class DeskSwitch {
     const views = this.views()
     this.paintSleep()
     const before = this.segRects()
+    // The room under both looks of the fixed pills, read back to back (no repaint in between that depends on the result).
+    this.element.classList.remove('pills-compact')
     const avail = this.room()
+    this.element.classList.add('pills-compact')
+    const availCompact = this.room()
+    this.element.classList.remove('pills-compact')
     this.measure.replaceChildren(...this.awake.map((d, i) => this.segment(d, i, true, views[i]!)))
     const probe = document.createElement('span')
     probe.className = 'seg desk-more'
@@ -275,9 +284,13 @@ export class DeskSwitch {
     const plusWidth = Math.ceil(probe.getBoundingClientRect().width)
     // Hidden window (nothing laid out): the widths are not real, so the next pass measures again.
     this.mKey = avail === undefined ? undefined : this.measureSig(views)
-    this.visible = avail === undefined
-      ? order.filter(id => this.visible.includes(id) || id === this.active)
-      : fitDesks({ order, active: this.active, visible: this.visible.filter(id => order.includes(id)), widths, avail, plusWidth, gap: this.gap(), lastUsed: this.lastUsed })
+    if (avail === undefined || availCompact === undefined) {
+      this.visible = order.filter(id => this.visible.includes(id) || id === this.active)
+    } else {
+      const fit = fitCapsule({ order, active: this.active, visible: this.visible.filter(id => order.includes(id)), widths, avail, availCompact, plusWidth, gap: this.gap(), lastUsed: this.lastUsed })
+      this.visible = fit.visible
+      this.element.classList.toggle('pills-compact', fit.compactPills)
+    }
     if (this.visible.length === 0) this.visible = [...order]
     this.measure.replaceChildren()
     if (this.paintSegs(views)) this.flip(before)
