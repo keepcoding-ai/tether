@@ -1282,6 +1282,10 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(await sizeBtn.getAttribute('aria-label'), 'Reduzir')
     assert.equal(await sizeBtn.getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('#peek .peek-card').getAttribute('data-movable'), 'false', 'the large card does not move')
+    // Large, Esc reduces: the foot says so, and the ✕ does not offer Esc to close.
+    const hint17 = (): Promise<string> => page.locator('#peek .qv-foot .qv-hint').innerText()
+    assert.match(await hint17(), /^Esc reduz/, 'the large card\'s foot: "Esc reduz"')
+    assert.doesNotMatch((await page.locator('#peek .qv-close').getAttribute('title')) ?? '', /Esc/, 'the ✕ of the large card does not say Esc')
     assert.ok(await sameTerm(), 'large: the same live terminal (not remounted)')
     assert.equal(await loanOf(b), 'lent', 'large: b still lent')
     await page.waitForTimeout(300)
@@ -1302,6 +1306,8 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await sizeBtn.click()
     await until('the card is docked again', async () => (await sizeOf()) === 'docked')
     assert.deepEqual(await card17(), docked17, 'reduced: back to its place')
+    assert.match(await hint17(), /^Esc aqui fecha/, 'the docked card\'s foot: "Esc aqui fecha"')
+    assert.match((await page.locator('#peek .qv-close').getAttribute('title')) ?? '', /Esc/, 'the docked ✕ says Esc again')
     assert.ok(await sameTerm(), 'reduced: the same live terminal')
     // Esc in the large card's header reduces (it does not close); Esc again closes nothing yet: we keep it open below.
     await sizeBtn.click()
@@ -1368,9 +1374,20 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     await page.keyboard.press(' ')
     await until('a in the card', async () => (await peekState()).pane === a)
     assert.deepEqual(await card17(), docked17, 'a swap puts the card back in its place')
+    // Large, then another pane spied: it stays large (the "imersão rápida"), with the same foot.
+    await sizeBtn.click()
+    await until('a large', async () => (await sizeOf()) === 'large')
     await page.locator(`.rg-tree [data-key="${bKey}"]`).focus()
     await page.keyboard.press(' ')
-    await until('b in the card for the close', async () => (await peekState()).pane === b)
+    await until('b in the large card', async () => (await peekState()).pane === b)
+    assert.equal(await sizeOf(), 'large', 'the swap keeps the card large')
+    await until('b\'s large box', async () => JSON.stringify(await card17()) === JSON.stringify(large17))
+    assert.match(await hint17(), /^Esc reduz/)
+    assert.equal(await loanOf(a), 'home', 'a went home on the swap')
+    // Esc on the row that opened it: the large card reduces first.
+    await page.keyboard.press('Escape')
+    await until('Esc on the row reduced', async () => (await sizeOf()) === 'docked')
+    assert.equal((await peekState()).open, true)
     await page.locator(`.rg-tree [data-key="${bKey}"]`).focus()
 
     // Esc on the row that opened it closes; b goes back whole.

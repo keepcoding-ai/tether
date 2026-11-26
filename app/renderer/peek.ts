@@ -47,7 +47,7 @@ import {
 } from './peek-rules.ts'
 import { lentNoticeElement, type ShellLoan } from './pane-shell.ts'
 import {
-  NO_OFFSET, clampOffset, dragAllowed, dragStarted, quickBox, quickEscAction, shownSize, sizeButton, toggledSize,
+  NO_OFFSET, clampOffset, dragAllowed, dragStarted, escWord, quickBox, quickEscAction, shownSize, sizeButton, sizeOnShow, toggledSize,
   type Offset, type QuickAbilities, type QuickFrame, type QuickSize,
 } from './quick-card-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
@@ -453,8 +453,10 @@ export class PeekCard {
       this.opener = from ?? this.activeOutside()
       if (this.opener) this.returnTo = this.opener
     }
-    // Another pane in the card: it starts small and in its place (the size and a drag never carry over).
+    // Another pane in the card: back in its place (a drag never carries over); a large card stays large, a new opening is docked.
+    const size = sizeOnShow(this.size, opening)
     this.resetPlace()
+    this.size = size
     const holder = make('div', 'peek-pane')
     holder.dataset.pane = paneId
     this.body.replaceChildren(holder)
@@ -547,7 +549,8 @@ export class PeekCard {
     if (!g) { this.close({ restoreFocus: false }); return }
     const a = this.abilities()
     const size = shownSize(this.size, a)
-    if (size !== this.size) { this.size = size; this.offset = NO_OFFSET }
+    const shrunk = size !== this.size
+    if (shrunk) { this.size = size; this.offset = NO_OFFSET }
     if (!a.move && !this.drag) this.offset = NO_OFFSET
     const b = quickBox(this.size, g.docked, g.area, this.offset)
     const px = (n: number): string => `${n}px`
@@ -556,6 +559,8 @@ export class PeekCard {
     if (this.card.style.width !== px(b.width)) this.card.style.width = px(b.width)
     if (this.card.style.height !== px(b.height)) this.card.style.height = px(b.height)
     this.paintSize(a)
+    // The foot's Esc word and the ✕'s tooltip follow the size.
+    if (shrunk) this.render()
   }
 
   /** The header's "Ampliar"/"Reduzir" and the marks CSS reads (`#peek[data-size]`, the card's `data-movable`); writes only on a change. */
@@ -585,6 +590,7 @@ export class PeekCard {
     this.offset = NO_OFFSET
     this.endDrag()
     this.placeDocked()
+    this.render()
   }
 
   /** Esc where it closes the card (escClosesAt): the large docked card reduces, anything else closes (quick-card-rules.ts quickEscAction). */
@@ -908,9 +914,11 @@ export class PeekCard {
       if (this.qvState.className !== cls) this.qvState.className = cls
       if (this.qvState.textContent !== head.state.text) this.qvState.replaceChildren(make('span', 'dot'), document.createTextNode(head.state.text))
     }
-    const tip = closeTip(['Esc', ...hints])
+    // The large docked card: Esc reduces it, so neither the ✕ nor the foot offer Esc as a way to close.
+    const large = this.dock !== undefined && this.size === 'large'
+    const tip = closeTip(large ? hints : ['Esc', ...hints])
     if (this.qvClose.title !== tip) this.qvClose.title = tip
-    const foot = paneCardFoot(f, hints)
+    const foot = paneCardFoot(f, hints, escWord(large ? 'large' : 'docked'))
     setText(this.qvHint, foot.hint)
     this.qvNote.hidden = !v.note
     setText(this.qvNote, v.note ?? '')

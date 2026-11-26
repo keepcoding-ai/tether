@@ -455,14 +455,15 @@ export interface PaneCardFoot {
   hint: string
 }
 
-export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'place'>, hints: readonly string[]): PaneCardFoot {
+/** `esc`: what Esc does here, as the foot says it (the large docked card reduces: quick-card-rules.ts escWord). */
+export function paneCardFoot(f: Pick<PaneCardFacts, 'asleep' | 'deskAsleep' | 'place'>, hints: readonly string[], esc = 'Esc aqui fecha'): PaneCardFoot {
   const wake = f.deskAsleep
     ? { label: WAKE_LABEL, title: `Despertar a mesa${f.place ? ` ${f.place}` : ''}: as guias dela voltam a rodar`, what: 'desk' as const, band: 'Mesa hibernando: o que você vê não está rodando' }
     : f.asleep ? { label: WAKE_LABEL, title: 'Despertar a guia: o processo dela volta a rodar', what: 'pane' as const, band: 'Guia hibernando: o que você vê não está rodando' } : undefined
   return {
     wake,
     go: { label: GO_PANE_LABEL, title: 'Ir até a guia: fecha o cartão, devolve a guia ao lugar dela e mostra a guia' },
-    hint: hints.length ? `Esc aqui fecha · ${hints.join(' ou ')}` : 'Esc aqui fecha',
+    hint: hints.length ? `${esc} · ${hints.join(' ou ')}` : esc,
   }
 }
 

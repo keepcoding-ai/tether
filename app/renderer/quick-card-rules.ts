@@ -47,6 +47,19 @@ export function shownSize(size: QuickSize, a: QuickAbilities): QuickSize {
   return size === 'large' && !a.expand ? 'docked' : size
 }
 
+/**
+ * The size when a pane comes to the card: a new opening starts docked (nothing persists between openings); another pane
+ * spied in an open card keeps its size (the large card is the "imersão rápida": it stays large). A drag never carries over.
+ */
+export function sizeOnShow(size: QuickSize, opening: boolean): QuickSize {
+  return opening ? 'docked' : size
+}
+
+/** The foot's Esc word for the size shown: the large card reduces, the docked one closes. */
+export function escWord(size: QuickSize): string {
+  return size === 'large' ? 'Esc reduz' : 'Esc aqui fecha'
+}
+
 export function toggledSize(size: QuickSize): QuickSize {
   return size === 'large' ? 'docked' : 'large'
 }

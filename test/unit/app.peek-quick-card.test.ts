@@ -4,9 +4,9 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DRAG_THRESHOLD, LARGE_MARGIN, LARGE_MARGIN_SMALL, NO_OFFSET, clampOffset, dragAllowed, dragStarted, largeBox, quickAbilities, quickBox,
-  quickEscAction, shownSize, sizeButton, toggledSize, type QuickAbilities,
+  escWord, quickEscAction, shownSize, sizeButton, sizeOnShow, toggledSize, type QuickAbilities,
 } from '../../app/renderer/quick-card-rules.ts'
-import { DOCK_MARGIN, type Box } from '../../app/renderer/peek-rules.ts'
+import { DOCK_MARGIN, paneCardFoot, type Box } from '../../app/renderer/peek-rules.ts'
 
 const BOTH: QuickAbilities = { expand: true, move: true }
 
@@ -32,6 +32,19 @@ describe('quick card: the two sizes', () => {
     assert.deepEqual([sizeButton('docked').label, sizeButton('docked').icon], ['Ampliar', 'arrows-out-simple'])
     assert.deepEqual([sizeButton('large').label, sizeButton('large').icon], ['Reduzir', 'arrows-in-simple'])
     assert.match(sizeButton('large').title, /Esc/)
+  })
+  test('another pane spied keeps a large card large; a new opening is docked', () => {
+    assert.equal(sizeOnShow('large', false), 'large', 'the swap keeps the "imersão rápida"')
+    assert.equal(sizeOnShow('docked', false), 'docked')
+    assert.equal(sizeOnShow('large', true), 'docked', 'nothing persists between openings')
+  })
+  test('the foot says what Esc does: the large card reduces, the docked one closes', () => {
+    assert.equal(escWord('large'), 'Esc reduz')
+    assert.equal(escWord('docked'), 'Esc aqui fecha')
+    const f = { asleep: false, deskAsleep: false, place: 'Obra' }
+    assert.equal(paneCardFoot(f, ['Ctrl+Shift+O'], escWord('large')).hint, 'Esc reduz · Ctrl+Shift+O')
+    assert.equal(paneCardFoot(f, ['Ctrl+Shift+O']).hint, 'Esc aqui fecha · Ctrl+Shift+O', 'the default is the docked word')
+    assert.equal(paneCardFoot(f, [], escWord('large')).hint, 'Esc reduz')
   })
   test('the large box is the area less the modal margin (6 px in a small area)', () => {
     assert.deepEqual(largeBox({ left: 100, top: 40, width: 1600, height: 900 }), { left: 100 + LARGE_MARGIN, top: 40 + LARGE_MARGIN, width: 1600 - 2 * LARGE_MARGIN, height: 900 - 2 * LARGE_MARGIN })
