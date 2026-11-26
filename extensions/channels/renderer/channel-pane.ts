@@ -10,7 +10,7 @@ import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } fro
 import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
-import { markdownNodes, markdownPlain } from './speech-markdown.ts'
+import { linkDisguise, linkTip, markdownNodes, markdownPlain } from './speech-markdown.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
 import type { ChannelEvent, LineEvent, PollEvent, ReactionEvent } from '../daemon/fanout.ts'
 import { reactionKey, USER, type Line, type PollMissingWhy } from '../rules.ts'
@@ -18,7 +18,7 @@ import {
   applyPoll, cardAria, cardOf, closePollDialog, isNoOption, POLL_REASON_MAX, pollRefusalText, countdown, voteAnnounce,
   type PollCard, type PollOpenView, type PollState,
 } from './polls.ts'
-import { ICON } from './texts.ts'
+import { ICON, disguisedLinkDialog } from './texts.ts'
 import {
   announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, seesNextText, splitPills, whoText,
   type Pending, type Pill, type Tallies,
@@ -2247,8 +2247,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           }
           if (at < text.length) this.plainSpeech(parent, text.slice(at))
         },
-        link: (href, parent) => {
-          const a = this.linkAnchor(href)
+        link: (href, parent, text) => {
+          const a = this.linkAnchor(href, undefined, text)
           parent.append(a)
           return a
         },
@@ -2256,12 +2256,25 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       return box
     }
 
-    /** The app link for a URL: a plain click follows, Alt+click peeks, the right button opens the link's menu. */
-    private linkAnchor(url: string, text?: string): HTMLAnchorElement {
+    /**
+     * The app link for a URL: a plain click follows, Alt+click peeks, the right button opens the link's menu. `shows`: the text a
+     * markdown link shows; when it is not the address itself the tip tells the real one, and when it spells ANOTHER address
+     * (linkDisguise) the click asks first.
+     */
+    private linkAnchor(url: string, text?: string, shows?: string): HTMLAnchorElement {
       const target = linkTargetOfUrl(url)
       const a = el('a', 'ch-link', text)
       a.href = '#'
-      a.addEventListener('click', ev => { ev.preventDefault(); ui.links.follow(target, ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}) })
+      const tip = shows === undefined ? undefined : linkTip(shows, url)
+      if (tip) a.title = tip
+      const disguise = shows === undefined ? undefined : linkDisguise(shows, url)
+      if (disguise) a.dataset.disguised = ''
+      a.addEventListener('click', ev => {
+        ev.preventDefault()
+        const opts = ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}
+        if (!disguise) { ui.links.follow(target, opts); return }
+        void ui.dialogs.ask(disguisedLinkDialog(disguise)).catch(() => undefined).then(r => { if (r?.choice === 'follow') ui.links.follow(target, opts) })
+      })
       a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.links.showMenu(ev.clientX, ev.clientY, target) })
       return a
     }
