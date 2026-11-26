@@ -255,6 +255,40 @@ export function portsWords(ports: readonly { port: number; listening: boolean }[
 
 const procRank = (r: ProcRow): number => (r.attention ? 0 : r.status === 'running' || r.status === 'stopping' ? 1 : 2)
 
+/** A row's colour by intent: running is ok, a fall or a failure is bad, stopping is a warning, the rest is quiet. */
+export function procIntent(r: ProcRow): 'ok' | 'warn' | 'bad' | 'off' {
+  if (r.status === 'running') return 'ok'
+  if (r.status === 'stopping') return 'warn'
+  if (r.attention || r.status === 'failed' || r.status === 'host-lost') return 'bad'
+  if (r.status === 'exited' && !/código 0/.test(r.stateText)) return 'bad'
+  return 'off'
+}
+
+/** The TV's rail of "Sistema" at a glance: each process with its state, the notice of a fall, the rondas that are on. */
+export interface SystemSummary {
+  procs: { name: string; state: string; intent: 'ok' | 'warn' | 'bad' | 'off' }[]
+  /** "1 processo caiu" (the red dot's words), absent while nothing fell. */
+  fell?: string
+  /** The words when there is no process. */
+  procsEmpty?: string
+  rondas: { name: string; text: string }[]
+  /** The words when no ronda is on. */
+  rondasEmpty?: string
+}
+
+/** The summary from the model the sections paint (same order: what needs attention first). */
+export function systemSummary(model: SystemModel): SystemSummary {
+  const procs = model.processes.map(p => ({ name: p.name, state: p.stateText, intent: procIntent(p) }))
+  const rondas = model.ronda.filter(r => r.on).map(r => ({ name: r.name, text: [r.intervalText, r.nextText ? `próxima ${r.nextText}` : undefined].filter(Boolean).join(' · ') }))
+  return {
+    procs,
+    ...(model.dot.show ? { fell: model.dot.text } : {}),
+    ...(procs.length === 0 ? { procsEmpty: 'Nenhum processo' } : {}),
+    rondas,
+    ...(rondas.length === 0 ? { rondasEmpty: 'Nenhuma ronda ligada' } : {}),
+  }
+}
+
 /** Needs attention first, then the live ones, then the rest; by name inside each. */
 export function procRowsOf(procs: readonly SystemProcInput[], now: number): ProcRow[] {
   return procs.map(p => procRow(p, now)).sort((a, b) => procRank(a) - procRank(b) || byName(a.name, b.name))

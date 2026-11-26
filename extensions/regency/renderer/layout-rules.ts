@@ -25,6 +25,8 @@ export interface RegencyLayout {
   system?: SystemSection
   /** The right column shows "Sistema" instead of the tether's (absent: the tether's). */
   column?: 'system'
+  /** The tablet's one side column shows "Tether" (absent: "Esperam você" and "Conversas"). */
+  side?: 'tether'
 }
 
 export const DEFAULT_LAYOUT: Readonly<RegencyLayout> = {
@@ -50,6 +52,7 @@ export function readLayout(params: unknown): RegencyLayout {
     filter: TREE_FILTERS.find(f => f === p.filter) ?? 'all',
     ...(isSystemSection(p.system) ? { system: p.system } : {}),
     ...(p.column === 'system' ? { column: 'system' as const } : {}),
+    ...(p.side === 'tether' ? { side: 'tether' as const } : {}),
   }
 }
 
@@ -111,4 +114,96 @@ export function tierOf(widthPx: number): Tier {
   if (widthPx < 1280) return 'tablet'
   if (widthPx < 2560) return 'desktop'
   return 'wide'
+}
+
+// ---------------------------------------------------------------- the four designs
+
+/** The tablet's two places for its one side column. */
+export type TabletSide = 'waiting' | 'tether'
+
+/** What the tablet's side column shows (kept in the layout). */
+export const tabletSideOf = (l: RegencyLayout): TabletSide => (l.side === 'tether' ? 'tether' : 'waiting')
+
+export const otherSide = (s: TabletSide): TabletSide => (s === 'tether' ? 'waiting' : 'tether')
+
+/** The side column shows `side`; the other comes as the panel over the conversation, on demand. */
+export function setTabletSide(l: RegencyLayout, side: TabletSide): RegencyLayout {
+  const { side: _drop, ...rest } = l
+  return side === 'tether' ? { ...rest, side: 'tether' } : rest
+}
+
+/** The tablet's inner step: the same design, denser from 1024 px (the side column gets wider). Only the tablet has one. */
+export function tierStep(widthPx: number): 'sm' | 'lg' | undefined {
+  if (tierOf(widthPx) !== 'tablet') return undefined
+  return widthPx >= 1024 ? 'lg' : 'sm'
+}
+
+/** A place of the Regency: what a column (or the tablet's panel over the conversation) shows. */
+export type Place = 'waiting' | 'conversation' | 'quick' | 'tether' | 'system'
+
+/** How a tier lays the Regency out: the columns left to right, the panel on demand, where the quick view and "Sistema" go. */
+export interface TierPlan {
+  columns: readonly Place[]
+  /** The tablet: the place not in the side column, shown as a panel over the conversation when asked. */
+  sheet?: 'waiting' | 'tether'
+  /** A card docked over the conversation, or a fixed column beside it (the TV). */
+  quick: 'card' | 'column'
+  /** "Sistema" swaps the tree's column, or has its own rail always in view (the TV). */
+  system: 'swap' | 'rail'
+  /** The phone's bottom bar. */
+  bottomBar: boolean
+}
+
+/**
+ * The design of each tier over the same layout. Phone: one place at a time. Tablet: the conversation and one side column
+ * (the other on demand). Desktop: the three columns. TV: the width works (who waits, the conversation at a reading measure,
+ * the quick view's column, the tree, the rail of "Sistema"). Immersion keeps only the conversation, on every tier but the phone.
+ */
+export function tierPlan(tier: Tier, l: RegencyLayout): TierPlan {
+  const tree: Place = rightColumnOf(l) === 'system' ? 'system' : 'tether'
+  if (tier === 'mobile') {
+    const place: Place = l.narrowTab === 'waiting' ? 'waiting' : l.narrowTab === 'tether' ? tree : 'conversation'
+    return { columns: [place], quick: 'card', system: 'swap', bottomBar: true }
+  }
+  if (l.mode === 'immersion') return { columns: ['conversation'], quick: 'card', system: 'swap', bottomBar: false }
+  if (tier === 'tablet') {
+    const side = tabletSideOf(l)
+    return { columns: [side === 'tether' ? tree : 'waiting', 'conversation'], sheet: otherSide(side), quick: 'card', system: 'swap', bottomBar: false }
+  }
+  if (tier === 'desktop') return { columns: ['waiting', 'conversation', tree], quick: 'card', system: 'swap', bottomBar: false }
+  return { columns: ['waiting', 'conversation', 'quick', 'tether', 'system'], quick: 'column', system: 'rail', bottomBar: false }
+}
+
+/** What the tree's column shows on this tier: on the TV "Sistema" has its own rail, so the tree never steps aside. */
+export const treeColumnOf = (l: RegencyLayout, tier: Tier): 'tether' | 'system' => (tier === 'wide' ? 'tether' : rightColumnOf(l))
+
+/** "Sistema" is drawn now: in its rail on the TV (outside immersion), else when it holds the tree's column. */
+export const systemShownOf = (l: RegencyLayout, tier: Tier): boolean =>
+  tier === 'wide' ? l.mode === 'manage' : rightColumnOf(l) === 'system'
+
+/**
+ * The person opens "Sistema" (on `section`, or the kept one). TV: its rail is always in view, so only the section changes
+ * (the tree's column keeps the tree, here and when the pane narrows). Tablet: it enters by the side column, which turns to
+ * "Tether". Elsewhere: it takes the tree's column.
+ */
+export function openSystemOn(l: RegencyLayout, tier: Tier, section?: SystemSection): RegencyLayout {
+  if (tier === 'wide') return { ...l, system: section ?? systemSectionOf(l) }
+  const next = openSystem(l, section)
+  return tier === 'tablet' ? setTabletSide(next, 'tether') : next
+}
+
+/**
+ * The pane changes tier with the keyboard in one of the side places: the place stays in view. Entering the tablet with the
+ * keyboard in the place the side column does not show, the column turns to it. Leaving the TV with the keyboard in the rail
+ * of "Sistema", "Sistema" takes the tree's column (on the tablet, by the side column). The phone is left as it is.
+ */
+export function layoutOnTier(l: RegencyLayout, to: Tier, focusIn: 'waiting' | 'tether' | 'system' | undefined): RegencyLayout {
+  if (l.mode !== 'manage' || focusIn === undefined || to === 'mobile' || to === 'wide') return l
+  let next = l
+  if (focusIn === 'system' && rightColumnOf(next) !== 'system') next = openSystem(next)
+  if (to === 'tablet') {
+    const want: TabletSide = focusIn === 'waiting' ? 'waiting' : 'tether'
+    if (tabletSideOf(next) !== want) next = setTabletSide(next, want)
+  }
+  return next
 }

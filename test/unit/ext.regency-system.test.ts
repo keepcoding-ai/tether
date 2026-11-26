@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
-  dotText, forceReasonError, inUseRefusal, portsWords, procStateText, refusalText, spanWords, systemDot, systemModelOf, systemSignature,
+  dotText, forceReasonError, inUseRefusal, portsWords, procStateText, refusalText, spanWords, systemDot, systemModelOf, systemSignature, systemSummary,
   type SystemAgentInput, type SystemInput, type SystemProcInput,
 } from '../../extensions/regency/system-rules.ts'
 import {
@@ -316,5 +316,45 @@ describe('layout: the right column and the remembered section', () => {
       assert.equal('column' in r, false)
     }
     assert.deepEqual(readLayout({ system: 'bad', column: 'x' }), DEFAULT_LAYOUT)
+  })
+})
+
+describe('the TV rail summary (systemSummary)', () => {
+  test('empty: the words for no process and no ronda, no fall', () => {
+    const s = systemSummary(systemModelOf(input()))
+    assert.deepEqual(s, { procs: [], procsEmpty: 'Nenhum processo', rondas: [], rondasEmpty: 'Nenhuma ronda ligada' })
+  })
+
+  test('each process with its state and intent, in the sections order; a fall names the red dot', () => {
+    const m = systemModelOf(input({
+      procs: [
+        proc('web'),
+        proc('job', { status: 'exited', attention: true, exit: { code: 1, at: at(-4), cause: 'own' } }),
+        proc('done', { status: 'exited', exit: { code: 0, at: at(-1), cause: 'own' } }),
+        proc('halt', { status: 'stopping' }),
+      ],
+    }))
+    const s = systemSummary(m)
+    assert.deepEqual(s.procs.map(p => p.name), m.processes.map(p => p.name))
+    const by = Object.fromEntries(s.procs.map(p => [p.name, p]))
+    assert.equal(by.web!.intent, 'ok')
+    assert.equal(by.job!.intent, 'bad')
+    assert.equal(by.done!.intent, 'off')
+    assert.equal(by.halt!.intent, 'warn')
+    assert.equal(by.job!.state, 'Caiu (código 1) há 4 min')
+    assert.equal(s.fell, m.dot.text)
+    assert.equal(s.fell, '1 processo caiu')
+    assert.equal('procsEmpty' in s, false)
+  })
+
+  test('only the rondas that are on, with interval and next', () => {
+    const m = systemModelOf(input({
+      agents: [agent('ana', { ronda: { intervalMs: 20 * 60_000, nextAt: at(5), channel: 'listening' } }), agent('zed')],
+    }))
+    const s = systemSummary(m)
+    assert.deepEqual(s.rondas.map(r => r.name), ['ana'])
+    assert.match(s.rondas[0]!.text, /20 min · próxima em 5 min$/)
+    assert.equal('rondasEmpty' in s, false)
+    assert.equal('fell' in s, false)
   })
 })

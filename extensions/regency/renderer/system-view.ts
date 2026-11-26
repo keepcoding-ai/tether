@@ -8,7 +8,7 @@ import { identityView } from '../../../app/renderer/agent-identity.ts'
 import type { ContextMenuEntry, RondaAnswer, RondaChange } from '../../../app/renderer/ext-api.ts'
 import type { GuardedOptions, ProcAct } from '../../processes/embed.ts'
 import {
-  SYSTEM_SECTIONS, forceReasonError, intervalWords, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
+  SYSTEM_SECTIONS, forceReasonError, intervalWords, procIntent, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
   type RondaRow, type SettingsItem, type SystemModel, type SystemSection,
 } from '../system-rules.ts'
 import { el, glyph } from './columns.ts'
@@ -58,15 +58,6 @@ const SECTION_ICON: Record<SystemSection, string> = {
 
 const SETTINGS_ICON: Record<SettingsItem['id'], string> = {
   settings: 'gear-six', extensions: 'puzzle-piece', keybindings: 'keyboard', bridge: 'brand', sync: 'arrows-clockwise',
-}
-
-/** A row's colour by intent: running is ok, a fall or a failure is bad, stopping is a warning, the rest is quiet. */
-function procIntent(r: ProcRow): 'ok' | 'warn' | 'bad' | 'off' {
-  if (r.status === 'running') return 'ok'
-  if (r.status === 'stopping') return 'warn'
-  if (r.attention || r.status === 'failed' || r.status === 'host-lost') return 'bad'
-  if (r.status === 'exited' && !/código 0/.test(r.stateText)) return 'bad'
-  return 'off'
 }
 
 interface Act { id: string; icon: string; tip: string; label?: string; danger?: boolean }
