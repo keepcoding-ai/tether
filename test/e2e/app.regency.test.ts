@@ -195,10 +195,14 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
       while (Date.now() < end) { if (await fn()) return; await page.waitForTimeout(100) }
       throw new Error(`timeout: ${what}`)
     }
+    // A desk switch hands the keyboard to the desk's active pane one animation frame later (focusActivePane): a test that
+    // focuses a row right after the switch must wait that frame out, or the shell takes the keyboard from the row.
+    const frames = (): Promise<void> => page.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))))
     const enter = async (): Promise<void> => {
       if ((await page.evaluate(() => window.__tether.activeDesk())) !== DESK) await page.evaluate(d => window.__tether.runCommand(`desk.system.${d}`), DESK)
       await page.waitForFunction(d => window.__tether.activeDesk() === d, DESK)
       await page.waitForFunction(p => window.__tether.panelIds().includes(p), PANE)
+      await frames()
     }
     const queueDesk = await page.evaluate(() => window.__tether.activeDesk())
 
@@ -963,6 +967,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     // Back to the Regency for the rest of the gestures.
     await page.evaluate(d => window.__tether.switchDesk(d), DESK)
     await page.waitForFunction(d => window.__tether.activeDesk() === d, DESK)
+    await frames()
     // "Fechar guia" on the copy: its row goes, the keyboard goes to the row now in its place.
     const copyKey = (await treeKeys()).find(k => k.endsWith(`:${copy}`))!
     const copyRow = page.locator(`.rg-tree [data-key="${copyKey}"]`)
