@@ -2,10 +2,11 @@
 // output (Scrollback) and a clean log on disk, records pid / start time / exit in <home>/procs/<name>.run.json and
 // tells its clients. It decides nothing: tetherd sends ready plans and asks to stop. Small on purpose: if this
 // process dies, every process it hosts dies with it (ConPTY closes with its owner).
-import { rm } from 'node:fs/promises'
+import { chmod, rm } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { processStartTime } from '../core/liveness.ts'
 import { encode, guessId, LineParser } from '../daemon/ndjson.ts'
+import { clientProof, daemonProof, fillKeyFile, hostKeyPath, isNonce, newNonce, prepareKeyFile, sameProof, servePipeHome, unservePipeHome } from '../daemon/pipe-key.ts'
 import { killTree, spawnPty, type PtyHandle } from '../daemon/pty.ts'
 import { Scrollback } from '../daemon/scrollback.ts'
 import { makePrioritySetter, prioritiesEnabled, PRIORITY_BELOW_NORMAL, type SetPriority } from './priority.ts'
@@ -63,6 +64,8 @@ export interface HostOptions {
   scrollbackChars?: number
   /** Priority setter for hosted processes (tests inject one). Default: the OS one; TETHER_PRIORITIES=0 turns it off. */
   setPriority?: SetPriority
+  /** Overrides HOST_HELLO_TIMEOUT_MS (tests). */
+  helloTimeoutMs?: number
 }
 
 export interface HostStats {
@@ -81,8 +84,18 @@ class ClientOut {
   queued = 0
   names = new Map<string, NameOut>()
   readonly socket: Socket
+  /** The hello's proof was checked: only then does this client get events and answers to anything but auth/hello. */
+  greeted = false
+  /** The nonces of this connection's `auth`, waiting for the hello's proof (used once). */
+  challenge: { client: string; daemon: string } | undefined
+  helloTimer: NodeJS.Timeout | undefined
+  /** Close once the reply in flight is written (a refused hello). */
+  closeAfterReply = false
   constructor(socket: Socket) { this.socket = socket }
 }
+
+/** A connection that has not completed its hello by then is dropped (tetherd and the app send it at once). */
+export const HOST_HELLO_TIMEOUT_MS = 10_000
 
 const CAPS: HostCap[] = ['write', 'offsets', 'lag']
 
@@ -143,6 +156,9 @@ export class ProcHost {
   private readonly runs = new Map<string, Run>()
   private idleTimer: NodeJS.Timeout | undefined
   private closing = false
+  private readonly helloTimeoutMs: number
+  /** This host's own key (pipe-key.ts hostKeyPath), drawn once the pipe is ours; `auth` waits for it. */
+  private key: Promise<Buffer> = new Promise(() => {})
 
   constructor(opts: HostOptions) {
     this.home = opts.home
@@ -159,6 +175,7 @@ export class ProcHost {
     this.batchMs = opts.batchMs ?? BATCH_MS
     this.inputMax = opts.inputMax ?? INPUT_MAX
     this.scrollbackChars = opts.scrollbackChars ?? SCROLLBACK_CHARS
+    this.helloTimeoutMs = opts.helloTimeoutMs ?? HOST_HELLO_TIMEOUT_MS
     this.setPriority = makePrioritySetter({ enabled: prioritiesEnabled(), set: opts.setPriority, log: this.log })
     // The queue is pumped only on 'drain', and a socket emits 'drain' only after a write found it at or above its own
     // highWaterMark. With that mark equal to outHigh, every item that waits (queued because writableLength >= outHigh)
@@ -168,12 +185,25 @@ export class ProcHost {
   }
 
   async listen(): Promise<void> {
+    // The key file first: one that cannot be private stops the host before it serves anything (pipe-key.ts).
+    const keyPath = hostKeyPath(this.home, this.pipe)
+    await prepareKeyFile(this.home, keyPath, this.log)
     if (this.persist) this.startedAt = (await processStartTime(process.pid)) ?? this.startedAt
     if (process.platform !== 'win32') await rm(this.pipe, { force: true }) // a socket file left by a dead host
     await new Promise<void>((resolve, reject) => {
       this.server.once('error', reject)
       this.server.listen(this.pipe, () => { this.server.off('error', reject); resolve() })
     })
+    try {
+      if (process.platform !== 'win32') await chmod(this.pipe, 0o600)
+      // Only the owner of the pipe draws the key: a host that lost the race never replaces the winner's.
+      this.key = fillKeyFile(keyPath)
+      await this.key
+    } catch (e) {
+      this.server.close()
+      throw e
+    }
+    servePipeHome(this.pipe, this.home)
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
     this.armIdle()
     this.log(`listening on ${this.pipe}`)
@@ -195,6 +225,7 @@ export class ProcHost {
     await Promise.all([...this.runs.values()].filter((r) => !r.exit).map((r) => r.pty.kill()))
     for (const c of this.clients) c.destroy()
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    unservePipeHome(this.pipe, this.home)
     this.log('closed')
   }
 
@@ -215,6 +246,14 @@ export class ProcHost {
     this.clients.add(socket)
     const out = new ClientOut(socket)
     this.outs.set(socket, out)
+    // Any account of the machine may open the pipe (Windows gives Everyone read): one that never says hello is dropped.
+    // The check waits one more turn of the loop, so a hello already read but not yet handled is not lost to the timer.
+    out.helloTimer = setTimeout(() => setImmediate(() => {
+      if (out.greeted || socket.destroyed) return
+      this.log(`client dropped: no hello in ${this.helloTimeoutMs} ms`)
+      socket.destroy()
+    }), this.helloTimeoutMs)
+    out.helloTimer.unref()
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
       for (const line of parser.push(chunk)) void this.onLine(socket, line.value, line.raw)
@@ -222,6 +261,7 @@ export class ProcHost {
     socket.on('error', () => { /* surfaces as close */ })
     socket.on('drain', () => this.pump(out))
     socket.on('close', () => {
+      clearTimeout(out.helloTimer)
       this.clients.delete(socket)
       this.outs.delete(socket)
       for (const n of out.names.values()) if (n.timer) clearTimeout(n.timer)
@@ -313,6 +353,13 @@ export class ProcHost {
       if (id !== undefined) this.send(socket, { t: 'error', id, code: 'bad-request', message: 'linha não é JSON válido' })
       return
     }
+    const out = this.outs.get(socket)
+    if (!out) return
+    if (!out.greeted && value.t !== 'auth' && value.t !== 'hello') {
+      // Before the hello nothing is done: input is dropped, any other request refused.
+      if (typeof value.id === 'number') this.send(socket, { t: 'error', id: value.id, code: 'auth-required', message: 'identifique-se primeiro (hello)' })
+      return
+    }
     if (value.t === 'write') { this.onWrite(value as unknown as HostNotice); return }
     const req = value as unknown as HostRequest
     if (typeof req.id !== 'number') return
@@ -324,6 +371,36 @@ export class ProcHost {
       reply = { t: 'error', id: req.id, code: err.code, message: err.message }
     }
     this.send(socket, reply)
+    if (out.closeAfterReply) socket.end()
+  }
+
+  /** `auth`: the handshake's first step (daemon/pipe-key.ts, scope 'tether-host'). Never twice for a greeted client. */
+  private async auth(out: ClientOut, req: Extract<HostRequest, { t: 'auth' }>): Promise<HostReply> {
+    if (out.greeted) throw new HostError('bad-request', 'conexão já identificada')
+    if (!isNonce(req.nonce)) throw new HostError('bad-request', 'nonce inválido (64 dígitos hexadecimais)')
+    const key = await this.key
+    const daemon = newNonce()
+    out.challenge = { client: req.nonce, daemon }
+    return { t: 'ok', id: req.id, auth: { nonce: daemon, proof: daemonProof(key, req.nonce, daemon, 'tether-host') } }
+  }
+
+  /** The hello's proof, once per connection; a refusal closes the connection after its reply. */
+  private async checkHello(out: ClientOut, req: Extract<HostRequest, { t: 'hello' }>): Promise<void> {
+    if (out.greeted) return
+    const challenge = out.challenge
+    out.challenge = undefined
+    if (req.proof === undefined || !challenge) {
+      out.closeAfterReply = true
+      this.log(`client refused: hello without proof (protocol ${String(req.v)})`)
+      throw new HostError('auth-required', `este anfitrião (versão ${PROCD_VERSION}) só atende quem prova ser o mesmo usuário, e este cliente é de uma versão anterior do tether: reinicie o tetherd (tether daemon restart)`)
+    }
+    if (!sameProof(req.proof, clientProof(await this.key, challenge.client, challenge.daemon, 'tether-host'))) {
+      out.closeAfterReply = true
+      this.log("client refused: the hello's proof does not match")
+      throw new HostError('auth-failed', 'a identificação não confere com a chave deste anfitrião')
+    }
+    out.greeted = true
+    clearTimeout(out.helloTimer)
   }
 
   private onWrite(n: HostNotice): void {
@@ -345,7 +422,10 @@ export class ProcHost {
   private async handle(socket: Socket, req: HostRequest): Promise<HostReply> {
     const { id } = req
     switch (req.t) {
+      case 'auth':
+        return await this.auth(this.outs.get(socket)!, req)
       case 'hello':
+        await this.checkHello(this.outs.get(socket)!, req)
         if (req.v !== PROCD_PROTOCOL_VERSION) throw new HostError('version', `anfitrião fala a versão ${PROCD_PROTOCOL_VERSION} do protocolo, o cliente a ${String(req.v)}`)
         return { t: 'ok', id, hello: { v: PROCD_PROTOCOL_VERSION, caps: CAPS, pid: this.pid, version: PROCD_VERSION, startedAt: this.startedAt } }
       case 'spawn': {
@@ -456,7 +536,7 @@ export class ProcHost {
     this.writeRun(home, run)
     this.log(`${name} run ${run.run} pid ${run.pid} ended with code ${code}`)
     done(exit)
-    for (const c of this.clients) this.send(c, { t: 'exit', name, run: run.run, exit })
+    for (const c of this.clients) if (this.outs.get(c)?.greeted) this.send(c, { t: 'exit', name, run: run.run, exit })
     this.armIdle()
   }
 

@@ -70,7 +70,7 @@ before(async () => {
 after(async () => {
   try { probe?.close() } catch { /* gone */ }
   try {
-    const ptyd = await HostClient.ping(ptydPipe)
+    const ptyd = await HostClient.ping(ptydPipe, home)
     if (ptyd) seen.add(ptyd.pid)
     // The shutdown drains the queued writes through the slow disk: it can take a while.
     await suite.shutdown(120_000)

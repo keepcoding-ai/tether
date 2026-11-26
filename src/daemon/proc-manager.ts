@@ -84,6 +84,8 @@ export interface ProcManagerOptions {
   author: (by: ProcBy | undefined, client: string | undefined) => ProcAuthor
   /** Connects to the host; `launch` = start one when nothing answers (only a start does). */
   connectHost: (launch: boolean) => Promise<HostClient>
+  /** An unproven connection to a host before protocol 2 (HostOpenOptions.legacy): `host stop` uses it to let an upgrade past one. */
+  openLegacyHost?: () => Promise<HostClient>
   /** Base environment of the processes (default: tetherd's). */
   env?: NodeJS.ProcessEnv
   reconnectMs?: number
@@ -131,6 +133,7 @@ export class ProcManager {
   private readonly broadcast: (msg: DaemonMessage) => void
   private readonly author: ProcManagerOptions['author']
   private readonly connectHost: ProcManagerOptions['connectHost']
+  private readonly openLegacyHost: ProcManagerOptions['openLegacyHost']
   private readonly env: NodeJS.ProcessEnv
   private readonly reconnectMs: number
   private readonly allowSeconds: boolean
@@ -156,6 +159,7 @@ export class ProcManager {
     this.broadcast = opts.broadcast
     this.author = opts.author
     this.connectHost = opts.connectHost
+    this.openLegacyHost = opts.openLegacyHost
     this.env = opts.env ?? process.env
     this.reconnectMs = opts.reconnectMs ?? HOST_RECONNECT_MS
     this.allowSeconds = opts.allowSeconds ?? false
@@ -445,7 +449,27 @@ export class ProcManager {
     return { pid: host.hello.pid, version: host.hello.version, startedAt: host.hello.startedAt, live: runs.filter((r) => !r.exit).length }
   }
 
+  /** `host stop` on a host of protocol 1: the same refusal while it runs something, then its shutdown. Nothing of ours is recorded (it ran nothing we can see). */
+  private async stopLegacyHost(old: HostClient, force: boolean): Promise<void> {
+    try {
+      const live = ((await old.request({ t: 'list' })).runs ?? []).filter((r) => !r.exit)
+      if (live.length && !force) {
+        throw new ProcError('proc-host', `o anfitrião antigo tem ${live.length} processo(s) rodando (${live.map((r) => r.name).join(', ')}); pare-os antes ou use --force (eles param)`)
+      }
+      this.log(`host pid ${old.hello.pid} predates the identified protocol: asked to shut down (force ${force})`)
+      await old.request({ t: 'shutdown', ...(force ? { force: true } : {}) }).catch((err: Error) => { throw new ProcError('proc-host', `o anfitrião antigo recusou: ${err.message}`) })
+    } finally {
+      old.close()
+    }
+  }
+
   async hostStop(force: boolean, by: ProcBy | undefined, client: string | undefined): Promise<void> {
+    if (this.openLegacyHost && !(this.host && !this.host.isClosed)) {
+      // A host before protocol 2 refuses this tetherd; it still takes a `list` and a `shutdown` (never a plan).
+      const old = await this.openLegacyHost().catch(() => undefined)
+      if (old?.hello.legacy) return this.stopLegacyHost(old, force)
+      old?.close()
+    }
     const host = await this.connect(false)
     if (!host) return
     const runs = (await host.request({ t: 'list' })).runs ?? []
@@ -866,6 +890,7 @@ export class ProcManager {
         if (err instanceof HostRequestError && err.code === 'version') {
           throw new ProcError('proc-host', `${err.message}. Pare o anfitrião antigo (tether proc host stop, com --force se houver processos) e tente de novo`)
         }
+        if (err instanceof HostRequestError && err.code === 'outdated') throw new ProcError('proc-host', err.message)
         if (launch) throw new ProcError('proc-host', `não consegui falar com o anfitrião de processos: ${(err as Error).message}`)
         return undefined
       }

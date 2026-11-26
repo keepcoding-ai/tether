@@ -30,7 +30,7 @@ import { isAgentExecutor, setAgentExecutor } from '../agents/agent-exec.ts'
 import { createExecutor, type Executor } from '../exec/executor.ts'
 import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
-import { clientProof, daemonProof, fillKeyFile, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servePipeHome, unservePipeHome } from './pipe-key.ts'
+import { clientProof, daemonProof, fillKeyFile, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -48,7 +48,7 @@ import { killTree, spawnPty, type PtyExit, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
 import { HostClient } from '../procd/client.ts'
 import { PanelHost, type PanelCallbacks } from './panel-host.ts'
-import { PTYD_TARGET, ptydPipePath } from '../ptyd/paths.ts'
+import { PTYD_TARGET, ptydKeyHome, ptydPipePath } from '../ptyd/paths.ts'
 import { UserSettings } from '../core/user-settings.ts'
 import { treeValueAt } from '../../app/shared/settings-file.ts'
 import { limiter, mapLimit } from '../core/limit.ts'
@@ -483,11 +483,15 @@ class DaemonImpl implements Daemon {
     this.userSettings = opts.userSettings ?? new UserSettings(opts.home, this.executor, process.env, this.log)
     this.panelHostForced = opts.panelHost
     this.panelHostOn = opts.panelHost ?? panelHostEnabled(this.userSettings.get())
+    // The hosts' keys live in the home of the host on that pipe: this daemon's, unless the host runs in this process with
+    // its own home, or TETHER_PTYD_PIPE points at one that does (TETHER_PTYD_HOME: tests).
+    const hostHome = (pipe: string): string => servedHome(pipe) ?? opts.home
     this.connectPanelHost = opts.connectPanelHost ?? ((launch) => {
       const pipe = ptydPipePath(opts.pipe, opts.home)
+      const keyHome = servedHome(pipe) ?? ptydKeyHome(opts.home)
       return launch
-        ? HostClient.ensure({ home: opts.home, pipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log }, PANEL_HOST_ENSURE_MS, PTYD_TARGET)
-        : HostClient.tryOpen(pipe)
+        ? HostClient.ensure({ home: opts.home, keyHome, pipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log }, PANEL_HOST_ENSURE_MS, PTYD_TARGET)
+        : HostClient.tryOpen(pipe, 5_000, { home: keyHome })
     })
     this.server = createServer((socket) => this.onConnection(socket))
     const procdPipe = opts.procdPipe ?? procdPipePath(opts.pipe, opts.home)
@@ -499,8 +503,9 @@ class DaemonImpl implements Daemon {
       broadcast: (msg) => this.broadcast(msg),
       author: (by, client) => this.procAuthor(by, client),
       connectHost: opts.connectProcHost ?? ((launch) => launch
-        ? HostClient.ensure({ home: opts.home, pipe: procdPipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log })
-        : HostClient.open(procdPipe)),
+        ? HostClient.ensure({ home: opts.home, keyHome: hostHome(procdPipe), pipe: procdPipe, node: process.env.TETHER_NODE?.trim() || process.execPath, env: process.env, log: this.log })
+        : HostClient.open(procdPipe, 5_000, { home: hostHome(procdPipe) })),
+      openLegacyHost: () => HostClient.open(procdPipe, 5_000, { home: hostHome(procdPipe), legacy: true }),
       ...(opts.procHostReconnectMs !== undefined ? { reconnectMs: opts.procHostReconnectMs } : {}),
       allowSeconds: this.rondaAllowSeconds,
       slotExists: (slotId) => this.slotMap.has(slotId),

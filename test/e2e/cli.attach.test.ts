@@ -109,7 +109,7 @@ test('tether attach: keys in, output out, resize survives, Ctrl+] detaches with 
     assert.ok(pidAlive(shellPid))
   } finally {
     cli?.dispose()
-    const host = await HostClient.ping(ptydPipe)
+    const host = await HostClient.ping(ptydPipe, home)
     await suite.shutdown().catch(e => t.diagnostic(String(e)))
     if (host && pidAlive(host.pid)) { // the host outlives tetherd: kill it (and its panes) by identity
       const owned = await claim(host.pid, { what: 'tether-ptyd' }).catch(() => undefined)

@@ -10,6 +10,7 @@ import { agentExecutor } from '../agents/agent-exec.ts'
 import { exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import { tetherHome } from '../core/paths.ts'
+import { HandshakeReader } from './handshake.ts'
 import { encode, LineParser, type ParsedLine } from './ndjson.ts'
 import { clientProof, daemonProof, isNonce, newNonce, pipeKeyPath, readPipeKey, sameProof, servedHome } from './pipe-key.ts'
 import { PROTOCOL_VERSION, pipePath, type DaemonMessage, type DeskMap, type ErrorCode, type ObjectKind, type PauseBatch, type ProcState, type Profile, type Reply, type Request, type SlotState } from './protocol.ts'
@@ -146,7 +147,7 @@ export class DaemonClient extends EventEmitter<Events> {
   static async open(pipe: string, kind: 'app' | 'cli' | 'test', how: OpenOptions = {}): Promise<DaemonClient> {
     const home = how.home ?? servedHome(pipe) ?? tetherHome()
     const socket = await connectSocket(pipe)
-    const replies = new HandshakeReader(socket)
+    const replies = new HandshakeReader<Reply>(socket, (why) => new NotTetherError(why === 'closed' ? 'conexão fechada antes do hello' : 'sem resposta ao hello'))
     try {
       const nonce = newNonce()
       socket.write(encode({ t: 'auth', id: 0, nonce }))
@@ -277,73 +278,6 @@ export class DaemonClient extends EventEmitter<Events> {
   close(): void {
     this.socket.end()
     this.socket.destroy()
-  }
-}
-
-/** The reply of a handshake step; the handshake has no other reply in flight (every step uses id 0). */
-type StepReply = Reply
-
-/** Reads the handshake's replies (id 0) one at a time; lines before each reply (a v1 tetherd's events) are skipped. */
-class HandshakeReader {
-  private readonly parser = new LineParser()
-  private lines: ParsedLine[] = []
-  private closed = false
-  private waiter: { resolve: (r: StepReply) => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | undefined
-  private readonly socket: Socket
-
-  constructor(socket: Socket) {
-    this.socket = socket
-    socket.setEncoding('utf8')
-    socket.on('data', this.onData)
-    socket.on('close', this.onClose)
-  }
-
-  private readonly onData = (chunk: string): void => {
-    this.lines.push(...this.parser.push(chunk))
-    this.pump()
-  }
-
-  private readonly onClose = (): void => {
-    this.closed = true
-    this.pump()
-  }
-
-  private pump(): void {
-    const w = this.waiter
-    if (!w) return
-    while (this.lines.length) {
-      const v = this.lines.shift()!.value as Reply | undefined
-      if (v && (v.t === 'ok' || v.t === 'error') && v.id === 0) {
-        this.waiter = undefined
-        clearTimeout(w.timer)
-        w.resolve(v)
-        return
-      }
-    }
-    if (this.closed) {
-      this.waiter = undefined
-      clearTimeout(w.timer)
-      w.reject(new NotTetherError('conexão fechada antes do hello'))
-    }
-  }
-
-  next(timeoutMs = 5_000): Promise<StepReply> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.waiter = undefined; reject(new NotTetherError('sem resposta ao hello')) }, timeoutMs)
-      this.waiter = { resolve, reject, timer }
-      this.pump()
-    })
-  }
-
-  /** Stops reading; what was read past the last reply goes on to the client. */
-  release(): { parser: LineParser; lines: ParsedLine[] } {
-    this.socket.off('data', this.onData)
-    this.socket.off('close', this.onClose)
-    if (this.waiter) clearTimeout(this.waiter.timer)
-    this.waiter = undefined
-    const lines = this.lines
-    this.lines = []
-    return { parser: this.parser, lines }
   }
 }
 

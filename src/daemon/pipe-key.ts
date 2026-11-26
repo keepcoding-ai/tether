@@ -13,7 +13,7 @@
 // The two labels keep one side's answer from ever serving as the other's. The key is a secret: it never goes into a log
 // line, an error message, a reply or stdout; only its path does.
 import { execFile } from 'node:child_process'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmod, open, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -53,14 +53,39 @@ function mac(key: Buffer, label: string, a: string, b: string): string {
   return createHmac('sha256', key).update(`${label}\n${a}\n${b}`).digest('hex')
 }
 
-/** What tetherd answers to the client's nonce. */
-export function daemonProof(key: Buffer, clientNonce: string, daemonNonce: string): string {
-  return mac(key, 'tetherd-daemon', clientNonce, daemonNonce)
+/**
+ * Who the handshake is with: tetherd's pipe ('tetherd') or a host's (tether-procd, tether-ptyd: 'tether-host'). The scope
+ * is part of every label, so a proof made for one kind of pipe never passes on another even if two keys were ever equal.
+ */
+export type KeyScope = 'tetherd' | 'tether-host'
+
+/** What the server answers to the client's nonce. */
+export function daemonProof(key: Buffer, clientNonce: string, daemonNonce: string, scope: KeyScope = 'tetherd'): string {
+  return mac(key, `${scope}-daemon`, clientNonce, daemonNonce)
 }
 
 /** What the client sends in its hello. */
-export function clientProof(key: Buffer, clientNonce: string, daemonNonce: string): string {
-  return mac(key, 'tetherd-client', daemonNonce, clientNonce)
+export function clientProof(key: Buffer, clientNonce: string, daemonNonce: string, scope: KeyScope = 'tetherd'): string {
+  return mac(key, `${scope}-client`, daemonNonce, clientNonce)
+}
+
+/**
+ * A host's own key (tether-procd, tether-ptyd), one file per pipe: <home>/host-<16 hex of sha256(pipe)>.key. Own keys,
+ * not derived from tetherd's: a host outlives tetherd (the panes survive a tetherd restart) while tetherd draws a new key
+ * at every start, so a derived key would lock tetherd out of the host it must re-adopt.
+ */
+export function hostKeyPath(home: string, pipe: string): string {
+  return join(home, `host-${createHash('sha256').update(pipe).digest('hex').slice(0, 16)}.key`)
+}
+
+/** Reads a key file (64 hex); undefined when missing or malformed. */
+export async function readKeyFile(path: string): Promise<Buffer | undefined> {
+  try {
+    const text = (await readFile(path, 'utf8')).trim()
+    return /^[0-9a-f]{64}$/.test(text) ? Buffer.from(text, 'hex') : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Constant-time comparison of a proof from the wire with the expected one. */
@@ -70,13 +95,8 @@ export function sameProof(got: unknown, want: string): boolean {
 }
 
 /** The key a client presents: read fresh at every connection (a restarted tetherd draws a new one). */
-export async function readPipeKey(home: string): Promise<Buffer | undefined> {
-  try {
-    const text = (await readFile(pipeKeyPath(home), 'utf8')).trim()
-    return /^[0-9a-f]{64}$/.test(text) ? Buffer.from(text, 'hex') : undefined
-  } catch {
-    return undefined
-  }
+export function readPipeKey(home: string): Promise<Buffer | undefined> {
+  return readKeyFile(pipeKeyPath(home))
 }
 
 function run(file: string, args: string[]): Promise<string> {

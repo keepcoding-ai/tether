@@ -62,7 +62,7 @@ after(async () => {
   try { typist?.close() } catch { /* gone */ }
   try { link?.stop() } catch { /* gone */ }
   try {
-    const ptyd = await HostClient.ping(ptydPipe)
+    const ptyd = await HostClient.ping(ptydPipe, home)
     if (ptyd) seen.add(ptyd.pid)
     await suite.shutdown()
   } finally {
@@ -169,7 +169,7 @@ test('P1: panel host on, typing and echo skip tetherd: p99 < 30 ms across a 5 s 
     if (s?.status === 'running') { assert.equal(s.ptyHost, true, 'the pane runs in tether-ptyd'); seen.add(s.pid!); break }
     assert.ok(Date.now() < end, `slot never ran (${s?.status})`)
   }
-  const ptyd = await HostClient.ping(ptydPipe)
+  const ptyd = await HostClient.ping(ptydPipe, home)
   assert.ok(ptyd, 'tether-ptyd answers on its isolated pipe')
   seen.add(ptyd.pid)
 
@@ -242,7 +242,7 @@ async function p7(extra: number): Promise<void> {
   const slotId = await startSlot(ECHO)
   const floods: string[] = []
   for (let i = 0; i < extra; i++) floods.push(await startSlot(FLOOD, [String(50 + Math.round((150 * i) / Math.max(1, extra - 1)))]))
-  const ptyd = await HostClient.ping(ptydPipe)
+  const ptyd = await HostClient.ping(ptydPipe, home)
   assert.ok(ptyd, 'tether-ptyd answers on its isolated pipe')
   seen.add(ptyd.pid)
 

@@ -61,7 +61,7 @@ import { BRAND } from '../shared/brand.ts'
 import { perfEchoData, perfEchoKey, recordProbe, registerPerf, stopPerf } from './perf-main.ts'
 import { PanelLink } from './panel-link.ts'
 import { PanelRouter } from './panel-route.ts'
-import { ptydPipePath } from '../../src/ptyd/paths.ts'
+import { ptydKeyHome, ptydPipePath } from '../../src/ptyd/paths.ts'
 import { extendProbe, parseProbe } from '../../src/core/perf-probe.ts'
 import { isProbeResultNotice, probeEnabled } from '../shared/probe-app.ts'
 
@@ -164,6 +164,7 @@ const trayNotices = new TrayNotices(() => updateTray())
  */
 const panelLink: PanelLink = new PanelLink({
   pipe: ptydPipePath(pipe, home),
+  home: ptydKeyHome(home),
   onData: (slotId, data) => panelRouter.onLinkData(slotId, data),
   onReset: (slotId, scrollback) => { appLog(`panel host: ${slotId} repainted from the host ring`); panelRouter.onLinkReset(slotId, scrollback) },
   onLost: (slotId, reason) => appLog(`panel host: re-attach of ${slotId} refused (${reason}); retried on the next reconnect`),

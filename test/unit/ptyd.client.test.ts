@@ -69,7 +69,9 @@ describe('lag', () => {
       s.on('data', (chunk: string) => {
         for (const l of parser.push(chunk)) {
           const m = l.value as { t: string; id: number }
-          if (m.t === 'hello') s.write(encode({ t: 'ok', id: m.id, hello: { v: 1, caps: ['lag'], pid: 1, version: 'x', startedAt: 'now' } }))
+          // A fake of protocol 1 (no `auth`), reached as legacy: what is tested is the client's reading of `lag`.
+          if (m.t === 'auth') s.write(encode({ t: 'error', id: m.id, code: 'bad-request', message: 'mensagem desconhecida: auth' }))
+          else if (m.t === 'hello') s.write(encode({ t: 'ok', id: m.id, hello: { v: 1, caps: ['lag'], pid: 1, version: 'x', startedAt: 'now' } }))
           else if (m.t === 'list') {
             s.write(encode({ t: 'lag', name: 'pane' }))
             s.write(encode({ t: 'ok', id: m.id, runs: [] }))
@@ -79,7 +81,7 @@ describe('lag', () => {
     })
     await new Promise<void>((r) => server.listen(pipe, r))
     try {
-      const c = await HostClient.open(pipe)
+      const c = await HostClient.open(pipe, 5_000, { home, legacy: true })
       const lagged: string[] = []
       c.on('lag', (n) => lagged.push(n))
       await c.request({ t: 'list' })

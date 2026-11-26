@@ -213,7 +213,7 @@ class Rig {
     try { await this.client.request({ t: 'shutdown' }) } catch { /* gone */ }
     try { this.client.close() } catch { /* gone */ }
     this.lap('teardown: shutdown')
-    const host = await HostClient.ping(this.ptydPipe).catch(() => undefined)
+    const host = await HostClient.ping(this.ptydPipe, this.home).catch(() => undefined)
     if (host) this.seen.add(host.pid)
     for (const end = Date.now() + 15_000; [...this.seen].some(pidAlive) && Date.now() < end; await sleep(200));
     this.lap('teardown: processes gone by themselves')

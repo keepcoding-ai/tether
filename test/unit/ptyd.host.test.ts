@@ -5,7 +5,10 @@ import { readdirSync } from 'node:fs'
 import { connect, type Socket } from 'node:net'
 import { after, before, describe, test } from 'node:test'
 import { encode, LineParser } from '../../src/daemon/ndjson.ts'
+import { join } from 'node:path'
+import { hostKeyPath } from '../../src/daemon/pipe-key.ts'
 import { ProcHost } from '../../src/procd/host.ts'
+import { identifyHost } from './host-auth.ts'
 import { PROCD_PROTOCOL_VERSION, type HostEvent, type HostReply } from '../../src/procd/protocol.ts'
 import { pidAlive, removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
@@ -17,13 +20,14 @@ class Wire {
   private nextId = 1
   private readonly socket: Socket
   private constructor(socket: Socket) { this.socket = socket }
-  static async open(pipe: string): Promise<Wire> {
+  static async open(pipe: string, home: string): Promise<Wire> {
     const socket = connect(pipe)
     await new Promise<void>((resolve, reject) => { socket.once('connect', () => resolve()); socket.once('error', reject) })
     socket.setEncoding('utf8')
     const w = new Wire(socket)
     const parser = new LineParser()
     socket.on('data', (chunk: string) => { for (const l of parser.push(chunk)) if (l.value) w.msgs.push(l.value as unknown as Msg) })
+    await identifyHost((b) => w.request(b), pipe, home)
     return w
   }
   async request(body: Record<string, unknown>): Promise<Extract<HostReply, { t: 'ok' }>> {
@@ -46,6 +50,8 @@ describe('ptyd host: persist:false, write, offsets, attach, release', () => {
   const home = tempHome()
   const pipe = uniquePipe(home)
   const before0 = readdirSync(home).sort()
+  /** The home's files, without the host's own key (pipe-key.ts hostKeyPath), the one file a pane host writes. */
+  const onDisk = (): string[] => readdirSync(home).filter((n) => join(home, n) !== hostKeyPath(home, pipe)).sort()
   let host: ProcHost
   let w: Wire
   let epoch = ''
@@ -54,7 +60,7 @@ describe('ptyd host: persist:false, write, offsets, attach, release', () => {
   before(async () => {
     host = new ProcHost({ home, pipe, persist: false })
     await host.listen()
-    w = await Wire.open(pipe)
+    w = await Wire.open(pipe, home)
   })
   after(async () => {
     w?.close()
@@ -82,7 +88,7 @@ describe('ptyd host: persist:false, write, offsets, attach, release', () => {
     let off = a.off!
     for (const d of w.data('pane-1')) { off += d.data.length; assert.equal(d.off, off, 'off is the offset after this chunk') }
     assert.equal(w.msgs.some((m) => m.t === 'error'), false)
-    assert.deepEqual(readdirSync(home).sort(), before0, 'persist:false writes nothing under the home')
+    assert.deepEqual(onDisk(), before0, 'persist:false writes nothing under the home but its key')
   })
 
   test('attach {from, epoch} returns only what is missing; a wrong epoch returns the whole ring', async () => {
@@ -107,7 +113,7 @@ describe('ptyd host: persist:false, write, offsets, attach, release', () => {
     assert.ok(exitAt > lastData, 'exit comes after the last data')
     const list = await w.request({ t: 'list' })
     assert.ok(list.runs!.find((r) => r.name === 'pane-1')!.exit)
-    assert.deepEqual(readdirSync(home).sort(), before0, 'still nothing on disk')
+    assert.deepEqual(onDisk(), before0, 'still nothing on disk but its key')
     // release does not kill the tree: tidy the leftover process by pid.
     if (pidAlive(pid)) try { process.kill(pid) } catch { /* gone */ }
   })

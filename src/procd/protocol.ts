@@ -4,7 +4,13 @@
 // The host knows nothing of cards, authors or history: it runs plans, keeps output and records pid/exit on disk.
 import { join } from 'node:path'
 
-export const PROCD_PROTOCOL_VERSION = 1
+/**
+ * 2: the client proves it holds the host's key (`auth`, then `hello` with `proof`; daemon/pipe-key.ts, scope
+ * 'tether-host', key file hostKeyPath) and the host proves it back. Until the hello the host answers nothing else and
+ * sends no event; a connection without hello in time is dropped. A v1 host answers `auth` with bad-request: the client
+ * calls it `outdated`.
+ */
+export const PROCD_PROTOCOL_VERSION = 2
 export const PROCD_VERSION = '0.1.0'
 
 /** A ready launch: tetherd resolved the command, the folder and the complete environment. */
@@ -40,7 +46,10 @@ export interface RunFile extends HostRun {
 }
 
 export type HostRequest =
-  | { t: 'hello'; id: number; v: number }
+  /** Opens every connection: the client's nonce (64 hex). Reply: `auth`. */
+  | { t: 'auth'; id: number; nonce: string }
+  /** `proof`: pipe-key.ts clientProof with scope 'tether-host'. A wrong or missing proof is refused and the connection closed. */
+  | { t: 'hello'; id: number; v: number; proof?: string }
   | { t: 'spawn'; id: number; name: string; run: number; plan: ProcPlan; cols: number; rows: number; home: string }
   /** Ctrl+C, wait up to graceMs, then killTree; the reply comes once the process ended. */
   | { t: 'stop'; id: number; name: string; graceMs: number }
@@ -59,13 +68,16 @@ export type HostRequest =
 /** Fire-and-forget input: no `id`, no reply. Unknown names are ignored. */
 export type HostNotice = { t: 'write'; name: string; data: string }
 
-export type HostErrorCode = 'spawn-failed' | 'already-running' | 'unknown-run' | 'busy' | 'bad-request' | 'version'
+/** `auth-required` / `auth-failed`: see the hello; `outdated` (client side): the host predates protocol 2 and checks nobody. */
+export type HostErrorCode = 'spawn-failed' | 'already-running' | 'unknown-run' | 'busy' | 'bad-request' | 'version' | 'auth-required' | 'auth-failed' | 'outdated'
 
 /** Capabilities announced in `hello` (additive: the protocol version stays the same). */
 export type HostCap = 'write' | 'offsets' | 'lag'
 
 export interface HostHello {
   v: number
+  /** Client side: a host before protocol 2, reached only by an `open` that allows it (ping, shutdown). */
+  legacy?: true
   caps?: HostCap[]
   pid: number
   version: string
@@ -73,7 +85,7 @@ export interface HostHello {
 }
 
 export type HostReply =
-  | { t: 'ok'; id: number; hello?: HostHello; pid?: number; startedAt?: string; exit?: RunExit; runs?: HostRun[]; scrollback?: string; off?: number; epoch?: string }
+  | { t: 'ok'; id: number; hello?: HostHello; auth?: { nonce: string; proof: string }; pid?: number; startedAt?: string; exit?: RunExit; runs?: HostRun[]; scrollback?: string; off?: number; epoch?: string }
   | { t: 'error'; id: number; code: HostErrorCode; message: string }
 
 export type HostEvent =

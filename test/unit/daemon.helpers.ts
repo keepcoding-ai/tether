@@ -63,5 +63,7 @@ if (process.env.TETHER_PANEL_HOST?.trim() !== '0') {
   const host = new ProcHost({ home, pipe, persist: false })
   await host.listen()
   process.env.TETHER_PTYD_PIPE = pipe
+  // Its key is in its own home: a tetherd started as a child of this test (another home) finds it there (ptydKeyHome).
+  process.env.TETHER_PTYD_HOME = home
   after(async () => { await host.close(); await removeHome(home) })
 }

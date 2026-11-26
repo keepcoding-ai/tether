@@ -122,10 +122,12 @@ async function probeProcHost(pipe: string, home: string, daemonUp: boolean): Pro
   const { HostClient, HostRequestError } = await import('./procd/client.ts')
   const facts: ProcHostFacts = { host: null, running: 0 }
   try {
-    const c = await HostClient.open(procdPipePath(pipe, home), 3_000)
+    // `legacy`: the doctor only reads (list), so a host of protocol 1 is still described, and named as such.
+    const c = await HostClient.open(procdPipePath(pipe, home), 3_000, { home, legacy: true })
     try {
       facts.host = { pid: c.hello.pid, version: c.hello.version }
       facts.running = ((await c.request({ t: 'list' })).runs ?? []).filter((r) => !r.exit).length
+      if (c.hello.legacy) facts.versionProblem = `o anfitrião (pid ${c.hello.pid}) é anterior à identificação dos clientes: encerre-o (tether proc host stop, com --force se houver processos)`
     } finally { c.close() }
   } catch (e) {
     if (e instanceof HostRequestError && e.code === 'version') facts.versionProblem = e.message

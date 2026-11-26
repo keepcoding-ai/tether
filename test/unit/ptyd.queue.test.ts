@@ -5,6 +5,7 @@ import { connect, type Socket } from 'node:net'
 import { after, before, describe, test } from 'node:test'
 import { encode, LineParser } from '../../src/daemon/ndjson.ts'
 import { ProcHost } from '../../src/procd/host.ts'
+import { identifyHost } from './host-auth.ts'
 import { PROCD_PROTOCOL_VERSION, type HostEvent, type HostReply } from '../../src/procd/protocol.ts'
 import { removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
@@ -28,13 +29,14 @@ class Wire {
   private nextId = 1
   private readonly socket: Socket
   private constructor(socket: Socket) { this.socket = socket }
-  static async open(pipe: string): Promise<Wire> {
+  static async open(pipe: string, home: string): Promise<Wire> {
     const socket = connect(pipe)
     await new Promise<void>((resolve, reject) => { socket.once('connect', () => resolve()); socket.once('error', reject) })
     socket.setEncoding('utf8')
     const w = new Wire(socket)
     const parser = new LineParser()
     socket.on('data', (chunk: string) => { for (const l of parser.push(chunk)) if (l.value) { w.msgs.push(l.value as unknown as Msg); w.arrived.set(l.value, Date.now()) } })
+    await identifyHost((b) => w.request(b), pipe, home)
     return w
   }
   async request(body: Record<string, unknown>): Promise<Extract<HostReply, { t: 'ok' }>> {
@@ -62,7 +64,7 @@ describe('ptyd host queues: slow client, batching, input ceiling', () => {
   const pipe = uniquePipe(home)
   let host: ProcHost
   const wires: Wire[] = []
-  const open = async (): Promise<Wire> => { const w = await Wire.open(pipe); wires.push(w); return w }
+  const open = async (): Promise<Wire> => { const w = await Wire.open(pipe, home); wires.push(w); return w }
 
   before(async () => {
     host = new ProcHost({ home, pipe, persist: false, outHighWater: 4 * 1024, outQueueMax: 32 * 1024, batchMs: 5, scrollbackChars: 4 * 1024 * 1024 })
@@ -136,7 +138,7 @@ describe('ptyd host queues: input ceiling', () => {
   before(async () => {
     host = new ProcHost({ home, pipe, persist: false, inputMax: -1 }) // pending input is never below -1: every write is over
     await host.listen()
-    w = await Wire.open(pipe)
+    w = await Wire.open(pipe, home)
   })
   after(async () => {
     w?.close()

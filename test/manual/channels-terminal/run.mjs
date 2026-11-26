@@ -114,7 +114,7 @@ async function teardown() {
   try { app?.close() } catch {}
   try { await client.request({ t: 'shutdown' }) } catch {}
   try { client.close() } catch {}
-  const host = await HostClient.ping(ptydPipe).catch(() => undefined); if (host) seen.add(host.pid)
+  const host = await HostClient.ping(ptydPipe, home).catch(() => undefined); if (host) seen.add(host.pid)
   await sleep(2000)
   for (const pid of [...seen].reverse()) { const o = await claim(pid, { what: 'e2 bench process' }).catch(() => undefined); if (o) await killOwned(o, { tree: true }).catch(() => {}) }
   for (const dir of [join(bench, '..'), root]) for (let i = 0; i < 5; i++) { try { rmSync(dir, { recursive: true, force: true }); break } catch { await sleep(300) } }

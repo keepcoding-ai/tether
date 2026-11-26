@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const log = (msg: string): void => {
     try { appendFileSync(procdLogPath(home), `${new Date().toISOString()} [${process.pid}] ${msg}\n`) } catch { /* disk full or gone */ }
   }
-  const other = await HostClient.ping(pipe)
+  const other = await HostClient.ping(pipe, home)
   if (other) {
     log(`another tether-procd (pid ${other.pid}) answers on ${pipe}; exiting`)
     process.exit(0)

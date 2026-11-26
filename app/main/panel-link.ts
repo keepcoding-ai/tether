@@ -23,6 +23,8 @@ export interface AttachResult { scrollback: string; off: number; epoch: string }
 
 export interface PanelLinkOptions {
   pipe: string
+  /** The tether home that holds the host's key (the default `open` proves this client with it). */
+  home?: string
   /** Output of an attached slot: exactly once per byte, in order. */
   onData: (slotId: string, data: string) => void
   /** The host answered a re-attach with its whole ring (epoch changed or the offset fell out of it): replace the screen. */
@@ -221,7 +223,7 @@ export class PanelLink {
     this.connecting = true
     let c: PanelConn | undefined
     try {
-      c = await (this.o.open ?? defaultOpen(this.o.openTimeoutMs))(this.o.pipe)
+      c = await (this.o.open ?? defaultOpen(this.o.openTimeoutMs, this.o.home))(this.o.pipe)
     } catch {
       c = undefined
     }
@@ -324,9 +326,9 @@ export class PanelLink {
   private readonly inflight = new Set<Slot>()
 }
 
-function defaultOpen(timeoutMs = 5_000): (pipe: string) => Promise<PanelConn | undefined> {
+function defaultOpen(timeoutMs = 5_000, home?: string): (pipe: string) => Promise<PanelConn | undefined> {
   return async (pipe) => {
-    const c = await HostClient.tryOpen(pipe, timeoutMs)
+    const c = await HostClient.tryOpen(pipe, timeoutMs, home !== undefined ? { home } : {})
     return c ? adaptHostClient(c) : undefined
   }
 }

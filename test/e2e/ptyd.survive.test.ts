@@ -63,7 +63,7 @@ test('P2: 3 hosted panes outlive a force-killed tetherd and a new tetherd adopts
       for (const s of await listSlots(c1)) if (ids.includes(s.slotId) && s.status === 'running' && s.pid) { assert.equal(s.ptyHost, true); pids.set(s.slotId, s.pid) }
     }
     for (const p of pids.values()) seen.add(p)
-    const ptyd = await HostClient.ping(ptydPipe)
+    const ptyd = await HostClient.ping(ptydPipe, home)
     assert.ok(ptyd, 'tether-ptyd answers on its isolated pipe')
     seen.add(ptyd.pid)
 
@@ -90,7 +90,7 @@ test('P2: 3 hosted panes outlive a force-killed tetherd and a new tetherd adopts
     assert.equal(pidAlive(oldPid), false, 'tetherd is dead')
     suite1.client.close()
     await echoes('AFTERKILL')
-    const runs = (await (async () => { const h = await HostClient.open(ptydPipe); try { return (await h.request({ t: 'list' })).runs ?? [] } finally { h.close() } })())
+    const runs = (await (async () => { const h = await HostClient.open(ptydPipe, 5_000, { home }); try { return (await h.request({ t: 'list' })).runs ?? [] } finally { h.close() } })())
     for (const id of ids) assert.equal(runs.find(r => r.name === id && !r.exit)?.pid, pids.get(id), `host pid of ${id} unchanged`)
     for (const p of pids.values()) assert.ok(pidAlive(p), `pane pid ${p} alive`)
 
@@ -113,7 +113,7 @@ test('P2: 3 hosted panes outlive a force-killed tetherd and a new tetherd adopts
     try { link?.stop() } catch { /* gone */ }
     try { suite2?.client.close() } catch { /* gone */ }
     // Kill by identity (pid + creation time), never by name: the new tetherd, the host, the panes.
-    const host = await HostClient.ping(ptydPipe)
+    const host = await HostClient.ping(ptydPipe, home)
     if (host) seen.add(host.pid)
     for (const pid of [...seen].reverse()) {
       if (!pidAlive(pid)) continue

@@ -11,6 +11,15 @@ export function ptydPipePath(tetherPipe: string, home: string, env: NodeJS.Proce
   return platform === 'win32' ? `${procdPipePath(tetherPipe, home, { ...env, TETHER_PTYD_PIPE: undefined }, platform)}-ptyd` : join(home, 'tether-ptyd.sock')
 }
 
+/**
+ * The home that holds the key of the host on ptydPipePath (pipe-key.ts hostKeyPath): TETHER_PTYD_HOME when TETHER_PTYD_PIPE
+ * points at a host that runs with another home (a test's shared in-process host), else `home`.
+ */
+export function ptydKeyHome(home: string, env: NodeJS.ProcessEnv = process.env): string {
+  const other = env.TETHER_PTYD_HOME?.trim()
+  return env.TETHER_PTYD_PIPE?.trim() && other ? other : home
+}
+
 export function ptydPidPath(home: string): string {
   return join(home, 'tether-ptyd.pid')
 }

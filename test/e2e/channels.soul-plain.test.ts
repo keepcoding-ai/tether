@@ -216,7 +216,7 @@ class Rig {
     try { this.app?.close() } catch { /* gone */ }
     try { await this.client.request({ t: 'shutdown' }) } catch { /* gone */ }
     try { this.client.close() } catch { /* gone */ }
-    const host = await HostClient.ping(this.ptydPipe).catch(() => undefined)
+    const host = await HostClient.ping(this.ptydPipe, this.home).catch(() => undefined)
     if (host) this.seen.add(host.pid)
     for (const end = Date.now() + 15_000; [...this.seen].some(pidAlive) && Date.now() < end; await sleep(200));
     for (const pid of [...this.seen].reverse()) {

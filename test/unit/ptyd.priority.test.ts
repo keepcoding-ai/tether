@@ -6,7 +6,8 @@ import { connect } from 'node:net'
 import { encode, LineParser } from '../../src/daemon/ndjson.ts'
 import { ProcHost } from '../../src/procd/host.ts'
 import { makePrioritySetter, prioritiesEnabled, PRIORITY_BELOW_NORMAL } from '../../src/procd/priority.ts'
-import { PROCD_PROTOCOL_VERSION } from '../../src/procd/protocol.ts'
+import type { HostReply } from '../../src/procd/protocol.ts'
+import { identifyHost } from './host-auth.ts'
 import { removeHome, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const SLEEP = { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: process.cwd(), env: process.env as Record<string, string> }
@@ -18,8 +19,13 @@ async function spawnOne(host: ProcHost, pipe: string, home: string): Promise<num
   const msgs: Record<string, unknown>[] = []
   const parser = new LineParser()
   socket.on('data', (c: string) => { for (const l of parser.push(c)) if (l.value) msgs.push(l.value as Record<string, unknown>) })
-  socket.write(encode({ t: 'hello', v: PROCD_PROTOCOL_VERSION, id: 1 }))
-  await waitUntil(() => msgs.some((m) => m.id === 1), 10_000, 'hello')
+  let nextId = 10
+  await identifyHost(async (body) => {
+    const id = nextId++
+    socket.write(encode({ ...body, id }))
+    await waitUntil(() => msgs.some((m) => m.id === id), 10_000, String(body.t))
+    return msgs.find((m) => m.id === id) as unknown as Extract<HostReply, { t: 'ok' }>
+  }, pipe, home)
   socket.write(encode({ t: 'spawn', id: 2, name: 'p1', run: 1, home, plan: SLEEP, cols: 80, rows: 24 }))
   await waitUntil(() => msgs.some((m) => m.id === 2), 10_000, 'spawn')
   const r = msgs.find((m) => m.id === 2) as { t: string; message?: string; pid?: number }

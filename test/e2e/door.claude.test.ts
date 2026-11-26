@@ -163,7 +163,7 @@ class Rig {
       }
     } catch { /* daemon gone */ }
     try { this.client.close() } catch { /* gone */ }
-    const host = await HostClient.ping(this.ptydPipe).catch(() => undefined)
+    const host = await HostClient.ping(this.ptydPipe, this.home).catch(() => undefined)
     if (host) this.seen.add(host.pid)
     for (const pid of [...this.seen].reverse()) {
       if (!pidAlive(pid)) continue
