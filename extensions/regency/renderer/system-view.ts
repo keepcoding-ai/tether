@@ -118,11 +118,11 @@ export class SystemView {
     const back = el('button', 'rg-sys-back')
     back.type = 'button'
     back.dataset.sys = 'back'
-    back.title = 'Voltar ao tether: a árvore das mesas e guias'
-    back.setAttribute('aria-label', 'Voltar ao tether')
+    back.title = 'Voltar às mesas: a árvore das mesas e guias'
+    back.setAttribute('aria-label', 'Voltar às mesas')
     const arrow = glyph('arrow-left', 'Voltar')
     arrow.setAttribute('aria-hidden', 'true')
-    back.append(arrow, el('span', '', 'voltar ao tether'))
+    back.append(arrow, el('span', '', 'voltar às mesas'))
     head.append(back, el('span', 'rg-sp'), el('b', 'rg-sys-t', 'Sistema'))
     this.tabs.setAttribute('role', 'tablist')
     this.tabs.setAttribute('aria-label', 'Seções do Sistema')

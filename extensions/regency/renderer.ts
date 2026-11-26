@@ -593,10 +593,10 @@ export function activate(ui: TetherUi): Disposable[] {
     mount: (el, channelId, opts) => channelEmbeds.mount(el, channelId, opts),
     go,
     pickChannel: () => ui.pick.list<string>({
-      title: 'Escolher conversa',
+      title: 'Escolher canal',
       placeholder: 'Nome do canal',
       items: channelEmbeds.list().filter(c => !c.closed).map(c => ({ value: c.id, label: `#${c.name}`, ...(c.title && c.title !== c.name ? { detail: c.title } : {}) })),
-      emptyText: 'Nenhuma conversa aberta',
+      emptyText: 'Nenhum canal aberto',
     }),
     // The pane that replaces a closed one starts from the last layout saved (the new pane may come before the old one's dispose).
     saved: () => { const p = livePane(); if (p) lastLayout = p.state; ui.layout.scheduleSave() },

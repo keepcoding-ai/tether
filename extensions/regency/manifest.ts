@@ -27,7 +27,7 @@ export const manifest: ExtensionManifest = {
   id: EXT_ID,
   version: '0.1.0',
   displayName: 'Regência',
-  description: 'Uma mesa para reger o trabalho: quem espera você, as conversas, o canal escolhido e todas as mesas com as guias.',
+  description: 'Uma mesa para reger o trabalho: quem espera você, os canais, o canal escolhido e todas as mesas com as guias.',
   hosts: ['renderer'],
   optional: true,
   requires: ['channels'],

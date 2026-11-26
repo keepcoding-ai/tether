@@ -211,9 +211,9 @@ function reasonsOf(c: ConvRow): string {
 export function paintConversations(host: HTMLElement, model: RegencyModel, ctx: ColumnsContext): void {
   const { open, closed } = model.conversations
   if (ctx.convsOpen !== undefined && !ctx.convsOpen) { host.replaceChildren(convsToggle(model, ctx)); return }
-  const out: HTMLElement[] = [ctx.convsOpen !== undefined ? convsToggle(model, ctx) : heading('Conversas')]
+  const out: HTMLElement[] = [ctx.convsOpen !== undefined ? convsToggle(model, ctx) : heading('Canais')]
   if (ctx.loading && open.length === 0 && closed.length === 0) out.push(el('p', 'rg-empty', 'Carregando…'))
-  else if (open.length === 0) out.push(el('p', 'rg-empty', 'Nenhuma conversa aberta'))
+  else if (open.length === 0) out.push(el('p', 'rg-empty', 'Nenhum canal aberto'))
   for (const c of open) out.push(convRow(c, ctx))
   if (closed.length > 0) {
     const tg = el('button', 'rg-tg')
@@ -235,7 +235,7 @@ function convsToggle(model: RegencyModel, ctx: ColumnsContext): HTMLElement {
   tg.type = 'button'
   tg.dataset.action = 'convs'
   tg.setAttribute('aria-expanded', String(on))
-  tg.append(glyph(on ? 'caret-down' : 'caret-right', on ? 'Recolher as conversas' : 'Mostrar as conversas'), el('span', '', `Conversas · ${open.length}`))
+  tg.append(glyph(on ? 'caret-down' : 'caret-right', on ? 'Recolher os canais' : 'Mostrar os canais'), el('span', '', `Canais ·${open.length}`))
   const chosen = [...open, ...closed].find(c => c.target.id === ctx.selected)
   if (chosen && !on) tg.append(el('span', 'rg-convs-now', `#${chosen.name}`))
   return tg

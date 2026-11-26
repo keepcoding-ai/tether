@@ -100,8 +100,8 @@ const FRESH_SHOWN_MS = 2_200
 /** The phone's three places, in the bottom bar's order. */
 const NARROW_PLACES: readonly { tab: NarrowTab; label: string; icon: string }[] = [
   { tab: 'waiting', label: 'Esperam você', icon: 'bell' },
-  { tab: 'conversation', label: 'Conversa', icon: 'chats-circle' },
-  { tab: 'tether', label: 'Tether', icon: 'tree-view' },
+  { tab: 'conversation', label: 'Canal', icon: 'chats-circle' },
+  { tab: 'tether', label: 'Mesas', icon: 'tree-view' },
 ]
 
 const VIEWS: readonly { view: RegencyView; label: string; tip: string }[] = [
@@ -129,7 +129,7 @@ export class RegencyPane implements IContentRenderer {
   private readonly embedHost = el('div', 'rg-embed')
   /** The place the quick view docks on: the conversation under its bar, the same element whatever conversation is shown. */
   private readonly quickHost = el('div', 'rg-quick')
-  private readonly closedBar = el('div', 'rg-closed-bar', 'Conversa encerrada: só leitura.')
+  private readonly closedBar = el('div', 'rg-closed-bar', 'Canal encerrado: só leitura.')
   private readonly voidBox = el('div', 'rg-void')
   private readonly members = el('section', 'rg-members')
   private readonly membersHead = el('button', 'rg-tg rg-members-tg')
@@ -232,14 +232,14 @@ export class RegencyPane implements IContentRenderer {
     this.api = p.api
     this.state = readLayout(p.params)
     this.setShown(this.host.visible())
-    this.left.setAttribute('aria-label', 'Esperam você e conversas')
+    this.left.setAttribute('aria-label', 'Esperam você e canais')
     this.left.append(this.waitHost, this.convHost)
-    this.center.setAttribute('aria-label', 'Conversa')
+    this.center.setAttribute('aria-label', 'Canal')
     this.embedHost.hidden = true
     this.closedBar.hidden = true
     this.quickHost.setAttribute('aria-hidden', 'true')
     this.center.append(this.closedBar, this.embedHost, this.voidBox, this.quickHost)
-    this.right.setAttribute('aria-label', 'Neste canal e o Tether')
+    this.right.setAttribute('aria-label', 'Neste canal e as mesas')
     this.membersHead.type = 'button'
     this.membersHead.dataset.action = 'members'
     this.members.append(this.membersHead, this.membersHost)
@@ -253,10 +253,10 @@ export class RegencyPane implements IContentRenderer {
     const plus = glyph('plus', 'Novo')
     plus.setAttribute('aria-hidden', 'true')
     this.newBtn.append(plus, el('span', '', 'Novo'))
-    this.treeHd.append(el('span', 'rg-hd-t', 'Tether'), this.newBtn, el('span', 'rg-sp'), this.searchBtn, this.viewSeg)
+    this.treeHd.append(el('span', 'rg-hd-t', 'Mesas'), this.newBtn, el('span', 'rg-sp'), this.searchBtn, this.viewSeg)
     this.buildTools()
     this.treeHost.setAttribute('role', 'tree')
-    this.treeHost.setAttribute('aria-label', 'Tether: mesas e guias')
+    this.treeHost.setAttribute('aria-label', 'Mesas e guias')
     this.right.append(this.members, this.treeHd, this.tools, this.treeHost, this.reservedHost, this.sysView.element)
     this.buildEdges()
     this.buildTabBar()
@@ -403,8 +403,8 @@ export class RegencyPane implements IContentRenderer {
       return b
     }
     this.sideSeg.append(
-      seg('waiting', 'Esperam você', 'bell', 'A coluna mostra quem espera você e as conversas'),
-      seg('tether', 'Tether', 'tree-view', 'A coluna mostra as mesas e guias do tether'),
+      seg('waiting', 'Esperam você', 'bell', 'A coluna mostra quem espera você e os canais'),
+      seg('tether', 'Mesas', 'tree-view', 'A coluna mostra as mesas e guias'),
     )
     this.sheetBtn.type = 'button'
     this.sheetBtn.dataset.action = 'sheet'
@@ -430,7 +430,7 @@ export class RegencyPane implements IContentRenderer {
     const other = otherSide(side)
     if (this.sheetBtn.dataset.other === other) return
     this.sheetBtn.dataset.other = other
-    const tip = other === 'tether' ? 'Abrir o Tether por cima da conversa' : 'Abrir Esperam você e Conversas por cima da conversa'
+    const tip = other === 'tether' ? 'Abrir as Mesas por cima do canal' : 'Abrir Esperam você e Canais por cima do canal'
     this.sheetBtn.title = tip
     this.sheetBtn.setAttribute('aria-label', tip)
     const g = glyph(other === 'tether' ? 'tree-view' : 'bell', tip)
@@ -705,7 +705,7 @@ export class RegencyPane implements IContentRenderer {
   private paintColumn(): void {
     const sys = treeColumnOf(this.state, this.tier) === 'system'
     if (this.right.dataset.column !== (sys ? 'system' : 'tether')) this.right.dataset.column = sys ? 'system' : 'tether'
-    this.right.setAttribute('aria-label', sys ? 'Sistema' : 'Neste canal e o Tether')
+    this.right.setAttribute('aria-label', sys ? 'Sistema' : 'Neste canal e as mesas')
     this.sysView.setShown(systemShownOf(this.state, this.tier) && this.onScreen)
   }
 
@@ -867,7 +867,7 @@ export class RegencyPane implements IContentRenderer {
       b.append(glyph(name, tip))
       return b
     }
-    this.edgeRight.append(to('manage-members', 'robot', 'Neste canal'), to('manage-tether', 'tree-view', 'Tether'))
+    this.edgeRight.append(to('manage-members', 'robot', 'Neste canal'), to('manage-tether', 'tree-view', 'Mesas'))
     // "Sistema" on the edge, with the red dot of a process that fell.
     this.edgeSys.type = 'button'
     this.edgeSys.dataset.action = 'manage-system'
@@ -883,7 +883,7 @@ export class RegencyPane implements IContentRenderer {
   /** The tree's tools: the view's switch (in the heading), the search field and the state chips. */
   private buildTools(): void {
     this.viewSeg.setAttribute('role', 'radiogroup')
-    this.viewSeg.setAttribute('aria-label', 'Organizar o Tether')
+    this.viewSeg.setAttribute('aria-label', 'Organizar as mesas')
     for (const v of VIEWS) {
       const b = el('button', 'rg-seg-b', v.label)
       b.type = 'button'
@@ -1141,16 +1141,16 @@ export class RegencyPane implements IContentRenderer {
     this.voidBox.hidden = !!this.embed
     if (this.embed) return
     const open = this.host.openChannels()
-    const box: HTMLElement[] = [glyph('chats-circle', 'Conversa')]
+    const box: HTMLElement[] = [glyph('chats-circle', 'Canal')]
     if (open.length > 0) {
-      box.push(el('p', 'rg-void-t', 'Escolha uma conversa à esquerda para acompanhar aqui.'))
+      box.push(el('p', 'rg-void-t', 'Escolha um canal à esquerda para acompanhar aqui.'))
       const pick = el('button', 'rg-btn')
       pick.type = 'button'
       pick.dataset.action = 'choose'
-      pick.textContent = 'Escolher conversa…'
+      pick.textContent = 'Escolher canal…'
       box.push(pick)
     } else {
-      box.push(el('p', 'rg-void-t', this.host.loading() ? 'Carregando as conversas…' : 'Nenhuma conversa ainda.'))
+      box.push(el('p', 'rg-void-t', this.host.loading() ? 'Carregando os canais…' : 'Nenhum canal ainda.'))
     }
     // The way to make one is a button here ("+ Novo" opened on the channel), not a sentence about where else to look.
     const make = el('button', open.length > 0 ? 'rg-btn rg-btn-q' : 'rg-btn')
@@ -1433,7 +1433,7 @@ export class RegencyTab implements ITabRenderer {
     pin.append(icon('push-pin'))
     pin.title = 'Guia fixa da Regência'
     this.element.append(kind, el('span', 'text', REGENCY_TITLE), pin)
-    this.element.title = `${REGENCY_TITLE}\nQuem espera você, as conversas e todas as mesas`
+    this.element.title = `${REGENCY_TITLE}\nQuem espera você, os canais e todas as mesas`
   }
 
   init(_p: TabPartInitParameters): void {}

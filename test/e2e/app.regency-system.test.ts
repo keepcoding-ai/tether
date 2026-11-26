@@ -251,7 +251,7 @@ test('regency system: the column, processes, record, in use, red dot, ronda, pro
     await until('the column is "Sistema"', async () => (await sys()).column === 'system')
     assert.equal(await page.locator('.rg-right .rg-sys').isVisible(), true)
     assert.equal(await page.locator('.rg-right .rg-tree').isVisible(), false, 'the tree steps out')
-    assert.equal(await page.locator('.rg-sys-back').innerText(), 'voltar ao tether')
+    assert.equal(await page.locator('.rg-sys-back').innerText(), 'voltar às mesas')
     assert.equal((await sys()).section, 'processes', 'the first section by default')
     assert.equal((await layout())?.channelId, obra, 'the centre keeps its conversation')
     assert.equal(await centre(), centreBefore, 'the conversation did not move')
