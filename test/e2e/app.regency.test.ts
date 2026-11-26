@@ -214,7 +214,7 @@ test('regency: the desk, its three columns, its layout kept', { timeout: 480_000
     assert.equal(await page.locator('.rg-waiting .rg-empty').textContent(), 'Ninguém espera você')
     assert.equal(await page.locator('.rg-void .rg-void-t').textContent(), 'Nenhuma conversa ainda.')
     assert.equal(await page.locator('.rg-members').isVisible(), false, 'no channel, no "Neste canal"')
-    assert.equal(await page.locator('.rg-reserved-row[aria-disabled="true"]').count(), 1, '"Sistema" is there, off')
+    assert.equal(await page.locator('.rg-reserved .rg-sys-open[data-action="system"]').count(), 1, '"Sistema" is at the column\'s foot (on since R5d)')
     assert.equal(await page.locator('.rg-cl-head').count(), 1, '"Fechadas" is at the tree\'s foot')
     assert.equal(await page.locator('.rg-cl-empty').textContent(), 'Nenhuma sessão fechada')
     await page.screenshot({ path: join(SHOTS, 'r1-vazio.png') })

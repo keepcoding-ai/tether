@@ -337,8 +337,9 @@ export class SystemView {
     if (!r.on) line.append(chip('sem ronda', 'off'))
     else {
       line.append(chip(r.intervalText ?? '', 'st ok', `Ronda ${r.intervalText ?? ''}`))
-      if (r.nextText) line.append(chip(`próxima ${r.nextText}`, 'next'))
-      if (r.noChannel) line.append(chip('sem canal', 'warn', 'O agente não está ouvindo o canal da ronda agora: o cutucão espera até ele ouvir'))
+      // Without a channel the next nudge waits for it: "sem canal" says it (and its tooltip how), no "próxima".
+      if (r.noChannel) line.append(chip('sem canal', 'warn', 'O agente não está ouvindo o canal da ronda agora: o próximo cutucão espera até ele ouvir'))
+      else if (r.nextText) line.append(chip(`próxima ${r.nextText}`, 'next'))
       if (r.criterion) line.append(chip(`até "${r.criterion}"`, 'crit', `Critério de parada: ${r.criterion}`))
     }
     main.append(id, line)
