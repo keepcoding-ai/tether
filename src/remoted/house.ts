@@ -10,16 +10,13 @@ import {
   ActCache, ADMIT_TTL_S, CLOSE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
   parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE,
-  admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS,
+  admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT,
   type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OuterFrame, type Req, type ResStatus,
   type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
 import type { AttentionView } from './attention.ts'
 import { gate } from './gate.ts'
 import type { DenyRow, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus } from './ipc.ts'
-
-/** Events of this milestone (house → device). Like the operations, an event has a line with the scope it needs. */
-export const EVT = { attentionChanged: { code: 0x0100, scope: 'attention' } } as const
 
 /** Spec 5.8: at most this many handshakes per minute per ticketId hint, and pending in total. */
 const HS_PER_TICKET_PER_MIN = 6

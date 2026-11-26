@@ -40,6 +40,23 @@ export const OPS: readonly OpLine[] = [
   { code: 0x0601, name: 'device.revoke', scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true },
 ]
 
+/** An event (house → device, spec 7.2 rule 6): like an operation, it has a line with the scope a device needs to get it. */
+export interface EvtLine {
+  readonly code: number
+  readonly name: string
+  readonly scope: OpScope
+}
+
+/** Events fixed in this version. The portal emits one only to a session whose device has its scope. */
+export const EVT = {
+  attentionChanged: { code: 0x0100, name: 'attention.changed', scope: 'attention' },
+} as const satisfies Record<string, EvtLine>
+
+const EVT_BY_CODE = new Map<number, EvtLine>(Object.values(EVT).map(l => [l.code, l]))
+
+/** The line of an event code, or undefined for an event this version does not know. */
+export const evtByCode = (code: number): EvtLine | undefined => EVT_BY_CODE.get(code)
+
 const BY_CODE = new Map<number, OpLine>(OPS.map(l => [l.code, l]))
 const BY_NAME = new Map<string, OpLine>(OPS.map(l => [l.name, l]))
 

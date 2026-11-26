@@ -51,8 +51,8 @@ export {
 export type { RelayHouse, HouseAuthFailure, AdmitCheck, AdmitVerdict } from './admission.ts'
 
 // Operations and presence on the wire (spec 7)
-export { OPS, opByCode, opByName, ActCache } from './ops.ts'
-export type { OpLine, OpScope, PresenceClass } from './ops.ts'
+export { OPS, opByCode, opByName, ActCache, EVT, evtByCode } from './ops.ts'
+export type { OpLine, OpScope, PresenceClass, EvtLine } from './ops.ts'
 export {
   UV_PURPOSE, uvChallenge, unlockDigest, elevateDigest, actDigest, uvRegChallenge, derToP1363,
 } from './presence.ts'
