@@ -4652,7 +4652,7 @@ function setupUi(): void {
       case 'prefix': take(); pill.wait(action.first, action.next, where === 'terminal'); return
       case 'editor': {
         take(); pill.hide()
-        const id = currentDesk().activePanel?.id
+        const id = commandPaneId()
         if (id) liveTypeOf(paneTypes, id)?.runEditorChord?.(id, action.keys[0]!, ev)
         return
       }
@@ -4729,6 +4729,8 @@ declare global {
       activeId(): string | undefined
       /** The pane new panes and the shortcuts act on: the drawer's, the focused pad's or the visible desk's active pane. */
       currentPane(): string | undefined
+      /** The pane the pane's commands and chords aim at now: the tab lent to the peek card while the keyboard is in it, else currentPane (peek-rules.ts cardHoldsKeys). */
+      commandPane(): string | undefined
       slots(): SlotState[]
       text(slotId: string): string
       connection(): ConnectionState | undefined
@@ -4924,6 +4926,7 @@ function setupTestHooks(): void {
     modelMarkers: (path: string) => monaco.editor.getModelMarkers({ resource: monaco.Uri.file(path) }).map(m => ({ severity: m.severity, message: m.message, line: m.startLineNumber })),
     activeId: () => desks.activePanel?.id,
     currentPane: () => currentDesk().activePanel?.id,
+    commandPane: () => commandPaneId(),
     slots: () => [...slots.values()],
     text: slotId => {
       const p = panels.get(slotId)

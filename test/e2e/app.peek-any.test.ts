@@ -19,12 +19,17 @@
 //   8. a pane of a SLEEPING desk: "dormindo" and "Acordar", the desk not woken by the peek; "Acordar" wakes it (r3-cartao-dormindo);
 //   9. the pane CLOSED while in the card: the card closes, nothing left;
 //  10. a tab IN VIEW only gets the keyboard (no card).
+// The keyboard in the card (V3): the card's tab is the target of its commands and chords:
+//   6b. modal, a note in the card and another note active on the desk below: the command target is the card's note; Ctrl+S
+//       writes the card's note to disk (typing on holds the autosave off, so the write is the chord's) and leaves the other
+//       alone; Ctrl+N (new tab), Ctrl+W and Ctrl+F4 (close the panel) are quiet; Ctrl+F opens the editor's find in the card;
+//  6c. docked over a pane: the keyboard in the card aims at the card's note, out of it (on the pane below) back at the desk.
 // Run alone: node --test --test-force-exit --test-concurrency=1 test/e2e/app.peek-any.test.ts   (the build is remade)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
@@ -53,6 +58,8 @@ type Hooks = {
   closePanel(id: string): void
   termSize(slotId: string): { cols: number; rows: number } | undefined
   peekState(): { open: boolean; lent: boolean }
+  currentPane(): string | undefined
+  commandPane(): string | undefined
   peekPane(id: string, over?: string): void
   lendPane(id: string): string
   giveBackPane(id: string): boolean
@@ -334,6 +341,15 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     await page.waitForSelector(CH(shellOf(chPane)))
     await page.waitForFunction(id => window.__tether.ext.channels.view(id)?.loaded === true, vit)
     await switchTo(homeDesk)
+    // Another note, the home desk's active tab under the card (6b: Ctrl+S must not aim at it).
+    const belowPath = join(home, 'de-baixo.md')
+    writeFileSync(belowPath, '# De baixo\n')
+    await page.evaluate(p => window.__tether.openNote(p), belowPath)
+    await page.waitForFunction(() => window.__tether.notes().length === 2)
+    const below = await page.evaluate(p => window.__tether.notes().find(n => n.path.endsWith(p))!.id, 'de-baixo.md')
+    await page.waitForSelector(`${shellOf(below)} > .note-panel .monaco-editor`)
+    assert.equal(await page.evaluate(() => window.__tether.currentPane()), below)
+    assert.equal(await page.evaluate(() => window.__tether.commandPane()), below, 'no card: the target is the desk\'s active tab')
 
     await peekPane(note2)
     await page.waitForSelector(`${CARD}[data-mode="modal"] .peek-card[data-content="pane"]`)
@@ -359,6 +375,44 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     await page.keyboard.press('Escape')
     await frames()
     assert.equal((await peekState()).open, true, 'Esc in the content does not close')
+
+    // ---- 6b (V3). the keys aim at the note in the card, never at the desk's tab below ----
+    console.log('step 6b')
+    assert.equal(await page.evaluate(() => window.__tether.commandPane()), note2, 'the keyboard in the card: the card\'s note is the target')
+    assert.equal(await page.evaluate(() => window.__tether.currentPane()), below, 'the desk\'s active tab is still the other note')
+    // Ctrl+S writes at once. Typing on every 60 ms keeps the 300 ms autosave from firing (NOTE_SAVE_DEBOUNCE_MS), so the
+    // file holding the text of the instant of the chord is the chord's doing.
+    await page.waitForFunction(id => window.__tether.note(id)?.dirty === false, note2, { timeout: 10_000 })
+    await page.keyboard.type(' salvo-pelo-ctrl-s')
+    const atSave = (await page.evaluate(id => window.__tether.note(id)!.text, note2))
+    assert.notEqual(readFileSync(notePath, 'utf8'), atSave, 'not on disk yet')
+    await page.keyboard.press('Control+s')
+    let saved = false
+    for (let i = 0; i < 30 && !saved; i++) {
+      saved = readFileSync(notePath, 'utf8') === atSave
+      if (!saved) { await page.keyboard.type('.'); await page.waitForTimeout(60) }
+    }
+    assert.ok(saved, 'Ctrl+S in the card wrote the card\'s note to disk')
+    assert.equal(readFileSync(belowPath, 'utf8'), '# De baixo\n', 'the note below untouched')
+    assert.equal((await page.evaluate(id => window.__tether.note(id), below))?.dirty, false)
+    // The structure is quiet with the keyboard in the modal card: no new tab, no panel closed.
+    const panes = (await page.evaluate(() => window.__tether.panelIds())).sort()
+    for (const k of ['Control+n', 'Control+w', 'Control+F4']) {
+      await page.keyboard.press(k)
+      await frames()
+      await page.waitForTimeout(200)
+      assert.deepEqual((await page.evaluate(() => window.__tether.panelIds())).sort(), panes, `${k}: the panes as they were`)
+      assert.equal((await peekState()).pane, note2, `${k}: the card still shows the note`)
+      assert.equal(await count('dialog[open]'), 0, `${k}: no dialog`)
+    }
+    // Find in the tab: the editor's own find opens inside the card.
+    await page.keyboard.press('Control+f')
+    await page.waitForSelector(`${PANE} .monaco-editor .find-widget.visible`)
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('#peek .peek-pane .monaco-editor .find-widget.visible'))
+    assert.equal((await peekState()).open, true, 'Esc closed the find only')
+    await page.locator(`${PANE} .monaco-editor .view-lines`).click()
+
     // The tab's menu at the foot: the manager's menu aimed at the pane, "Ir até a guia" last; Esc closes the menu, then (on the foot) the card.
     await page.click('#peek .qv-menu')
     await page.locator('#ctx-menu').waitFor()
@@ -375,6 +429,25 @@ test('quick view V1: any live pane is lent out of its tab and given back whole',
     assert.equal(await count('.peek-lent'), 0)
     assert.equal(await count('.peek-tab-eye'), 0, 'the eye went')
     assert.equal(await count('[data-inert-onscreen]'), 0, 'the window is back')
+
+    // ---- 6c (V3). docked: the target follows the keyboard in and out of the card ----
+    console.log('step 6c')
+    await page.evaluate(([id, over]) => window.__tether.peekPane(id, over), [note2, shellOf(below)] as const)
+    await page.waitForSelector(`${CARD}[data-mode="docked"] .peek-pane > .note-panel .monaco-editor`)
+    await page.locator(`${PANE} .monaco-editor .view-lines`).click()
+    assert.equal(await page.evaluate(() => window.__tether.commandPane()), note2, 'docked, the keyboard in the card: the card\'s note')
+    // Out of the card, on the note below (the part the card leaves uncovered): the desk's tab again.
+    const belowBox = (await page.evaluate(s => { const r = document.querySelector(s)!.getBoundingClientRect() as unknown as { left: number; top: number; height: number }; return { left: r.left, top: r.top, height: r.height } }, shellOf(below)))
+    await page.mouse.click(belowBox.left + 40, belowBox.top + belowBox.height - 30)
+    await page.waitForFunction(b => window.__tether.commandPane() === b, below)
+    assert.equal((await peekState()).open, true, 'the docked card stays')
+    await page.locator(`${PANE} .monaco-editor .view-lines`).click()
+    await page.waitForFunction(n => window.__tether.commandPane() === n, note2)
+    await closeCard()
+    assert.equal((await loan(note2)).state, 'home')
+    assert.equal(await page.evaluate(() => window.__tether.commandPane()), below, 'card closed: the desk\'s tab')
+    await page.evaluate(id => window.__tether.closePanel(id), below)
+    await page.waitForFunction(id => !window.__tether.panelIds().includes(id), below)
 
     // ---- 7. a channel in the same card: same header and foot ----
     console.log('step 7')
