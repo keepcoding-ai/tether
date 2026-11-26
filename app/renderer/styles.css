@@ -652,6 +652,13 @@ body:not([data-builder="true"]) .frame-dock:has(.dv-sash) { border-color: transp
 .frame-dock:has(.dv-sash) .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash { width: var(--gap); margin-left: calc(2px - var(--gap) / 2); }
 .frame-dock:has(.dv-sash) .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash { height: var(--gap); margin-top: calc(2px - var(--gap) / 2); }
 .frame-dock:has(.dv-sash) .dv-view::before { background-color: transparent !important; }
+/* --- surfaces per group: a terminal group sits on the deepest tone (--frame-bg, the one xterm is painted with: app/shared/theme.ts
+   FRAME_BACKGROUND), any other group (a channel, a preview, a note, an app) one step lighter on dark. A group is a
+   terminal when its visible content holds a .panel (panel.ts). Descendants that read var(--frame-bg) follow the group. --- */
+.dv-theme-tether { --surface-term: var(--frame-bg); --surface-lift: 5%; --surface-content: color-mix(in srgb, var(--fg) var(--surface-lift), var(--frame-bg)); }
+:root[data-theme="light"] .dv-theme-tether { --surface-lift: 0%; }
+.dv-groupview { --group-body: var(--surface-content); --frame-bg: var(--group-body); --dv-group-view-background-color: var(--group-body); }
+.dv-groupview:has(> .dv-content-container .panel) { --group-body: var(--surface-term); }
 /* --- builder mode (builder-mode.ts): the "+" exist only here, the content is inert and dimmed, the tabs only drag ---
    Outside the mode the "+" are in the DOM but never shown: nothing appears on hover over a tab, a scrollbar or a sash. */
 body:not([data-builder="true"]) .edge-plus { display: none; }
