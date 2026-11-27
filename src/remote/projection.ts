@@ -276,6 +276,7 @@ export const RESULTS = {
   'house.key-rotate.ack': unbuilt,
   'attention.list': attentionList,
   'attention.watch': attentionList,
+  'channels.marks': unbuilt,
   'regency.tree': unbuilt,
   'device.list': unbuilt,
   'device.revoke': empty,

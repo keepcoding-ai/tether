@@ -33,6 +33,7 @@ describe('remote operations registry', () => {
       [0x0008, 'house.key-rotate.ack', 'session', 'unlocked', false, true],
       [0x0100, 'attention.list', 'attention', 'unlocked', false, false],
       [0x0101, 'attention.watch', 'attention', 'unlocked', false, false],
+      [0x0200, 'channels.marks', 'channels', 'unlocked', false, false],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],

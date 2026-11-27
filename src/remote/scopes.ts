@@ -45,6 +45,7 @@ export const OP_CODES = {
   'house.key-rotate.ack': 0x0008,
   'attention.list': 0x0100,
   'attention.watch': 0x0101,
+  'channels.marks': 0x0200,
   'regency.tree': 0x0300,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
@@ -79,6 +80,8 @@ export const OP_TABLE = {
   'house.key-rotate.ack': { scope: 'session', presence: 'unlocked', mutates: true, gesture: false, allowedWithoutCredential: true, pipe: [] },
   'attention.list': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'attention.watch': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
+  // The channels' marks as tetherd computes them (ext `channels`, `marks`). No body yet: its handler and its way through the pipe are step 3.4.
+  'channels.marks': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`). No body yet: its handler and its way through the pipe are step 3.4.
   'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
