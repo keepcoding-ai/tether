@@ -5,6 +5,9 @@ import { defaultTetherHome, remoteBenchOn, withoutRemoteBench } from '../../src/
 import { daemonEnv } from '../../src/daemon/client.ts'
 import { cmdRemote } from '../../src/cli/remote.ts'
 import { portalEnv } from '../../extensions/remote/daemon/portal.ts'
+import { regencyBenchOn } from '../../extensions/regency/daemon.ts'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 const os = { platform: 'win32' as const, homedir: 'C:\\Users\\p' }
 const env = { LOCALAPPDATA: 'C:\\Users\\p\\AppData\\Local', TETHER_TEST_REMOTE: '1', TETHER_TEST_REMOTE_NOTICE: 'f', TETHER_TEST_REMOTE_TICK_MS: '200', PATH: 'p' }
@@ -34,6 +37,41 @@ test('portalEnv: the bench variables reach the portal only under a bench home', 
   assert.equal(portalEnv(env, 'C:\\atrium\\.tmp\\bench-home', 'P').TETHER_TEST_REMOTE_NOTICE, 'f')
   const real = portalEnv(env, defaultTetherHome(env), 'P')
   assert.equal(Object.keys(real).some((k) => k.startsWith('TETHER_TEST_REMOTE')), false)
+})
+
+// RR3 gate B-2: TETHER_TEST_REGENCY was read straight from process.env in the Regency's daemon half: inherited by a tetherd
+// a CLI started, and honoured under the person's default home.
+test('the Regency bench: only TETHER_TEST_REMOTE_REGENCY, only where remoteBenchOn counts, never inherited', () => {
+  const bench = 'C:\\atrium\\.tmp\\bench-home'
+  const on = { ...env, TETHER_TEST_REMOTE_REGENCY: '1' }
+  assert.equal(regencyBenchOn(on, bench), true)
+  assert.equal(regencyBenchOn(on, defaultTetherHome(on)), false, 'the default home ignores it')
+  assert.equal(regencyBenchOn({ ...on, TETHER_TEST_REMOTE: undefined }, bench), false, 'without the remote bench flag')
+  assert.equal(regencyBenchOn({ ...env, TETHER_TEST_REGENCY: '1' }, bench), false, 'the old name opens nothing')
+  assert.equal(Object.hasOwn(daemonEnv(on, 'C:\\h', 'pipe'), 'TETHER_TEST_REMOTE_REGENCY'), false, 'a started tetherd does not inherit it')
+})
+
+test('ratchet: no TETHER_TEST_* in a daemon half of an extension outside remoteBenchOn', () => {
+  const root = join(import.meta.dirname, '..', '..', 'extensions')
+  const files: string[] = []
+  for (const ext of readdirSync(root, { withFileTypes: true })) {
+    if (!ext.isDirectory()) continue
+    const dir = join(root, ext.name)
+    for (const e of readdirSync(dir, { withFileTypes: true, recursive: true })) {
+      const rel = relative(dir, join(e.parentPath, e.name)).replaceAll('\\', '/')
+      if (e.isFile() && /^daemon(\.ts|\/.*\.ts)$/.test(rel)) files.push(join(dir, rel))
+    }
+  }
+  assert.ok(files.length > 5, 'the daemon halves were found')
+  const bad: string[] = []
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    for (const l of src.split('\n')) {
+      if (!l.includes('TETHER_TEST_')) continue
+      if (/process\.env\.TETHER_TEST_/.test(l) || !/TETHER_TEST_REMOTE/.test(l) || !/remoteBenchOn\(/.test(l)) bad.push(`${relative(root, f)}: ${l.trim()}`)
+    }
+  }
+  assert.deepEqual(bad, [], 'a bench variable of a daemon half is of the TETHER_TEST_REMOTE* family and read on the line of remoteBenchOn')
 })
 
 test('cmdRemote: `pair` and `on` stay refused under the default home even with the flag', async () => {

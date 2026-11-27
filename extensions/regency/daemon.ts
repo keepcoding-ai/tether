@@ -11,6 +11,7 @@
 // How tetherd knows the app left: the lease. The open app renews it every LEASE_MS; a tree not renewed for STALE_MS is
 // the app's last (the app closed, crashed or hangs). No connection hook is needed, and a reload simply publishes again.
 import { toDisposable, type IDisposable } from '../../app/shared/vscode-lifecycle.ts'
+import { remoteBenchOn } from '../../src/core/paths.ts'
 import { DoorError } from '../../src/daemon/door/port.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { ExtRequestContext } from '../../src/daemon/door/types.ts'
@@ -105,11 +106,20 @@ export class TreeKeeper {
   }
 }
 
+/**
+ * The bench of the Regency (a `test` connection may publish): TETHER_TEST_REMOTE_REGENCY=1, and only where the remote's bench
+ * counts (src/core/paths.ts remoteBenchOn: the flag AND an explicit bench home). Its name is of the TETHER_TEST_REMOTE* family,
+ * so a tetherd started by a CLI or the app never inherits it (daemonEnv drops the family).
+ */
+export function regencyBenchOn(env: NodeJS.ProcessEnv, home: string | undefined): boolean {
+  return remoteBenchOn(env, home) && env.TETHER_TEST_REMOTE_REGENCY === '1'
+}
+
 export function activateWith(api: TetherDaemon, extra: TreeKeeperDeps = {}): { keeper: TreeKeeper; disposables: IDisposable[] } {
   const keeper = new TreeKeeper({
     live: () => ({ slots: api.slots.list(), deskMap: api.desks.map() }),
     emit: (name, payload) => api.events.emit(name, payload),
-    bench: process.env.TETHER_TEST_REGENCY === '1',
+    bench: regencyBenchOn(process.env, api.home),
     ...extra,
   })
   const disposables: IDisposable[] = [
