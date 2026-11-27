@@ -95,8 +95,8 @@ describe('generated stylesheet', () => {
     assert.ok(schemeVars('dark').startsWith('--x-red:oklch(0.620 0.220 25);--x-red-foreground:#10131a;--x-red-text:'), schemeVars('dark').slice(0, 120))
   })
 
-  test('styles.css keeps the desk background the text is checked against (one constant, two spellings)', () => {
-    const styles = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'renderer', 'styles.css'), 'utf8')
+  test('tokens.css keeps the desk background the text is checked against (one constant, two spellings)', () => {
+    const styles = readFileSync(join(import.meta.dirname, '..', '..', 'app', 'renderer', 'tokens.css'), 'utf8')
     assert.ok(styles.includes(`--desk-bg: ${WINDOW_BACKGROUND.dark};`), 'dark --desk-bg')
     assert.ok(styles.includes(`--desk-bg: ${WINDOW_BACKGROUND.light};`), 'light --desk-bg')
   })

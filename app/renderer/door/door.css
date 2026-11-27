@@ -1,18 +1,7 @@
 /* The marks an extension puts through the agent door: a seal on a desk pill (desk-switch.ts) and emblems on the right of a tab
    (the `.ext-emblems` of tab-header.ts). The hue is a number (0-359, in general agentHue(slotId): teal to rose) in --seal-hue /
-   --emblem-hue; the theme sets lightness and saturation here, so a hue reads the same on both. Theme tokens only otherwise. */
-:root {
-  --mark-s: 62%;
-  --mark-fg-l: 72%;
-  --mark-bg-a: .18;
-  --mark-solid-s: 62%;
-  --mark-solid-l: 62%;
-  --mark-line-a: .5;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; --mark-solid-s: 58%; --mark-solid-l: 40%; }
-}
-:root[data-theme="light"] { --mark-fg-l: 32%; --mark-bg-a: .14; --mark-line-a: .55; --mark-solid-s: 58%; --mark-solid-l: 40%; }
+   --emblem-hue; the theme sets lightness and saturation (the --mark-* tokens, in tokens.css), so a hue reads the same on both.
+   Theme tokens only otherwise. */
 
 /* The seal on a pill: a small glyph in a round chip, after the name and before any count. Without a hue it takes the pill's text. */
 :is(.seg, .ctx-seals) .desk-seal {
