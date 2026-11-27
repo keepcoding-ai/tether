@@ -7,7 +7,7 @@
 // The pane paints its rows again on every change of the house: the focus is held by the item's key, never by its node, and
 // given back after each paint when the repaint took it away.
 import type { Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
-import { BACK_KEYS, DIRECTIONS, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Item } from './focus-rules.ts'
+import { BACK_KEYS, DIRECTIONS, firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Item } from './focus-rules.ts'
 import { el } from './ui-lite.ts'
 
 /** Where the items live, and the name of each place (the prefix of its key). */
@@ -69,6 +69,9 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
   let lastKey: string | undefined
   let order: string[] = []
   let cardAtKey = false
+  /** The first focus was decided (the house arrived); and whether the person walked with the arrows before that. */
+  let settled = false
+  let walked = false
 
   const paintOn = (): void => { if (on) shell.dataset.keys = 'on'; else delete shell.dataset.keys }
 
@@ -91,6 +94,9 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
     const a = document.activeElement
     return a === null || a === document.body || a === document.documentElement
   }
+
+  /** The keyboard sits on a filter chip (what the first paint gave it, before the house arrived). */
+  const heldIsChip = (): boolean => { const a = document.activeElement; return a instanceof HTMLElement && shell.contains(a) && a.matches('.rg-chips .rg-chip[data-filter]') }
 
   const isItem = (e: Element | null): e is HTMLElement => e instanceof HTMLElement && shell.contains(e) && e.matches(ITEM_SELECTOR) && !e.closest('.rr-card')
 
@@ -115,6 +121,7 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
       ev.preventDefault()
       ev.stopPropagation()
       on = true
+      walked = true
       paintOn()
       order = all.map(a => a.key)
       const here = item ? all.find(a => a.el === t) : undefined
@@ -172,6 +179,14 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
   const afterPaint = (): void => {
     const all = keyed()
     const keys = all.map(a => a.key)
+    if (on && !settled && deps.tier() === 'wide' && !deps.cardShown() && (nobody() || heldIsChip())) {
+      const first = firstFocusOf(keys, walked)
+      settled = first.settled
+      if (first.key !== undefined) {
+        const to = all.find(a => a.key === first.key)
+        if (to) { focusEl(to.el); order = keys; return }
+      }
+    }
     if (on && nobody() && !deps.cardShown()) {
       const want = keptKeyOf(order, keys, lastKey) ?? (deps.tier() === 'wide' ? initialKeyOf(keys) : undefined)
       const to = want === undefined ? undefined : all.find(a => a.key === want)

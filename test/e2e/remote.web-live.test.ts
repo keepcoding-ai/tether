@@ -560,13 +560,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   })
   let firstHeld: Held | undefined
 
-  // Product defect found by this test (reported, not fixed here: remote/web/src is not this test's): the casing paints the
-  // pane once while the house is still being read (regency.ts `online` -> paint -> focus.afterPaint), when the only items are
-  // the filter chips; the walk gives the keyboard to the first of them ("Todos") and, once someone holds it, keeps it there
-  // (keptKeyOf), so the TV opens on "Todos" and not on who waits.
-  test('TV (2560) 2. foco inicial ao abrir: quem espera a pessoa segura o teclado', {
-    todo: 'defeito de produto: a TV abre com o foco no chip "Todos", não em quem espera (a 1a pintura, antes da árvore, dá o foco ao 1o chip e ele fica)',
-  }, async () => {
+  // The first paint (before the house is read) has only the chips; the walk decides the first focus when the content arrives
+  // (focus-rules.ts firstFocusOf), so the TV opens on who waits and not on "Todos".
+  test('TV (2560) 2. foco inicial ao abrir: quem espera a pessoa segura o teclado', async () => {
     await page.setViewportSize({ width: 2560, height: 1440 })
     await page.reload()
     await toRegency()

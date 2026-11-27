@@ -81,6 +81,17 @@ export function initialKeyOf(keys: readonly string[]): string | undefined {
 }
 
 /**
+ * The first focus of the TV is decided when real content arrives, not at the first paint (which has only the filter chips and
+ * would give them the keyboard for good). Until content arrives nothing is forced; when it arrives for the first time the
+ * focus goes to who takes it first, unless the person already walked with the arrows (then hers stays). `settled` turns true
+ * once the content has been seen.
+ */
+export function firstFocusOf(keys: readonly string[], walked: boolean): { settled: boolean; key?: string } {
+  if (!keys.some(k => !k.startsWith('chip:'))) return { settled: false }
+  return walked ? { settled: true } : { settled: true, key: initialKeyOf(keys) }
+}
+
+/**
  * The item that keeps the keyboard after the tree is read again: the same key when it is still there; when it went (a pane
  * closed), the item now at its old place in the order, so the focus does not fall off the screen.
  */

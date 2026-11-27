@@ -3,7 +3,7 @@
 // across a re-reading of the tree, and the arrows that stay a text field's.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Direction, type Item, type KeyPlace } from '../../remote/web/src/focus-rules.ts'
+import { firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Direction, type Item, type KeyPlace } from '../../remote/web/src/focus-rules.ts'
 
 const box = (key: string, left: number, top: number, w: number, h: number): Item => ({ key, rect: { left, top, right: left + w, bottom: top + h } })
 
@@ -25,6 +25,16 @@ const grid: Item[] = [
   box('pane:2a', 1680, 170, 300, 120),
   box('closed', 1360, 600, 620, 40),
 ]
+describe('firstFocusOf', () => {
+  test('only chips so far: nothing is decided yet; when the house arrives, who waits takes the focus', () => {
+    assert.deepEqual(firstFocusOf(['chip:all', 'chip:waiting'], false), { settled: false })
+    assert.deepEqual(firstFocusOf(['chip:all', 'conv:x', 'wait:a'], false), { settled: true, key: 'wait:a' })
+  })
+  test('the person already walked: her focus stays, the decision is closed', () => {
+    assert.deepEqual(firstFocusOf(['chip:all', 'conv:x', 'wait:a'], true), { settled: true })
+  })
+})
+
 const at = (k: string): Item => grid.find(i => i.key === k)!
 const go = (k: string, d: Direction): string | undefined => neighbourOf(at(k), grid, d)
 
