@@ -4,15 +4,18 @@
 // app on the same pipe, hidden window. Played in order:
 //   1. the top bar's state icon says "off"; a click brings the Regency's "Sistema › Aparelhos" forward;
 //   2. "Ligar a remota" without a relay says why in words; on (with a relay), the icon says nobody is connected;
-//   3. pairing at 1440 px: QR and the 12-digit code with the 2-minute clock; the device arrives, the card shows its declared
-//      name, what it may do and the field; wrong digits count (the portal refuses), the right ones pair it; the session is
-//      live and the icon counts it;
-//   4. pairing at 390 px (phone tier): the same card, 44 px targets, no horizontal scroll;
+//   3. pairing at 1440 px: QR and the 12-digit code with the 2-minute clock; without the phone app's address the card says
+//      the code has to be typed and the QR carries the fragment alone; the device arrives, the card shows its declared
+//      name, what it may do and the field; wrong digits count (the portal refuses), the right ones pair it; its row says
+//      "Ligado agora há…" with "Encerrar sessão", and the icon counts it;
+//   4. pairing at 390 px (phone tier), with the phone app's address configured: the QR carries `<webUrl>#pair=…`; the same
+//      card, 44 px targets, no horizontal scroll, the "Aparelhos" tab whole; the icon counts DEVICES (one has 2 sessions);
 //   5. cancel: a code begun and cancelled closes the card;
-//   6. "Revogar aparelho" asks first; then the device's session falls and its row goes;
-//   7. "Desligar a remota" asks first; then every session falls and the icon says off; "Ligar a remota" brings it back.
-// "Encerrar sessão" is not offered: the daemon does not yet tell sessions apart by device (see the RR2.2 report).
-// Captures: C:/atrium/.tmp/tether-agents/onda-3/regencia-remota/capturas/rr22-*.png.
+//   6. "Encerrar sessão" asks first; then only that device falls (CLOSE 0x01), its row says "Desligado", it is not revoked
+//      and it connects again;
+//   7. "Revogar aparelho" asks first; then the device's session falls and its row goes;
+//   8. "Desligar a remota" asks first; then every session falls and the icon says off; "Ligar a remota" brings it back.
+// Captures: C:/atrium/.tmp/tether-agents/onda-3/regencia-remota/capturas/rr22b-*.png.
 // Run: npm run app:build && env -u TETHER_USER_DIR node --test --test-force-exit --test-concurrency=1 test/e2e/app.remote-devices.test.ts
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
@@ -33,8 +36,9 @@ import { killElectron } from './electron.ts'
 type Snap = {
   head: string; acts: string[]; ask?: string; paints: number
   rows: { id: string; text: string; state?: string; acts: string[]; panel?: string }[]
-  pair?: { phase: string; title: string; code: string; clock: string; qr: boolean; text: string; typing: boolean }
+  pair?: { phase: string; title: string; code: string; clock: string; qr: boolean; qrText?: string; text: string; typing: boolean }
 }
+const WEB = 'https://remota.exemplo/app/'
 type Icon = { kind: string; state: string; badge?: number; title: string }
 type Hooks = {
   activeDesk(): string
@@ -106,7 +110,8 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
     const refresh = (): Promise<void> => page.evaluate(() => window.__tether.ext.remote.refresh())
     const sys = (): Promise<{ column: string; section: string } | undefined> => page.evaluate(() => window.__tether.ext.regency.system())
     const card = page.locator('.rr-pair')
-    const shot = async (name: string): Promise<void> => { await page.waitForTimeout(250); await page.screenshot({ path: join(SHOTS, `rr22-${name}.png`) }) }
+    const shot = async (name: string): Promise<void> => { await page.waitForTimeout(250); await page.screenshot({ path: join(SHOTS, `rr22b-${name}.png`) }) }
+    const row = async (id: string): Promise<Snap['rows'][number] | undefined> => (await snap()).rows.find(r => r.id === id)
     const head = (id: string) => page.locator(`.rr-head button[data-rr="${id}"]`)
     const rowAct = (id: string, act: string) => page.locator(`.rg-sr.device[data-device="${id}"] .rg-sr-h button[data-rr="${act}"]`)
     const askGo = (act: string) => page.locator(`.rg-sr-x button[data-rr="${act}-go"]`)
@@ -114,12 +119,18 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
       (JSON.parse(readFileSync(join(home, 'remote', 'devices.json'), 'utf8')) as { devices: { deviceId: string; state: string; name: string }[] }).devices
 
     /** Pairs one test device through the screen: the code read from the card, the device's SAS typed on the machine. */
-    const pairOne = async (name: string, width: number): Promise<{ id: string; session: DeviceSession }> => {
+    const pairOne = async (name: string, width: number, web?: string): Promise<{ id: string; session: DeviceSession; device: TestDevice }> => {
       await head('pair').click()
       await until('the card with the QR and the code', async () => { const p = (await snap()).pair; return p?.phase === 'code' && p.qr && /^\d{12}$/.test(p.code) })
       const p = (await snap()).pair!
       assert.match(p.clock, /^(2:00|1:5\d)$/, `the 2-minute clock (${p.clock})`)
-      assert.match(p.text, /aponte a câmera para o QR, ou digite o código/)
+      if (web) {
+        assert.ok(p.qrText?.startsWith(`${web}#pair=`), `the QR carries the app's address (${p.qrText?.slice(0, 40)})`)
+        assert.match(p.text, /aponte a câmera para o QR \(ele abre o tether remoto\), ou abra o tether remoto e digite o código/)
+      } else {
+        assert.match(p.qrText ?? '', /^#pair=/, 'without the address the QR carries the fragment alone')
+        assert.match(p.text, /ainda não sabe o endereço do app do celular, então o QR não abre o app sozinho\. No aparelho, abra o tether remoto e digite o código/)
+      }
       await shot(`qr-${width}`)
       const device = await TestDevice.make(relay)
       const code = p.code.match(/\d{3}/g)!.join(' ')
@@ -152,7 +163,7 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
       assert.equal(regDevices().find(d => d.deviceId === id)!.state, 'active')
       await page.locator('.rr-pair [data-rr="pair-close"]').click()
       await until('the card closed and the device listed', async () => { const s = await snap(); return s.pair === undefined && s.rows.some(x => x.id === id) })
-      return { id, session: r as DeviceSession }
+      return { id, session: r as DeviceSession, device }
     }
 
     // ---- 1. the icon says off; a click brings "Aparelhos" ----
@@ -188,28 +199,49 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
     assert.match(readFileSync(noticeFile, 'utf8'), /pareamento de aparelho foi iniciado/, 'the native notice of pair.begin')
     await until('the icon counts the live session', async () => (await icon()).badge === 1)
     assert.match((await icon()).title, /1 aparelho conectado agora/)
-    const row1 = (await snap()).rows.find(r => r.id === one.id)!
+    await until('the row of the device says it is on', async () => /Ligado agora há menos de 1 min/.test((await row(one.id))?.text ?? ''))
+    const row1 = (await row(one.id))!
     assert.match(row1.text, /Telefone do teste/)
     assert.match(row1.text, /pareado .* pelo código/)
-    assert.deepEqual(row1.acts, ['revoke'], '"Encerrar sessão" waits for sessions per device from the daemon')
+    assert.equal(row1.state, 'ok')
+    assert.deepEqual(row1.acts, ['end', 'revoke'], '"Encerrar sessão" for a device that is on')
+    assert.doesNotMatch(row1.text, /ainda não diz qual aparelho/)
     assert.equal(await page.locator('.status-wrap[data-status="remote.status"] .status-badge').innerText(), '1')
-    await shot('lista-1440')
+    assert.ok(Array.isArray((await ext(cli, 'remote.status')).live), 'the status says the live devices')
 
-    // ---- 4. pairing at 390 (the phone tier) ----
+    // ---- 4. pairing at 390 (the phone tier), with the phone app's address configured ----
     console.log('step 4')
+    assert.deepEqual(await ext(cli, 'remote.on', { relayUrl: relay.url, webUrl: WEB }), { on: true }) // same relay: the portal stays up
+    await refresh()
+    assert.equal((await ext(cli, 'remote.status')).webUrl, WEB)
+    assert.equal(JSON.parse(readFileSync(join(home, 'remote', 'config.json'), 'utf8')).webUrl, WEB, 'kept with the relay')
+    assert.equal(one.session.closed, undefined, 'setting the address did not drop anybody')
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(390, 844) })
     await until('the phone tier', async () => (await page.evaluate(() => window.__tether.ext.regency.tier())) === 'mobile')
     // The state icon brings "Aparelhos" on the phone too ("Sistema" lives in "Mesas" there).
     await page.locator('.rg-tabbar [data-tab="waiting"]').click()
     await page.evaluate(() => window.__tether.ext.remote.reveal())
     await until('Aparelhos on the phone', async () => head('pair').isVisible())
-    const two = await pairOne('Tablet da sala', 390)
+    const two = await pairOne('Tablet da sala', 390, WEB)
     const box = await rowAct(two.id, 'revoke').boundingBox()
     assert.ok(box && box.height >= 44 && box.width >= 44, `a 44 px target on the phone (${JSON.stringify(box)})`)
+    const endBox = await rowAct(two.id, 'end').boundingBox()
+    assert.ok(endBox && endBox.height >= 44 && endBox.width >= 44, `"Encerrar sessão" is 44 px on the phone (${JSON.stringify(endBox)})`)
     const pairBox = await head('pair').boundingBox()
     assert.ok(pairBox && pairBox.height >= 44, 'the pairing button is 44 px on the phone')
     const over = await page.evaluate(() => { const d = (globalThis as unknown as { document: { querySelector(s: string): { scrollWidth: number; clientWidth: number } | null } }).document.querySelector('.rr-dev'); return d ? d.scrollWidth - d.clientWidth : -1 })
     assert.ok(over === 0, `no horizontal scroll in Aparelhos (${over})`)
+    // Every tab of Sistema says its whole word on the phone ("Aparelhos", not "Aparel…").
+    const cut = await page.evaluate(() => [...(globalThis as unknown as { document: { querySelectorAll(s: string): Iterable<{ scrollWidth: number; clientWidth: number; textContent: string | null }> } }).document.querySelectorAll('.rg-sys-tab-t')]
+      .filter(t => t.clientWidth > 0 && t.scrollWidth > t.clientWidth).map(t => t.textContent))
+    assert.deepEqual(cut, [], `no tab label cut at 390 px (${cut.join(', ')})`)
+    const tabBox = await page.locator('.rg-sys-tab[data-section="devices"]').boundingBox()
+    assert.ok(tabBox && tabBox.height >= 44, 'the tab is a 44 px target')
+    // A second session of the same device: the icon still counts one device per device.
+    const extra = await two.device.connect() as DeviceSession
+    sessions.push(extra)
+    await until('two devices on, three sessions', async () => { await refresh(); const s = await ext(cli, 'remote.status'); return s.sessions === 3 && (await icon()).badge === 2 })
+    extra.leg.close()
     await shot('lista-390')
 
     // ---- 5. cancel ----
@@ -220,12 +252,36 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
     await until('the card closed', async () => (await snap()).pair === undefined)
     assert.equal(await card.isHidden(), true)
 
-    // ---- 6. revoke, with the question first ----
+    // ---- 6. end the session of one device, with the question first; it is not revoked and comes back ----
     console.log('step 6')
     await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]!.setSize(1440, 900) })
     await until('the desktop tier', async () => (await page.evaluate(() => window.__tether.ext.regency.tier())) !== 'mobile')
     await page.evaluate(() => window.__tether.ext.regency.openSystem('devices'))
-    await until('both devices listed', async () => (await snap()).rows.length === 2)
+    await until('both devices listed and on', async () => { const s = await snap(); return s.rows.length === 2 && s.rows.every(r => /Ligado agora/.test(r.text)) })
+    await shot('lista-1440')
+    await rowAct(one.id, 'end').click()
+    await until('the question under the row', async () => /^Encerrar a sessão de Telefone do teste\? Ele cai agora e pode se conectar de novo\./.test((await row(one.id))?.panel ?? ''))
+    assert.equal(one.session.closed, undefined, 'nothing happens before the answer')
+    await shot('encerrar-1440')
+    await askGo('end').click()
+    await untilSync(() => one.session.closed, 5_000, 'the session of that device falls')
+    assert.deepEqual(one.session.closed, { by: 'peer', code: 0x01 })
+    assert.equal(two.session.closed, undefined, 'the other device stays')
+    await until('its row says off, without "Encerrar sessão"', async () => { const r = await row(one.id); return r?.text.includes('Desligado') === true && r.acts.join() === 'revoke' })
+    assert.match((await row(two.id))!.text, /Ligado agora/)
+    await until('the icon counts the one left', async () => (await icon()).badge === 1)
+    assert.equal(regDevices().find(d => d.deviceId === one.id)!.state, 'active', 'ending a session revokes nothing')
+    await until('the audit line says who ended it', async () => readFileSync(join(home, 'remote', 'audit.jsonl'), 'utf8').split('\n').filter(Boolean)
+      .map(l => JSON.parse(l) as { act: string; result: string; device?: string })
+      .some(l => l.act === 'session.end' && l.result === 'by:app' && l.device === one.id))
+    const back = await one.device.connect()
+    assert.ok(!('failed' in back), `the device comes back (${JSON.stringify(back)})`)
+    one.session = back as DeviceSession
+    sessions.push(one.session)
+    await until('its row says on again', async () => { await refresh(); return /Ligado agora/.test((await row(one.id))?.text ?? '') })
+
+    // ---- 7. revoke, with the question first ----
+    console.log('step 7')
     await rowAct(one.id, 'revoke').click()
     await until('the question under the row', async () => /^Revogar Telefone do teste\?/.test((await snap()).rows.find(r => r.id === one.id)?.panel ?? ''))
     assert.equal(regDevices().find(d => d.deviceId === one.id)!.state, 'active', 'nothing happens before the answer')
@@ -240,8 +296,8 @@ test('remote devices: icon, Aparelhos, pairing with the six digits typed, revoke
     assert.match(await page.locator('.rr-foot').innerText(), /1 aparelho revogado/)
     assert.equal(two.session.closed, undefined, 'the other device stays')
 
-    // ---- 7. off, with the question first; on again ----
-    console.log('step 7')
+    // ---- 8. off, with the question first; on again ----
+    console.log('step 8')
     await head('off').click()
     await until('the question under the head', async () => /^Desligar a remota\?/.test((await snap()).ask ?? ''))
     await askGo('off').click()

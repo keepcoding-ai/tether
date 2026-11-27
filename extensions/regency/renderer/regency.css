@@ -472,7 +472,7 @@ dialog.rg-cr.rg-np[data-tier="mobile"] { width: 100vw; height: 100vh; height: 10
 .rg-sys-back:hover { background: var(--bg-hover); color: var(--fg); }
 .rg .rg-sys-back .rg-ic { color: inherit; }
 .rg-sys-t { font-size: 12.5px; padding-right: 6px; }
-.rg-sys-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 2px 6px 6px; border-bottom: 1px solid var(--border); flex: none; }
+.rg-sys-tabs { display: grid; grid-template-columns: repeat(var(--rg-sys-n, 5), minmax(0, 1fr)); gap: 2px; padding: 2px 6px 6px; border-bottom: 1px solid var(--border); flex: none; }
 .rg-sys-tab { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 5px 2px; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 10.5px; }
 .rg-sys-tab:hover { background: var(--bg-hover); color: var(--fg); }
 .rg-sys-tab[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--fg); font-weight: 600; }
@@ -536,6 +536,10 @@ dialog.rg-cr.rg-np[data-tier="mobile"] { width: 100vw; height: 100vh; height: 10
 
 /* The phone: "Sistema" lives in "Tether"; every target is 44 px (on the tablet too). */
 .rg:is([data-tier="mobile"], [data-tier="tablet"]) :is(.rg-sys-open, .rg-sys-back, .rg-sys-tab) { min-height: 44px; }
+/* Phone, six sections: a word of 9 letters does not fit a sixth of 390 px. Three per row, icon beside the whole word. */
+.rg[data-tier="mobile"] .rg-sys-tabs[data-n="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rg[data-tier="mobile"] .rg-sys-tabs[data-n="6"] .rg-sys-tab { flex-direction: row; justify-content: center; gap: 6px; font-size: 12px; }
+.rg[data-tier="mobile"] .rg-sys-tabs[data-n="6"] .rg-sys-tab .rg-sys-dot { top: 6px; right: 6px; }
 .rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sys-ib { width: 44px; height: 44px; }
 .rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sys-btn { height: 44px; }
 .rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-sr-x :is(input, select) { height: 44px; font-size: 14px; }

@@ -4,7 +4,9 @@
 //   remote off                    switches the remote off: the portal stops, every session ends
 //   remote revoke <aparelho>      revokes a device (its id, or a unique start of it with 4+ digits)
 // BENCH ONLY, with TETHER_TEST_REMOTE=1 in the environment of this CLI AND of the tetherd (a test flag, never for use):
-//   remote on <relay-url>         switches the remote on against a bench relay
+//   remote on <relay-url> [--web <url>]
+//                                 switches the remote on against a bench relay; --web sets the phone app's address the
+//                                 pairing QR carries (https://, http:// only for localhost; --web '' forgets it)
 //   remote pair                   prints the code, waits for the device, asks for the 6 digits it shows
 import { createInterface } from 'node:readline/promises'
 import type { DaemonClient } from '../daemon/client.ts'
@@ -29,6 +31,8 @@ interface Status {
   link: string
   sessions: number
   fingerprint?: string
+  webUrl?: string
+  live?: { deviceId: string; since: string; doing?: string }[]
   devices: DeviceView[]
 }
 
@@ -42,9 +46,11 @@ export function describeStatus(s: Status): string {
     lines.push(`Relay: ${s.link === 'up' ? 'conectado' : 'desconectado'}. Sessões abertas: ${s.sessions}.`)
   }
   if (s.fingerprint) lines.push(`Impressão digital desta casa: ${s.fingerprint}`)
-  const live = s.devices.filter((d) => d.state !== 'revoked')
-  lines.push(live.length ? 'Aparelhos:' : 'Nenhum aparelho pareado.')
-  for (const d of live) lines.push(`  ${d.id.slice(0, 8)}  ${STATE_PT[d.state] ?? d.state}  ${d.name}${d.lastSeenAt ? `  (visto ${d.lastSeenAt})` : ''}`)
+  if (s.webUrl) lines.push(`App do celular (no QR): ${s.webUrl}`)
+  const kept = s.devices.filter((d) => d.state !== 'revoked')
+  const on = new Map((s.live ?? []).map((l) => [l.deviceId, l.since]))
+  lines.push(kept.length ? 'Aparelhos:' : 'Nenhum aparelho pareado.')
+  for (const d of kept) lines.push(`  ${d.id.slice(0, 8)}  ${STATE_PT[d.state] ?? d.state}  ${d.name}${on.has(d.id) ? `  (ligado desde ${on.get(d.id)})` : d.lastSeenAt ? `  (visto ${d.lastSeenAt})` : ''}`)
   return lines.join('\n') + '\n'
 }
 
@@ -56,7 +62,7 @@ async function req(client: DaemonClient, name: string, args?: Record<string, unk
 export async function cmdRemote(argv: string[], io: RemoteIo): Promise<number> {
   const [sub, ...rest] = argv
   const bench = io.env.TETHER_TEST_REMOTE === '1'
-  const a = parseArgs(rest, { flags: ['json'] })
+  const a = parseArgs(rest, { flags: ['json'], valued: ['web'] })
   if (!sub) throw new UsageError(REMOTE_USAGE)
   if ((sub === 'pair' || sub === 'on') && !bench) {
     io.err('tether: parear e ligar a remota se faz no app do tether, na tela, com você diante da máquina. A linha de comando só mostra o estado, revoga e desliga.\n')
@@ -85,8 +91,9 @@ export async function cmdRemote(argv: string[], io: RemoteIo): Promise<number> {
       }
       case 'on': {
         const url = a.positional[0]
-        if (!url) throw new UsageError('uso (bancada): tether remote on <relay-url>')
-        await req(client, 'remote.on', { relayUrl: url })
+        if (!url) throw new UsageError('uso (bancada): tether remote on <relay-url> [--web <endereço-do-app>]')
+        const web = a.options.web
+        await req(client, 'remote.on', { relayUrl: url, ...(web !== undefined ? { webUrl: web } : {}) })
         io.out('Acesso remoto ligado (bancada).\n')
         return 0
       }

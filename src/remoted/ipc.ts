@@ -27,6 +27,8 @@ export type PairCmd =
   | { cmd: 'pair.cancel'; pairId: string }
   | { cmd: 'pair.state'; pairId: string }
   | { cmd: 'status' }
+  /** The person ends the live sessions of one device on the machine; the device is not revoked and may come back. */
+  | { cmd: 'session.end'; deviceId: string }
 
 /** extension → portal */
 export type ToPortal =
@@ -52,7 +54,8 @@ export type PortalNote =
   | { note: 'seen'; deviceId: string; ver: number }
   | { note: 'revoke-self'; deviceId: string }
   | { note: 'link'; state: 'up' | 'down' }
-  | { note: 'sessions'; count: number }
+  /** The sessions changed (opened, ended, or what one does): the count and the devices live now. */
+  | { note: 'sessions'; count: number; live: LiveDevice[] }
   /** One audit line: the kind of act, the device by id, the target by id or operation name, the result. Never content (M-10). */
   | { note: 'audit'; act: string; deviceId?: string; target?: string; result: string }
 
@@ -89,11 +92,25 @@ export interface PairBegun extends PairView {
   fingerprint: string
 }
 
+/**
+ * What a device does in its live sessions, as one word of a closed vocabulary: never content, never a request's
+ * argument. `watching`: it follows who waits (attention.watch).
+ */
+export const LIVE_DOING = ['watching'] as const
+export type LiveDoing = (typeof LIVE_DOING)[number]
+
+/** One device with at least one live session: since when (ISO, its oldest live session) and what it does, if anything. */
+export interface LiveDevice { deviceId: string; since: string; doing?: LiveDoing }
+
 export interface PortalStatus {
   link: 'up' | 'down'
   sessions: number
   houseFingerprint: string
+  live: LiveDevice[]
 }
+
+/** The answer of `session.end`: how many sessions of the device were closed. */
+export interface SessionEnded { deviceId: string; ended: number }
 
 /** Exit codes of the portal: why it did not serve. */
 export const PORTAL_EXIT = { ok: 0, crashed: 1, badCredential: 2, folderOpen: 3, config: 4, keys: 5, pipe: 6 } as const

@@ -18,10 +18,14 @@ import type { Executor } from '../../../src/exec/executor.ts'
 import { relayUrlAllowed } from '../../../src/remote/index.ts'
 import { DEFAULT_SCOPES } from '../../../src/remoted/house.ts'
 import { KEY_FILES } from '../../../src/remoted/keyfiles.ts'
-import { PORTAL_EXIT, type FromPortal, type PairBegun, type PairView, type PortalAsk, type PortalNote, type PortalStatus } from '../../../src/remoted/ipc.ts'
+import {
+  PORTAL_EXIT, type FromPortal, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalNote, type PortalStatus,
+  type SessionEnded,
+} from '../../../src/remoted/ipc.ts'
 import {
   denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, ENV_TEST_REMOTE, originAllowed, PAIR_ID_RE, parseConfig,
-  parseRegistry, pruneRegistry, serializeRegistry, toPortalDevice, type DeviceEntry, type RemoteConfig, type RemoteRequest,
+  parseRegistry, pruneRegistry, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
+  type RemoteRequest,
 } from '../rules.ts'
 import { AuditLog } from './audit.ts'
 import { ensureKeys } from './keys.ts'
@@ -57,6 +61,8 @@ export class RemoteService {
   #portalState: PortalState = { kind: 'off' }
   #link: 'up' | 'down' = 'down'
   #sessions = 0
+  /** The devices live now, as the portal's last note said (the status asks the portal itself when it is up). */
+  #live: LiveDevice[] = []
   #cmdSeq = 0
   readonly #cmds = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
   /** pairId → the connection that began it: only that connection sees or drives the ticket (E-7 (c)). */
@@ -175,6 +181,7 @@ export class RemoteService {
     this.#pairOwner.clear()
     this.#link = 'down'
     this.#sessions = 0
+    this.#live = []
     this.#portalState = { kind: 'off' }
     if (p) await p.kill()
   }
@@ -185,6 +192,7 @@ export class RemoteService {
     setPortalCredential(this.#d.home, undefined)
     this.#link = 'down'
     this.#sessions = 0
+    this.#live = []
     for (const [, w] of this.#cmds) { clearTimeout(w.timer); w.reject(new DoorError('bad-request', 'o portal saiu')) }
     this.#cmds.clear()
     this.#pairOwner.clear()
@@ -284,7 +292,7 @@ export class RemoteService {
         if (d) await this.#revoke(d, 'device')
         return
       case 'link': this.#link = n.state; return
-      case 'sessions': this.#sessions = n.count; return
+      case 'sessions': this.#sessions = n.count; this.#live = sanitizeLive(n.live); return
       case 'audit': this.#audit(n.act, n.result, n.deviceId, n.target); return
     }
   }
@@ -344,11 +352,15 @@ export class RemoteService {
       case 'remote.on': {
         const url = a.relayUrl === undefined ? this.#config.relayUrl : a.relayUrl
         if (typeof url !== 'string' || !relayUrlAllowed(url)) throw new DoorError('bad-request', 'relay inválido: wss://, ou ws:// só para localhost, sem usuário nem senha na URL')
+        // The phone app's address goes with the relay: absent, kept; '' or null, forgotten; else https (http only for localhost).
+        const web = a.webUrl === undefined ? this.#config.webUrl : a.webUrl === null || a.webUrl === '' ? undefined : a.webUrl
+        if (web !== undefined && !webUrlAllowed(web)) throw new DoorError('bad-request', 'endereço do app do celular inválido: https://, ou http:// só para localhost, sem usuário, senha nem # na URL')
         return this.#serial(async () => {
           await this.#privateFolder()
           const changed = url !== this.#config.relayUrl
           if (changed && this.#portal) await this.#stopPortal()
-          this.#config = { ...this.#config, on: true, relayUrl: url }
+          const { webUrl: _old, ...rest } = this.#config
+          this.#config = { ...rest, on: true, relayUrl: url, ...(web !== undefined ? { webUrl: web } : {}) }
           await this.#saveConfig()
           this.#audit('remote.on', `by:${ctx.client ?? '?'}`)
           await this.#startPortal()
@@ -361,6 +373,15 @@ export class RemoteService {
         if (!d) throw new DoorError('bad-request', 'nenhum aparelho com esse id')
         await this.#serial(() => this.#revoke(d, ctx.client ?? '?'))
         return { device: deviceView(d) }
+      }
+      case 'session.end': {
+        const d = findDevice(this.#devices, a.device)
+        if (d === 'ambiguous') throw new DoorError('bad-request', 'esse começo de id serve a mais de um aparelho: dê mais dígitos')
+        if (!d || d.state === 'revoked') throw new DoorError('bad-request', 'nenhum aparelho pareado com esse id')
+        // Not revoked, nothing denied: the device may connect again. The line says who ended it.
+        const r = await this.#command({ cmd: 'session.end', deviceId: d.deviceId }) as SessionEnded
+        this.#audit('session.end', `by:${ctx.client ?? '?'}`, d.deviceId)
+        return { device: deviceView(d), ended: r.ended }
       }
       case 'pair.begin': {
         if (ctx.conn === undefined) throw new DoorError('bad-request', 'conexão sem número')
@@ -399,7 +420,9 @@ export class RemoteService {
       portal: st.kind === 'refused' || st.kind === 'down' ? { state: st.kind, reason: st.reason, ...(this.#portal?.pid ? { pid: this.#portal.pid } : {}) } : { state: st.kind, ...(this.#portal?.pid ? { pid: this.#portal.pid } : {}) },
       link: portal?.link ?? this.#link,
       sessions: portal?.sessions ?? this.#sessions,
+      live: this.#config.on ? (portal ? sanitizeLive(portal.live) : this.#live) : [],
       ...(portal ? { fingerprint: portal.houseFingerprint } : {}),
+      ...(this.#config.webUrl ? { webUrl: this.#config.webUrl } : {}),
       devices: this.#devices.map(deviceView),
     }
   }

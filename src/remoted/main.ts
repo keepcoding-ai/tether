@@ -178,6 +178,7 @@ async function main(): Promise<void> {
         case 'pair.cancel': result = await house.pairCancel(m.pairId); break
         case 'pair.state': result = house.pairState(m.pairId); break
         case 'status': result = house.status(); break
+        case 'session.end': result = await house.endSessions(m.deviceId); break
       }
       send({ t: 'reply', id: m.id, ok: true, result })
     } catch (e) {

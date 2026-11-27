@@ -46,7 +46,7 @@ export function activate(ui: TetherUi): Disposable[] {
       status: () => status,
       request: (name, args) => ui.daemon.request(name, args),
       refresh,
-      webUrl: () => undefined,
+      webUrl: () => status?.webUrl,
       now: () => Date.now(),
       pairTickMs: PAIR_TICK_MS,
     })

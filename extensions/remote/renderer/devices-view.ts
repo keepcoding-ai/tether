@@ -1,12 +1,12 @@
 // "Aparelhos" (RR2.2), the view the Regency's "Sistema" embeds: the remote's state with "Ligar"/"Desligar a remota", the
-// paired devices (declared name, last use, connected now and doing what) with "Encerrar sessão" and "Revogar aparelho", and
+// paired devices (declared name, last use, on now since when and doing what, or off) with "Encerrar sessão" and "Revogar aparelho", and
 // the pairing card: QR and the 12-digit code with the 2-minute clock, then, when a device arrives, its declared name, what it
 // will be able to do and the field where the person TYPES the six digits the device shows (never a "they match" button).
 // Every destructive act asks first, under its row, in the house's panel. The words and states are rules.ts; what the
 // daemon and the portal decide (origin, tries, burning, the SAS) is never decided here.
 import { ICON_NAMES, icon, type IconName } from '../../../app/renderer/icons.ts'
 import {
-  codeGroups, confirmOf, devicesModel, pairScreen, qrPayload, sasDigits, type DeviceRow, type DevicesModel, type PairScreen,
+  codeGroups, confirmOf, devicesModel, pairScreen, qrPayload, qrStepWords, sasDigits, type DeviceRow, type DevicesModel, type PairScreen,
   type PairViewInput, type RemoteStatusInput,
 } from '../rules.ts'
 import { encodeQr, qrPath } from './qr.ts'
@@ -90,6 +90,8 @@ export class DevicesView {
   private poll: ReturnType<typeof setTimeout> | undefined
   private cardSig = ''
   private sasInput: HTMLInputElement | undefined
+  /** What the QR on screen carries (for the E2E's snapshot). */
+  private qrText: string | undefined
   paints = 0
 
   constructor(host: DevicesHost) {
@@ -214,7 +216,7 @@ export class DevicesView {
       const off = this.busy.has(r.id)
       if (r.can.end) { const b = button('end', 'x-circle', `Encerrar sessão de ${r.name}: ele cai agora e pode voltar`); b.dataset.key = `device:${r.id}:end`; b.disabled = off; acts.append(b) }
       if (r.can.revoke) { const b = button('revoke', 'prohibit', `Revogar ${r.name}: ele perde o acesso de vez`, undefined, true); b.dataset.key = `device:${r.id}:revoke`; b.disabled = off; acts.append(b) }
-      h.append(glyph('device-mobile', r.live ? 'Aparelho conectado agora' : 'Aparelho pareado'), main, acts)
+      h.append(glyph('device-mobile', r.live ? 'Aparelho ligado agora' : 'Aparelho pareado'), main, acts)
       row.append(h)
       const a = this.asking
       if (a && a.device === r.id && (a.act === 'revoke' || a.act === 'end')) row.append(this.confirmPanel(a.act, r))
@@ -333,6 +335,7 @@ export class DevicesView {
     clearTimeout(this.poll)
     this.clock = undefined
     this.sasInput = undefined
+    this.qrText = undefined
     this.paintCard(true)
     this.signature = ''
     this.paint()
@@ -345,7 +348,7 @@ export class DevicesView {
     if (!p) { this.card.hidden = true; this.card.replaceChildren(); this.cardSig = ''; return }
     const s = pairScreen(p.view, this.host.now(), p.sasSince)
     if (s.phase === 'done' || s.phase === 'over') clearInterval(this.clock)
-    const sig = JSON.stringify([s.phase, s.code, s.deviceName, s.triesText, s.outcome, p.error, p.busy, s.canType, p.view.qr])
+    const sig = JSON.stringify([s.phase, s.code, s.deviceName, s.triesText, s.outcome, p.error, p.busy, s.canType, p.view.qr, this.host.webUrl()])
     if (!force && sig === this.cardSig) { this.tickClock(s); return }
     this.cardSig = sig
     this.card.hidden = false
@@ -382,6 +385,7 @@ export class DevicesView {
   private codeBlock(p: Pairing, s: PairScreen): HTMLElement {
     const box = el('div', 'rr-code-box')
     const qrText = p.view.qr ? qrPayload(p.view.qr, this.host.webUrl()) : undefined
+    this.qrText = qrText
     if (qrText) {
       const m = encodeQr(qrText, { level: 'M' })
       const side = m.size + 8
@@ -406,7 +410,9 @@ export class DevicesView {
       box.append(svg)
     }
     const side = el('div', 'rr-code-side')
-    side.append(el('p', 'rr-step', 'No aparelho, abra o tether remoto e aponte a câmera para o QR, ou digite o código:'))
+    const step = el('p', 'rr-step', qrStepWords(this.host.webUrl()))
+    step.dataset.role = 'qr-step'
+    side.append(step)
     const code = el('p', 'rr-code')
     code.setAttribute('aria-label', `Código: ${(s.code ?? '').split('').join(' ')}`)
     code.dataset.role = 'code'
@@ -532,7 +538,7 @@ export class DevicesView {
   snapshot(): {
     head: string; acts: string[]; ask?: string; paints: number
     rows: { id: string; text: string; state?: string; acts: string[]; panel?: string }[]
-    pair?: { phase: string; title: string; code: string; clock: string; qr: boolean; text: string; typing: boolean }
+    pair?: { phase: string; title: string; code: string; clock: string; qr: boolean; qrText?: string; text: string; typing: boolean }
   } {
     const cardOn = !this.card.hidden
     return {
@@ -552,7 +558,7 @@ export class DevicesView {
         pair: {
           phase: this.card.dataset.phase ?? '', title: this.card.querySelector('.rr-pair-t')?.textContent ?? '',
           code: this.card.querySelector('[data-role="code"]')?.textContent ?? '', clock: this.card.querySelector('[data-role="clock"]')?.textContent ?? '',
-          qr: this.card.querySelector('svg.rr-qr') !== null, text: this.card.textContent ?? '', typing: this.sasInput !== undefined && !this.sasInput.disabled,
+          qr: this.card.querySelector('svg.rr-qr') !== null, ...(this.qrText ? { qrText: this.qrText } : {}), text: this.card.textContent ?? '', typing: this.sasInput !== undefined && !this.sasInput.disabled,
         },
       } : {}),
     }

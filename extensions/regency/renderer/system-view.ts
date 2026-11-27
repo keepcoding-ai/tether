@@ -220,7 +220,8 @@ export class SystemView {
 
   private paintTabs(model: SystemModel): void {
     const n = String(model.sections.length)
-    if (this.tabs.dataset.n !== n) { this.tabs.dataset.n = n; this.tabs.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))` }
+    // The count goes as a variable, so the phone tier can lay six tabs in two rows (regency.css) without a fight with inline style.
+    if (this.tabs.dataset.n !== n) { this.tabs.dataset.n = n; this.tabs.style.setProperty('--rg-sys-n', n) }
     for (const b of this.tabs.querySelectorAll<HTMLElement>('.rg-sys-tab')) {
       const id = b.dataset.section as SystemSection
       const offered = model.sections.some(s => s.id === id)

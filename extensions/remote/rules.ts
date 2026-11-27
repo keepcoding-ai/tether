@@ -1,6 +1,6 @@
 // The remote extension's pure rules: who may ask what (E-7, A-2), the registry of devices (<home>/remote/devices.json) and
 // its transitions, the deny list it implies, and the projections that leave the extension. No I/O.
-import type { DenyRow, PortalDevice, TicketRow } from '../../src/remoted/ipc.ts'
+import { LIVE_DOING, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
 
 export const EXT_ID = 'remote'
 
@@ -17,6 +17,8 @@ export const ORIGIN = {
   'remote.off': 'any',
   'device.list': 'any',
   'device.revoke': 'any',
+  /** Ends a device's live sessions without revoking it: it lowers power, like revoke. */
+  'session.end': 'any',
   'remote.on': 'app',
   'pair.begin': 'app',
   'pair.sas': 'app',
@@ -155,8 +157,30 @@ export interface RemoteStatusInput {
   sessions: number
   fingerprint?: string
   devices: readonly DeviceView[]
-  /** Per device, when the daemon gives it: the live sessions and what each does. Absent today (see `sessionsKnown`). */
+  /** The devices live now (src/remoted/ipc.ts LiveDevice): since when, and one word of what they do. Absent = none. */
   live?: readonly { deviceId: string; since: string; doing?: string }[]
+  /** The address of the phone's app, when configured: the QR carries it. */
+  webUrl?: string
+}
+
+/**
+ * The live devices as the extension passes them on: a hex id, an ISO instant and a word of LIVE_DOING, nothing else.
+ * Whatever else came from the portal is dropped, never forwarded.
+ */
+export function sanitizeLive(raw: unknown): LiveDevice[] {
+  if (!Array.isArray(raw)) return []
+  const out: LiveDevice[] = []
+  for (const x of raw.slice(0, DEVICES_MAX) as Partial<LiveDevice>[]) {
+    if (!x || !HEX(32).test(String(x.deviceId)) || typeof x.since !== 'string' || Number.isNaN(Date.parse(x.since))) continue
+    const doing = (LIVE_DOING as readonly string[]).includes(String(x.doing)) ? x.doing : undefined
+    out.push({ deviceId: x.deviceId!, since: new Date(Date.parse(x.since)).toISOString(), ...(doing ? { doing } : {}) })
+  }
+  return out
+}
+
+/** The closed vocabulary of `doing` (src/remoted/ipc.ts LIVE_DOING) in the person's words; an unknown word says nothing. */
+export const DOING_WORDS: Readonly<Record<string, string>> = {
+  watching: 'acompanhando quem espera você',
 }
 
 /** The pairing ticket as the screen that asked sees it (src/remoted/ipc.ts PairView/PairBegun, structurally). */
@@ -199,11 +223,10 @@ export interface RemoteIcon {
   title: string
 }
 
-/** How many devices are connected now: distinct devices when the daemon tells them apart, else its count of sessions. */
+/** How many DEVICES are connected now (a device with three sessions is one). */
 export function liveCount(s: RemoteStatusInput): number {
   if (!s.on) return 0
-  if (s.live) return new Set(s.live.map(l => l.deviceId)).size
-  return Math.max(0, s.sessions | 0)
+  return new Set((s.live ?? []).map(l => l.deviceId)).size
 }
 
 export function remoteIcon(s: RemoteStatusInput | undefined): RemoteIcon {
@@ -245,7 +268,7 @@ export interface DeviceRow {
   state: 'pending' | 'active'
   stateText: string
   live: boolean
-  /** "Conectado agora · vendo as mesas" / "Não conectado" / "Conexão sem detalhe por aparelho". */
+  /** "Ligado agora há 5 min · acompanhando quem espera você" / "Desligado". */
   liveText: string
   lastText: string
   pairedText: string
@@ -260,8 +283,6 @@ export interface DevicesModel {
   fingerprint?: string
   rows: DeviceRow[]
   revoked: number
-  /** The daemon tells sessions apart by device (otherwise "Encerrar sessão" cannot be offered). */
-  sessionsKnown: boolean
   can: { on: boolean; off: boolean; pair: boolean }
   /** Why "Parear um aparelho" is off, when it is. */
   pairWhy?: string
@@ -270,19 +291,18 @@ export interface DevicesModel {
 
 export function devicesModel(s: RemoteStatusInput | undefined, now: number): DevicesModel {
   if (!s) {
-    return { on: false, headText: 'Sem notícia do tether agora', headIntent: 'off', rows: [], revoked: 0, sessionsKnown: false, can: { on: false, off: false, pair: false }, pairWhy: 'O tether não respondeu', empty: 'Sem notícia do tether agora.' }
+    return { on: false, headText: 'Sem notícia do tether agora', headIntent: 'off', rows: [], revoked: 0, can: { on: false, off: false, pair: false }, pairWhy: 'O tether não respondeu', empty: 'Sem notícia do tether agora.' }
   }
   const icon = remoteIcon(s)
-  const sessionsKnown = s.live !== undefined
   const liveOf = (id: string): { since: string; doing?: string }[] => (s.live ?? []).filter(l => l.deviceId === id)
   const kept = s.devices.filter(d => d.state !== 'revoked')
   const rows = kept.map((d): DeviceRow => {
     const ls = s.on ? liveOf(d.id) : []
     const live = ls.length > 0
-    const doing = ls.map(l => l.doing).filter((x): x is string => typeof x === 'string' && x !== '')
-    const liveText = !s.on ? 'Não conectado: a remota está desligada'
-      : !sessionsKnown ? (s.sessions > 0 ? 'Conexão: o tether ainda não diz qual aparelho está conectado' : 'Não conectado')
-        : live ? `Conectado agora${doing.length ? ` · ${doing.join(', ')}` : ''}` : 'Não conectado'
+    const sinceMs = Math.min(...ls.map(l => Date.parse(l.since)).filter(t => !Number.isNaN(t)))
+    const doing = [...new Set(ls.map(l => DOING_WORDS[l.doing ?? '']).filter((x): x is string => x !== undefined))]
+    const liveText = !s.on ? 'Desligado: a remota está desligada'
+      : live ? `Ligado agora${Number.isFinite(sinceMs) ? ` há ${spanWords(now - sinceMs)}` : ''}${doing.length ? ` · ${doing.join(', ')}` : ''}` : 'Desligado'
     const last = ago(d.lastSeenAt, now)
     return {
       id: d.id, name: d.name || 'Aparelho sem nome', nameTip: `Nome que o aparelho declarou: ${d.name || '(nenhum)'}`,
@@ -291,7 +311,7 @@ export function devicesModel(s: RemoteStatusInput | undefined, now: number): Dev
       live, liveText,
       lastText: last ? `último uso ${last}` : 'nunca usado',
       pairedText: `pareado ${ago(d.createdAt, now) ?? ''} pelo ${d.access === 'qr' ? 'QR' : 'código'}`.replace('  ', ' '),
-      can: { end: sessionsKnown && live, revoke: true },
+      can: { end: live, revoke: true },
     }
   }).sort((a, b) => Number(b.live) - Number(a.live) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.id < b.id ? -1 : 1))
   const n = liveCount(s)
@@ -302,7 +322,7 @@ export function devicesModel(s: RemoteStatusInput | undefined, now: number): Dev
   return {
     on: s.on, headText, headIntent: !s.on ? 'off' : icon.kind === 'trouble' ? (icon.state === 'error' ? 'bad' : 'warn') : 'ok',
     ...(s.fingerprint ? { fingerprint: s.fingerprint } : {}),
-    rows, revoked: s.devices.length - kept.length, sessionsKnown,
+    rows, revoked: s.devices.length - kept.length,
     can: { on: !s.on, off: s.on, pair: pairWhy === undefined },
     ...(pairWhy ? { pairWhy } : {}),
     ...(rows.length === 0 ? { empty: 'Nenhum aparelho pareado.' } : {}),
@@ -416,7 +436,26 @@ export function confirmOf(act: 'off' | 'revoke' | 'end', name?: string): { sente
   }
 }
 
-export interface RemoteConfig { v: 1; on: boolean; relayUrl?: string; houseName: string }
+/**
+ * The address of the phone's app the QR carries (B-8's rule for the relay, for pages): `https://`, or `http://` only for
+ * `localhost`; no user nor password; no fragment (the QR's `#pair=` goes there).
+ */
+export function webUrlAllowed(url: unknown): url is string {
+  if (typeof url !== 'string' || url.length > 512) return false
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  if (u.username !== '' || u.password !== '' || u.hash !== '') return false
+  return u.protocol === 'https:' || (u.protocol === 'http:' && u.hostname === 'localhost')
+}
+
+/** The line above the code: with the app's address the QR opens it; without it, the code has to be typed. */
+export function qrStepWords(webUrl: string | undefined): string {
+  return webUrl
+    ? 'No aparelho, aponte a câmera para o QR (ele abre o tether remoto), ou abra o tether remoto e digite o código:'
+    : 'Este tether ainda não sabe o endereço do app do celular, então o QR não abre o app sozinho. No aparelho, abra o tether remoto e digite o código:'
+}
+
+export interface RemoteConfig { v: 1; on: boolean; relayUrl?: string; webUrl?: string; houseName: string }
 
 export function parseConfig(text: string | undefined): RemoteConfig {
   const base: RemoteConfig = { v: 1, on: false, houseName: 'tether' }
@@ -426,6 +465,7 @@ export function parseConfig(text: string | undefined): RemoteConfig {
     return {
       v: 1, on: c.on === true, houseName: typeof c.houseName === 'string' && c.houseName.trim() ? c.houseName.slice(0, 64) : 'tether',
       ...(typeof c.relayUrl === 'string' ? { relayUrl: c.relayUrl } : {}),
+      ...(webUrlAllowed(c.webUrl) ? { webUrl: c.webUrl } : {}),
     }
   } catch { return base }
 }

@@ -132,7 +132,7 @@ describe('the requests of the pipe: the person-facing ones leave a line when ref
   // A new request of the extension without a place in this map does not compile.
   const READS: Record<RemoteRequest, boolean> = {
     'remote.status': true, 'device.list': true, 'pair.state': true,
-    'remote.on': false, 'remote.off': false, 'device.revoke': false, 'pair.begin': false, 'pair.sas': false, 'pair.cancel': false,
+    'remote.on': false, 'remote.off': false, 'device.revoke': false, 'session.end': false, 'pair.begin': false, 'pair.sas': false, 'pair.cancel': false,
   }
 
   test('the classification of the map is the one the service uses', () => {
@@ -159,6 +159,7 @@ describe('the requests of the pipe: the person-facing ones leave a line when ref
         await assert.rejects(svc.handle(name, args, ctx), /só é aceito do app/, name)
       }
       await assert.rejects(svc.handle('device.revoke', args, ctx), /nenhum aparelho/)
+      await assert.rejects(svc.handle('session.end', args, ctx), /nenhum aparelho/)
       await svc.handle('remote.off', {}, ctx) // accepted: recorded as well
       for (const name of ['remote.status', 'device.list'] as const) await svc.handle(name, {}, ctx)
       await svc.dispose()
@@ -168,6 +169,7 @@ describe('the requests of the pipe: the person-facing ones leave a line when ref
       const said = (name: string): string[] => acts.filter((l) => l.act === name).map((l) => `${l.result}@${l.target ?? ''}`)
       for (const name of ['remote.on', 'pair.begin', 'pair.sas', 'pair.cancel']) assert.deepEqual(said(name), ['refused:door-denied@agent'], name)
       assert.deepEqual(said('device.revoke'), ['refused:bad-request@agent'])
+      assert.deepEqual(said('session.end'), ['refused:bad-request@agent'])
       assert.deepEqual(said('remote.off'), ['already-off:by:agent@'])
       assert.deepEqual([...said('remote.status'), ...said('device.list'), ...said('pair.state')], [], 'reads leave no line')
     } finally { await removeHome(home) }

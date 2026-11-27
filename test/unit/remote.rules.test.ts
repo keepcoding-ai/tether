@@ -6,8 +6,8 @@ import { describe, test } from 'node:test'
 import { DEFAULT_SCOPES } from '../../src/remoted/house.ts'
 import { PAIR_TTL_MS, PAIR_SAS_WINDOW_MS } from '../../src/remote/constants.ts'
 import {
-  burnWords, clockWords, codeGroups, confirmOf, devicesModel, liveCount, PAIR_SCOPES, pairScreen, qrPayload, remoteIcon, SAS_WARNING,
-  SAS_WINDOW_MS, sasDigits, scopeWords, type RemoteStatusInput,
+  burnWords, clockWords, codeGroups, confirmOf, devicesModel, liveCount, PAIR_SCOPES, pairScreen, parseConfig, qrPayload, qrStepWords,
+  remoteIcon, sanitizeLive, SAS_WARNING, SAS_WINDOW_MS, sasDigits, scopeWords, webUrlAllowed, type RemoteStatusInput,
 } from '../../extensions/remote/rules.ts'
 import { encodeQr, qrPath, versionFor } from '../../extensions/remote/renderer/qr.ts'
 import { systemModelOf, type SystemInput } from '../../extensions/regency/system-rules.ts'
@@ -28,20 +28,33 @@ describe('the state icon', () => {
     const idle = remoteIcon(status())
     assert.deepEqual([idle.kind, idle.state], ['idle', 'normal'])
     assert.match(idle.title, /nenhum aparelho conectado/)
-    const live = remoteIcon(status({ sessions: 2 }))
+    const live = remoteIcon(status({ sessions: 3, live: [{ deviceId: 'a', since: iso(1) }, { deviceId: 'b', since: iso(1) }] }))
     assert.deepEqual([live.kind, live.badge], ['live', 2])
     assert.match(live.title, /2 aparelhos conectados/)
-    assert.match(remoteIcon(status({ sessions: 1 })).title, /1 aparelho conectado agora/)
+    assert.match(remoteIcon(status({ sessions: 2, live: [{ deviceId: 'a', since: iso(1) }] })).title, /1 aparelho conectado agora/)
     assert.deepEqual([remoteIcon(status({ link: 'down' })).kind, remoteIcon(status({ link: 'down' })).state], ['trouble', 'warn'])
     const refused = remoteIcon(status({ portal: { state: 'refused', reason: 'pasta aberta' } }))
     assert.equal(refused.state, 'error')
     assert.match(refused.title, /pasta aberta/)
   })
 
-  test('connected devices: distinct devices when the daemon tells them apart, else its count of sessions; zero when off', () => {
-    assert.equal(liveCount(status({ sessions: 3 })), 3)
+  test('the icon counts DEVICES, never sessions; zero when off or when nobody is live', () => {
+    assert.equal(liveCount(status({ sessions: 3 })), 0, 'sessions without a live device count nothing')
     assert.equal(liveCount(status({ sessions: 3, live: [{ deviceId: 'a', since: iso(1) }, { deviceId: 'a', since: iso(2) }, { deviceId: 'b', since: iso(1) }] })), 2)
-    assert.equal(liveCount(status({ on: false, sessions: 3 })), 0)
+    assert.equal(liveCount(status({ on: false, sessions: 3, live: [{ deviceId: 'a', since: iso(1) }] })), 0)
+  })
+
+  test('what the extension passes on of the portal\'s live list: hex id, ISO instant, a word of the vocabulary; nothing else', () => {
+    const id = 'ab'.repeat(16)
+    assert.deepEqual(sanitizeLive([
+      { deviceId: id, since: iso(3), doing: 'watching', extra: 'segredo' },
+      { deviceId: 'cd'.repeat(16), since: iso(1), doing: 'lendo o canal #x' },
+      { deviceId: 'nao-hex', since: iso(1) },
+      { deviceId: id, since: 'ontem' },
+      null,
+    ]), [{ deviceId: id, since: iso(3), doing: 'watching' }, { deviceId: 'cd'.repeat(16), since: iso(1) }])
+    assert.deepEqual(sanitizeLive('x'), [])
+    assert.deepEqual(sanitizeLive(undefined), [])
   })
 })
 
@@ -63,15 +76,20 @@ describe('the devices', () => {
     assert.match(m.headText, /^Ligada pelo relay relay\.exemplo · nenhum aparelho conectado$/)
   })
 
-  test('without sessions per device "Encerrar sessão" is not offered; with them, the live rows come first and say what they do', () => {
-    const plain = devicesModel(status({ sessions: 1, devices: [dev('a1', 'Telefone')] }), NOW)
-    assert.equal(plain.sessionsKnown, false)
-    assert.equal(plain.rows[0]!.can.end, false)
-    assert.match(plain.rows[0]!.liveText, /ainda não diz qual aparelho/)
-    const known = devicesModel(status({ sessions: 1, devices: [dev('a1', 'Alfa'), dev('b2', 'Beta')], live: [{ deviceId: 'b2', since: iso(1), doing: 'vendo as mesas' }] }), NOW)
-    assert.deepEqual(known.rows.map(r => [r.id, r.live, r.can.end]), [['b2', true, true], ['a1', false, false]])
-    assert.equal(known.rows[0]!.liveText, 'Conectado agora · vendo as mesas')
-    assert.match(known.headText, /1 aparelho conectado$/)
+  test('per device: "Ligado agora há X" with what it does, or "Desligado"; "Encerrar sessão" only for a device that is on', () => {
+    const none = devicesModel(status({ sessions: 1, devices: [dev('a1', 'Telefone')] }), NOW)
+    assert.equal(none.rows[0]!.can.end, false)
+    assert.equal(none.rows[0]!.liveText, 'Desligado')
+    const m = devicesModel(status({
+      sessions: 3, devices: [dev('a1', 'Alfa'), dev('b2', 'Beta')],
+      live: [{ deviceId: 'b2', since: iso(12), doing: 'watching' }, { deviceId: 'b2', since: iso(3) }, { deviceId: 'zz', since: iso(1), doing: 'qualquer coisa' }],
+    }), NOW)
+    assert.deepEqual(m.rows.map(r => [r.id, r.live, r.can.end]), [['b2', true, true], ['a1', false, false]])
+    assert.equal(m.rows[0]!.liveText, 'Ligado agora há 12 min · acompanhando quem espera você', 'the oldest session, the word of the vocabulary')
+    assert.equal(m.rows[1]!.liveText, 'Desligado')
+    assert.match(m.headText, /2 aparelhos conectados$/, 'the head counts devices live (an unknown one too)')
+    const odd = devicesModel(status({ devices: [dev('a1', 'Alfa')], live: [{ deviceId: 'a1', since: iso(1), doing: 'lendo #segredo' }] }), NOW)
+    assert.equal(odd.rows[0]!.liveText, 'Ligado agora há 1 min', 'a word out of the vocabulary says nothing')
   })
 
   test('off: nothing connected, only "Ligar"; pairing waits; trouble says why; no answer is said too', () => {
@@ -163,6 +181,17 @@ describe('the pairing card', () => {
     assert.equal(qrPayload('#pair=AQ'), '#pair=AQ')
     assert.equal(qrPayload('#pair=AQ', 'https://remota.exemplo'), 'https://remota.exemplo/#pair=AQ')
     assert.equal(qrPayload('#pair=AQ', 'https://remota.exemplo/app/#x'), 'https://remota.exemplo/app/#pair=AQ')
+    assert.match(qrStepWords(undefined), /não sabe o endereço do app do celular.*digite o código/)
+    assert.match(qrStepWords('https://remota.exemplo'), /aponte a câmera para o QR/)
+  })
+
+  test('the phone app\'s address: https, or http only for localhost; no credentials, no fragment; kept by the config', () => {
+    for (const ok of ['https://remota.exemplo', 'https://remota.exemplo/app/', 'http://localhost:5173/']) assert.equal(webUrlAllowed(ok), true, ok)
+    for (const bad of ['http://remota.exemplo', 'http://127.0.0.1:5173', 'https://u:p@remota.exemplo', 'https://remota.exemplo/#x', 'javascript:alert(1)', 'ftp://x', '', 42, `https://x.exemplo/${'a'.repeat(600)}`]) {
+      assert.equal(webUrlAllowed(bad), false, String(bad))
+    }
+    assert.equal(parseConfig(JSON.stringify({ on: true, relayUrl: 'wss://r.exemplo', webUrl: 'https://remota.exemplo' })).webUrl, 'https://remota.exemplo')
+    assert.equal(parseConfig(JSON.stringify({ on: true, webUrl: 'http://remota.exemplo' })).webUrl, undefined, 'a bad address in the file is not used')
   })
 })
 

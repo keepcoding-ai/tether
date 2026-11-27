@@ -19,7 +19,7 @@ import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projectio
 import type { AttentionView } from './attention.ts'
 import { gate, gateEvent } from './gate.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
-import type { DenyRow, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus } from './ipc.ts'
+import type { DenyRow, LiveDevice, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus, SessionEnded } from './ipc.ts'
 
 /** Old ticket denied this long after a renewal (spec 5.5). The limits are all in ./limits.ts. */
 export const RENEW_DENY_AFTER_MS = 60_000
@@ -117,7 +117,7 @@ export class House {
   get fingerprint(): string { return this.#fingerprint }
 
   status(): PortalStatus {
-    return { link: this.#linkUp ? 'up' : 'down', sessions: this.#sessionCount(), houseFingerprint: this.#fingerprint }
+    return { link: this.#linkUp ? 'up' : 'down', sessions: this.#sessionCount(), houseFingerprint: this.#fingerprint, live: this.#live() }
   }
 
   // ---- registry (from the extension) -------------------------------------------------------------------------
@@ -171,7 +171,7 @@ export class House {
     this.#queues.clear()
     if (this.#pairing && !this.#isOver(this.#pairing.view.state)) void this.#pairing.p.cancel(this.#d.now()).then((fx) => this.#pairEffects(fx))
     this.#d.note({ note: 'link', state: 'down' })
-    this.#d.note({ note: 'sessions', count: 0 })
+    this.#noteSessions()
   }
 
   /** One frame of the house leg written by the relay (after R_AUTH_OK). */
@@ -323,7 +323,25 @@ export class House {
     const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false }
     this.#routes.set(route, s)
     this.#memOf(deviceId).sessions.add(s)
-    this.#d.note({ note: 'sessions', count: this.#sessionCount() })
+    this.#noteSessions()
+  }
+
+  /** The extension learns every change of the sessions: their count and, per device, since when and what it does. */
+  #noteSessions(): void {
+    this.#d.note({ note: 'sessions', count: this.#sessionCount(), live: this.#live() })
+  }
+
+  /** The devices with a live session: the oldest one's start, and `watching` when any of them follows who waits. */
+  #live(): LiveDevice[] {
+    const out: LiveDevice[] = []
+    for (const [deviceId, mem] of this.#mem) {
+      if (mem.sessions.size === 0) continue
+      let since = Infinity
+      let watching = false
+      for (const s of mem.sessions) { since = Math.min(since, s.openedMs); watching ||= s.watching }
+      out.push({ deviceId, since: new Date(since).toISOString(), ...(watching ? { doing: 'watching' as const } : {}) })
+    }
+    return out
   }
 
   #memOf(deviceId: string): DeviceMem {
@@ -365,7 +383,20 @@ export class House {
     this.#audit('session.end', reason, s.deviceId)
     this.#mem.get(s.deviceId)?.sessions.delete(s)
     s.session.drop('ended')
-    this.#d.note({ note: 'sessions', count: this.#sessionCount() })
+    this.#noteSessions()
+  }
+
+  /**
+   * The person ends the live sessions of one device on the machine (CLOSE(0x01)): nothing is denied and the registry is
+   * not touched, so the device may connect again. The extension writes the line of who asked; each session's own end
+   * leaves its line here.
+   */
+  async endSessions(deviceId: string): Promise<SessionEnded> {
+    const dv = this.#devices.get(deviceId)
+    if (!dv || dv.state === 'revoked') throw new PortalError('not-found', 'nenhum aparelho pareado com esse id')
+    const ended = this.#mem.get(deviceId)?.sessions.size ?? 0
+    await this.#closeDevice(deviceId, CLOSE.normal)
+    return { deviceId, ended }
   }
 
   async #closeDevice(deviceId: string, code: CloseCode): Promise<void> {
@@ -443,7 +474,7 @@ export class House {
           bytes = resultBody('attention.list', this.#d.attention.items())
           break
         case 'attention.watch':
-          s.watching = true
+          if (!s.watching) { s.watching = true; this.#noteSessions() }
           bytes = resultBody('attention.watch', this.#d.attention.items())
           break
         case 'admit.renew':
