@@ -8,8 +8,9 @@
 // of its variables; a process card's `env` is not read at all.
 import { foldText } from './model.ts'
 
-export type SystemSection = 'processes' | 'ronda' | 'profiles' | 'projects' | 'settings'
+export type SystemSection = 'processes' | 'ronda' | 'profiles' | 'projects' | 'devices' | 'settings'
 
+/** The five sections that always exist. "Aparelhos" (`devices`) joins them, before Ajustes, only while the remote publishes. */
 export const SYSTEM_SECTIONS: readonly { id: SystemSection; label: string }[] = [
   { id: 'processes', label: 'Processos' },
   { id: 'ronda', label: 'Ronda' },
@@ -18,9 +19,14 @@ export const SYSTEM_SECTIONS: readonly { id: SystemSection; label: string }[] = 
   { id: 'settings', label: 'Ajustes' },
 ]
 
+export const DEVICES_SECTION: { id: SystemSection; label: string } = { id: 'devices', label: 'Aparelhos' }
+
+/** Every section a tab may be drawn for, in the order of the tabs. */
+export const ALL_SYSTEM_SECTIONS: readonly { id: SystemSection; label: string }[] = [...SYSTEM_SECTIONS.slice(0, 4), DEVICES_SECTION, SYSTEM_SECTIONS[4]!]
+
 export const DEFAULT_SYSTEM_SECTION: SystemSection = 'processes'
 
-export const isSystemSection = (x: unknown): x is SystemSection => SYSTEM_SECTIONS.some(s => s.id === x)
+export const isSystemSection = (x: unknown): x is SystemSection => ALL_SYSTEM_SECTIONS.some(s => s.id === x)
 
 // ---------------------------------------------------------------- inputs (structural: the daemon's and the app's types fit)
 
@@ -76,6 +82,8 @@ export interface SystemInput {
   profiles: readonly SystemProfileInput[]
   folders: readonly SystemFolderInput[]
   status?: { bridge?: SystemStatusInput; sync?: SystemStatusInput }
+  /** The remote's summary (extensions/remote/renderer/embed.ts) while it publishes; absent, there is no "Aparelhos". */
+  devices?: { on: boolean; devices: number; live: number; text: string }
 }
 
 // ---------------------------------------------------------------- model
@@ -151,6 +159,8 @@ export interface SystemModel {
   profiles: ProfileRow[]
   projects: ProjectRow[]
   settings: SettingsItem[]
+  /** "Aparelhos": the remote's sentence and counts (its view draws the rest); absent without the remote. */
+  devices?: { on: boolean; devices: number; live: number; text: string }
   dot: SystemDot
   /** The foot of the Processos section. */
   procFoot: string
@@ -431,10 +441,14 @@ export function systemModelOf(input: SystemInput): SystemModel {
   const dot = systemDot({ procs: input.procs })
   const counts: Record<SystemSection, number> = {
     processes: processes.length, ronda: ronda.filter(r => r.on).length, profiles: profiles.length, projects: projects.length, settings: settings.length,
+    devices: input.devices?.live ?? 0,
   }
+  const shown = input.devices !== undefined ? ALL_SYSTEM_SECTIONS : SYSTEM_SECTIONS
   return {
-    sections: SYSTEM_SECTIONS.map(s => ({ id: s.id, label: s.label, count: counts[s.id], dot: s.id === 'processes' && dot.show })),
-    processes, ronda, profiles, projects, settings, dot, procFoot: procFootText(input.procs),
+    sections: shown.map(s => ({ id: s.id, label: s.label, count: counts[s.id], dot: s.id === 'processes' && dot.show })),
+    processes, ronda, profiles, projects, settings,
+    ...(input.devices !== undefined ? { devices: { on: input.devices.on, devices: input.devices.devices, live: input.devices.live, text: input.devices.text } } : {}),
+    dot, procFoot: procFootText(input.procs),
   }
 }
 

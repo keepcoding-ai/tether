@@ -1,0 +1,62 @@
+/* "Aparelhos" (extensions/remote/renderer/devices-view.ts), mounted in the Regency's "Sistema": the rows reuse the
+   Regency's (.rg-sr, .rg-sys-btn, .rg-sr-x), so the four tiers' 44 px targets come with them. Colours by token only; the QR is
+   always dark modules on a light plate (light-dark() follows the color-scheme the theme sets on :root). */
+.rr-dev { display: flex; flex-direction: column; min-height: 100%; }
+.rr-head { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.rr-state { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.rr-state > .rg-ic { margin-top: 1px; }
+.rr-state .rg-sr-c.st { white-space: normal; }
+.rg-sr-c.wrap { white-space: normal; }
+.rr-fp { margin: 0; font-size: 11px; color: var(--fg-dim); }
+.rr-fp code { font-family: var(--mono, monospace); color: var(--fg); letter-spacing: .02em; }
+.rr-acts { align-items: center; }
+.rr-ask:empty, .rr-ask[hidden] { display: none; }
+.rr-ask { padding-top: 8px; }
+.rr-list { display: flex; flex-direction: column; }
+.rr-foot { margin-top: auto; flex-direction: column; align-items: flex-start; }
+.rg-sr.device .rg-sr-h { cursor: default; }
+.rg-sr.device.live .rg-sr-h > .rg-ic { color: color-mix(in srgb, var(--ok) 80%, var(--fg)); }
+.rr-pop { margin: 0; padding: 8px 10px; max-width: 280px; font-size: 12px; line-height: 1.4; }
+
+/* The pairing card: above the list, never modal (the list stays reachable behind it). */
+.rr-pair { display: flex; flex-direction: column; gap: 10px; margin: 8px; padding: 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--bg); font-size: 12.5px; }
+.rr-pair[hidden] { display: none; }
+.rr-pair[data-phase="confirm"] { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }
+.rr-pair-hd { display: flex; align-items: center; gap: 8px; }
+.rr-pair-t { margin: 0; font-size: 13.5px; }
+.rr-clock { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); }
+.rr-code-box { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.rr-qr { width: 184px; height: 184px; flex: none; border-radius: 6px; }
+.rr-qr-bg { fill: light-dark(var(--bg), var(--fg)); }
+.rr-qr-fg { fill: light-dark(var(--fg), var(--bg)); }
+.rr-code-side { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.rr-step { margin: 0; line-height: 1.4; }
+.rr-step.dim { color: var(--fg-dim); font-size: 11.5px; }
+.rr-code { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font-family: var(--mono, monospace); font-size: 22px; font-weight: 700; letter-spacing: .06em; font-variant-numeric: tabular-nums; user-select: all; }
+.rr-confirm { display: flex; flex-direction: column; gap: 8px; }
+.rr-who { margin: 0; line-height: 1.4; }
+.rr-who-n { overflow-wrap: anywhere; }
+.rr-scopes .rr-step { color: var(--fg-dim); font-size: 11.5px; }
+.rr-sas { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+.rr-sas-in { width: 11ch; height: 40px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg);
+  font-family: var(--mono, monospace); font-size: 22px; letter-spacing: .25em; font-variant-numeric: tabular-nums; }
+.rr-sas-in:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.rr-sas-in[aria-invalid="true"] { border-color: var(--err); }
+.rr-warn { margin: 0; padding: 6px 8px; border-radius: 6px; font-size: 11.5px; line-height: 1.4;
+  color: var(--fg); background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); }
+.rr-tries { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--warn); }
+.rr-outcome { margin: 0; line-height: 1.4; font-weight: 600; }
+.rr-outcome.ok { color: color-mix(in srgb, var(--ok) 80%, var(--fg)); }
+.rr-outcome.bad { color: var(--err); }
+.rr-outcome.off { color: var(--fg-dim); }
+
+/* Phone and tablet: 44 px for the field and the buttons (the Regency's rule covers .rg-sys-btn), the QR centred. */
+.rg:is([data-tier="mobile"], [data-tier="tablet"]) .rr-sas-in { height: 48px; width: 100%; max-width: 14ch; }
+.rg[data-tier="mobile"] .rr-code-box { flex-direction: column; align-items: center; }
+.rg[data-tier="mobile"] .rr-qr { width: min(240px, 70vw); height: min(240px, 70vw); }
+.rg[data-tier="mobile"] .rr-code { justify-content: center; }
+.rg[data-tier="mobile"] .rr-pair { margin: 8px 0; border-radius: 0; border-left: 0; border-right: 0; }
+/* The wide tier: the card keeps a reading width instead of stretching. */
+.rg[data-tier="wide"] .rr-pair { max-width: 760px; }
+.rg[data-tier="wide"] .rr-qr { width: 240px; height: 240px; }

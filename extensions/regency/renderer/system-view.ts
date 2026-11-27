@@ -8,7 +8,7 @@ import { identityView } from '../../../app/renderer/agent-identity.ts'
 import type { ContextMenuEntry, RondaAnswer, RondaChange } from '../../../app/renderer/ext-api.ts'
 import type { GuardedOptions, ProcAct } from '../../processes/embed.ts'
 import {
-  SYSTEM_SECTIONS, forceReasonError, intervalWords, procIntent, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
+  ALL_SYSTEM_SECTIONS, forceReasonError, intervalWords, procIntent, refusalText, type InUseRefusal, type ProcRow, type ProfileRow, type ProjectRow,
   type RondaRow, type SettingsItem, type SystemModel, type SystemSection,
 } from '../system-rules.ts'
 import { el, glyph } from './columns.ts'
@@ -41,6 +41,10 @@ export interface SystemViewHost {
   menu(x: number, y: number, entries: ContextMenuEntry[]): void
   /** The view ticks while shown (the "há 4 min" age): one clock, only then. */
   tick(): void
+  /** "Aparelhos": the remote's own view (it draws itself), while the remote publishes. */
+  devices?(): HTMLElement | undefined
+  /** "Aparelhos" is on screen or not. */
+  devicesShown?(on: boolean): void
 }
 
 /** What the pane gives: going back to the tree and choosing a section (both kept in the layout). */
@@ -55,7 +59,7 @@ const DEFAULT_INTERVAL = '20m'
 const CLOCK_MS = 30_000
 
 const SECTION_ICON: Record<SystemSection, string> = {
-  processes: 'pulse', ronda: 'timer', profiles: 'sliders-horizontal', projects: 'folder', settings: 'gear-six',
+  processes: 'pulse', ronda: 'timer', profiles: 'sliders-horizontal', projects: 'folder', devices: 'device-mobile', settings: 'gear-six',
 }
 
 const SETTINGS_ICON: Record<SettingsItem['id'], string> = {
@@ -128,7 +132,7 @@ export class SystemView {
     head.append(back, el('span', 'rg-sp'), el('b', 'rg-sys-t', 'Sistema'))
     this.tabs.setAttribute('role', 'tablist')
     this.tabs.setAttribute('aria-label', 'Seções do Sistema')
-    for (const s of SYSTEM_SECTIONS) {
+    for (const s of ALL_SYSTEM_SECTIONS) {
       const b = el('button', 'rg-sys-tab')
       b.type = 'button'
       b.dataset.sys = 'tab'
@@ -155,6 +159,7 @@ export class SystemView {
   setShown(on: boolean): void {
     if (this.shown === on) return
     this.shown = on
+    this.host.devicesShown?.(on && this.section === 'devices')
     if (on && !this.clock) this.clock = setInterval(() => this.host.tick(), CLOCK_MS)
     if (!on && this.clock) { clearInterval(this.clock); this.clock = undefined }
   }
@@ -167,9 +172,12 @@ export class SystemView {
   }
 
   /** Draws `section` from the model; nothing changes on screen when the model of the section did not. */
-  paint(section: SystemSection, model: SystemModel): void {
+  paint(asked: SystemSection, model: SystemModel): void {
+    // A kept section that is not offered now ("Aparelhos" without the remote) shows the first one.
+    const section = model.sections.some(s => s.id === asked) ? asked : 'processes'
     if (section !== this.section) {
       this.section = section
+      this.host.devicesShown?.(this.shown && section === 'devices')
       this.rows.clear()
       this.busy.clear()
       this.body.replaceChildren()
@@ -200,6 +208,7 @@ export class SystemView {
       case 'profiles': return m.profiles
       case 'projects': return m.projects
       case 'settings': return m.settings
+      case 'devices': return m.devices
     }
   }
 
@@ -210,8 +219,12 @@ export class SystemView {
   }
 
   private paintTabs(model: SystemModel): void {
+    const n = String(model.sections.length)
+    if (this.tabs.dataset.n !== n) { this.tabs.dataset.n = n; this.tabs.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))` }
     for (const b of this.tabs.querySelectorAll<HTMLElement>('.rg-sys-tab')) {
       const id = b.dataset.section as SystemSection
+      const offered = model.sections.some(s => s.id === id)
+      if (b.hidden === offered) b.hidden = !offered
       const on = id === this.section
       if (b.getAttribute('aria-selected') !== String(on)) b.setAttribute('aria-selected', String(on))
       b.tabIndex = on ? 0 : -1
@@ -225,6 +238,16 @@ export class SystemView {
   }
 
   private paintBody(section: SystemSection, m: SystemModel, active: boolean): void {
+    if (section === 'devices') {
+      // The remote's view draws itself (rows, confirmations, the pairing card); it is the same element across repaints.
+      this.rows.clear()
+      const view = this.host.devices?.()
+      if (view) { if (this.body.firstElementChild !== view || this.body.childElementCount !== 1) this.body.replaceChildren(view) }
+      else this.body.replaceChildren(el('p', 'rg-empty rg-sys-empty', 'O acesso remoto está desligado nas extensões.'))
+      this.foot.replaceChildren()
+      this.foot.hidden = true
+      return
+    }
     const want: { key: string; draw: (head: HTMLElement, key: string) => void; cls: string }[] = []
     let empty: string | undefined
     const foot: (HTMLElement | string)[] = []
@@ -696,8 +719,9 @@ export class SystemView {
     const t = ev.target instanceof HTMLElement ? ev.target : null
     const panel = t?.closest<HTMLElement>('.rg-sr-x')
     if (t && t.closest('.rg-sys-tabs') && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
-      const i = SYSTEM_SECTIONS.findIndex(s => s.id === this.section)
-      const next = SYSTEM_SECTIONS[(i + (ev.key === 'ArrowRight' ? 1 : SYSTEM_SECTIONS.length - 1)) % SYSTEM_SECTIONS.length]!
+      const list = this.model?.sections ?? ALL_SYSTEM_SECTIONS
+      const i = list.findIndex(s => s.id === this.section)
+      const next = list[(i + (ev.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length]!
       ev.preventDefault()
       this.nav.select(next.id)
       this.tabs.querySelector<HTMLElement>(`[data-section="${next.id}"]`)?.focus()

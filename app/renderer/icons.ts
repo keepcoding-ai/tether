@@ -161,6 +161,8 @@ import gauge from '@phosphor-icons/core/assets/regular/gauge.svg'
 import robot from '@phosphor-icons/core/assets/regular/robot.svg'
 import crownSimple from '@phosphor-icons/core/assets/regular/crown-simple.svg'
 import arrowUDownLeft from '@phosphor-icons/core/assets/regular/arrow-u-down-left.svg'
+import deviceMobile from '@phosphor-icons/core/assets/regular/device-mobile.svg'
+import qrCode from '@phosphor-icons/core/assets/regular/qr-code.svg'
 import type { SlotKind } from '../../src/daemon/protocol.ts'
 
 const SVG = {
@@ -320,6 +322,8 @@ const SVG = {
   'crown-simple': crownSimple,
   leaf,
   'arrow-u-down-left': arrowUDownLeft,
+  'device-mobile': deviceMobile,
+  'qr-code': qrCode,
   // The product's monogram (brand/assets/app/mask.json, 24x24 currentColor): the Bridge's status icon wears it.
   'brand': BRAND.icon,
 } as const

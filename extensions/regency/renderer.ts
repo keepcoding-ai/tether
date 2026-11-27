@@ -11,6 +11,7 @@ import { browserEmbeds } from '../browser/renderer/embed.ts'
 import { channelEmbeds } from '../channels/renderer/embed.ts'
 import { ownerBoard } from '../for-agents/renderer/owner-board.ts'
 import { processEmbeds } from '../processes/embed.ts'
+import { remoteEmbeds } from '../remote/renderer/embed.ts'
 import { STATUS_ID as SYNC_STATUS } from '../sync/manifest.ts'
 import { STATUS_ID as BRIDGE_STATUS } from '../web-bridge/manifest.ts'
 import { systemModelOf, type SystemInput, type SystemModel } from './system-rules.ts'
@@ -521,6 +522,7 @@ export function activate(ui: TetherUi): Disposable[] {
       })),
       folders: ui.workspace.folders(),
       status: { ...(bridge ? { bridge } : {}), ...(sync ? { sync } : {}) },
+      ...(remoteEmbeds.active ? { devices: remoteEmbeds.summary()! } : {}),
     }
   }
   const systemModel = (): SystemModel => systemModelOf(systemInput())
@@ -587,6 +589,8 @@ export function activate(ui: TetherUi): Disposable[] {
     showStatus: id => ui.status.show(id === 'bridge' ? BRIDGE_STATUS : SYNC_STATUS),
     menu: (x, y, entries) => ui.menus.context(x, y, entries),
     tick: () => schedule(),
+    devices: () => remoteEmbeds.element(),
+    devicesShown: on => remoteEmbeds.setShown(on),
   }
 
   const host: RegencyHost = {
@@ -723,6 +727,19 @@ export function activate(ui: TetherUi): Disposable[] {
     ui.profiles.onDidChange(schedule),
     ui.workspace.onDidChange(schedule),
     ui.status.onDidChange(schedule),
+    // "Aparelhos" follows the remote's summary; its status icon brings the Regency and the section forward.
+    remoteEmbeds.onDidChange(schedule),
+    remoteEmbeds.onDidRequestReveal(() => {
+      if (!visible()) ui.desks.reveal(DESK_ID)
+      ensurePane()
+      requestAnimationFrame(() => {
+        const p = livePane()
+        if (!p) return
+        // On the phone "Sistema" lives in "Mesas": that place comes to view with it.
+        if (p.tier === 'mobile') p.setTab('tether')
+        p.openSystemColumn('devices')
+      })
+    }),
     { dispose: () => { peekWatch.disconnect() } },
     { dispose: () => { if (frame) cancelAnimationFrame(frame); frame = 0 } },
   ]
