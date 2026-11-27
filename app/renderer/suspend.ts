@@ -49,6 +49,19 @@ export function shouldSuspend(c: SuspendCandidate, settings: SuspendSettings, no
   return now - (c.lastUse ?? appStart) >= limit
 }
 
+/**
+ * Whether the person (or an owner agent) may suspend this pane by hand, as the alternative to hibernating it: an agent that
+ * is up and resumes its session in place (the sweep's own conditions on the slot), not hibernated, not suspended already.
+ * Idle time, focus and a busy turn do not matter here: a busy turn is only asked about (see `isBusyTurn`).
+ */
+export function canSuspendNow(slot: SlotState | undefined, asleep: boolean, suspended: boolean): boolean {
+  if (!slot || asleep || suspended) return false
+  return slot.kind !== 'shell' && slot.status === 'running' && !slot.restarting && !slot.stopping && slot.canRestart === true
+}
+
+/** The agent is mid-turn (or has background subagents): stopping it now cuts the work. */
+export const isBusyTurn = (s: SlotState): boolean => s.turn === 'busy' || (s.background ?? 0) > 0
+
 /** The panes to suspend in this sweep. */
 export function sweepSuspend(candidates: Iterable<SuspendCandidate>, settings: SuspendSettings, now: number, appStart: number): string[] {
   if (!settings.enabled) return []
@@ -128,6 +141,9 @@ export class SuspendBook {
     this.suspended.add(id)
     return { changed: true }
   }
+
+  /** A manual suspension (the menu, the palette or an owner's `agents suspend`): the same state the sweep sets. */
+  suspendNow(id: string): SuspendOutcome { return this.suspend(id) }
 
   /** The pane was hibernated: it is asleep now, not suspended. */
   hibernated(id: string): SuspendOutcome {

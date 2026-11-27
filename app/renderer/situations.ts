@@ -412,6 +412,22 @@ export function hibernateSituation(where: string, busy: SlotState[]): DialogSpec
   }
 }
 
+/** Suspending a pane whose agent is mid-turn: the process stops now and the pane comes back when it is used. */
+export function suspendSituation(where: string, busy: SlotState[]): DialogSpec {
+  const names = busy.map(s => s.title ?? s.name ?? folderName(s.cwd))
+  return {
+    situation: 'suspend',
+    tone: 'warn',
+    icon: 'warning',
+    title: `Um agente ${where} está trabalhando`,
+    context: { icon: 'leaf', name: where.replace(/^d[aeo] /, ''), lines: names.slice(0, 4), status: { label: 'em andamento', tone: 'ok' } },
+    choices: [
+      { id: 'suspend', icon: 'leaf', label: 'Suspender mesmo assim', consequence: 'O processo para agora, no meio do turno. A conversa fica salva e a guia retoma sozinha quando você usá-la.', tone: 'destructive' },
+    ],
+    cancelLabel: 'Cancelar',
+  }
+}
+
 /** A tether:// link named a pane that is closed but still known (its slot is in "Slots fechados"). */
 export function closedTabSituation(name: string): DialogSpec {
   return {

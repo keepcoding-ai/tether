@@ -40,6 +40,7 @@ export interface CommandHost {
   /** "Reiniciar agente": relaunch the pane's agent resuming the same session (the daemon refuses shells and unreported sessions). */
   restartAgent(id: string): void
   /** "Hibernar guia": stop the pane's process and keep it asleep (not started on launch) until woken. */
+  suspendPane(id: string): void
   hibernatePane(id: string): void
   /** "Marcar como não lido" / "Marcar como lido": toggles the unread mark of a slot's pane (the daemon keeps it through focus). */
   toggleUnread(id: string): void
@@ -170,6 +171,7 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.restart', title: 'Reiniciar agente do painel', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.restartAgent(id)) },
     { id: 'pane.asleep', title: 'Guias hibernadas…', group: GROUP.pane, icon: 'moon', run: () => host.asleepMenu() },
+    { id: 'pane.suspend', title: 'Suspender guia', group: GROUP.pane, icon: 'leaf', ...pane, run: withPane(id => host.suspendPane(id)) },
     { id: 'pane.hibernate', title: 'Hibernar guia', group: GROUP.pane, icon: 'moon', ...pane, run: withPane(id => host.hibernatePane(id)) },
     // One command per label of the pair: the palette lists the one that applies to the active slot's pane.
     { id: 'pane.mark-unread', title: UNREAD_LABEL, group: GROUP.pane, icon: 'bell', when: ctx => ctx.pane && ctx.unread === false, run: withPane(id => host.toggleUnread(id)) },

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { deskMapOf } from '../../app/renderer/door/desk-map.ts'
 import { emptyLayout, type DeskLayout, type Layout } from '../../app/renderer/layout.ts'
-import { DEFAULT_SUSPEND, normalizeSuspend, RESUME_INPUT_MAX, ResumeInput, shouldSuspend, SuspendBook, sweepSuspend, SUSPEND_ENABLED_KEY, SUSPEND_IDLE_KEY, type SuspendCandidate } from '../../app/renderer/suspend.ts'
+import { canSuspendNow, DEFAULT_SUSPEND, isBusyTurn, normalizeSuspend, RESUME_INPUT_MAX, ResumeInput, shouldSuspend, SuspendBook, sweepSuspend, SUSPEND_ENABLED_KEY, SUSPEND_IDLE_KEY, type SuspendCandidate } from '../../app/renderer/suspend.ts'
 import { CORE_SETTINGS } from '../../app/shared/core-settings.ts'
 import { parseDeskMap } from '../../src/daemon/door/desks.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
@@ -203,3 +203,34 @@ describe('suspend: apart from hibernation', () => {
 function desk(id: string, panes: Record<string, string>): DeskLayout {
   return { id, name: id, color: 'blue', frames: { grid: {}, views: { f1: { grid: {}, panels: Object.fromEntries(Object.entries(panes).map(([pid, c]) => [pid, { id: pid, contentComponent: c }])), activeGroup: 'g' } } } } as unknown as DeskLayout
 }
+
+describe('suspend: by hand (menu, palette, owner)', () => {
+  const slot = (o: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', status: 'running', canRestart: true, ...o }) as SlotState
+
+  test('only a running agent that resumes in place, not hibernated or suspended, may be suspended by hand; a busy turn is allowed (it is only asked)', () => {
+    assert.equal(canSuspendNow(slot(), false, false), true)
+    assert.equal(canSuspendNow(slot({ turn: 'busy' }), false, false), true)
+    assert.equal(isBusyTurn(slot({ turn: 'busy' })), true)
+    assert.equal(isBusyTurn(slot({ background: 1 })), true)
+    assert.equal(isBusyTurn(slot()), false)
+    assert.equal(canSuspendNow(undefined, false, false), false)
+    assert.equal(canSuspendNow(slot({ kind: 'shell' }), false, false), false)
+    assert.equal(canSuspendNow(slot({ canRestart: false }), false, false), false)
+    assert.equal(canSuspendNow(slot({ status: 'exited' }), false, false), false)
+    assert.equal(canSuspendNow(slot({ restarting: true }), false, false), false)
+    assert.equal(canSuspendNow(slot(), true, false), false)
+    assert.equal(canSuspendNow(slot(), false, true), false)
+  })
+
+  test('suspendNow sets the same state as the sweep: resumes on use and survives in the layout', () => {
+    const book = new SuspendBook()
+    assert.deepEqual(book.suspendNow('s1'), { changed: true })
+    assert.deepEqual(book.suspendNow('s1'), { changed: false })
+    assert.equal(book.has('s1'), true)
+    assert.deepEqual(book.toLayout(), ['s1'])
+    assert.equal(book.use('s1').resume, true)
+    const again = new SuspendBook()
+    again.load(book.toLayout(), () => true)
+    assert.equal(again.has('s1'), true)
+  })
+})
