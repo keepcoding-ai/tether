@@ -20,6 +20,7 @@ import { commandVerb, PendingCommands } from './verbs/command.ts'
 import { failOf, type VerbApi, type VerbDef, type VerbDeps } from './verbs/common.ts'
 import { giveVerb } from './verbs/give.ts'
 import { hibernateVerb, SleepBridge } from './verbs/hibernate.ts'
+import { suspendVerb } from './verbs/suspend.ts'
 import { interruptVerb } from './verbs/interrupt.ts'
 import { keysVerb } from './verbs/keys.ts'
 import { lastAnswerVerb } from './verbs/last-answer.ts'
@@ -38,13 +39,14 @@ export interface VerbsWiring { store: OwnershipStore; gate: WriteGate }
 /** The contract's table 3.1, in order; hibernate and wake after restart. */
 export const AGENT_VERBS: readonly VerbDef[] = [
   listVerb, openVerb, sendVerb, interruptVerb, readScreenVerb, lastAnswerVerb, answerVerb, commandVerb,
-  typeVerb, keysVerb, closeVerb, restartVerb, hibernateVerb, wakeVerb, giveVerb, revokeVerb,
+  typeVerb, keysVerb, closeVerb, restartVerb, hibernateVerb, suspendVerb, wakeVerb, giveVerb, revokeVerb,
 ]
 
 export const INSTRUCTIONS = [
   'You can own desks and panes of the tether: the person gives them to you, and over what is in them you have the power she has.',
   '`agents list` shows what is yours and what you may do with each pane; run it to find your way again after compacting.',
   '`agents hibernate` puts one of your panes, or a desk of yours (`desk`), to sleep as the person does (the processes stop and do not start with the tether); `agents wake` brings them back; `agents list` marks what sleeps with `asleep`.',
+  '`agents suspend` stops one of your panes to save resources but, unlike hibernate, the pane comes back on its own when anything uses it (a send, a read, the person); hibernate only returns with `agents wake`. `agents list` marks it `suspended`.',
   'What happens in your panes reaches you as <channel source="tether" origin="for-agents" ...>. The person sees everything and may take any pane back at any time; an act on a pane she holds answers `with-user`.',
 ].join('\n')
 

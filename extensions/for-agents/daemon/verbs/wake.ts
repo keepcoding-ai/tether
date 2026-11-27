@@ -4,6 +4,7 @@
 //   of its slot, whoever started it, so this needs no answer from the app. A live pane answers `already: true`.
 // - A desk: the app's own wake of a desk (`wake-desk`, through the bridge of hibernate.ts): only the panes the desk's sleep put
 //   down start again, the ones hibernated one by one stay asleep; the panes with the person are spared and listed.
+// A suspended pane (`agents suspend`, or the app's sweep) is a stopped one: waking it resumes it like any other.
 // The `open-close` line of the inventory, like hibernate.
 import type { VerbCaller } from '../../../../src/daemon/ext-api.ts'
 import { WAKE_DESK_EVENT, type DeskSleepEvent, type DeskWakeAnswer } from '../../sleep-names.ts'
