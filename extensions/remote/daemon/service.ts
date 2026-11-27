@@ -9,6 +9,7 @@
 // the portal's memory; nothing here ever sees it.
 import { join } from 'node:path'
 import { userInfo } from 'node:os'
+import { remoteBenchOn } from '../../../src/core/paths.ts'
 import { setPortalCredential } from '../../../src/daemon/handshake.ts'
 import { servedPipeOf } from '../../../src/daemon/pipe-key.ts'
 import { pipePath } from '../../../src/daemon/protocol.ts'
@@ -23,7 +24,7 @@ import {
   type SessionEnded,
 } from '../../../src/remoted/ipc.ts'
 import {
-  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, ENV_TEST_REMOTE, isCredential, originAllowed, PAIR_ID_RE, parseConfig,
+  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, isCredential, originAllowed, PAIR_ID_RE, parseConfig,
   parseRegistry, pruneRegistry, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
   type RemoteRequest,
 } from '../rules.ts'
@@ -82,7 +83,7 @@ export class RemoteService {
   }
 
   get #now(): number { return (this.#d.now ?? Date.now)() }
-  get #bench(): boolean { return this.#d.env[ENV_TEST_REMOTE] === '1' }
+  get #bench(): boolean { return remoteBenchOn(this.#d.env, this.#d.home) }
 
   /** One writer at a time: every change of the registry, the config or the keys runs in this chain. */
   #serial<T>(fn: () => Promise<T>): Promise<T> {

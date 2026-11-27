@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { agentExecutor } from '../agents/agent-exec.ts'
 import { exeLog, type ExeName, type ExeResult } from '../core/exe.ts'
 import type { Probe } from '../core/perf-probe.ts'
-import { tetherHome } from '../core/paths.ts'
+import { tetherHome, withoutRemoteBench } from '../core/paths.ts'
 import { HandshakeReader } from './handshake.ts'
 import { encode, LineParser, type ParsedLine } from './ndjson.ts'
 import { clientProof, daemonProof, isNonce, newNonce, pipeKeyPath, readPipeKey, sameProof, servedHome } from './pipe-key.ts'
@@ -347,9 +347,14 @@ export function spawnDaemon(opts: SpawnOptions): Promise<number | undefined> {
     home: opts.home,
     node: opts.execPath ?? process.execPath,
     mainPath: opts.mainPath ?? fileURLToPath(new URL('./main.ts', import.meta.url)),
-    env: { ...(opts.env ?? process.env), TETHER_HOME: opts.home, TETHER_PIPE: opts.pipe },
+    env: daemonEnv(opts.env ?? process.env, opts.home, opts.pipe),
     ...(opts.log ? { log: opts.log } : {}),
   })
+}
+
+/** The environment a started tetherd gets: the caller's, minus the remote's bench variables (a daemon never inherits them), plus its home and pipe. */
+export function daemonEnv(base: NodeJS.ProcessEnv, home: string, pipe: string): NodeJS.ProcessEnv {
+  return { ...withoutRemoteBench(base), TETHER_HOME: home, TETHER_PIPE: pipe }
 }
 
 export interface DetachedNodeOptions {

@@ -9,6 +9,7 @@
 //                                 pairing QR carries (https://, http:// only for localhost; --web '' forgets it)
 //   remote pair                   prints the code, waits for the device, asks for the 6 digits it shows
 import { createInterface } from 'node:readline/promises'
+import { remoteBenchOn, tetherHome } from '../core/paths.ts'
 import type { DaemonClient } from '../daemon/client.ts'
 import { parseArgs, UsageError } from './args.ts'
 
@@ -16,6 +17,8 @@ export interface RemoteIo {
   out: (text: string) => void
   err: (text: string) => void
   env: NodeJS.ProcessEnv
+  /** The tether's home (default: from `env`): the bench flag counts only with an explicit bench home. */
+  home?: string
   connect: () => Promise<DaemonClient | undefined>
   /** One line typed by the person (bench pairing only). */
   ask?: (question: string) => Promise<string>
@@ -61,7 +64,7 @@ async function req(client: DaemonClient, name: string, args?: Record<string, unk
 
 export async function cmdRemote(argv: string[], io: RemoteIo): Promise<number> {
   const [sub, ...rest] = argv
-  const bench = io.env.TETHER_TEST_REMOTE === '1'
+  const bench = remoteBenchOn(io.env, io.home ?? tetherHome(io.env))
   const a = parseArgs(rest, { flags: ['json'], valued: ['web'] })
   if (!sub) throw new UsageError(REMOTE_USAGE)
   if ((sub === 'pair' || sub === 'on') && !bench) {

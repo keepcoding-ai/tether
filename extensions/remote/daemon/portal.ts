@@ -9,19 +9,19 @@ import { randomBytes } from 'node:crypto'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { REMOTE_BENCH_ENV, remoteBenchOn } from '../../../src/core/paths.ts'
 import type { FromPortal, ToPortal } from '../../../src/remoted/ipc.ts'
 
 const PASS_ENV = [
   'SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR', 'PATH', 'Path', 'PATHEXT', 'ComSpec', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE',
   'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'USERDOMAIN', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'HOME', 'LANG',
 ]
-const BENCH_ENV = /^TETHER_TEST_REMOTE(_[A-Z_]+)?$/
 
 /** The portal's environment: the allow list above, the home and the pipe, and the bench knobs only on the bench. */
 export function portalEnv(base: NodeJS.ProcessEnv, home: string, pipe: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const k of PASS_ENV) { const v = base[k]; if (v !== undefined) env[k] = v }
-  if (base.TETHER_TEST_REMOTE === '1') for (const [k, v] of Object.entries(base)) if (BENCH_ENV.test(k) && v !== undefined) env[k] = v
+  if (remoteBenchOn(base, home)) for (const [k, v] of Object.entries(base)) if (REMOTE_BENCH_ENV.test(k) && v !== undefined) env[k] = v
   env.TETHER_HOME = home
   env.TETHER_PIPE = pipe
   return env

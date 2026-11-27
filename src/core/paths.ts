@@ -47,6 +47,27 @@ export function defaultTetherHome(env: NodeJS.ProcessEnv = process.env, os: Plat
   return p.join(home, '.local', 'state', 'tether')
 }
 
+/** The remote's bench variables: the flag and its knobs (idle, tick, notice file, deny-after). */
+export const REMOTE_BENCH_ENV = /^TETHER_TEST_REMOTE(_[A-Z_]+)?$/i
+
+/**
+ * The one decision on the remote's bench flag: it counts only with TETHER_TEST_REMOTE=1 AND an explicit bench home. Under the
+ * person's default home it is ignored, so a variable set by a script cannot put the real tetherd in bench mode.
+ */
+export function remoteBenchOn(env: NodeJS.ProcessEnv, home: string | undefined, os: PlatformInfo = {}): boolean {
+  if (env.TETHER_TEST_REMOTE !== '1') return false
+  const h = home?.trim()
+  if (!h) return false
+  return !samePath(h, defaultTetherHome(env, os), os.platform ?? process.platform)
+}
+
+/** An environment without any remote bench variable: what tetherd inherits when a CLI or the app starts it. */
+export function withoutRemoteBench(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(env)) if (!REMOTE_BENCH_ENV.test(k)) out[k] = v
+  return out
+}
+
 /** Same folder by its spelling: normalized, no trailing separator, case-insensitive on Windows. No disk access. */
 export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
   const p = platform === 'win32' ? win32 : posix

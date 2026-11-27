@@ -15,7 +15,7 @@ import { appendFile, readFile } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { agentExecutor } from '../agents/agent-exec.ts'
-import { tetherHome } from '../core/paths.ts'
+import { remoteBenchOn, tetherHome } from '../core/paths.ts'
 import { DaemonClient } from '../daemon/client.ts'
 import { pipePath } from '../daemon/protocol.ts'
 import { buildHouseAuth, relyingParty, relayUrlAllowed, selfTest, type RelyingParty } from '../remote/index.ts'
@@ -29,7 +29,7 @@ import { audOf, RelayLink } from './relay.ts'
 const home = tetherHome()
 const remoteDir = join(home, 'remote')
 const logPath = join(home, 'tether-remoted.log')
-const bench = process.env.TETHER_TEST_REMOTE === '1'
+const bench = remoteBenchOn(process.env, home)
 const knob = (name: string): number | undefined => {
   const v = bench ? Number(process.env[name]) : NaN
   return Number.isFinite(v) && v > 0 ? v : undefined
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
     send: (f) => link?.send(f),
     note: (n) => send({ t: 'note', ...n }),
-    notice: makeNotice(process.env, log),
+    notice: makeNotice(bench ? process.env : {}, log),
     ...(idleMs !== undefined ? { idleMs } : {}),
     ...(renewDenyAfterMs !== undefined ? { renewDenyAfterMs } : {}),
   })

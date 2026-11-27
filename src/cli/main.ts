@@ -151,7 +151,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'pause': return await cmdPause(rest, { out, err, env: process.env })
       case 'ronda': return await cmdRonda(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
       case 'sync': return await cmdSync(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
-      case 'remote': return await cmdRemote(rest, { out, err, env: process.env, connect: () => tryConnect(context()) })
+      case 'remote': return await cmdRemote(rest, { out, err, env: process.env, home: context().home, connect: () => tryConnect(context()) })
       case 'proc': return await cmdProc(rest, { out, err, env: process.env, home: context().home, cwd: process.cwd(), connect: () => tryConnect(context()) })
       default:
         // Not a built-in: a verb an extension contributed (`tether <ns> <verbo>`); the built-ins above always win.
