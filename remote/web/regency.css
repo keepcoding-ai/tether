@@ -12,7 +12,7 @@
   --fg-dim: color-mix(in srgb, var(--fg) 75%, var(--bg-2));
   --alert-text: color-mix(in srgb, var(--x-alert) 62%, var(--fg));
   position: relative; height: 100vh; height: 100dvh; overflow: hidden;
-  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
   padding-left: var(--sal); padding-right: var(--sar);
   background: var(--desk-bg); color: var(--fg); font: 13px/1.45 var(--ui); -webkit-text-size-adjust: 100%;
 }
@@ -44,7 +44,12 @@
 .rr[data-tier="mobile"] :is(.rr-watch, .rr-clock) { display: none; }
 
 /* ---------- the stage: the whole screen on the phone and the tablet; a card on the ground on the desk and the TV ---------- */
-.rr-stage { min-width: 0; min-height: 0; display: flex; }
+.rr-top { grid-row: 1; }
+/* The lines that say why a part of the house is not shown: a scope this device lacks, a tree too big to come. */
+.rr-why { grid-row: 2; display: flex; flex-direction: column; gap: 4px; padding: 6px .85em; border-bottom: 1px solid var(--border); background: var(--desk-bg); }
+.rr-why-l { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: .88em; line-height: 1.4; color: var(--fg-dim); }
+.rr-why-l .ph { flex: none; width: 1.1em; height: 1.1em; margin-top: .1em; color: var(--warn); }
+.rr-stage { grid-row: 3; min-width: 0; min-height: 0; display: flex; }
 .rr-stage > .rg { flex: 1 1 auto; min-width: 0; height: auto; }
 .rr:is([data-tier="desktop"], [data-tier="wide"]) .rr-stage { padding: 8px; }
 .rr:is([data-tier="desktop"], [data-tier="wide"]) .rr-stage > .rg { border: 1px solid var(--frame-border); border-radius: 10px; overflow: hidden; }
@@ -147,7 +152,7 @@
 @keyframes rr-card-up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
 
 /* ---------- offline: the machine out of reach. Nothing to show but the notice and when we last spoke ---------- */
-.rr-off { grid-row: 2; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: auto; padding: 2em 1.25em calc(2em + var(--sab)); }
+.rr-off { grid-row: 3; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: auto; padding: 2em 1.25em calc(2em + var(--sab)); }
 .rr-off-in { max-width: 26em; display: flex; flex-direction: column; align-items: flex-start; gap: .8em; }
 .rr-off-ic { display: inline-grid; place-items: center; width: 2em; height: 2em; border-radius: .55em; font-size: 1.5em; color: var(--fg-dim); background: var(--bg-2); border: 1px solid var(--border); }
 .rr-off h1 { margin: 0; font-size: 1.45em; line-height: 1.25; font-weight: 650; }

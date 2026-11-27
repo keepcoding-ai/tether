@@ -52,7 +52,13 @@ describe('the web bundle of the Regency', () => {
   })
 
   test('the client\'s entry (src/main.ts) and the bench page pass the same guard', async () => {
-    assert.equal((await make(join(dir, 'src', 'main.ts'))).refusal, undefined)
+    const app = await make(join(dir, 'src', 'main.ts'))
+    assert.equal(app.refusal, undefined)
+    // The published app.js carries the Regency's screen over the session's source, and never the bench's made-up house.
+    for (const piece of ['remote/web/src/regency.ts', 'remote/web/src/source.ts', 'extensions/regency/renderer/pane.ts', 'extensions/channels/renderer/channel-pane.ts']) {
+      assert.ok(has(app, piece), `app.js holds ${piece}`)
+    }
+    assert.ok(!has(app, 'remote/web/bench/page/fake.ts'), 'app.js does not hold the bench\'s house')
     const bench = await make(join(dir, 'bench', 'page', 'regency-bench.ts'))
     assert.equal(bench.refusal, undefined)
     assert.ok(has(bench, 'extensions/regency/renderer/pane.ts'))

@@ -1,5 +1,8 @@
-// The remote web client's skeleton (RR1 step 1.5): pair this device with a tether, keep its keys, and show who waits
-// for the person, live. The relay of this origin comes from `<meta name="tether-relay">`, written by the build; a QR
+// The remote web client (RR1 step 1.5, RR3 step 3.4c): pair this device with a tether, keep its keys, and show the
+// house's Regency, reading only, live. Once the session is unlocked (and the offer to protect the device is over), the
+// screen is the Regency (regency.ts) over the session's source (source.ts); while the house is out of reach, the same
+// casing shows only "offline", with the last contact and "Tentar agora". Nothing of the house is written to the device:
+// the keys and the record of the pairing are, and nothing else. The relay of this origin comes from `<meta name="tether-relay">`, written by the build; a QR
 // link (`#pair=`) must name the same relay. Order of a visit: self-test of the crypto, then the stored house (reconnect
 // without pairing) or the pairing screen. Reconnection after a cut retries with backoff; nothing polls the house.
 import { CLOSE, evtByCode, opByName, RES_STATUS, relayUrlAllowed, selfTest } from '../../../src/remote/index.ts'
@@ -8,6 +11,8 @@ import { mount } from './dom.ts'
 import { connect, type Ended, type Live } from './live.ts'
 import { pair, type PairInput } from './pair.ts'
 import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
+import { mountRegency, type RemoteRegency } from './regency.ts'
+import { sessionSource, type SessionSource } from './source.ts'
 import {
   connectingScreen, hardScreen, idleScreen, isPairNotice, listScreen, offlineScreen, pairFailedScreen, pairScreen,
   pairWaitScreen, retryText, unsupportedScreen, type Guard, type Lock, type PairNotice,
@@ -31,6 +36,7 @@ type View =
   | { s: 'pair-failed'; kind: 'refused' | 'expired' | 'not-confirmed' | 'cut' }
   | { s: 'connecting' }
   | { s: 'list'; notice?: string; problem?: string }
+  | { s: 'regency' }
   | { s: 'offline' | 'hard' }
   | { s: 'idle' }
   | { s: 'unsupported' }
@@ -50,13 +56,30 @@ let regChallenge: Uint8Array = new Uint8Array(0)
 let guard: Guard = { s: 'read-only' }
 let lock: Lock | undefined
 const retry = { attempt: 0, timer: 0 as ReturnType<typeof setTimeout> | 0, atMs: 0 }
+/** The Regency's casing, while the screen is the Regency or its "offline" notice. */
+let regency: RemoteRegency | undefined
+/** The source over the session the Regency reads now; one per session. */
+let source: { live: Live; src: SessionSource } | undefined
+/** When the house last answered, on this device's clock (memory only: the offline notice says it). */
+let lastContactMs: number | undefined
 
 const TITLE: Record<View['s'], string> = {
   pair: 'Parear', 'pair-wait': 'Parear', 'pair-failed': 'Parear', connecting: 'Conectando', list: 'Esperam você',
-  offline: 'Offline', hard: 'Atenção', idle: 'Sessão fechada', unsupported: 'Navegador sem suporte',
+  regency: 'Regência', offline: 'Offline', hard: 'Atenção', idle: 'Sessão fechada', unsupported: 'Navegador sem suporte',
+}
+
+function dropSource(): void {
+  source?.src.dispose()
+  source = undefined
 }
 
 function show(v: View): void {
+  // The casing lives through "Regência" and "offline"; any other screen lets it go, and what it read with it.
+  if (v.s !== 'regency' && !(v.s === 'offline' && record)) {
+    dropSource()
+    regency?.dispose()
+    regency = undefined
+  }
   view = v
   root.dataset.view = v.s
   document.title = `${TITLE[v.s]} · Tether`
@@ -82,10 +105,26 @@ function render(): void {
       mount(root, listScreen({
         list, nowMs: Date.now() + skewMs, houseName: record?.houseName ?? '', ...(v.notice ? { notice: v.notice } : {}), ...(v.problem ? { problem: v.problem } : {}),
         guard: record?.credentialId ? { s: 'protected' } : guard, ...(lock ? { lock } : {}),
-        onProtect: () => void protect(), onUnlock: () => void unlock(),
+        onProtect: () => void protect(), onUnlock: () => void unlock(), onSkip: endPairingSession,
       }))
       return
-    case 'offline': mount(root, offlineScreen({ retryInS: retryInS(), onRetry: retryNow })); return
+    case 'regency': {
+      const r = casing()
+      const l = live
+      if (l && source?.live !== l) {
+        dropSource()
+        const src = sessionSource(l, { onLocked: () => locked(l), onContact: () => { lastContactMs = Date.now() } })
+        source = { live: l, src }
+        r.online(src)
+      }
+      return
+    }
+    case 'offline': {
+      if (!record) { mount(root, offlineScreen({ retryInS: retryInS(), onRetry: retryNow })); return }
+      dropSource()
+      casing().offline({ ...(lastContactMs !== undefined ? { lastContactMs } : {}), ...(retryInS() !== undefined ? { retryInS: retryInS() } : {}) })
+      return
+    }
     case 'hard': mount(root, hardScreen({ retryInS: retryInS(), onRetry: retryNow })); return
     case 'idle': mount(root, idleScreen(retryNow)); return
     case 'unsupported': mount(root, unsupportedScreen()); return
@@ -139,11 +178,36 @@ function endPairingSession(): void {
   offerOver()
 }
 
-/** The registration window closed: an offer still open becomes "read only". */
+/** The registration window closed (or the person said "Agora não"): an offer still open becomes "read only". */
 function offerOver(): void {
   if (guard.s !== 'offer' && guard.s !== 'registering') return
   guard = { s: 'read-only' }
-  if (view.s === 'list') render()
+  if (view.s !== 'list') return
+  if (live && !lock) enter()
+  else render()
+}
+
+// ---- the Regency ------------------------------------------------------------------------------------------------------
+
+function casing(): RemoteRegency {
+  regency ??= mountRegency(root, { houseName: record?.houseName ?? '', onRetry: retryNow })
+  return regency
+}
+
+/**
+ * The session is open and unlocked: the screen is the Regency. While the offer to protect this device is open (right after
+ * pairing, for the registration window), the list stays, with the offer: it is the one moment the device may take it.
+ */
+function enter(notice?: string): void {
+  if (guard.s === 'offer' || guard.s === 'registering') show({ s: 'list', ...(notice ? { notice } : {}) })
+  else show({ s: 'regency' })
+}
+
+/** A reading answered "trancado": the session asks for presence; the unlock panel takes the screen. */
+function locked(l: Live): void {
+  if (live !== l || lock) return
+  lock = { busy: false }
+  show({ s: 'list' })
 }
 
 async function protect(): Promise<void> {
@@ -187,7 +251,10 @@ async function unlock(): Promise<void> {
 async function adopt(l: Live, notice?: string): Promise<void> {
   live = l
   retry.attempt = 0
+  lastContactMs = Date.now()
   l.onEvent = (evt, body) => {
+    if (live === l) lastContactMs = Date.now()
+    if (source?.live === l && source.src.heard(evt, body)) return
     if (evtByCode(evt)?.name !== 'attention.changed') return
     const w = parseWaiting(body)
     if (!w) return
@@ -199,19 +266,21 @@ async function adopt(l: Live, notice?: string): Promise<void> {
   await watch(l, notice)
 }
 
-/** Subscribes to the list. A locked session (status 0x04) asks for presence first: the unlock panel takes its place. */
+/**
+ * Subscribes to the list, which also tells whether the session is unlocked. A locked session (status 0x04) asks for
+ * presence first: the unlock panel takes its place. Unlocked, the screen is the Regency (with or without the list: a
+ * device without `attention` still reads what its other scopes let it).
+ */
 async function watch(l: Live, notice?: string): Promise<void> {
   const r = await l.request(WATCH)
   if (l.ended || live !== l) return
-  if (r.status === RES_STATUS.ok) {
-    list = parseWaiting(r.body) ?? { items: [], more: 0 }
-    show({ s: 'list', ...(notice ? { notice } : {}) })
-  } else if (r.status === RES_STATUS.locked) {
+  if (r.status === RES_STATUS.locked) {
     lock = { busy: false }
     show({ s: 'list', ...(notice ? { notice } : {}) })
-  } else {
-    show({ s: 'list', problem: r.status === RES_STATUS.noScope ? 'Este aparelho não tem permissão para ver quem espera você.' : 'A máquina não mandou a lista agora.' })
+    return
   }
+  if (r.status === RES_STATUS.ok) list = parseWaiting(r.body) ?? { items: [], more: 0 }
+  enter(notice)
 }
 
 async function reconnect(o: { afterPair?: boolean } = {}): Promise<void> {
@@ -306,6 +375,7 @@ async function boot(): Promise<void> {
 // The countdown and "há quanto tempo" are rewritten in place from memory; no request leaves for them.
 setInterval(() => {
   if (!retry.timer || (view.s !== 'offline' && view.s !== 'hard')) return
+  if (view.s === 'offline' && regency) { regency.retryIn(retryInS()); return }
   const t = root.querySelector('.status-text')
   if (t) t.textContent = retryText(retryInS())
 }, 1_000)

@@ -32,6 +32,9 @@ export const TEXT = {
   offKept: 'Nada da máquina fica guardado neste aparelho: a Regência volta quando ela voltar.',
   offApp: 'Se só o app do tether estiver fechado, a máquina ainda responde e as mesas aparecem aqui.',
   retry: 'Tentar agora',
+  noDesks: 'As mesas não aparecem: este aparelho não tem permissão para ver a Regência.',
+  bigDesks: 'As mesas não chegaram: são grandes demais para ver daqui agora.',
+  noChannels: 'Os canais não aparecem: este aparelho não tem permissão para ler os canais.',
 } as const
 
 const two = (n: number): string => String(n).padStart(2, '0')
@@ -270,7 +273,11 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     box.append(ic, el('h1', '', TEXT.offTitle), el('p', '', TEXT.offLead), fine, offBtn, list)
     off.append(box)
   }
-  shell.append(top, stage, off)
+  // ---- the lines that say why a part of the house is not shown (a scope the device lacks, a tree too big)
+  const why = el('div', 'rr-why')
+  why.setAttribute('role', 'status')
+  why.hidden = true
+  shell.append(top, why, stage, off)
   root.replaceChildren(shell)
 
   // ---- the band of "the app is closed on the machine", put over the tree of the pane
@@ -316,7 +323,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   const paintSnap = (): void => {
     const s = session
     if (!s) return
-    const closed = s.house.loaded && !s.house.live
+    const closed = s.house.hasTree && !s.house.live
     const right = s.pane.element.querySelector<HTMLElement>(':scope > .rg-right')
     const tools = right?.querySelector<HTMLElement>(':scope > .rg-tools')
     const title = right?.querySelector<HTMLElement>(':scope > .rg-hd > .rg-hd-t')
@@ -331,11 +338,25 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     if (at === '') asOfMark.remove()
   }
 
+  const paintWhy = (s: Session | undefined): void => {
+    const lines: string[] = []
+    if (s?.house.treeProblem === 'no-scope') lines.push(TEXT.noDesks)
+    else if (s?.house.treeProblem === 'too-large') lines.push(TEXT.bigDesks)
+    if (s?.house.channelsProblem === 'no-scope') lines.push(TEXT.noChannels)
+    const said = lines.join('\n')
+    if (why.dataset.said === said) return
+    why.dataset.said = said
+    why.replaceChildren(...lines.map(t => { const p = el('p', 'rr-why-l'); p.append(glyph('info'), el('span', '', t)); return p }))
+    why.hidden = lines.length === 0
+  }
+
   const paint = (): void => {
     frame = 0
     const s = session
+    paintWhy(disposed ? undefined : s)
     if (disposed || !s) { paintTop(); return }
-    link = !s.house.loaded ? 'loading' : s.house.live ? 'live' : 'closed'
+    // Without a tree (no scope for it, or too big) the session is up but whether the app is open is not known: "ao vivo".
+    link = !s.house.loaded ? 'loading' : !s.house.hasTree || s.house.live ? 'live' : 'closed'
     paintTop()
     // The first tree: the phone opens on "Mesas" when the app is closed (that is where the news is), and a channel that
     // calls the person (else the first open one) takes the centre.
@@ -416,6 +437,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   const offline = (state: OfflineState): void => {
     if (disposed) return
     endSession()
+    paintWhy(undefined)
     offlineState = state
     link = 'offline'
     stage.replaceChildren()

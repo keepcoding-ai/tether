@@ -165,17 +165,20 @@ function guardState(g: Guard): HTMLElement {
     h('span', {}, on ? 'Protegido pela biometria deste aparelho' : 'Só leitura: sem biometria cadastrada'))
 }
 
-function guardPanel(g: Guard, onProtect: () => void): HTMLElement | undefined {
+function guardPanel(g: Guard, onProtect: () => void, onSkip?: () => void): HTMLElement | undefined {
   if (g.s !== 'offer' && g.s !== 'registering') return g.s === 'read-only' && g.fail ? notice('warn', REGISTER_FAIL[g.fail]) : undefined
   const busy = g.s === 'registering'
   const b = button(busy ? 'Esperando a biometria…' : 'Proteger com a biometria', onProtect)
   b.id = 'guard-protect'
   if (busy) { b.disabled = true; b.setAttribute('aria-busy', 'true') }
+  const skip = !busy && onSkip ? button('Agora não', onSkip, 'quiet') : undefined
+  if (skip) skip.id = 'guard-skip'
   return h('section', { class: 'panel', 'data-panel': 'guard', 'aria-labelledby': 'guard-title' },
     h('h2', { id: 'guard-title', class: 'panel-title' }, 'Proteger com a biometria deste aparelho'),
     h('p', { class: 'lead' }, 'Sem isso, este aparelho só vê: não fala, não responde e não aprova nada em seu nome.'),
     g.s === 'offer' && g.fail && notice('warn', REGISTER_FAIL[g.fail]),
     b,
+    skip,
     h('p', { class: 'fine' }, 'A digital, o rosto ou o bloqueio de tela ficam neste aparelho. A máquina recebe só a prova de que foi você.'),
   )
 }
@@ -195,6 +198,8 @@ function lockPanel(l: Lock, onUnlock: () => void): HTMLElement {
 export function listScreen(o: {
   list: WaitingList; nowMs: number; houseName: string; notice?: string; problem?: string
   guard: Guard; lock?: Lock; onProtect: () => void; onUnlock: () => void
+  /** "Agora não" on the offer to protect: the device stays reading only and goes on to the Regency. */
+  onSkip?: () => void
 }): HTMLElement {
   const where = o.houseName ? `Conectado a ${o.houseName}` : 'Conectado'
   const items = o.list.items.map((w) =>
@@ -216,7 +221,7 @@ export function listScreen(o: {
       o.guard.s !== 'offer' && o.guard.s !== 'registering' && guardState(o.guard),
     ),
     o.notice && notice('ok', o.notice),
-    guardPanel(o.guard, o.onProtect),
+    guardPanel(o.guard, o.onProtect, o.onSkip),
     body,
     o.list.more > 0 && h('p', { class: 'fine more' }, `e mais ${o.list.more} esperando`),
   )
