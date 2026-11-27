@@ -62,3 +62,11 @@ export {
   UV_PURPOSE, uvChallenge, unlockDigest, elevateDigest, actDigest, uvRegChallenge, derToP1363,
 } from './presence.ts'
 export type { UvPurpose, PresenceVerifier } from './presence.ts'
+
+// WebAuthn: the challenges and the verification of the registration and of every assertion (spec 7.4, step 2.4)
+export {
+  relyingParty, registrationChallenge, assertionChallenge, verifyRegistration, verifyAssertion, WEBAUTHN_LIMITS,
+} from './webauthn.ts'
+export type {
+  RelyingParty, PresenceContext, WebAuthnCredential, WebAuthnFailure, RegistrationVerdict, AssertionVerdict,
+} from './webauthn.ts'
