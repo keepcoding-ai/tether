@@ -278,6 +278,15 @@ export const PAGE_BYTES_MAX = 128 * 1024
 export const LINE_BODY_MAX = 4000
 /** Channel ids in one channels.changed; more, and the notice says `all`. */
 export const CHANGED_IDS_MAX = 32
+/** Member ids of one row of channels.marks; the rest is counted in the row's `membersMore`. */
+export const MARK_MEMBERS_MAX = 32
+/** Member ids of all the rows of one channels.marks together (its bytes stay well under READ_BODY_MAX); past it, rows count only. */
+export const MARKS_MEMBER_IDS_MAX = 1024
+/** Members of one channels.page; the rest is counted in `membersMore`. */
+export const PAGE_MEMBERS_MAX = 64
+/** Seal lines of one pane of the tree, and the characters of each (extensions/regency/publish-rules.ts keeps the same). */
+export const SEAL_LINES_MAX = 3
+export const SEAL_LINE_MAX = 160
 
 const SIG_RE = /^[0-9a-f]{16}$/
 const MIME_RE = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/
@@ -353,19 +362,28 @@ export interface MarkRow {
   owed: number
   firstToMe?: number
   firstCall?: { why: (typeof FIRST_WHY)[number]; text: string }
+  /** The ids of the agents in the channel now (never `user`: the person is in every one), at most MARK_MEMBERS_MAX. */
+  members: string[]
+  /** How many member ids were left out of `members` (the row's cap, or the answer's MARKS_MEMBER_IDS_MAX). */
+  membersMore?: number
 }
-export interface ChannelsMarks { channels: MarkRow[]; more: number }
+/** `moderator.name`: the person's name in the channels, the one the lines' `to` name her by. */
+export interface ChannelsMarks { channels: MarkRow[]; more: number; moderator: { name: string } }
 
 /** The `marks` answer of tetherd (extensions/channels/daemon/marks.ts RemoteMarks); a RemoteMarks fits. */
 export interface MarkRowSource {
   channel: string; name: string; unread: number; toMe: number; seen: number; asks: number; owed: number
-  firstToMe?: number; firstCall?: { why: string; text: string }
+  firstToMe?: number; firstCall?: { why: string; text: string }; members?: readonly string[]
 }
-export interface MarksSource { channels: readonly MarkRowSource[] }
+export interface MarksSource { channels: readonly MarkRowSource[]; moderator?: { name: string } }
+
+/** The agents' ids of a member list: an id of the shape of ID_RE, each once, the person left out. */
+const memberIds = (v: unknown): string[] => [...new Set(arr(v, 4096).filter((id): id is string => typeof id === 'string' && id !== 'user' && ID_RE.test(id)))]
 
 export function channelsMarks(s: MarksSource): ChannelsMarks {
   const rows: MarkRow[] = []
   const all = Array.isArray(rec(s).channels) ? (s.channels as readonly unknown[]) : []
+  let room = MARKS_MEMBER_IDS_MAX
   for (const r0 of all) {
     if (rows.length >= MARKS_MAX) break
     const r = rec(r0)
@@ -373,12 +391,15 @@ export function channelsMarks(s: MarksSource): ChannelsMarks {
     if (!channel) continue
     const f = rec(r.firstCall)
     const why = oneOf(f.why, FIRST_WHY)
+    const ids = memberIds(r.members)
+    const members = ids.slice(0, Math.min(MARK_MEMBERS_MAX, room))
+    room -= members.length
     rows.push(opt<MarkRow>(
-      { channel, name: name64(r.name), unread: int(r.unread) ?? 0, toMe: int(r.toMe) ?? 0, seen: int(r.seen) ?? 0, asks: int(r.asks) ?? 0, owed: int(r.owed) ?? 0 },
-      { firstToMe: int(r.firstToMe, 1), firstCall: why ? { why, text: line(f.text, 240) } : undefined },
+      { channel, name: name64(r.name), unread: int(r.unread) ?? 0, toMe: int(r.toMe) ?? 0, seen: int(r.seen) ?? 0, asks: int(r.asks) ?? 0, owed: int(r.owed) ?? 0, members },
+      { firstToMe: int(r.firstToMe, 1), firstCall: why ? { why, text: line(f.text, 240) } : undefined, membersMore: ids.length > members.length ? ids.length - members.length : undefined },
     ))
   }
-  return { channels: rows, more: Math.max(0, all.length - rows.length) }
+  return { channels: rows, more: Math.max(0, all.length - rows.length), moderator: { name: name64(rec(rec(s).moderator).name) } }
 }
 
 // ---- channels.page
@@ -418,7 +439,14 @@ export interface ChannelPage {
   last: number
   /** The cursor of the page before this one (`{ channel, before }`); absent at the start of the channel. */
   before?: number
+  /** Who is in the channel now (agents; the person is in every one), in the order they joined, at most PAGE_MEMBERS_MAX. */
+  members: PageMember[]
+  /** How many members were left out of `members`. */
+  membersMore?: number
+  /** The person's name in the channels: a line whose `to` holds it is for her. */
+  moderator: { name: string }
 }
+export interface PageMember { id: string; name: string; muted?: true }
 
 /** The `history` answer of tetherd (extensions/channels/daemon/requests.ts), with what the portal asked: unknown JSON. */
 export interface PageSource {
@@ -519,6 +547,19 @@ export function channelsPage(s: PageSource): ChannelPage {
     { id: typeof ch.id === 'string' && ID_RE.test(ch.id) ? ch.id : '', name: name64(ch.name), title: label(ch.title, 256, s.home) },
     { closed: ch.closed ? true : undefined },
   )
+  const seenIds = new Set<string>()
+  const allMembers = arr(a.members, 4096).flatMap((m0): PageMember[] => {
+    const m = rec(m0)
+    const id = typeof m.id === 'string' && m.id !== 'user' && ID_RE.test(m.id) ? m.id : ''
+    if (!id || seenIds.has(id)) return []
+    seenIds.add(id)
+    return [opt<PageMember>({ id, name: label(m.name, 64, s.home) }, { muted: m.muted === true ? true : undefined })]
+  })
+  const members = allMembers.slice(0, PAGE_MEMBERS_MAX)
+  const head = opt<Pick<ChannelPage, 'members' | 'membersMore' | 'moderator'>>(
+    { members, moderator: { name: label(rec(a.moderator).name, 64, s.home) } },
+    { membersMore: allMembers.length > members.length ? allMembers.length - members.length : undefined },
+  )
   const limit = int(s.limit, 1, PAGE_LINES_MAX) ?? PAGE_LINES_MAX
   const lines = arr(a.lines, limit).map(pageLine).filter((l): l is PageLine => l !== undefined).sort((x, y) => x.seq - y.seq)
   const reactions = arr(a.reactions, limit).map(pageReactions).filter((r): r is PageReactions => r !== undefined)
@@ -530,21 +571,25 @@ export function channelsPage(s: PageSource): ChannelPage {
 
   const sizeOf = new Map<number, number>()
   for (const x of [...lines, ...reactions, ...polls]) sizeOf.set(x.seq, (sizeOf.get(x.seq) ?? 0) + byteLength(x) + 1)
-  let total = byteLength({ channel, lines: [], reactions: [], polls: [], last, before: 0 }) + [...sizeOf.values()].reduce((n, b) => n + b, 0)
+  let total = byteLength({ channel, lines: [], reactions: [], polls: [], last, before: 0, ...head }) + [...sizeOf.values()].reduce((n, b) => n + b, 0)
   let cut = 0
   while (total > PAGE_BYTES_MAX && cut < lines.length - 1) total -= sizeOf.get(lines[cut++]!.seq) ?? 0
   const kept = lines.slice(cut)
   if (cut > 0) from = kept[0]!.seq
   const keep = new Set(kept.map(l => l.seq))
   return opt<ChannelPage>(
-    { channel, lines: kept, reactions: reactions.filter(r => cut === 0 || keep.has(r.seq)), polls: polls.filter(p => cut === 0 || keep.has(p.seq)), last },
-    { before: from > 1 ? from : undefined },
+    { channel, lines: kept, reactions: reactions.filter(r => cut === 0 || keep.has(r.seq)), polls: polls.filter(p => cut === 0 || keep.has(p.seq)), last, members: head.members, moderator: head.moderator },
+    { before: from > 1 ? from : undefined, membersMore: head.membersMore },
   )
 }
 
 // ---- regency.tree
 
-export interface RemotePane { id: string; type: string; icon: string; title: string; attention?: 'done' | 'waiting'; busy?: true; asleep?: true; exited?: true }
+/**
+ * `lines`: what the pane's seal says (the terminal's line, the extensions' messages; the app shows the first that is not
+ * "Esperando você" as what the agent is doing). Only while the app publishes (`live`); each one line, as a title is.
+ */
+export interface RemotePane { id: string; type: string; icon: string; title: string; attention?: 'done' | 'waiting'; busy?: true; asleep?: true; exited?: true; lines?: string[] }
 export interface RemoteDesk { id: string; name: string; color: string; kind: 'queue' | 'system' | 'drawer'; asleep: boolean; icon?: string; panes: RemotePane[] }
 export interface RemoteOwner { id: string; name: string }
 export interface RemoteChannel {
@@ -593,18 +638,24 @@ const TREE_CLOSED_MAX = 50
 
 const short = (v: unknown, max = 32): string => idOf(v, max)
 
-function remotePane(v: unknown, home: string | undefined): RemotePane {
+function remotePane(v: unknown, home: string | undefined, live: boolean): RemotePane {
   const p = rec(v)
+  // Seal lines are text an agent writes: one line each, without controls, bidi, zero-width or the machine's paths (as a title).
+  // A tree the app no longer publishes says what the agent WAS doing: no lines (tetherd drops them too).
+  const lines = arr(live ? p.lines : [], SEAL_LINES_MAX).map(l => label(l, SEAL_LINE_MAX, home)).filter(l => l !== '')
   return opt<RemotePane>(
     { id: idOf(p.id), type: short(p.type), icon: short(p.icon), title: label(p.title, 256, home) },
-    { attention: oneOf(p.attention, ['done', 'waiting'] as const), busy: p.busy === true ? true : undefined, asleep: p.asleep === true ? true : undefined, exited: p.exited === true ? true : undefined },
+    {
+      attention: oneOf(p.attention, ['done', 'waiting'] as const), busy: p.busy === true ? true : undefined, asleep: p.asleep === true ? true : undefined, exited: p.exited === true ? true : undefined,
+      lines: lines.length > 0 ? lines : undefined,
+    },
   )
 }
 
-function remoteDesk(v: unknown, home: string | undefined): RemoteDesk {
+function remoteDesk(v: unknown, home: string | undefined, live: boolean): RemoteDesk {
   const d = rec(v)
   return opt<RemoteDesk>(
-    { id: idOf(d.id), name: label(d.name, 128, home), color: short(d.color), kind: oneOf(d.kind, ['queue', 'system', 'drawer'] as const) ?? 'queue', asleep: d.asleep === true, panes: arr(d.panes, TREE_PANES_MAX).map(p => remotePane(p, home)) },
+    { id: idOf(d.id), name: label(d.name, 128, home), color: short(d.color), kind: oneOf(d.kind, ['queue', 'system', 'drawer'] as const) ?? 'queue', asleep: d.asleep === true, panes: arr(d.panes, TREE_PANES_MAX).map(p => remotePane(p, home, live)) },
     { icon: typeof d.icon === 'string' ? short(d.icon) : undefined },
   )
 }
@@ -670,12 +721,13 @@ export function regencyTree(s: RegencyTreeSource): RegencyTree {
   const i = rec(view.input)
   const owners = rec(i.owners)
   const home = s.home
+  const live = view.live === true
   const since: Record<string, number> = {}
   for (const [k, at] of Object.entries(byId(i.since, num))) if (at !== undefined) since[k] = at
   const owner = (x: unknown): RemoteOwner => ({ id: idOf(rec(x).id), name: label(rec(x).name, 64, home) })
   const input = opt<RemoteRegencyInput>(
     {
-      desks: { desks: arr(rec(i.desks).desks, TREE_DESKS_MAX).map(d => remoteDesk(d, home)) },
+      desks: { desks: arr(rec(i.desks).desks, TREE_DESKS_MAX).map(d => remoteDesk(d, home, live)) },
       owners: { desk: byId(owners.desk, owner), pane: byId(owners.pane, owner) },
       channels: arr(i.channels, TREE_CHANNELS_MAX).map(c => remoteChannel(c, home)),
       channelMarks: byId(i.channelMarks, x => remoteMarks(x, s.channels === true)),
@@ -685,7 +737,6 @@ export function regencyTree(s: RegencyTreeSource): RegencyTree {
     },
     { selfDeskId: typeof i.selfDeskId === 'string' ? idOf(i.selfDeskId) : undefined, closed: Array.isArray(i.closed) ? arr(i.closed, TREE_CLOSED_MAX).map(c => remoteClosed(c, home)) : undefined },
   )
-  const live = view.live === true
   return opt<RegencyTree>(
     { input, live },
     { asOf: live ? undefined : int(view.asOf), sig: typeof view.sig === 'string' && SIG_RE.test(view.sig) ? view.sig : undefined },

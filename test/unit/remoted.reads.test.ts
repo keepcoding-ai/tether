@@ -219,16 +219,21 @@ describe('ReadFeeds: thin notices, paced, never lost', () => {
 
 /** What a hostile tetherd might answer: the allowed fields, and a marker in every field it might add or must keep home. */
 const ANSWERS: Record<ExtReadOp, unknown> = {
-  'channels.marks': { channels: [{ channel: 'c_1', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi' }, ...later() }], ...later() },
+  'channels.marks': {
+    channels: [{ channel: 'c_1', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi' }, members: ['a1b2c3d4', 'user'], ...later() }],
+    moderator: { name: 'Guga', ...later() }, ...later(),
+  },
   'channels.page': {
     channel: { id: 'c_1', name: 'obra', title: `Obra em C:\\Users\\${MARKER}`, members: 1, seenByUser: 3, createdAt: ISO, ...later() },
     lines: [{ seq: 5, at: ISO, kind: 'message', from: { id: 'a1b2c3d4', name: 'conferente', role: 'member' }, body: 'oi', files: [{ name: 'a.txt', path: `C:/Users/${MARKER}/a.txt`, size: 3, type: 'text/plain' }], ...later() }],
-    reactions: [], polls: [], more: true, last: 5, ...later(),
+    reactions: [], polls: [], more: true, last: 5,
+    members: [{ id: 'a1b2c3d4', name: `conferente em C:\\Users\\${MARKER}\\obra`, muted: true, since: ISO, by: MARKER, alive: true, path: 'inside', ...later() }],
+    moderator: { name: 'Guga', ...later() }, ...later(),
   },
   'regency.tree': {
     input: {
       desks: { desks: [
-        { id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...later() }] },
+        { id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [`revisa C:\\Users\\${MARKER}\\obra‮`, 'Esperando você'], ...later() }] },
         // RR3 gate B-4: titles carry the machine's paths (a session titled by its folder, a browser tab on a file).
         { id: 'desk-2', name: `C:/Users/${MARKER}/obra`, color: 'blue', kind: 'queue', asleep: false, panes: [
           { id: 'a2', type: 'terminal', icon: 'terminal', title: `C:\\Users\\${MARKER}\\tether` },
@@ -269,15 +274,20 @@ describe('the three reads through a real House', () => {
   test('each read answers its projection; the pair gets only the arguments rebuilt from the strict body', async () => {
     calls.length = 0
     const marks = await s.request(OP_CODES['channels.marks'])
-    assert.deepEqual(marks, { status: RES_STATUS.ok, body: { channels: [{ channel: 'c_1', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi' } }], more: 0 } })
+    assert.deepEqual(marks, {
+      status: RES_STATUS.ok,
+      body: { channels: [{ channel: 'c_1', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, members: ['a1b2c3d4'], firstCall: { why: 'to-you', text: 'conferente: oi' } }], more: 0, moderator: { name: 'Guga' } },
+    })
     const page = await s.request(OP_CODES['channels.page'], { channel: 'c_1', before: 9 })
     assert.equal(page.status, RES_STATUS.ok)
+    assert.deepEqual([page.body.members, page.body.moderator], [[{ id: 'a1b2c3d4', name: 'conferente em ~\\obra', muted: true }], { name: 'Guga' }], 'the members by id, name and mute only')
     assert.deepEqual((page.body.lines as { files: unknown }[])[0]!.files, [{ name: 'a.txt', size: 3, type: 'text/plain' }], 'an attachment by its name, never its path')
     assert.equal(page.body.before, undefined, 'seq 5 of 5 with a page of 50: the start')
     const tree = await s.request(OP_CODES['regency.tree'])
     assert.equal(tree.status, RES_STATUS.ok)
     assert.deepEqual([tree.body.live, tree.body.sig, (tree.body.input as { collapsed: unknown }).collapsed], [true, '0123456789abcdef', []])
-    const input = tree.body.input as { desks: { desks: { name: string; panes: { title: string }[] }[] }; closed: { title: string }[]; channels: { title: string }[]; agents: { name: string }[] }
+    const input = tree.body.input as { desks: { desks: { name: string; panes: { title: string; lines?: string[] }[] }[] }; closed: { title: string }[]; channels: { title: string }[]; agents: { name: string }[] }
+    assert.deepEqual(input.desks.desks[0]!.panes[0]!.lines, ['revisa ~\\obra', 'Esperando você'], 'the seal lines of a live tree, one line each, without paths or bidi')
     const d2 = input.desks.desks[1]!
     assert.deepEqual(
       { desk: d2.name, panes: d2.panes.map((p) => p.title), closed: input.closed[0]!.title, channel: input.channels[0]!.title, agent: input.agents[0]!.name },

@@ -15,7 +15,8 @@ import {
 } from '../../src/remote/index.ts'
 import {
   ATTENTION_MAX, attentionItem, attentionList, CHANGED_IDS_MAX, channelsChanged, channelsMarks, channelsPage, emptyBody, errorBody,
-  eventBody, LINE_BODY_MAX, MARKS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, pathsOut, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
+  eventBody, LINE_BODY_MAX, MARK_MEMBERS_MAX, MARKS_MAX, MARKS_MEMBER_IDS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, PAGE_MEMBERS_MAX, pathsOut,
+  READ_BODY_MAX, SEAL_LINE_MAX, SEAL_LINES_MAX, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
   RESULTS, sessionInfo, type MarkRowSource, type ProcSource, type ProfileSource, type RegencyTree, type SlotSource,
 } from '../../src/remote/projection.ts'
 import { utf8 } from '../../src/remote/bytes.ts'
@@ -124,7 +125,8 @@ describe('projections by allow list', () => {
     const leak = (): Record<string, unknown> => ({
       ...later(), env: { GITHUB_TOKEN: MARKER }, profile: hostileProfile(), args: ['--token', MARKER], cwd: `C:/${MARKER}`, folder: `C:/${MARKER}`, keyPath: `C:/${MARKER}/.keys`,
     })
-    const pane = { id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...leak() }
+    // The seal's lines are published (RR3.4d) like the title: what the agent says it does; the portal takes the paths out.
+    const pane = { id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: ['revisando o plano'], ...leak() }
     const desk = { id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [pane], ...leak() }
     const entry = {
       desks: { desks: [desk], ...leak() },
@@ -139,6 +141,7 @@ describe('projections by allow list', () => {
     const tree = publishedTreeOf(entry)
     assert.equal(has(tree), false, JSON.stringify(tree))
     assert.equal(tree.desks.desks[0]!.panes[0]!.title, 'Agente', 'the allowed fields do go')
+    assert.deepEqual(tree.desks.desks[0]!.panes[0]!.lines, ['revisando o plano'])
 
     const sent: unknown[] = []
     let now = Date.parse(ISO)
@@ -228,12 +231,65 @@ function hostileLine(seq: number, o: Partial<Line> = {}): Line {
 
 describe('the reads of an extension, by allow list', () => {
   test('channels.marks: field by field, capped, the first call one line; an odd row is left out', () => {
-    const row: RemoteMarks = { channel: 'c_1', name: 'obra', unread: 3, toMe: 1, firstToMe: 7, seen: 4, asks: 1, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi\nde novo' } }
-    const out = channelsMarks({ channels: [{ ...row, ...later() } as RemoteMarks, { ...row, channel: 'bad id' }] })
-    assert.deepEqual(out, { channels: [{ channel: 'c_1', name: 'obra', unread: 3, toMe: 1, seen: 4, asks: 1, owed: 0, firstToMe: 7, firstCall: { why: 'to-you', text: 'conferente: oi de novo' } }], more: 1 })
+    const row: RemoteMarks = { channel: 'c_1', name: 'obra', unread: 3, toMe: 1, firstToMe: 7, seen: 4, asks: 1, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi\nde novo' }, members: ['a1b2c3d4'] }
+    const out = channelsMarks({ channels: [{ ...row, ...later() } as RemoteMarks, { ...row, channel: 'bad id' }], moderator: { name: 'Gu‮ga', ...later() } as { name: string } })
+    assert.deepEqual(out, {
+      channels: [{ channel: 'c_1', name: 'obra', unread: 3, toMe: 1, seen: 4, asks: 1, owed: 0, members: ['a1b2c3d4'], firstToMe: 7, firstCall: { why: 'to-you', text: 'conferente: oi de novo' } }],
+      more: 1, moderator: { name: 'Guga' },
+    })
+    assert.equal(has(out), false)
     const many = channelsMarks({ channels: Array.from({ length: MARKS_MAX + 3 }, (_, i) => ({ ...row, channel: `c_${i}` })) })
     assert.deepEqual([many.channels.length, many.more], [MARKS_MAX, 3])
-    assert.deepEqual(channelsMarks({ channels: 'x' } as never), { channels: [], more: 0 }, 'an odd answer says nothing')
+    assert.deepEqual(channelsMarks({ channels: 'x' } as never), { channels: [], more: 0, moderator: { name: '' } }, 'an odd answer says nothing')
+  })
+
+  // RR3.4d: the members of each channel (an agent's channels on a remote screen) and the person's name.
+  test('channels.marks: member ids only, the person and odd ids out, each once; capped per row and for the whole answer', () => {
+    const row = { channel: 'c_1', name: 'obra', unread: 0, toMe: 0, seen: 0, asks: 0, owed: 0 }
+    const one = channelsMarks({ channels: [{ ...row, members: ['a1', 'user', 'a1', 'bad id', 7 as never, 'b‮2', 'b2'] }] })
+    assert.deepEqual(one.channels[0]!.members, ['a1', 'b2'])
+    assert.equal(one.channels[0]!.membersMore, undefined)
+    assert.deepEqual(channelsMarks({ channels: [row] }).channels[0]!.members, [], 'a tetherd without members: an empty list')
+    const wide = channelsMarks({ channels: [{ ...row, members: Array.from({ length: MARK_MEMBERS_MAX + 5 }, (_, i) => `a${i}`) }] })
+    assert.deepEqual([wide.channels[0]!.members.length, wide.channels[0]!.membersMore], [MARK_MEMBERS_MAX, 5])
+    const rows = Math.ceil(MARKS_MEMBER_IDS_MAX / MARK_MEMBERS_MAX) + 4
+    const full = channelsMarks({ channels: Array.from({ length: rows }, (_, r) => ({ ...row, channel: `c_${r}`, members: Array.from({ length: MARK_MEMBERS_MAX }, (_, i) => `a${r}_${i}`) })) })
+    assert.equal(full.channels.reduce((n, c) => n + c.members.length, 0), MARKS_MEMBER_IDS_MAX, 'the whole answer holds at most this many ids')
+    assert.deepEqual([full.channels.at(-1)!.members, full.channels.at(-1)!.membersMore], [[], MARK_MEMBERS_MAX], 'a row past it counts only')
+    const worst = channelsMarks({ channels: Array.from({ length: MARKS_MAX }, (_, r) => ({ ...row, channel: `c_${r}`.padEnd(64, 'x'), name: 'é'.repeat(64), members: Array.from({ length: MARK_MEMBERS_MAX }, (_, i) => `${r}_${i}`.padEnd(64, 'y')) })) })
+    assert.ok(utf8(JSON.stringify(worst)).length < READ_BODY_MAX, 'the longest ids and names still fit a read')
+  })
+
+  test('channels.page: the members now (by name without paths, muted marked, capped) and the person\'s name', () => {
+    const members = [
+      { id: 'a1b2c3d4', name: `conf‮erente em C:\\Users\\${MARKER}\\obra`, muted: true, since: ISO, path: 'inside', ...later() },
+      { id: 'user', name: 'Guga' }, { id: 'bad id', name: 'x' }, { id: 'a1b2c3d4', name: 'de novo' }, { id: 'b2c3d4e5', name: 'revisor', muted: false },
+    ]
+    const page = channelsPage({ answer: { channel: { id: 'c_1' }, lines: [], reactions: [], polls: [], last: 0, members, moderator: { name: `Gu\u200bga`, ...later() } }, limit: 10, home: `C:\\Users\\${MARKER}` })
+    assert.equal(has(page), false, JSON.stringify(page))
+    assert.deepEqual(page.members, [{ id: 'a1b2c3d4', name: 'conferente em ~\\obra', muted: true }, { id: 'b2c3d4e5', name: 'revisor' }])
+    assert.deepEqual([page.membersMore, page.moderator], [undefined, { name: 'Guga' }])
+    const many = channelsPage({ answer: { channel: { id: 'c_1' }, last: 0, members: Array.from({ length: PAGE_MEMBERS_MAX + 2 }, (_, i) => ({ id: `a${i}`, name: 'n' })) }, limit: 10 })
+    assert.deepEqual([many.members.length, many.membersMore], [PAGE_MEMBERS_MAX, 2])
+    assert.deepEqual([channelsPage({ answer: {}, limit: 10 }).members, channelsPage({ answer: {}, limit: 10 }).moderator], [[], { name: '' }], 'an older tetherd: none')
+    const lines = Array.from({ length: PAGE_LINES_MAX }, (_, i) => hostileLine(51 + i, { body: 'é'.repeat(LINE_BODY_MAX), files: undefined }))
+    const big = channelsPage({ answer: { channel: { id: 'c_1' }, lines, last: 100, members: Array.from({ length: PAGE_MEMBERS_MAX }, (_, i) => ({ id: `a${i}`.padEnd(64, 'z'), name: 'é'.repeat(64) })) }, limit: PAGE_LINES_MAX })
+    assert.ok(utf8(JSON.stringify(big)).length <= PAGE_BYTES_MAX, 'the members count in the page\'s ceiling')
+  })
+
+  test('regency.tree: the seal lines of a live tree, one line each, sanitized and capped; none in a tree the app left', () => {
+    const lines = [`edita C:\\Users\\${MARKER}\\obra ‮exe.txt`, 'Esperando você', 'x'.repeat(SEAL_LINE_MAX + 20), 'linha a\nmais', 'quinta']
+    const view = (live: boolean) => ({
+      input: { desks: { desks: [{ id: 'd', name: 'Mesa', color: '', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'A', lines }, { id: 'a2', type: 'agent', icon: 'claude', title: 'B', lines: ['', 7] }] }] } },
+      live,
+    })
+    const t = regencyTree({ view: view(true), channels: false, home: `C:\\Users\\${MARKER}` })
+    const [p1, p2] = t.input.desks.desks[0]!.panes
+    assert.equal(has(t), false, JSON.stringify(t))
+    assert.deepEqual(p1!.lines, ['edita ~\\obra exe.txt', 'Esperando você', 'x'.repeat(SEAL_LINE_MAX)])
+    assert.equal(SEAL_LINES_MAX, 3)
+    assert.equal('lines' in p2!, false, 'no line, no field')
+    assert.equal('lines' in regencyTree({ view: view(false), channels: true }).input.desks.desks[0]!.panes[0]!, false)
   })
 
   test('channels.page: lines field by field; attachments by name, size and type, never the path; a long body is cut and says so', () => {

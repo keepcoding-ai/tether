@@ -183,9 +183,9 @@ function killTree(p: ChildProcess | undefined): void {
   else p.kill('SIGKILL')
 }
 
-/** The Regency's entry as the app publishes it, with the CANARY in a pane's title. */
+/** The Regency's entry as the app publishes it, with the CANARY in a pane's title and in its seal line (RR3.4d). */
 const tree = (title: string): Record<string, unknown> => ({
-  desks: { desks: [{ id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1b2c3d4', type: 'agent', icon: 'claude', title }] }] },
+  desks: { desks: [{ id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1b2c3d4', type: 'agent', icon: 'claude', title, lines: [`revisa ${CANARY}`, 'Esperando você'] }] }] },
   owners: { desk: {}, pane: {} }, channels: [], channelMarks: {}, agents: [{ id: 'a1b2c3d4', kind: 'claude', name: 'conferente' }], since: {}, collapsed: [],
 })
 
@@ -210,6 +210,8 @@ describe('remote reads end to end (RR3.4a): the tree, the marks and a channel pa
   let device: TestDevice
   let s: DeviceSession
   let channelId = ''
+  let memberId = ''
+  let moderatorName = ''
   let deviceUrl = ''
   let aud = ''
   const got: unknown[] = []
@@ -249,6 +251,10 @@ describe('remote reads end to end (RR3.4a): the tree, the marks and a channel pa
     // What the app holds: a channel with 55 lines, the last with an attachment, and the published tree.
     const made = await ext(app, 'create', { name: 'obra' }, 'channels')
     channelId = (made.channel as { id: string }).id
+    // A member (RR3.4d): an agent's slot, not started, joined by the person.
+    const created = await cli.request({ t: 'create', kind: 'claude', cwd: home, name: 'conferente', start: false }) as { slot?: { slotId: string } }
+    memberId = created.slot!.slotId
+    await ext(app, 'join', { channel: channelId, agent: memberId }, 'channels')
     for (let i = 1; i <= 54; i++) await ext(app, 'say', { channel: channelId, text: `fala ${i} ${CANARY}` }, 'channels')
     const file = join(home, 'nota.txt')
     writeFileSync(file, 'conteúdo do anexo')
@@ -290,16 +296,21 @@ describe('remote reads end to end (RR3.4a): the tree, the marks and a channel pa
     const t = await read(OP_CODES['regency.tree'])
     assert.equal(t.live, true)
     assert.match(String(t.sig), /^[0-9a-f]{16}$/)
-    const input = t.input as { desks: { desks: { panes: { title: string }[] }[] }; collapsed: unknown[] }
+    const input = t.input as { desks: { desks: { panes: { title: string; lines?: string[] }[] }[] }; collapsed: unknown[] }
     assert.equal(input.desks.desks[0]!.panes[0]!.title, `Agente ${CANARY}`)
+    assert.deepEqual(input.desks.desks[0]!.panes[0]!.lines, [`revisa ${CANARY}`, 'Esperando você'], 'the seal lines of a live tree')
     assert.deepEqual(input.collapsed, [])
   })
 
-  test('channels.marks: the open channel, counted by the rule of the app', async () => {
+  test("channels.marks: the open channel, counted by the rule of the app, with its members' ids and the person's name", async () => {
     const m = await read(OP_CODES['channels.marks'])
-    const rows = m.channels as { channel: string; name: string; unread: number }[]
+    const rows = m.channels as { channel: string; name: string; unread: number; members: string[] }[]
     assert.deepEqual(rows.map((r) => [r.channel, r.name]), [[channelId, 'obra']])
     assert.equal(rows[0]!.unread, 0, "the person's own speech is not unread")
+    assert.deepEqual(rows[0]!.members, [memberId], "an agent's channels, by its id")
+    assert.equal(typeof (m.moderator as { name: string }).name, 'string')
+    assert.notEqual((m.moderator as { name: string }).name, '')
+    moderatorName = (m.moderator as { name: string }).name
   })
 
   test('channels.page: the latest page, then the one before by the cursor; the attachment by its name, never its path', async () => {
@@ -310,6 +321,8 @@ describe('remote reads end to end (RR3.4a): the tree, the marks and a channel pa
     assert.equal(lines.at(-1)!.seq, last)
     assert.equal(latest.before, lines[0]!.seq, 'the cursor is the first line of this page')
     assert.deepEqual(lines.at(-1)!.files?.map((f) => f.name), ['nota.txt'])
+    assert.deepEqual(latest.members, [{ id: memberId, name: 'conferente' }], 'who is in the channel now')
+    assert.deepEqual(latest.moderator, { name: moderatorName }, "the person's name, the same as the marks'")
     const older = await read(OP_CODES['channels.page'], { channel: channelId, before: latest.before })
     const olderLines = older.lines as { seq: number }[]
     assert.equal(olderLines.at(-1)!.seq, Number(latest.before) - 1, 'the page before ends right before the cursor')

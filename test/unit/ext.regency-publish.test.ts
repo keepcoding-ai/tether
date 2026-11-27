@@ -5,10 +5,10 @@ import { describe, test } from 'node:test'
 import { TreeKeeper } from '../../extensions/regency/daemon.ts'
 import { regencyModelOf, type RegencyInput } from '../../extensions/regency/model.ts'
 import {
-  asOfLabel, LEASE_MS, publishedTreeOf, regencyViewOf, signatureOf, STALE_MS, TREE_MAX_BYTES, treeJson, utf8Length, VIEW_MAX_BYTES,
-  type PublishAnswer,
+  asOfLabel, LEASE_MS, publishedTreeOf, regencyViewOf, SEAL_LINE_MAX, SEAL_LINES_MAX, signatureOf, STALE_MS, TREE_MAX_BYTES, treeJson, utf8Length,
+  VIEW_MAX_BYTES, type PublishAnswer,
 } from '../../extensions/regency/publish-rules.ts'
-import { READ_BODY_MAX, resultBody } from '../../src/remote/projection.ts'
+import { READ_BODY_MAX, resultBody, SEAL_LINE_MAX as REMOTE_SEAL_LINE_MAX, SEAL_LINES_MAX as REMOTE_SEAL_LINES_MAX } from '../../src/remote/projection.ts'
 import { TreePublisher } from '../../extensions/regency/renderer/publish.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 
@@ -104,6 +104,17 @@ describe('the app publishes the Regency entry', () => {
     pub.dispose()
     keeper.dispose()
     assert.equal(c.pending(), 0, 'disposed: no timer left (the app\'s debounce and lease, tetherd\'s one lease timer)')
+  })
+
+  // RR3.4d: the seal's lines (what an agent is doing) go, capped; the portal keeps the same ceilings.
+  test('the seal lines are published, at most SEAL_LINES_MAX, each cut at SEAL_LINE_MAX; no line, no field', () => {
+    assert.deepEqual([SEAL_LINES_MAX, SEAL_LINE_MAX], [REMOTE_SEAL_LINES_MAX, REMOTE_SEAL_LINE_MAX], 'the portal and tetherd cap alike')
+    const e = entry()
+    e.desks.desks[0]!.panes[0]!.lines = ['a', 'x'.repeat(SEAL_LINE_MAX + 9), '', 'b', 'c', 7 as never]
+    e.desks.desks[0]!.panes[1]!.lines = ['', 9 as never]
+    const [p1, p2] = publishedTreeOf(e).desks.desks[0]!.panes
+    assert.deepEqual(p1!.lines, ['a', 'x'.repeat(SEAL_LINE_MAX), 'b'])
+    assert.equal('lines' in p2!, false)
   })
 
   test('the screen state of the app (folds, filter, search) is not published: it changes nothing', async () => {
@@ -228,8 +239,11 @@ describe('the kept tree joined with the live slots', () => {
     const k = new TreeKeeper({ now: c.now, live: () => ({ slots }), emit: (name, payload) => events.push({ name, payload }), setTimer: c.setTimeout, clearTimer: c.clear })
     const tree = entry()
     tree.agents.push({ id: 'gone', kind: 'claude', name: 'Foi embora' })
-    tree.desks.desks[0]!.panes.push({ id: 'gone', type: 'agent', icon: 'claude', title: 'Foi embora', busy: true })
+    tree.desks.desks[0]!.panes.push({ id: 'gone', type: 'agent', icon: 'claude', title: 'Foi embora', busy: true, lines: ['revisando'] })
+    tree.desks.desks[0]!.panes[0]!.lines = ['escrevendo o plano']
+    tree.desks.desks[0]!.panes[1]!.lines = ['nota']
     k.publish({ tree }, APP)
+    assert.deepEqual(k.read().input.desks.desks[0]!.panes[0]!.lines, ['escrevendo o plano'], 'live: the seal says what the agent does')
     const at = c.now()
     await c.advance(STALE_MS + 10)
     assert.deepEqual(events.at(-1), { name: 'tree.changed', payload: { sig: k.kept!.sig, at, live: false } }, 'the screens hear that the app left')
@@ -243,6 +257,7 @@ describe('the kept tree joined with the live slots', () => {
     assert.deepEqual(panes[0], { id: 'a1', type: 'agent', icon: 'claude', title: 'Agente 1', attention: 'waiting', busy: true }, 'the app\'s title, the live state')
     assert.deepEqual(panes[1], { id: 'n1', type: 'note', icon: 'note', title: 'Notas' }, 'a pane that is not a slot stays as it was')
     assert.deepEqual(panes[2], { id: 'gone', type: 'agent', icon: 'claude', title: 'Foi embora', exited: true }, 'an agent whose slot is gone ended')
+    assert.equal(panes.some(p => p.lines !== undefined), false, 'the app left: no seal says what an agent WAS doing')
     const extra = v.input.desks.desks.find(d => d.id === 'remote:slots')
     assert.deepEqual(extra?.panes.map(p => p.id), ['new1'], 'a slot born after the app closed shows in its own desk')
     assert.ok(v.input.agents.some(a => a.id === 'new1'))
