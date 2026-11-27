@@ -19,6 +19,7 @@ import xMark from '@phosphor-icons/core/assets/regular/x.svg'
 import key from '@phosphor-icons/core/assets/regular/key.svg'
 import fileCode from '@phosphor-icons/core/assets/regular/file-code.svg'
 import { icon, type IconName } from '../../../app/renderer/icons.ts'
+import { svgNode } from '../../../app/renderer/svg-node.ts'
 import type { NoticeGlyph } from './view-model.ts'
 
 const LOCAL = {
@@ -37,9 +38,7 @@ export function glyph(name: GlyphName): SVGSVGElement {
   if (!isLocal(name)) return icon(name)
   let el = templates.get(name)
   if (!el) {
-    const tpl = document.createElement('template')
-    tpl.innerHTML = LOCAL[name]
-    el = tpl.content.firstElementChild as SVGSVGElement
+    el = svgNode(LOCAL[name])
     el.classList.add('ph')
     el.setAttribute('aria-hidden', 'true')
     el.setAttribute('focusable', 'false')

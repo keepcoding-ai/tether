@@ -2,6 +2,7 @@
 // the bundle (esbuild `text` loader, app/build.mjs). Every file carries fill="currentColor", so an icon
 // takes the colour of its text and follows the theme. One weight (regular); `fill` for the status dot, the pin and the side bars' open pads.
 import { agentTable } from './agent-ui.ts'
+import { svgNode } from './svg-node.ts'
 import { BRAND } from '../shared/brand.ts'
 import arrowsClockwise from '@phosphor-icons/core/assets/regular/arrows-clockwise.svg'
 import squaresFour from '@phosphor-icons/core/assets/regular/squares-four.svg'
@@ -340,9 +341,7 @@ const templates = new Map<IconName, SVGSVGElement>()
 function template(name: IconName): SVGSVGElement {
   let el = templates.get(name)
   if (!el) {
-    const tpl = document.createElement('template')
-    tpl.innerHTML = SVG[name]
-    el = tpl.content.firstElementChild as SVGSVGElement
+    el = svgNode(SVG[name])
     el.classList.add('ph')
     el.setAttribute('aria-hidden', 'true')
     el.setAttribute('focusable', 'false')
