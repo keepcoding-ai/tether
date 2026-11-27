@@ -114,6 +114,14 @@ async function pollsOf(c: Channels, ch: Channel, lines: readonly Line[], near: r
   return out
 }
 
+/** A member as a page carries it: the id, the name and whether it is muted (the `members` request has the rest). */
+export interface PageMember { id: string; name: string; muted?: true }
+
+/** The members of a channel now, in the order they joined, with the names the channel shows. */
+export function pageMembersOf(c: Pick<Channels, 'nameOf'>, ch: Channel): PageMember[] {
+  return Object.entries(ch.members).map(([id, m]) => ({ id, name: c.nameOf(id), ...(m.muted !== undefined ? { muted: true as const } : {}) }))
+}
+
 const refuse =(code: string, message: string): DoorError => new DoorError(code as ErrorCode, message)
 
 const asRecord = (args: unknown): Record<string, unknown> => {
@@ -188,9 +196,11 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const lines = page.filter((l) => !apart(l))
       const wants = lines.some((l) => l.kind === 'message' || l.kind === 'poll')
       const after = wants ? await c.store.since(ch.id, page[page.length - 1]!.seq, REACTION_WINDOW) : []
+      // Who is in it now and the person's own name (what "para você" matches): from memory, no read of the record.
       return {
         channel: summaryOf(ch), lines, reactions: reactionsOf(page, after, lines), polls: await pollsOf(c, ch, lines, [...page, ...after]),
         more: page.length > 0 && page[0]!.seq > 1, last: await c.store.lastSeq(ch.id),
+        members: pageMembersOf(c, ch), moderator: { name: c.nameOf(USER) },
       }
     }],
 
@@ -313,8 +323,12 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       return { asks, polls }
     }],
 
-    // The marks of every open channel (what a remote device shows without the app): the app's rule, from the record (daemon/marks.ts).
-    ['marks', async (c) => ({ channels: await allMarks(c.store, c.nameOf(USER)) })],
+    // The marks of every open channel (what a remote device shows without the app): the app's rule, from the record (daemon/marks.ts),
+    // with the person's name (the one the lines' `to` name her by).
+    ['marks', async (c) => {
+      const name = c.nameOf(USER)
+      return { channels: await allMarks(c.store, name), moderator: { name } }
+    }],
 
     // The person saw up to `seq`: raised in memory now, written once after a delay (one timer for every channel).
     ['seen', async (c, a, ctx) => {

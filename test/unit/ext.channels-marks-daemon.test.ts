@@ -94,6 +94,7 @@ class Bench {
     return {
       channel: this.id, name: this.ch.name, ...board.of(this.id),
       asks: board.asksOf(this.id).length, owed: board.owedOf(this.id).length, ...(call ? { firstCall: call } : {}),
+      members: Object.keys(this.ch.members),
     }
   }
   async same(why: string): Promise<RemoteMarks> {
@@ -267,7 +268,13 @@ describe('the `marks` request', () => {
     const channels = { store, nameOf: (who: string) => (who === USER ? MOD : who) }
     for (const d of registerChannelRequests(api as never, Promise.resolve(channels as never))) void d
     const r = await handlers.get('marks')!(undefined, { client: 'remote' }) as { channels: RemoteMarks[] }
-    assert.deepEqual(r, { channels: await allMarks(store, MOD) })
+    assert.deepEqual(r, { channels: await allMarks(store, MOD), moderator: { name: MOD } })
     assert.deepEqual(r.channels.map((c) => [c.name, c.unread, c.toMe, c.firstCall?.text]), [['obra', 1, 1, 'conferente: oi']])
+    // RR3.4d: the members now, by id; a member who joins changes the row even when the memo had it.
+    const was = r.channels[0]!.members
+    assert.deepEqual(was, Object.keys(store.get(r.channels[0]!.channel)!.members))
+    assert.ok((await store.join(r.channels[0]!.channel, 'n3w4g3nt', 'novo', 'user')).ok)
+    const after = await allMarks(store, MOD)
+    assert.deepEqual(after[0]!.members, [...was, 'n3w4g3nt'])
   })
 })

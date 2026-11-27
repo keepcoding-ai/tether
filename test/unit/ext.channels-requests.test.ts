@@ -144,6 +144,13 @@ describe('channels moderator requests (H4)', () => {
     const last = all.lines.at(-1).seq
     assert.equal(all.last, last)
     assert.equal(all.more, false)
+    assert.deepEqual(all.members.map((m: any) => m.id).sort(), [a, b].sort(), 'the page says who is in the channel now')
+    assert.ok(all.members.every((m: any) => typeof m.name === 'string' && m.name !== '' && Object.keys(m).every((k) => ['id', 'name', 'muted'].includes(k))))
+    assert.equal(typeof all.moderator.name, 'string')
+    assert.ok(all.moderator.name !== '', 'and the person\'s name')
+    const marks = await ask(app, 'marks')
+    assert.deepEqual(marks.channels.find((c: any) => c.channel === id).members.sort(), [a, b].sort())
+    assert.equal(marks.moderator.name, all.moderator.name)
     const page = await ask(app, 'history', { channel: id, before: last, limit: 3 })
     assert.deepEqual(page.lines.map((l: any) => l.seq), [last - 3, last - 2, last - 1])
     assert.equal(page.more, true)

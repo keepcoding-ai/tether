@@ -42,6 +42,8 @@ export interface RemoteMarks extends ChannelMarks {
   /** The open polls that wait for her vote. */
   owed: number
   firstCall?: FirstCall
+  /** The ids of the agents in the channel now (the person is in every one): a remote screen lists an agent's channels by them. */
+  members: string[]
 }
 
 /** The lines one board reads: both the reaction window and the lines after "seen" end at the last line. */
@@ -69,6 +71,7 @@ async function build(store: PeekStore, ch: Channel, moderator: string, polls: Po
     marks: {
       channel: id, name: ch.name, ...board.of(id),
       asks: board.asksOf(id).length, owed: board.owedOf(id).length, ...(call ? { firstCall: call } : {}),
+      members: Object.keys(ch.members),
     },
   }
 }
@@ -82,7 +85,7 @@ interface Memo { key: string; marks: RemoteMarks }
 /** Per store, per channel: the last marks and what they were built from. */
 const memos = new WeakMap<object, Map<ChannelId, Memo>>()
 const keyOf = (ch: Channel, last: number, seen: number, polls: readonly PollOwed[], moderator: string): string =>
-  JSON.stringify([last, seen, ch.name, moderator, polls.map((p) => [p.seq, p.closesAt])])
+  JSON.stringify([last, seen, ch.name, moderator, polls.map((p) => [p.seq, p.closesAt]), Object.keys(ch.members)])
 
 /** The marks of every open channel of the person, one channel at a time; a channel that did not change is not read again. */
 export async function allMarks(store: MarksStore, moderator: string): Promise<RemoteMarks[]> {
