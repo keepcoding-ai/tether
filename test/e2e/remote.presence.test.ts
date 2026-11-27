@@ -180,6 +180,9 @@ describe('remote web client, presence end to end (RR2.4c)', () => {
     })
     authenticatorId = (added as { authenticatorId: string }).authenticatorId
     // The offer is decided once, right after pairing: the page must already see the authenticator.
+    // The page is found as soon as its URL commits, while the window's own first load may still be in flight; a reload
+    // sent then is aborted (net::ERR_ABORTED). Reload only after that first load is done.
+    await page.waitForLoadState('load')
     await page.reload()
   })
 
