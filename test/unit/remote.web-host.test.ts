@@ -5,7 +5,7 @@ import { describe, test } from 'node:test'
 import type { HistoryPage, MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import { fakeHouse } from '../../remote/web/bench/page/fake.ts'
 import {
-  RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource,
+  RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource,
 } from '../../remote/web/src/host.ts'
 
 const tick = (): Promise<void> => new Promise(done => setTimeout(done, 0))
@@ -149,23 +149,40 @@ describe('the channel view over the house', () => {
     assert.deepEqual(asked.slice(0, 3), [71, 51, 31])
   })
 
-  test('`members`: the source\'s list when it has one, else who spoke in the pages read', async () => {
-    const withList = hostOf(fakeHouse())
-    withList.house.start()
-    await settle()
-    const a = await withList.host.request<MembersAnswer>('members', { channel: 'migra' })
-    assert.deepEqual(a.members.map(m => m.name), ['migra', 'revisor'])
-    assert.equal(a.channel.id, 'migra')
-
+  test('`members`: who is in the channel now, as its page says; the lines and the members of a mount share one reading', async () => {
     const src = fakeHouse()
-    const noList: RemoteSource = { tree: src.tree, marks: src.marks, page: src.page, onNotice: src.onNotice }
-    const without = hostOf(noList)
-    without.house.start()
+    const pages: string[] = []
+    const counted: RemoteSource = { ...src, page: (c, b) => { pages.push(`${c}:${b ?? ''}`); return src.page(c, b) } }
+    const { house, host } = hostOf(counted)
+    house.start()
     await settle()
-    assert.deepEqual((await without.host.request<MembersAnswer>('members', { channel: 'obra' })).members, [])
-    await without.host.request<HistoryPage>('history', { channel: 'obra' })
-    const b = await without.host.request<MembersAnswer>('members', { channel: 'obra' })
-    assert.deepEqual(b.members.map(m => m.name), ['conferente', 'bancada'], 'the person and the system are no member')
+    // A channel never read: its page is read for it.
+    const a = await host.request<MembersAnswer>('members', { channel: 'migra' })
+    assert.deepEqual(a.members.map(m => [m.name, m.muted]), [['migra', false], ['revisor', true]])
+    assert.equal(a.channel.id, 'migra')
+    assert.deepEqual(pages, ['migra:'])
+    // Read again: what the last page said, nothing asked.
+    await host.request<MembersAnswer>('members', { channel: 'migra' })
+    assert.deepEqual(pages, ['migra:'])
+    // The view's mount asks the lines and the members together: one page.
+    pages.length = 0
+    const [, b] = await Promise.all([host.request<HistoryPage>('history', { channel: 'obra' }), host.request<MembersAnswer>('members', { channel: 'obra' })])
+    assert.deepEqual(b.members.map(m => m.name), ['conferente', 'bancada'])
+    assert.deepEqual(pages, ['obra:'])
+  })
+
+  test('"para você" is by the person\'s name as the house says it; an old house leaves the default', async () => {
+    const { house, host } = hostOf(fakeHouse())
+    assert.equal(host.moderatorName(), undefined)
+    house.start()
+    await settle()
+    assert.equal(host.moderatorName(), 'usuário')
+    const src = fakeHouse()
+    const old = hostOf({ ...src, marks: async () => ({ ...(await src.marks()), moderator: { name: '' } }), page: async (c, b) => ({ ...(await src.page(c, b)), moderator: { name: '' } }) })
+    old.house.start()
+    await settle()
+    await old.host.request<HistoryPage>('history', { channel: 'obra' })
+    assert.equal(old.host.moderatorName(), undefined)
   })
 
   test('reading only: every other request is refused, seeing marks nothing, an agent\'s name opens the reading card', async () => {
@@ -223,13 +240,28 @@ describe('the Regency\'s host over the house', () => {
     let restored = 0
     host.create({}, () => { restored++ })
     assert.equal(restored, 1, '"+ Novo" opens nothing and gives the keyboard back')
-    assert.equal(host.lines('p6'), undefined)
+    assert.deepEqual(host.lines('p6'), ['Esperando você', 'Pergunta se aplica a migração 0042'])
+    assert.equal(sealSays(host.lines('p6')), 'Pergunta se aplica a migração 0042', 'the core\'s "waiting" is not what it does')
+    assert.equal(host.lines('p5'), undefined, 'no line, no seal')
     assert.deepEqual(host.identity('p1'), { kind: 'claude', name: 'conferente', seed: 'p1', emblem: undefined })
     assert.equal(host.identity('p4'), undefined)
     assert.equal(await host.pickChannel(), 'extra', 'the channel that calls the person first')
     assert.deepEqual(host.openChannels().map(c => c.id), ['obra', 'extra', 'migra'])
     assert.equal(host.system.model().dot.show, false)
     assert.deepEqual(await host.system.proc('stop', 'x'), { refusal: 'Daqui você só acompanha.' })
+  })
+
+  test('the seal says nothing once the app closed; an agent\'s channels are the marks that name it', async () => {
+    const house = new RemoteHouse(fakeHouse({ appClosed: true }))
+    const host = remoteRegencyHost(house, parts)
+    house.start()
+    await settle()
+    assert.equal(host.lines('p6'), undefined, 'a closed app\'s tree says what the agent WAS doing')
+    assert.deepEqual(house.channelsOf('p2').map(c => c.channel), ['obra', 'extra'])
+    assert.deepEqual(house.channelsOf('p6').map(c => c.channel), ['migra'])
+    assert.deepEqual(house.channelsOf('p4'), [])
+    assert.equal(sealSays(['Esperando você']), undefined)
+    assert.equal(sealSays(undefined), undefined)
   })
 
   test('an emblem whose colour is not one of the 12 hues is not an emblem', () => {

@@ -111,11 +111,6 @@ export interface RemoteSource {
   marks(): Promise<MarksAnswer>
   /** A page of a channel: the newest, or the lines before `before`. */
   page(channel: string, before?: number): Promise<PageAnswer>
-  /**
-   * Who is in the channel. Not a reading of the contract yet: absent, the view shows who spoke in the page it holds (so the
-   * count may fall short of the channel's).
-   */
-  members?(channel: string): Promise<RemoteMember[]>
   onNotice(listener: (n: RemoteNotice) => void): { dispose(): void }
 }
 
@@ -125,6 +120,11 @@ const EMPTY_INPUT: RegencyInput = { desks: { desks: [] }, owners: { desk: {}, pa
 const PAGE_LINES = 50
 /** The most pages asked to cover one page of the view when the house cut its answers by size. */
 const PAGE_HOPS = 6
+/** The core's line of a pane that waits for the person (extensions/regency/renderer/columns.ts skips it the same way). */
+const CORE_WAITING_LINE = 'Esperando você'
+
+/** What a pane's seal says the agent is doing: its first line that is not the core's "waiting" (the app's rule). */
+export const sealSays = (lines: readonly string[] | undefined): string | undefined => lines?.find(l => l !== CORE_WAITING_LINE)
 
 /**
  * What the device knows of the house now: the tree and the marks, read at start and again at each notice. Kept in memory
@@ -135,6 +135,12 @@ export class RemoteHouse {
   private treeAnswer: TreeAnswer | undefined
   private readonly marks = new Map<string, MarkRow>()
   private marksLoaded = false
+  /** The person's name in the channels (`''`: not said). */
+  private moderator = ''
+  /** Who is in each channel, from its last page read (the members are the channel's, not the page's). */
+  private readonly pageMembers = new Map<string, RemoteMember[]>()
+  /** The newest page of each channel being read now. */
+  private readonly newest = new Map<string, Promise<PageAnswer>>()
   private readonly changed = new Set<() => void>()
   private readonly stale = new Set<(channelId: string) => void>()
   private sub: { dispose(): void } | undefined
@@ -201,12 +207,37 @@ export class RemoteHouse {
   /** Without the tree (no `regency:read`), the open channels are the ones the marks name. */
   private channelsOfMarks(): RegencyInput {
     const channels: ChannelSummary[] = [...this.marks.values()].map(m => ({
-      id: m.channel, name: m.name || m.channel, title: m.name || m.channel, owner: { kind: 'user' }, members: 0, seenByUser: 0, createdAt: '',
+      id: m.channel, name: m.name || m.channel, title: m.name || m.channel, owner: { kind: 'user' }, members: m.members.length + (m.membersMore ?? 0), seenByUser: 0, createdAt: '',
     }))
     return { ...EMPTY_INPUT, channels }
   }
 
   markOf(channelId: string): MarkRow | undefined { return this.channelsProblem ? undefined : this.marks.get(channelId) }
+
+  /**
+   * Which channels are open is known: the tree came (its list), or the marks did, or the device lacks `channels` (none). Until
+   * then a channel the address names can be neither found nor refused.
+   */
+  get channelsKnown(): boolean { return this.channelsProblem !== undefined || this.treeAnswer !== undefined || this.marksLoaded }
+
+  /** The person's name in the channels, as the house said it last (undefined: not said, an old house). */
+  moderatorName(): string | undefined { return this.channelsProblem ? undefined : this.moderator || undefined }
+
+  /** Who is in the channel, as its last page read said (undefined: no page of it read yet). */
+  membersOf(channelId: string): readonly RemoteMember[] | undefined { return this.channelsProblem ? undefined : this.pageMembers.get(channelId) }
+
+  /** The seal's lines of a pane, only while the app publishes (a closed app's tree says what the agent WAS doing). */
+  lines(paneId: string): readonly string[] | undefined {
+    if (!this.live) return undefined
+    for (const d of this.treeAnswer!.input.desks.desks) for (const p of d.panes) if (p.id === paneId) return p.lines?.length ? p.lines : undefined
+    return undefined
+  }
+
+  /** The open channels an agent is in, by its pane id: the marks whose members name it, in the marks' order. */
+  channelsOf(agentId: string): MarkRow[] {
+    if (this.channelsProblem) return []
+    return [...this.marks.values()].filter(m => m.members.includes(agentId))
+  }
 
   onDidChange(listener: () => void): { dispose(): void } {
     this.changed.add(listener)
@@ -248,6 +279,8 @@ export class RemoteHouse {
     this.channelsProblem = 'no-scope'
     this.marks.clear()
     this.marksLoaded = false
+    this.pageMembers.clear()
+    this.moderator = ''
     this.notify()
   }
 
@@ -260,6 +293,7 @@ export class RemoteHouse {
         const answer = await this.source.marks()
         this.marks.clear()
         for (const row of answer.channels) this.marks.set(row.channel, row)
+        this.moderator = answer.moderator.name
         this.marksLoaded = true
         this.channelsProblem = undefined
         this.notify()
@@ -268,9 +302,31 @@ export class RemoteHouse {
   }
 
   page(channel: string, before?: number): Promise<PageAnswer> {
-    return this.source.page(channel, before).catch((e: unknown) => { this.lostChannels(e); throw e })
+    // The newest page asked again while it is read is the same reading (the view asks its lines and its members together).
+    const known = before === undefined ? this.newest.get(channel) : undefined
+    if (known) return known
+    const p = this.source.page(channel, before).then(
+      a => {
+        this.pageMembers.set(channel, a.members)
+        if (a.moderator.name) this.moderator = a.moderator.name
+        return a
+      },
+      (e: unknown) => { this.lostChannels(e); throw e },
+    )
+    if (before === undefined) {
+      this.newest.set(channel, p)
+      const done = (): void => { if (this.newest.get(channel) === p) this.newest.delete(channel) }
+      p.then(done, done)
+    }
+    return p
   }
-  members(channel: string): Promise<RemoteMember[]> | undefined { return this.source.members?.(channel) }
+
+  /** Who is in the channel now: the newest page being read says it, else the last one read, else a page is read for it. */
+  async members(channel: string): Promise<readonly RemoteMember[]> {
+    const reading = this.newest.get(channel)
+    if (reading) return (await reading).members
+    return this.membersOf(channel) ?? (await this.page(channel)).members
+  }
 }
 
 /** An agent's emblem as the house published it, when its colour is one of the 12 hues (anything else: no emblem, the letter stands). */
@@ -303,25 +359,12 @@ export interface RemoteActs {
 
 /** The channel's view over the house, reading only. */
 export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): ChannelHost {
-  /** Who spoke in the pages read of each channel, in order of appearance: the members shown when the source has no list. */
-  const spoke = new Map<string, Map<string, string>>()
-
   const summaryOf = (channelId: string, from?: PageAnswer['channel']): ChannelSummary => {
     const known = house.input().channels.find(c => c.id === channelId)
     if (known) return known
     return {
       id: channelId, name: from?.name ?? channelId, title: from?.title ?? '', owner: { kind: 'user' }, members: 0, seenByUser: 0, createdAt: '',
       ...(from?.closed ? { closed: { at: '', by: '' } } : {}),
-    }
-  }
-
-  const note = (channelId: string, lines: readonly PageLine[]): void => {
-    let m = spoke.get(channelId)
-    if (!m) { m = new Map(); spoke.set(channelId, m) }
-    for (const l of lines) {
-      const role = l.from.role
-      if (l.kind === 'notice' || role === 'moderator' || role === 'system' || l.from.id === 'user' || l.from.id === 'tether') continue
-      if (!m.has(l.from.id)) m.set(l.from.id, l.from.name)
     }
   }
 
@@ -341,13 +384,12 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
       reactions.unshift(...answer.reactions)
       polls.unshift(...answer.polls)
     }
-    note(channelId, lines)
     return { channel: summaryOf(channelId, answer.channel), lines: lines.map(lineOf), reactions, polls, more: answer.before !== undefined, last: answer.last }
   }
 
   const members = async (channelId: string): Promise<MembersAnswer> => {
-    const listed = await house.members(channelId)?.catch(() => undefined)
-    const list: RemoteMember[] = listed ?? [...(spoke.get(channelId) ?? new Map<string, string>())].map(([id, name]) => ({ id, name }))
+    // The house says who is in the channel now (not who spoke): the agents, never the person.
+    const list = await house.members(channelId)
     const info = (m: RemoteMember): MemberInfo => ({ id: m.id, name: m.name, muted: m.muted === true, since: '', by: '', alive: true, path: 'inside' })
     return { channel: summaryOf(channelId), members: list.map(info), removed: [] }
   }
@@ -385,8 +427,8 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
     agent: id => { const a = house.input().agents.find(x => x.id === id); return a ? { kind: a.kind } : undefined },
     personEmblem: id => emblemOf(house.input().agents.find(x => x.id === id)),
     onDidChangeEmblems: listener => house.onDidChange(() => listener(undefined)),
-    // The name the house's person goes by in the channels is not published: the default stands.
-    moderatorName: () => undefined,
+    // The person's name in the channels, as the house says it: the lines' `to` name her by it ("para você").
+    moderatorName: () => house.moderatorName(),
     files: {
       inspect: async () => [],
       pick: async () => [],
@@ -483,8 +525,8 @@ export function remoteRegencyHost(house: RemoteHouse, parts: RemoteRegencyParts)
     renameRefused: () => {},
     loading: () => !house.loaded,
     identity,
-    // What a pane's seal says is not published (it may quote the terminal).
-    lines: () => undefined,
+    // The seal's lines, only while the app publishes them (cleaned as a title by the house's projector).
+    lines: id => house.lines(id),
     channel: id => house.input().channels.find(c => c.id === id),
     openChannels,
     mount: (place, channelId, opts) => parts.mount(place, channelId, opts),

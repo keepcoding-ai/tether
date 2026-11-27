@@ -16,7 +16,7 @@ import { glyph as paneGlyph, paneStateOf } from '../../../extensions/regency/ren
 import { layoutParams, tierOf, type RegencyLayout, type Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
 import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { keysStrip, mountSpatialFocus } from './focus.ts'
-import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, type RemoteSource } from './host.ts'
+import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type RemoteSource } from './host.ts'
 import { el, registerEngines } from './ui-lite.ts'
 
 /** The words of the casing (the vocabulary is the product's: Mesas, Canais, guia, hibernando). */
@@ -221,6 +221,11 @@ class QuickCard {
     if (since !== undefined && pane.state === 'waiting') row('Estado', st, el('span', 'rr-ago', `· ${formatAgo(this.deps.now() - since)}`))
     else row('Estado', st)
     if (agent && pane.title && pane.title !== agent.name) row('Guia', pane.title)
+    // What the seal says it is doing (only while the app publishes), and the open channels it is in.
+    const said = sealSays(this.house.lines(pane.target.id))
+    if (said) row('Agora', said)
+    const channels = this.house.channelsOf(pane.target.id)
+    if (channels.length > 0) row('Canais', channels.map(c => `#${c.name || c.channel}`).join(', '))
     this.body.replaceChildren(...rows)
   }
 }

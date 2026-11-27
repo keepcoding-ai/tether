@@ -32,7 +32,7 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
       desks: [
         {
           id: 'desk-obra', name: 'Obra', color: 'blue', kind: 'queue', asleep: false, panes: [
-            { id: 'p1', type: 'terminal', icon: 'sparkle', title: 'conferente', busy: true },
+            { id: 'p1', type: 'terminal', icon: 'sparkle', title: 'conferente', busy: true, lines: ['Rodando a bateria de paginação <i>10 mil</i>'] },
             { id: 'p2', type: 'terminal', icon: 'lightning', title: 'bancada', attention: 'done' },
             { id: 'channel:obra', type: 'channel', icon: 'chats-circle', title: '#obra' },
             { id: 'p4', type: 'terminal', icon: 'terminal-window', title: 'web · npm run dev' },
@@ -41,7 +41,7 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
         {
           id: 'desk-migr', name: 'Migração', color: 'green', kind: 'queue', asleep: false, panes: [
             { id: 'p5', type: 'terminal', icon: 'ghost', title: 'migra', busy: true },
-            { id: 'p6', type: 'terminal', icon: 'sparkle', title: 'revisor', attention: 'waiting' },
+            { id: 'p6', type: 'terminal', icon: 'sparkle', title: 'revisor', attention: 'waiting', lines: ['Esperando você', 'Pergunta se aplica a migração 0042'] },
             { id: 'web:p7', type: 'web', icon: 'globe-simple', title: 'Docs do Postgres 17 <b>índices</b>' },
           ],
         },
@@ -144,7 +144,6 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
         ...(first !== undefined && first > 1 ? { before: first } : {}),
       }
     },
-    members: async channelId => members[channelId] ?? [],
     onNotice: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener) } } },
     notify: n => { for (const l of [...listeners]) l(n) },
   }
