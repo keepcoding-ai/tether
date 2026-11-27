@@ -42,7 +42,7 @@ describe('remote operations registry', () => {
 
   test('39: an op without a line has no entry; codes and names are unique; every line is 16 bits and inside its range', () => {
     assert.equal(opByCode(0x0009), undefined)
-    assert.equal(opByCode(0x0200), undefined)
+    assert.equal(opByCode(0x0201), undefined)
     assert.equal(opByCode(0x0601)?.name, 'device.revoke')
     assert.equal(opByName('attention.watch')?.code, 0x0101)
     assert.equal(opByName('ext-request'), undefined, 'there is no tunnel operation')
@@ -51,7 +51,7 @@ describe('remote operations registry', () => {
     for (const l of OPS) {
       assert.ok(Number.isInteger(l.code) && l.code > 0 && l.code <= 0xffff, l.name)
       const family = l.code >>> 8
-      assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
+      assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
       assert.ok(l.scope.length > 0, 'a line always declares its scope')
     }
   })
