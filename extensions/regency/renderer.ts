@@ -28,7 +28,8 @@ import {
   type TreeFilter,
 } from './model.ts'
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
-import { RegencyPane, RegencyTab, type RegencyHost, type TreeQuery } from './renderer/pane.ts'
+import { RegencyPane, type RegencyHost, type TreeQuery } from './renderer/pane.ts'
+import { RegencyTab } from './renderer/tab.ts'
 import { targetOf } from './renderer/columns.ts'
 import { TreePublisher } from './renderer/publish.ts'
 import { TREE_REQ, type PublishAnswer } from './publish-rules.ts'

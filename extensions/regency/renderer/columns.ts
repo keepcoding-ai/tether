@@ -350,6 +350,8 @@ function paneRow(p: TreePaneRow | AgentPaneRow, ctx: ColumnsContext, group?: Age
   }
   const state = paneStateOf(p)
   if (state) r.dataset.state = state.cls
+  // The pane type's id ('terminal', 'channel', 'note', 'web'...): a host's sheet may tell what lives only in the app by it.
+  r.dataset.type = p.type
   if (p.state === 'asleep' || p.mark === 'ended') r.classList.add('zz')
   if (p.identity) {
     const who = ctx.identity(p.target.id) ?? { kind: p.identity.kind, name: p.identity.name, seed: p.target.id, emblem: p.identity.emblem as IdentityInput['emblem'] }

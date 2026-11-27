@@ -4,15 +4,14 @@
 // keyboard of a tree, roving tabindex) and the reserved "Fechadas" and "Sistema". The pane keeps its
 // layout (channel, folded desks, "Neste canal" open) in its parameters, so layout.json carries it. Nothing here takes the
 // focus or changes desk by itself: only a click or a key of the person does.
-import type { DockviewPanelApi, GroupPanelPartInitParameters, IContentRenderer, ITabRenderer, TabPartInitParameters } from 'dockview-core'
-import { icon } from '../../../app/renderer/icons.ts'
+// The pane asks everything of its `RegencyHost` and of the frame it is given in `init` (the tab it is the content of, or
+// the remote web client's own): it knows neither the app's `TetherUi` nor the dockview. Its tab is tab.ts.
 import { quickAbilities, type QuickFrame } from '../../../app/renderer/quick-card-rules.ts'
 import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ChannelSummary } from '../../channels/daemon/requests.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../channels/renderer/embed.ts'
 import type { RegencyModel, StateCounts, Target, TreeFilter } from '../model.ts'
 import { CLOSED_ID, TREE_FILTERS, modelSignature, safeName } from '../model.ts'
-import { REGENCY_TITLE } from '../manifest.ts'
 import type { CreateFixed } from '../create-rules.ts'
 import {
   DEFAULT_LAYOUT, backToTether, layoutOnTier, layoutParams, openSystemOn, openingTab, otherSide, readLayout, rightColumnOf, selectChannel,
@@ -32,11 +31,30 @@ import type { SystemSection } from '../system-rules.ts'
 /** What the tree is narrowed by: the folds, the state filter and the search. */
 export interface TreeQuery { collapsed: readonly string[]; filter: TreeFilter; query: string }
 
+/**
+ * The frame the pane is the content of, as much as the pane uses of it: its id and where its layout is kept (dockview's panel
+ * api satisfies it; the remote web client keeps the layout itself).
+ */
+export interface RegencyFrame {
+  readonly id: string
+  updateParameters(params: Record<string, unknown>): void
+}
+
 /** What the pane asks of the extension (renderer.ts). */
 /** The rows a click opens the quick view of: a pane's or an agent's line in the tree, and "Esperam você". */
 const QUICK_ROWS = '[data-row="pane"][data-target], [data-row="agent"][data-target], .rg-wait[data-target]'
 
 export interface RegencyHost {
+  /**
+   * The pane only reads (the remote, while it does not manage): the element carries `data-readonly` and the host's sheet
+   * takes away what creates, manages or opens "Sistema"; the gestures that remain ask the host as always.
+   */
+  readonly readOnly?: boolean
+  /**
+   * The width the tier is read from, when it is not the pane's own: a host that frames the pane (a margin, a border) gives
+   * the width of what it frames, so the ruler's breaks stay the screen's. Absent: the pane's width.
+   */
+  tierWidth?(): number
   /** The model narrowed by `q`, and the panes counted by state before any filter (the chips). */
   view(q: TreeQuery): { model: RegencyModel; counts: StateCounts }
   /** Space on a row of the tree, a click (or Space) on a pane or an agent in "Esperam você": the one place that opens a target's quick view. */
@@ -118,12 +136,12 @@ const FILTERS: Record<TreeFilter, { label: string; tip: string }> = {
   asleep: { label: 'Hibernando', tip: 'Só as guias e mesas hibernando' },
 }
 
-export class RegencyPane implements IContentRenderer {
+export class RegencyPane {
   readonly element: HTMLElement
   /** The layout kept in the pane's parameters (`layout` is dockview's resize hook). */
   state: RegencyLayout = { ...DEFAULT_LAYOUT }
   private readonly host: RegencyHost
-  private api: DockviewPanelApi | undefined
+  private api: RegencyFrame | undefined
   private readonly waitHost = el('div', 'rg-waiting')
   private readonly convHost = el('div', 'rg-convs')
   private readonly center = el('section', 'rg-col rg-center')
@@ -221,6 +239,7 @@ export class RegencyPane implements IContentRenderer {
     this.host = host
     this.element = el('div', 'rg')
     this.element.dataset.tier = 'desktop'
+    if (host.readOnly) this.element.dataset.readonly = ''
     this.sysView = new SystemView(host.system, {
       back: () => this.closeSystem(true),
       select: section => this.setSystemSection(section),
@@ -229,7 +248,8 @@ export class RegencyPane implements IContentRenderer {
 
   get id(): string | undefined { return this.api?.id }
 
-  init(p: GroupPanelPartInitParameters): void {
+  /** The shape of dockview's `init`: the frame and the parameters the layout was kept in. */
+  init(p: { api: RegencyFrame; params?: unknown }): void {
     this.api = p.api
     this.state = readLayout(p.params)
     this.setShown(this.host.visible())
@@ -291,7 +311,7 @@ export class RegencyPane implements IContentRenderer {
       this.openMenu(target, r, { x: ev.clientX, y: ev.clientY })
     })
     this.ro = new ResizeObserver(() => {
-      const w = this.element.clientWidth
+      const w = this.host.tierWidth?.() ?? this.element.clientWidth
       if (w > 0) this.applyTier(w)
       this.placeConversations()
     })
@@ -1427,25 +1447,4 @@ export class RegencyPane implements IContentRenderer {
     this.host.closeQuick()
     this.host.go(target)
   }
-}
-
-/** The Regency's tab: fixed (no close), the pin says so. */
-export class RegencyTab implements ITabRenderer {
-  readonly element: HTMLElement
-
-  constructor() {
-    this.element = el('div', 'tether-tab regency')
-    const kind = el('span', 'kind')
-    kind.append(icon('columns'))
-    kind.title = REGENCY_TITLE
-    const pin = el('span', 'kind rg-pin')
-    pin.append(icon('push-pin'))
-    pin.title = 'Guia fixa da Regência'
-    this.element.append(kind, el('span', 'text', REGENCY_TITLE), pin)
-    this.element.title = `${REGENCY_TITLE}\nQuem espera você, os canais e todas as mesas`
-  }
-
-  init(_p: TabPartInitParameters): void {}
-
-  dispose(): void {}
 }
