@@ -75,6 +75,26 @@ export interface RemoteMember { id: string; name: string; muted?: boolean }
 /** A thin notice of the house: it brings no content, only what to read again. */
 export type RemoteNotice = { what: 'regency' } | { what: 'channels'; channels: readonly string[]; all?: boolean }
 
+/**
+ * Why a reading did not come. `no-scope`: the device lacks the scope of the reading (status 0x03); `too-large`: the answer
+ * would pass the portal's ceiling; `locked`: the session asks for presence; `limit`: the device's pace ran out; `not-found`:
+ * the channel is not known; `malformed`: the body did not have the contract's shape and was thrown away; `gone`: the
+ * session ended before the answer; `failed`: anything else.
+ */
+export type RefusedWhy = 'no-scope' | 'too-large' | 'locked' | 'limit' | 'not-found' | 'malformed' | 'failed' | 'gone'
+
+/** What a source throws when a reading does not come. */
+export class SourceRefused extends Error {
+  readonly why: RefusedWhy
+  constructor(why: RefusedWhy) {
+    super(why)
+    this.name = 'SourceRefused'
+    this.why = why
+  }
+}
+
+const refusedWhy = (e: unknown): RefusedWhy | undefined => (e instanceof SourceRefused ? e.why : undefined)
+
 export interface RemoteSource {
   tree(): Promise<TreeAnswer>
   marks(): Promise<MarksAnswer>
@@ -113,6 +133,13 @@ export class RemoteHouse {
   private marksAgain = false
   /** The last reading failed (the session ended, the house refused): the screen keeps what it has. */
   failed = false
+  /**
+   * Why the desks are not shown: the device lacks `regency:read` (the tree never comes; the channels stand on the marks), or
+   * the tree is too big to come (the last one read, if any, stays).
+   */
+  treeProblem: 'no-scope' | 'too-large' | undefined
+  /** The device lacks `channels`: the channels' part goes (no channel, no mark, no page). */
+  channelsProblem: 'no-scope' | undefined
 
   constructor(source: RemoteSource) { this.source = source }
 
@@ -139,8 +166,10 @@ export class RemoteHouse {
   /** The channels with a view open (a notice with `all` reads each again). */
   readonly openViews = new Set<string>()
 
-  /** The tree has come at least once. */
-  get loaded(): boolean { return this.treeAnswer !== undefined }
+  /** The first reading of the tree ended: it came, or the house said why it will not. */
+  get loaded(): boolean { return this.treeAnswer !== undefined || this.treeProblem !== undefined }
+  /** A tree is held (without one, whether the app is open on the machine is not known). */
+  get hasTree(): boolean { return this.treeAnswer !== undefined }
   /** The app is open on the machine and publishing. */
   get live(): boolean { return this.treeAnswer?.live === true }
   /** When the app last published (epoch ms), while it is closed; undefined when it is open or never published. */
@@ -148,7 +177,8 @@ export class RemoteHouse {
 
   /** The model's entry: the house's tree with the marks the house counts now over the ones the app last published. */
   input(): RegencyInput {
-    const base = this.treeAnswer?.input ?? EMPTY_INPUT
+    if (this.channelsProblem === 'no-scope') return { ...(this.treeAnswer?.input ?? EMPTY_INPUT), channels: [], channelMarks: {} }
+    const base = this.treeAnswer?.input ?? (this.treeProblem === 'no-scope' ? this.channelsOfMarks() : EMPTY_INPUT)
     if (!this.marksLoaded) return base
     const channelMarks: RegencyInput['channelMarks'] = { ...base.channelMarks }
     for (const [id, m] of this.marks) {
@@ -157,7 +187,15 @@ export class RemoteHouse {
     return { ...base, channelMarks }
   }
 
-  markOf(channelId: string): MarkRow | undefined { return this.marks.get(channelId) }
+  /** Without the tree (no `regency:read`), the open channels are the ones the marks name. */
+  private channelsOfMarks(): RegencyInput {
+    const channels: ChannelSummary[] = [...this.marks.values()].map(m => ({
+      id: m.channel, name: m.name || m.channel, title: m.name || m.channel, owner: { kind: 'user' }, members: 0, seenByUser: 0, createdAt: '',
+    }))
+    return { ...EMPTY_INPUT, channels }
+  }
+
+  markOf(channelId: string): MarkRow | undefined { return this.channelsProblem ? undefined : this.marks.get(channelId) }
 
   onDidChange(listener: () => void): { dispose(): void } {
     this.changed.add(listener)
@@ -182,10 +220,24 @@ export class RemoteHouse {
       do {
         this.treeAgain = false
         this.treeAnswer = await this.source.tree()
+        this.treeProblem = undefined
         this.failed = false
         this.notify()
       } while (this.treeAgain)
-    } catch { this.failed = true; this.notify() } finally { this.readingTree = false }
+    } catch (e) {
+      const why = refusedWhy(e)
+      if (why === 'no-scope') { this.treeAnswer = undefined; this.treeProblem = 'no-scope' } else if (why === 'too-large') this.treeProblem = 'too-large'
+      this.failed = true
+      this.notify()
+    } finally { this.readingTree = false }
+  }
+
+  private lostChannels(e: unknown): void {
+    if (refusedWhy(e) !== 'no-scope' || this.channelsProblem) return
+    this.channelsProblem = 'no-scope'
+    this.marks.clear()
+    this.marksLoaded = false
+    this.notify()
   }
 
   private async readMarks(): Promise<void> {
@@ -198,12 +250,15 @@ export class RemoteHouse {
         this.marks.clear()
         for (const row of answer.channels) this.marks.set(row.channel, row)
         this.marksLoaded = true
+        this.channelsProblem = undefined
         this.notify()
       } while (this.marksAgain)
-    } catch { /* the next notice asks again */ } finally { this.readingMarks = false }
+    } catch (e) { this.lostChannels(e) /* else the next notice asks again */ } finally { this.readingMarks = false }
   }
 
-  page(channel: string, before?: number): Promise<PageAnswer> { return this.source.page(channel, before) }
+  page(channel: string, before?: number): Promise<PageAnswer> {
+    return this.source.page(channel, before).catch((e: unknown) => { this.lostChannels(e); throw e })
+  }
   members(channel: string): Promise<RemoteMember[]> | undefined { return this.source.members?.(channel) }
 }
 
