@@ -345,7 +345,7 @@ describe('for-agents: the app half of hibernate (renderer/sleep.ts)', () => {
       },
     }
     sleepBridge(ui as never)
-    assert.deepEqual([...listeners.keys()], [HIBERNATE_EVENT, 'hibernate-desk', 'wake-desk'])
+    assert.deepEqual([...listeners.keys()], [HIBERNATE_EVENT, 'suspend', 'hibernate-desk', 'wake-desk'])
     listeners.get(HIBERNATE_EVENT)!({ ask: 's7', pane: PANE })
     listeners.get(HIBERNATE_EVENT)!({ ask: 's8', pane: 'gone' })
     listeners.get(HIBERNATE_EVENT)!({ nonsense: true })
