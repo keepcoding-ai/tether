@@ -9,6 +9,7 @@ import type { PortalAsk, PortalDevice, PortalNote } from '../../src/remoted/ipc.
 import { loadKeys } from '../../src/remoted/keyfiles.ts'
 import type { Limits } from '../../src/remoted/limits.ts'
 import { audOf, RelayLink } from '../../src/remoted/relay.ts'
+import type { PipeReads } from '../../src/remoted/reads.ts'
 import type { PresenceClock } from '../../src/remoted/uv.ts'
 import { ensureKeys } from '../../extensions/remote/daemon/keys.ts'
 import { FakeRelay, TestDevice, until, type DeviceSession } from './remoted.helpers.ts'
@@ -24,6 +25,9 @@ export interface HouseBenchOptions {
   renewDenyAfterMs?: number
   /** The portal's clock (the house's `now`); absent, Date.now. A test moves it to let the presence clocks run. */
   now?: () => number
+  /** The reads of tetherd's extensions (src/remoted/reads.ts); absent, the read lines answer not-implemented. */
+  reads?: PipeReads
+  noticeGapsMs?: Partial<{ channels: number; regency: number }>
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -118,6 +122,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
       keys, aud, houseName: 'bench', attention: new AttentionView(), log: () => {}, now: o.now ?? Date.now, ask: answer,
       send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
+      ...(o.reads ? { reads: o.reads } : {}), ...(o.noticeGapsMs ? { noticeGapsMs: o.noticeGapsMs } : {}),
     })
     await house.init(devices, [])
     current = house

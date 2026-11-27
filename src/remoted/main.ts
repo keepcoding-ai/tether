@@ -24,6 +24,7 @@ import { House, PortalError } from './house.ts'
 import { PORTAL_EXIT, webRelyingParty, type FromPortal, type PortalAsk, type ToPortal } from './ipc.ts'
 import { KEY_FILES, loadKeys } from './keyfiles.ts'
 import { makeNotice } from './notice.ts'
+import { pipeReads } from './reads.ts'
 import { audOf, RelayLink } from './relay.ts'
 
 const home = tetherHome()
@@ -119,8 +120,10 @@ async function main(): Promise<void> {
   client.on('close', () => leave(PORTAL_EXIT.ok, 'the pipe closed'))
 
   const attention = new AttentionView()
-  client.on('state', (s) => attention.state(s))
-  client.on('removed', (id) => attention.removed(id))
+  let feed: House | undefined // the slots and tetherd's events also feed the house's thin notices, once it exists
+  client.on('state', (s) => { attention.state(s); feed?.slotsChanged() })
+  client.on('removed', (id) => { attention.removed(id); feed?.slotsChanged() })
+  client.on('ext-event', (e) => feed?.extEvent(e.ext, e.name, e.payload))
   attention.reset((await client.request({ t: 'list' })).slots ?? [])
 
   let askSeq = 0
@@ -135,14 +138,22 @@ async function main(): Promise<void> {
   let link: RelayLink | undefined // the house writes through it; it is made right after the house
   const idleMs = knob('TETHER_TEST_REMOTE_IDLE_MS')
   const renewDenyAfterMs = knob('TETHER_TEST_REMOTE_DENY_AFTER_MS')
+  const channelsGap = knob('TETHER_TEST_REMOTE_CHANNELS_GAP_MS')
+  const regencyGap = knob('TETHER_TEST_REMOTE_REGENCY_GAP_MS')
   const house = new House({
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
+    // The class `ext-read` of PIPE_REACH: the only path from a device to tetherd's extensions (./reads.ts).
+    reads: pipeReads((body) => client.request(body)),
+    ...(channelsGap !== undefined || regencyGap !== undefined
+      ? { noticeGapsMs: { ...(channelsGap !== undefined ? { channels: channelsGap } : {}), ...(regencyGap !== undefined ? { regency: regencyGap } : {}) } }
+      : {}),
     send: (f) => link?.send(f),
     note: (n) => send({ t: 'note', ...n }),
     notice: makeNotice(bench ? process.env : {}, log),
     ...(idleMs !== undefined ? { idleMs } : {}),
     ...(renewDenyAfterMs !== undefined ? { renewDenyAfterMs } : {}),
   })
+  feed = house
   await house.init(init.devices, init.deny)
   // The address changed while no portal was up: said now, as a `web` message says it to a portal already up.
   if (init.webChanged) house.setRelyingParty(rpOf(init.webUrl))

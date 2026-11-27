@@ -15,16 +15,20 @@
 import {
   ActCache, ADMIT_TTL_S, CLOCK_SKEW_S, CLOSE, DENY_MAX, NOTICE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
-  opByCode, parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND,
+  opByCode, opByName, parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND,
   admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT, SCOPE_FAMILIES,
   assertionChallenge, registrationChallenge, verifyAssertion, verifyRegistration, WEBAUTHN_LIMITS,
-  type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OpLine, type OuterFrame, type Req,
+  type Bytes, type CloseCode, type DeviceRecord, type EvtLine, type EvtName, type HouseHsEffect, type HousePairEffect, type OpLine, type OuterFrame, type Req,
   type PresenceContext, type Presence, type RelyingParty, type ResStatus, type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
-import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projection.ts'
+import {
+  emptyBody, errorBody, eventBody, PAGE_LINES_MAX, READ_BODY_MAX, regencyChanged, resultBody, type EventSource, type MarksSource, type RegencyChanged,
+} from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
-import { FRESH_PAIR_REGISTER_MS, gate, gateEvent } from './gate.ts'
+import { FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp } from './gate.ts'
+import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
+import { ReadError, type PipeReads } from './reads.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
 import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
 
@@ -32,6 +36,8 @@ import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, t
 export const UV_REGISTER_BODY_MAX = 8 * 1024
 const b64Max = (bytes: number): number => Math.ceil((bytes * 4) / 3)
 const HEX32 = /^[0-9a-f]{32}$/
+/** A channel's id as the store makes them (`c_…`, `desk_…`): the only argument a page sends tetherd besides two numbers. */
+const CHANNEL_ID = /^[\w.:-]{1,64}$/
 
 /** What one handler answers: the status, the body, and the audit's result when it says more than the status. */
 interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean }
@@ -73,6 +79,10 @@ export interface HouseDeps {
   rp?: RelyingParty
   /** Bench: a shorter idle lock or absolute ceiling of the presence. */
   presenceClock?: Partial<PresenceClock>
+  /** The reads of tetherd's extensions (./reads.ts). Absent: the three read lines answer `not-implemented`. */
+  reads?: PipeReads
+  /** Bench: shorter gaps between the thin notices (./feeds.ts). */
+  noticeGapsMs?: Partial<{ channels: number; regency: number }>
 }
 
 interface DeviceMem {
@@ -97,6 +107,8 @@ interface SessionRoute {
   lastReqMs: number
   inflight: number
   watching: boolean
+  /** Subscribed to channels.changed / regency.changed: set by the first read of that family this session served. */
+  follows: { channels: boolean; regency: boolean }
   /** The counter of the last presence challenge of this session, and the one pending (spec 7.4 point 6). */
   uvCtr: number
   uvPending?: PendingChallenge
@@ -134,13 +146,22 @@ export class House {
   #fingerprint = ''
   #rp: RelyingParty | undefined
   readonly #clock: PresenceClock
+  /** What changed for the reads (channels.changed, regency.changed), from tetherd's events. */
+  readonly #feeds: ReadFeeds
 
   constructor(deps: HouseDeps) {
     this.#d = deps
     this.#lim = { ...LIMITS, ...deps.limits }
     this.#rp = deps.rp
     this.#clock = { ...PRESENCE_CLOCK, ...deps.presenceClock }
+    this.#feeds = new ReadFeeds(deps.noticeGapsMs)
   }
+
+  /** An `ext-event` of tetherd: only what makes a thin notice is kept (./feeds.ts); its payload never goes to a device. */
+  extEvent(ext: string, name: string, payload: unknown): void { this.#feeds.extEvent(ext, name, payload) }
+
+  /** A slot's state changed or it went: the Regency a device sees with the app closed changed too. */
+  slotsChanged(): void { this.#feeds.slotsChanged() }
 
   /**
    * The origin of the PWA changed (or went): the presence credentials are checked against the new one from now on. A
@@ -416,7 +437,7 @@ export class House {
 
   #adopt(route: number, session: Session, deviceId: string, freshPair: boolean): void {
     const nowMs = this.#d.now()
-    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false, uvCtr: 0 }
+    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false, follows: { channels: false, regency: false }, uvCtr: 0 }
     this.#routes.set(route, s)
     this.#memOf(deviceId).sessions.add(s)
     this.#noteSessions()
@@ -595,6 +616,10 @@ export class House {
       case 'attention.watch':
         if (!s.watching) { s.watching = true; this.#noteSessions() }
         return ok(resultBody('attention.watch', this.#d.attention.items()))
+      case 'channels.marks':
+      case 'channels.page':
+      case 'regency.tree':
+        return this.#extRead(s, line.name, body, dv?.scopes ?? [])
       case 'admit.renew': return this.#renew(s, body)
       case 'device.revoke-self':
         // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
@@ -620,6 +645,55 @@ export class House {
       default:
         return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
     }
+  }
+
+  /**
+   * One read of a daemon extension (PIPE_REACH `ext-read`): the pair comes from EXT_READS by the line (./reads.ts), the
+   * arguments are rebuilt here from the strict body of the line, and the body of the answer from the line's projector. A
+   * read is no gesture and leaves no audit line (house.ts `audited`); its first success subscribes the session to the
+   * thin notice of its family.
+   */
+  async #extRead(s: SessionRoute, op: ExtReadOp, body: Record<string, unknown>, scopes: readonly string[]): Promise<Served> {
+    const reads = this.#d.reads
+    if (!reads) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
+    const bad: Served = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const count = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
+    let bytes: Bytes
+    try {
+      switch (op) {
+        case 'channels.marks':
+          bytes = resultBody(op, (await reads.read(op, {})) as MarksSource)
+          break
+        case 'channels.page': {
+          const { channel, before } = body
+          const limit = body.limit ?? PAGE_LINES_MAX
+          if (typeof channel !== 'string' || !CHANNEL_ID.test(channel)) return bad
+          if (before !== undefined && !count(before, 1, Number.MAX_SAFE_INTEGER)) return bad
+          if (!count(limit, 1, PAGE_LINES_MAX)) return bad
+          const at = before !== undefined ? { before } : {}
+          bytes = resultBody(op, { answer: await reads.read(op, { channel, limit, ...at }), limit, ...at })
+          break
+        }
+        case 'regency.tree': {
+          const view = await reads.read(op, {})
+          // The first call's text is a line of a channel: the tree carries it only to a device that may read the channels.
+          bytes = resultBody(op, { view, channels: scopes.includes(opByName('channels.marks')!.scope) })
+          const v = (view && typeof view === 'object' ? view : {}) as { live?: unknown; sig?: unknown; asOf?: unknown }
+          this.#feeds.sawTree(regencyChanged(v as RegencyChanged))
+          break
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof ReadError)) throw e
+      if (e.why === 'limit') return { status: RES_STATUS.limit, bytes: emptyBody() }
+      if (e.why === 'refused' && e.code === 'unknown-channel') return { status: RES_STATUS.notFound, bytes: emptyBody() }
+      if (e.why !== 'refused' || e.code !== 'bad-request') this.#d.log(`read ${op}: ${e.message}`)
+      return { status: RES_STATUS.failed, bytes: errorBody('failed') }
+    }
+    if (bytes.length > READ_BODY_MAX) return { status: RES_STATUS.failed, bytes: errorBody('too-large') }
+    if (op === 'regency.tree') s.follows.regency = true
+    else s.follows.channels = true
+    return { status: RES_STATUS.ok, bytes }
   }
 
   #presenceBody(s: SessionRoute): { presence: Presence; elevUntil: number } {
@@ -843,15 +917,19 @@ export class House {
       }
     }
     if (this.#pairing && !this.#isOver(this.#pairing.view.state)) jobs.push(this.#pairing.p.tick(nowMs).then((fx) => this.#pairEffects(fx)))
-    if (this.#d.attention.takeChange()) jobs.push(this.#pushAttention())
+    if (this.#d.attention.takeChange()) jobs.push(this.#pushEvent(EVT.attentionChanged, this.#d.attention.items(), (r) => r.watching))
+    const channels = this.#feeds.takeChannels(nowMs)
+    if (channels) jobs.push(this.#pushEvent(EVT.channelsChanged, channels, (r) => r.follows.channels))
+    const regency = this.#feeds.takeRegency(nowMs)
+    if (regency) jobs.push(this.#pushEvent(EVT.regencyChanged, regency, (r) => r.follows.regency))
     await Promise.all(jobs)
   }
 
-  async #pushAttention(): Promise<void> {
-    const line = EVT.attentionChanged
-    const evt = encodeEvt({ evt: line.code, body: eventBody(line.name, this.#d.attention.items()) })
+  /** One event to every open session that follows it and whose device may get it now (gateEvent: scope and presence). */
+  async #pushEvent<K extends EvtName>(line: EvtLine & { name: K }, src: EventSource<K>, follows: (r: SessionRoute) => boolean): Promise<void> {
+    const evt = encodeEvt({ evt: line.code, body: eventBody(line.name, src) })
     for (const r of [...this.#routes.values()]) {
-      if (r.kind !== 'session' || !r.watching || r.session.state !== 'open') continue
+      if (r.kind !== 'session' || !follows(r) || r.session.state !== 'open') continue
       const dv = this.#devices.get(r.deviceId)
       if (!gateEvent(line, { scopes: new Set(dv?.scopes ?? []), presence: this.#sessionPresence(r, this.#d.now()).presence })) continue
       try { this.#sessionEffects(r, await r.session.send('EVT', evt, this.#d.now())) } catch (e) { if (!(e instanceof WireError)) throw e }
