@@ -1,0 +1,463 @@
+// The Regency on the web, reading only: the app's own pane (extensions/regency/renderer/pane.ts) and the app's own channel
+// view, mounted over the remote hosts (host.ts) inside the web's casing. The casing is what the app's window gives the
+// local Regency and a browser does not: the strip of the house on top (its name, the state of the link, "Vendo de longe"),
+// the reading card of a pane (the place of the app's quick view), the band of "the app is closed on the machine" and the
+// notice that takes the whole screen while the house is out of reach.
+//
+// Nothing of the house is kept: the tree, the marks and the pages live in memory while the link does; when it falls they
+// are let go, and a new session reads everything again. Every text of the house reaches the page as a text node.
+import { icon, type IconName } from '../../../app/renderer/icons.ts'
+import { identityView } from '../../../app/renderer/agent-identity.ts'
+import { engineOf } from '../../../app/renderer/agent-ui.ts'
+import { formatAgo } from '../../../app/renderer/sessions-rules.ts'
+import { createChannelViews } from '../../../extensions/channels/renderer/channel-pane.ts'
+import { regencyModelOf, type Target, type TreeDeskRow, type TreePaneRow } from '../../../extensions/regency/model.ts'
+import { glyph as paneGlyph, paneStateOf } from '../../../extensions/regency/renderer/columns.ts'
+import { layoutParams, tierOf, type RegencyLayout, type Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
+import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
+import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, type RemoteSource } from './host.ts'
+import { el, registerEngines } from './ui-lite.ts'
+
+/** The words of the casing (the vocabulary is the product's: Mesas, Canais, guia, hibernando). */
+export const TEXT = {
+  watching: 'Vendo de longe',
+  watchingTip: 'Este aparelho acompanha de longe: vê, não fala nem gere',
+  live: 'ao vivo',
+  appClosed: 'app fechado na máquina',
+  offline: 'offline',
+  loading: 'lendo a casa…',
+  cardFoot: 'Para espiar o terminal ou responder, use o tether na máquina.',
+  offTitle: 'Seu tether está offline',
+  offLead: 'Não consegui falar com a máquina. Ela pode estar desligada, dormindo ou sem rede.',
+  offKept: 'Nada da máquina fica guardado neste aparelho: a Regência volta quando ela voltar.',
+  offApp: 'Se só o app do tether estiver fechado, a máquina ainda responde e as mesas aparecem aqui.',
+  retry: 'Tentar agora',
+} as const
+
+const two = (n: number): string => String(n).padStart(2, '0')
+/** "14:32", on this device's clock. */
+export const clockOf = (ms: number): string => { const d = new Date(ms); return `${two(d.getHours())}:${two(d.getMinutes())}` }
+
+/** "hoje às 14:37", or the day when it was not today. */
+export function whenOf(ms: number, nowMs: number): string {
+  const d = new Date(ms)
+  const n = new Date(nowMs)
+  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
+  return sameDay ? `hoje às ${clockOf(ms)}` : `em ${two(d.getDate())}/${two(d.getMonth() + 1)} às ${clockOf(ms)}`
+}
+
+export const retryWords = (s: number | undefined): string => (s === undefined || s <= 0 ? 'Tentando agora…' : `Tento de novo em ${s} s.`)
+
+/** The band over the tree while the app is closed on the machine. */
+export const snapWords = (asOfMs: number | undefined): { line: string; small: string } => asOfMs === undefined
+  ? { line: 'O tether está fechado na máquina. Daqui aparecem as sessões que ela mantém.', small: 'As mesas voltam quando o app abrir.' }
+  : { line: `O tether está fechado na máquina. As mesas são como estavam às ${clockOf(asOfMs)}.`, small: 'O estado de quem roda na máquina e os canais seguem ao vivo.' }
+
+function glyph(name: IconName): SVGSVGElement {
+  const g = icon(name)
+  g.setAttribute('aria-hidden', 'true')
+  return g
+}
+
+export interface OfflineState {
+  /** When the house last answered (epoch ms, this device's clock); absent when it never did in this visit. */
+  lastContactMs?: number
+  /** Seconds until the next try; absent or 0 while one is in course. */
+  retryInS?: number
+}
+
+export interface RemoteRegency {
+  readonly element: HTMLElement
+  /** The session is up: the house is read through `source` (each session gives its own). */
+  online(source: RemoteSource): void
+  /** The link fell: the notice takes the screen and what was read of the house is let go. */
+  offline(state: OfflineState): void
+  /** The countdown of the notice moved. */
+  retryIn(seconds: number | undefined): void
+  /** What a capture or a test reads of the screen: text and flags, never elements. */
+  snapshot(): { link: 'live' | 'closed' | 'offline' | 'loading'; tier: Tier; paneTier: Tier | undefined; card: string | undefined; channel: string | undefined }
+  dispose(): void
+}
+
+export interface RegencyOptions {
+  /** The house's name, as the pairing kept it. */
+  houseName: string
+  /** "Tentar agora". */
+  onRetry(): void
+  now?: () => number
+}
+
+/** What is up while the link is: the house's data, the pane over it and the reading card. */
+interface Session {
+  house: RemoteHouse
+  pane: RegencyPane
+  card: QuickCard
+  dispose(): void
+}
+
+/** What the card asks of the casing: where it docks, whether it is the phone's sheet, and the row to mark. */
+interface CardDeps { place(): HTMLElement; sheet(): boolean; shell: HTMLElement; changed(): void; now(): number }
+
+/**
+ * The reading card of a pane or an agent: the place of the app's quick view, with what a reading from afar may say (the
+ * desk, the engine, the state and since when). Docked over the conversation and not modal; on the phone, a sheet from the
+ * bottom. Esc, its button, a press outside it (the phone) or the same row again close it.
+ */
+class QuickCard {
+  readonly element = el('section', 'rr-card')
+  private readonly back = el('div', 'rr-card-back')
+  private readonly head = el('div', 'rr-card-h')
+  private readonly body = el('dl', 'rr-card-b')
+  private shownId: string | undefined
+  private opener: HTMLElement | undefined
+  private readonly house: RemoteHouse
+  private readonly deps: CardDeps
+
+  constructor(house: RemoteHouse, deps: CardDeps) {
+    this.house = house
+    this.deps = deps
+    this.element.hidden = true
+    this.element.setAttribute('role', 'dialog')
+    this.back.hidden = true
+    const foot = el('div', 'rr-card-f')
+    foot.append(glyph('eye'), el('span', '', TEXT.cardFoot))
+    this.element.append(el('div', 'rr-card-grab'), this.head, this.body, foot)
+    this.back.addEventListener('click', () => this.close())
+    this.element.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); this.close(true) } })
+  }
+
+  shown(): string | undefined { return this.shownId }
+
+  toggle(target: Target): void {
+    if (this.shownId === target.id) this.close()
+    else this.open(target)
+  }
+
+  open(target: Target): void {
+    if (target.kind !== 'pane' && target.kind !== 'agent') return
+    const found = this.find(target.id)
+    if (!found) return
+    const active = document.activeElement
+    this.opener = active instanceof HTMLElement && active !== document.body ? active : undefined
+    this.shownId = target.id
+    this.paint(found.pane, found.desk)
+    // The phone's sheet covers the whole casing (with its backdrop); elsewhere the card docks over the conversation.
+    const sheet = this.deps.sheet()
+    this.element.dataset.form = sheet ? 'sheet' : 'docked'
+    const place = sheet ? this.deps.shell : this.deps.place()
+    if (this.element.parentElement !== place) place.append(this.element)
+    if (sheet && this.back.parentElement !== this.deps.shell) this.deps.shell.insertBefore(this.back, this.element)
+    this.back.hidden = !sheet
+    this.element.hidden = false
+    this.deps.changed()
+    // A gesture of the person opened it: the keyboard goes to its one button (Esc and Enter close it from there).
+    this.head.querySelector<HTMLElement>('.rr-ib')?.focus({ preventScroll: true })
+  }
+
+  close(focus = false): void {
+    if (this.shownId === undefined) return
+    this.shownId = undefined
+    this.element.hidden = true
+    this.back.hidden = true
+    this.deps.changed()
+    if (focus && this.opener?.isConnected) this.opener.focus({ preventScroll: true })
+    this.opener = undefined
+  }
+
+  /** The house changed: the card follows the pane it shows, and goes with it. */
+  refresh(): void {
+    if (this.shownId === undefined) return
+    const found = this.find(this.shownId)
+    if (!found) { this.close(); return }
+    this.paint(found.pane, found.desk)
+  }
+
+  dispose(): void {
+    this.element.remove()
+    this.back.remove()
+  }
+
+  private find(paneId: string): { pane: TreePaneRow; desk: TreeDeskRow } | undefined {
+    const model = regencyModelOf({ ...this.house.input(), collapsed: [], filter: 'all', query: '' })
+    for (const desk of model.tree) for (const pane of desk.panes) if (pane.target.id === paneId) return { pane, desk }
+    return undefined
+  }
+
+  private paint(pane: TreePaneRow, desk: TreeDeskRow): void {
+    const input = this.house.input()
+    const agent = input.agents.find(a => a.id === pane.target.id)
+    const name = agent?.name ?? pane.title
+    this.element.setAttribute('aria-label', `Guia ${name}`)
+    const title = el('span', 'rr-card-t')
+    if (agent) title.append(identityView({ kind: agent.kind, name: agent.name, seed: agent.id, emblem: emblemOf(agent) }))
+    else title.append(paneGlyph(pane.icon, pane.type), el('span', 'rr-card-n', pane.title))
+    const x = el('button', 'rr-ib')
+    x.type = 'button'
+    x.title = 'Fechar'
+    x.setAttribute('aria-label', 'Fechar')
+    x.append(glyph('x'))
+    x.addEventListener('click', () => this.close(true))
+    this.head.replaceChildren(title, el('span', 'rr-sp'), x)
+
+    const rows: HTMLElement[] = []
+    const row = (label: string, ...value: (Node | string)[]): void => {
+      const dd = el('dd')
+      dd.append(...value)
+      rows.push(el('dt', '', label), dd)
+    }
+    const swatch = el('span', 'rr-swatch')
+    swatch.style.setProperty('--rr-desk', `var(--x-${desk.color}, var(--accent))`)
+    row('Mesa', swatch, `${desk.name}${desk.asleep ? ' · hibernando' : ''}`)
+    if (agent) row('Motor', engineOf(agent.kind).label)
+    const state = paneStateOf(pane)
+    const since = input.since[`agent:${pane.target.id}`] ?? input.since[`pane:${pane.target.id}`]
+    const st = el('span', `rr-st ${state?.cls ?? ''}`, state?.text ?? '—')
+    if (since !== undefined && pane.state === 'waiting') row('Estado', st, el('span', 'rr-ago', `· ${formatAgo(this.deps.now() - since)}`))
+    else row('Estado', st)
+    if (agent && pane.title && pane.title !== agent.name) row('Guia', pane.title)
+    this.body.replaceChildren(...rows)
+  }
+}
+
+/** Mounts the Regency's casing in `root`. It starts on "reading the house" until `online` or `offline` is told. */
+export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegency {
+  registerEngines()
+  const now = o.now ?? Date.now
+  const shell = el('div', 'rr')
+  shell.dataset.link = 'loading'
+
+  // ---- the strip of the house
+  const top = el('header', 'rr-top')
+  const brand = el('span', 'rr-brand')
+  brand.append(glyph('columns'))
+  // The phone's strip is short: there the house's name stands alone (the sheet hides the prefix).
+  const houseName = el('b', 'rr-house-n')
+  if (o.houseName) houseName.append(el('span', 'rr-house-p', 'Regência · '), o.houseName)
+  else houseName.append('Regência')
+  houseName.title = o.houseName
+  const dot = el('i', 'rr-dot')
+  const where = el('span', 'rr-where-t')
+  const far = el('span', 'rr-far', `· ${TEXT.watching.toLowerCase()}`)
+  const whereBox = el('span', 'rr-where')
+  whereBox.setAttribute('role', 'status')
+  whereBox.append(dot, where, far)
+  const house = el('div', 'rr-house')
+  house.append(houseName, whereBox)
+  const clock = el('span', 'rr-clock')
+  const watch = el('span', 'rr-watch')
+  watch.title = TEXT.watchingTip
+  watch.append(glyph('eye'), el('span', '', TEXT.watching))
+  top.append(brand, house, el('span', 'rr-sp'), clock, watch)
+
+  // ---- the stage (the pane) and the notice of "offline"
+  const stage = el('div', 'rr-stage')
+  const off = el('section', 'rr-off')
+  off.hidden = true
+  const offFine = el('span', 'rr-off-t')
+  const offBtn = el('button', 'rr-btn')
+  offBtn.type = 'button'
+  offBtn.append(glyph('arrows-clockwise'), el('span', '', TEXT.retry))
+  offBtn.addEventListener('click', () => o.onRetry())
+  {
+    const box = el('div', 'rr-off-in')
+    box.setAttribute('role', 'status')
+    const ic = el('span', 'rr-off-ic')
+    ic.append(glyph('plugs'))
+    const fine = el('p', 'rr-off-fine')
+    fine.append(el('i', 'rr-dot err'), offFine)
+    const list = el('ul', 'rr-off-list')
+    list.append(el('li', '', TEXT.offKept), el('li', '', TEXT.offApp))
+    box.append(ic, el('h1', '', TEXT.offTitle), el('p', '', TEXT.offLead), fine, offBtn, list)
+    off.append(box)
+  }
+  shell.append(top, stage, off)
+  root.replaceChildren(shell)
+
+  // ---- the band of "the app is closed on the machine", put over the tree of the pane
+  const snap = el('div', 'rr-snap')
+  const snapLine = el('span', 'rr-snap-l')
+  const snapSmall = el('small', 'rr-snap-s')
+  {
+    const text = el('div', 'rr-snap-t')
+    text.append(snapLine, snapSmall)
+    snap.append(glyph('clock'), text)
+  }
+  const asOfMark = el('span', 'rr-asof')
+
+  let session: Session | undefined
+  let link: 'loading' | 'live' | 'closed' | 'offline' = 'loading'
+  let offlineState: OfflineState = {}
+  let tier: Tier = tierOf(shell.clientWidth || window.innerWidth)
+  let lastLayout: RegencyLayout | undefined
+  let frame = 0
+  let opened = false
+  let disposed = false
+
+  const paintTop = (): void => {
+    shell.dataset.link = link
+    shell.dataset.tier = tier
+    const words = link === 'live' ? TEXT.live : link === 'closed' ? TEXT.appClosed : link === 'offline' ? TEXT.offline : TEXT.loading
+    if (where.textContent !== words) where.textContent = words
+    dot.className = `rr-dot ${link === 'live' ? 'ok' : link === 'closed' ? 'warn' : link === 'offline' ? 'err' : ''}`
+    far.hidden = link === 'offline' || link === 'loading'
+    watch.hidden = link === 'offline'
+    const t = clockOf(now())
+    if (clock.textContent !== t) clock.textContent = t
+  }
+
+  const paintOffline = (): void => {
+    const last = offlineState.lastContactMs
+    const said = last === undefined ? '' : `Último contato ${whenOf(last, now())}. `
+    const text = `${said}${retryWords(offlineState.retryInS)}`
+    if (offFine.textContent !== text) offFine.textContent = text
+  }
+
+  /** The band and the "às 14:32" of the heading, while the app is closed (they sit in the pane's own tree column). */
+  const paintSnap = (): void => {
+    const s = session
+    if (!s) return
+    const closed = s.house.loaded && !s.house.live
+    const right = s.pane.element.querySelector<HTMLElement>(':scope > .rg-right')
+    const tools = right?.querySelector<HTMLElement>(':scope > .rg-tools')
+    const title = right?.querySelector<HTMLElement>(':scope > .rg-hd > .rg-hd-t')
+    if (!closed || !right || !tools) { snap.remove(); asOfMark.remove(); return }
+    const words = snapWords(s.house.asOf)
+    if (snapLine.textContent !== words.line) snapLine.textContent = words.line
+    if (snapSmall.textContent !== words.small) snapSmall.textContent = words.small
+    if (snap.parentElement !== right || snap.nextElementSibling !== tools) right.insertBefore(snap, tools)
+    const at = s.house.asOf === undefined ? '' : `às ${clockOf(s.house.asOf)}`
+    if (asOfMark.textContent !== at) asOfMark.textContent = at
+    if (title && at !== '' && asOfMark.previousElementSibling !== title) title.after(asOfMark)
+    if (at === '') asOfMark.remove()
+  }
+
+  const paint = (): void => {
+    frame = 0
+    const s = session
+    if (disposed || !s) { paintTop(); return }
+    link = !s.house.loaded ? 'loading' : s.house.live ? 'live' : 'closed'
+    paintTop()
+    // The first tree: the phone opens on "Mesas" when the app is closed (that is where the news is), and a channel that
+    // calls the person (else the first open one) takes the centre.
+    if (!opened && s.house.loaded) {
+      opened = true
+      if (s.pane.state.channelId === undefined) {
+        const open = s.house.input().channels.filter(c => !c.closed)
+        const calls = (id: string): number => { const m = s.house.markOf(id); return m ? m.toMe + m.asks + m.owed : 0 }
+        const first = open.find(c => calls(c.id) > 0) ?? open[0]
+        if (first) s.pane.select(first.id)
+      }
+      s.pane.paint()
+      // (The casing's own tier: the pane learns its width a frame later.)
+      if (link === 'closed' && tier === 'mobile') s.pane.setTab('tether')
+    }
+    s.pane.paint()
+    s.card.refresh()
+    paintSnap()
+  }
+  const schedule = (): void => { if (!frame && !disposed) frame = requestAnimationFrame(paint) }
+
+  const endSession = (): void => {
+    const s = session
+    if (!s) return
+    session = undefined
+    lastLayout = s.pane.state
+    s.dispose()
+  }
+
+  const online = (source: RemoteSource): void => {
+    if (disposed) return
+    endSession()
+    opened = false
+    offlineState = {}
+    off.hidden = true
+    stage.hidden = false
+    const house = new RemoteHouse(source)
+    let pane: RegencyPane | undefined
+    const card: QuickCard = new QuickCard(house, {
+      place: () => pane?.element.querySelector<HTMLElement>(':scope > .rg-center') ?? stage,
+      sheet: () => tier === 'mobile',
+      shell,
+      changed: () => pane?.markQuick(),
+      now,
+    })
+    const views = createChannelViews(remoteChannelHost(house, { quick: id => card.open({ kind: 'pane', id }) }))
+    pane = new RegencyPane(remoteRegencyHost(house, {
+      mount: (place, channelId, opts) => {
+        const view = views.mountEmbed(place, channelId, opts)
+        house.openViews.add(channelId)
+        return { ...view, dispose: () => { house.openViews.delete(channelId); view.dispose() } }
+      },
+      quick: { open: t => card.open(t), toggle: t => card.toggle(t), shown: () => card.shown(), close: () => card.close() },
+      visible: () => !stage.hidden,
+      width: () => shell.clientWidth,
+    }))
+    const p = pane
+    // The layout is the page's while it lives: a new session starts from where the last one was.
+    p.init({ api: { id: 'regency:main', updateParameters: () => {} }, params: lastLayout ? layoutParams(lastLayout) : {} })
+    stage.replaceChildren(p.element)
+    p.setShown(true)
+    const subs = [house.onDidChange(schedule), ...views.disposables]
+    session = {
+      house, pane: p, card,
+      dispose: () => {
+        for (const s of subs) s.dispose()
+        card.dispose()
+        p.dispose()
+        p.element.remove()
+        house.dispose()
+      },
+    }
+    house.start()
+    link = 'loading'
+    paint()
+  }
+
+  const offline = (state: OfflineState): void => {
+    if (disposed) return
+    endSession()
+    offlineState = state
+    link = 'offline'
+    stage.replaceChildren()
+    stage.hidden = true
+    off.hidden = false
+    paintTop()
+    paintOffline()
+  }
+
+  const ro = new ResizeObserver(() => {
+    const next = tierOf(shell.clientWidth)
+    if (next === tier) return
+    tier = next
+    paintTop()
+    // The card changes form with the tier (a sheet on the phone): it closes, the row is one tap away.
+    session?.card.close()
+  })
+  ro.observe(shell)
+  // The clock of the strip and the ages ("há 6 min") move with the minute.
+  const minute = setInterval(() => { if (session) schedule(); else paintTop() }, 30_000)
+  // Esc closes the reading card from anywhere in the casing (the pane's own keys run first: this one only when they left it).
+  const onKey = (ev: KeyboardEvent): void => {
+    if (ev.key !== 'Escape' || ev.defaultPrevented || !session || session.card.shown() === undefined) return
+    session.card.close(true)
+  }
+  shell.addEventListener('keydown', onKey)
+  paintTop()
+
+  return {
+    element: shell,
+    online,
+    offline,
+    retryIn: seconds => { offlineState = { ...offlineState, retryInS: seconds }; if (link === 'offline') paintOffline() },
+    snapshot: () => ({ link, tier, paneTier: session?.pane.tier, card: session?.card.shown(), channel: session?.pane.state.channelId }),
+    dispose: () => {
+      disposed = true
+      if (frame) cancelAnimationFrame(frame)
+      clearInterval(minute)
+      ro.disconnect()
+      shell.removeEventListener('keydown', onKey)
+      endSession()
+      shell.remove()
+    },
+  }
+}

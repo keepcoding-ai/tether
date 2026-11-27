@@ -1,0 +1,161 @@
+/* The Regency on the web: the casing around the app's own pane (src/regency.ts) and what a reading from afar changes in
+   it. The build puts this file AFTER the app's two sheets (channels.css, regency.css), so it has the last word.
+   Tokens are the app's (tokens.css); no new colour; the orange only ever means "needs you".
+   The four tiers are the pane's own (768 / 1280 / 2560 by its width, layout-rules.ts): this sheet follows `data-tier`. */
+
+.app[data-view="regency"] { width: 100%; max-width: none; margin: 0; padding: 0; }
+
+.rr {
+  --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+  /* The Regency's second grey: the text a quarter of the way to the column's ground (4.5:1 or more), as in regency.css. */
+  --fg-dim: color-mix(in srgb, var(--fg) 75%, var(--bg-2));
+  --alert-text: color-mix(in srgb, var(--x-alert) 62%, var(--fg));
+  position: relative; height: 100vh; height: 100dvh; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  padding-left: var(--sal); padding-right: var(--sar);
+  background: var(--desk-bg); color: var(--fg); font: 13px/1.45 var(--ui); -webkit-text-size-adjust: 100%;
+}
+/* The ruler of type: the phone alone in the hand, the tablet, the desk, and the TV read from the sofa. */
+.rr[data-tier="mobile"] { font-size: 15px; }
+.rr[data-tier="tablet"] { font-size: 14px; }
+.rr[data-tier="wide"] { font-size: 21px; }
+.rr [hidden] { display: none !important; }
+.rr-sp { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- the strip of the house: no title bar here, this is the one of the house ---------- */
+.rr-top { display: flex; align-items: center; gap: .6em; min-width: 0; padding: calc(var(--sat) + .45em) .85em .45em; min-height: calc(var(--sat) + 3.2em); border-bottom: 1px solid var(--border); background: var(--desk-bg); }
+.rr-brand { display: inline-grid; place-items: center; width: 2em; height: 2em; border-radius: .55em; flex: none; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.rr-brand .ph { width: 1.1em; height: 1.1em; }
+.rr-house { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.rr-house-n { font-size: 1.02em; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr[data-tier="mobile"] .rr-house-p { display: none; }
+.rr-where { display: flex; align-items: center; gap: .4em; min-width: 0; font-size: .82em; color: var(--fg-dim); }
+.rr-where-t, .rr-far { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-far { display: none; }
+.rr[data-tier="mobile"] .rr-far { display: inline; }
+.rr-dot { width: .6em; height: .6em; border-radius: 50%; flex: none; background: var(--fg-dim); }
+.rr-dot.ok { background: var(--ok); }
+.rr-dot.warn { background: var(--warn); }
+.rr-dot.err { background: var(--err); }
+.rr-clock { flex: none; font-size: .9em; font-variant-numeric: tabular-nums; color: var(--fg-dim); }
+.rr-watch { display: inline-flex; align-items: center; gap: .4em; flex: none; height: 2.3em; padding: 0 .85em; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); font-size: .82em; white-space: nowrap; }
+.rr-watch .ph { width: 1.2em; height: 1.2em; }
+.rr[data-tier="mobile"] :is(.rr-watch, .rr-clock) { display: none; }
+
+/* ---------- the stage: the whole screen on the phone and the tablet; a card on the ground on the desk and the TV ---------- */
+.rr-stage { min-width: 0; min-height: 0; display: flex; }
+.rr-stage > .rg { flex: 1 1 auto; min-width: 0; height: auto; }
+.rr:is([data-tier="desktop"], [data-tier="wide"]) .rr-stage { padding: 8px; }
+.rr:is([data-tier="desktop"], [data-tier="wide"]) .rr-stage > .rg { border: 1px solid var(--frame-border); border-radius: 10px; overflow: hidden; }
+
+/* ---------- reading: nothing that creates, manages or opens "Sistema" (no dead control is left on screen) ---------- */
+.rg[data-readonly] :is(.rg-new, .rg-acts, .rg-reserved, .rg-mode, .rg-edge-sys, .rg-vazia-b, .rg-shelf, [data-action="create-channel"]) { display: none !important; }
+.rg[data-readonly] > :is(.rg-qcol, .rg-srail) { display: none !important; }
+/* A row's state gave place to its buttons on hover: with no button, it stays. */
+.rg[data-readonly] :is(.rg-pane, .rg-agent) > .rg-st, .rg[data-readonly] .rg-cl > .rg-ago { visibility: visible !important; }
+/* An ended session has no menu here: its line is not a door. */
+.rg[data-readonly] .rg-cl { cursor: default; }
+
+/* The speaking box's place: a calm line, not a box turned off (channel-pane.ts `ch-follow`). */
+.rr .ch-follow { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 8px 14px calc(8px + var(--rr-foot, 0px)); border-top: 1px solid var(--border); background: var(--bg-2); color: var(--fg-dim); font-size: 12px; line-height: 1.4; }
+.rr .ch-follow .ph { width: 15px; height: 15px; flex: none; }
+
+/* ---------- the tiers ---------- */
+/* The type grows by scaling the pane's PARTS, never the pane: its width in CSS pixels is what decides the tier. */
+.rr .rg[data-tier="mobile"] > * { zoom: 1.2; }
+.rr .rg[data-tier="wide"] > * { zoom: 1.6; }
+
+/* Phone: the targets stay 44 px on the glass (the pane's own 44 px, scaled, would be 53): the rows give the scale back. */
+.rr .rg[data-tier="mobile"] :is(.rg-wait, .rg-conv, .rg-desk, .rg-pane, .rg-agent, .rg-tg, .rg-cl-head, .rg-cl) { min-height: 37px; }
+.rr .rg[data-tier="mobile"] :is(.rg-chip, .rg-seg-b) { height: 34px; }
+.rr .rg[data-tier="mobile"] :is(.rg-search-open, .rg-search-x) { width: 37px; height: 37px; }
+.rr .rg[data-tier="mobile"] .rg-search { height: 38px; }
+/* The heading of "Mesas" has no room for the view's switch beside the title (and "às 14:32"): it goes under, whole width, as on the tablet. */
+.rr .rg[data-tier="mobile"] .rg-right > .rg-hd { flex-wrap: wrap; row-gap: 6px; }
+.rr .rg[data-tier="mobile"] .rg-right > .rg-hd > .rg-seg { order: 9; flex: 1 1 100%; }
+.rr .rg[data-tier="mobile"] .rg-right > .rg-hd > .rg-seg > .rg-seg-b { flex: 1 1 0; justify-content: center; }
+/* The chips roll sideways under the finger: no bar is drawn for it. */
+.rr .rg:is([data-tier="mobile"], [data-tier="tablet"]) .rg-chips { scrollbar-width: none; }
+/* The three places at the bottom, the icon over the word (side by side "Esperam você" was cut at 390 px), over the home
+   indicator. */
+.rr .rg[data-tier="mobile"] > .rg-tabbar { padding-bottom: calc(4px + var(--sab) / 1.2); }
+.rr .rg[data-tier="mobile"] .rg-tab { position: relative; flex: 1 1 0; flex-direction: column; gap: 2px; min-height: 44px; padding: 3px 4px; font-size: 10.5px; }
+.rr .rg[data-tier="mobile"] .rg-tab .rg-ic svg { width: 18px; height: 18px; }
+.rr .rg[data-tier="mobile"] .rg-tab .cnt { position: absolute; top: 2px; left: calc(50% + 7px); box-shadow: none; }
+
+/* Desk: the three columns of the local Regency. */
+.rr .rg[data-tier="desktop"][data-mode="manage"] { grid-template-columns: 260px minmax(0, 1fr) 360px; }
+
+/* TV: the width works. Who waits and the channels | the conversation at reading measure | the desks as a board: one column
+   per desk, each pane a card. */
+.rr .rg[data-tier="wide"][data-mode="manage"] { grid-template-columns: 460px minmax(0, 880px) minmax(0, 1fr); }
+.rr .rg[data-tier="wide"] > .rg-right { background: color-mix(in srgb, var(--bg-2) 55%, var(--frame-bg)); }
+/* The columns share the row; desks that do not fit go to the next row; "Fechadas" (and "nothing with this filter") take a whole row at the foot. */
+.rr .rg[data-tier="wide"] .rg-tree { display: flex; flex-flow: row wrap; align-items: flex-start; align-content: flex-start; gap: 10px; padding: 4px 10px 10px; }
+.rr .rg[data-tier="wide"] .rg-tree > .rg-group { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.rr .rg[data-tier="wide"] .rg-tree > :is(.rg-group[data-closed], .rg-none) { flex: 1 1 100%; padding-top: 6px; border-top: 1px solid var(--border); }
+.rr .rg[data-tier="wide"] .rg-tree :is(.rg-desk, .rg-pane) { margin: 0; }
+/* A desk (or, by agent, its head) is the column's head; each pane under it is a card. */
+.rr .rg[data-tier="wide"] .rg-group:not([data-closed]) > :is(.rg-desk, .rg-agent) { min-height: 34px; padding: 4px 8px; border-radius: 7px; background: var(--bg-2); border: 1px solid var(--border); }
+.rr .rg[data-tier="wide"] .rg-group:not([data-closed]) > .rg-pane:not(.rg-agent) { min-height: 38px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); }
+.rr .rg[data-tier="wide"] .rg-group:not([data-closed]) > .rg-pane:not(.rg-agent)[data-state="wait"] { border-color: color-mix(in srgb, var(--x-alert) 45%, var(--border)); background: color-mix(in srgb, var(--x-alert) 8%, var(--bg)); }
+.rr .rg[data-tier="wide"] .rg-group:not([data-closed]) > .rg-pane:not(.rg-agent).zz { background: transparent; border-style: dashed; }
+.rr .rg[data-tier="wide"] .rg-tree .rg-vazia { margin: 0; padding: 4px 9px; }
+.rr .rg[data-tier="wide"] .rg-tree .rg-cl-empty { margin: 0; }
+
+/* ---------- the app is closed on the machine: the desks are a picture of when it last published ---------- */
+.rr-asof { margin-left: 6px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--fg-dim); white-space: nowrap; }
+.rr-snap { display: flex; align-items: flex-start; gap: 8px; flex: none; margin: 2px 9px 8px; padding: 7px 9px; border-radius: 7px; font-size: 11.5px; line-height: 1.4;
+  border: 1px dashed color-mix(in srgb, var(--warn) 55%, var(--border)); background: color-mix(in srgb, var(--warn) 7%, transparent); color: var(--fg); }
+.rr-snap .ph { width: 15px; height: 15px; margin-top: 1px; color: var(--warn); }
+.rr-snap-t { min-width: 0; }
+.rr-snap-s { display: block; color: var(--fg-dim); font-size: 10.5px; }
+/* What lives only in the app (a note, a browser tab) has no state to tell while the app is closed: it says so. */
+.rr[data-link="closed"] .rg-tree .rg-pane:not([data-type="terminal"], [data-type="channel"], [data-type="process"]):not(:has(> .rg-st))::after { content: "como estava"; flex: none; font-size: 11.5px; font-style: italic; color: var(--fg-dim); white-space: nowrap; }
+
+/* ---------- the reading card of a pane: the quick view's place. Docked over the conversation, not modal; a sheet on the phone ---------- */
+.rr-card { position: absolute; z-index: 40; top: 52px; right: 12px; width: min(330px, calc(100% - 24px)); display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 10px; border: 1px solid var(--border); background: var(--bg-2); box-shadow: var(--shadow); font-size: 12.5px; color: var(--fg); }
+.rr-card[data-form="sheet"] { position: absolute; z-index: 70; top: auto; left: 0; right: 0; bottom: 0; width: auto; border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: var(--sab); background: var(--bg-3); font-size: 15px; }
+.rr-card-back { position: absolute; z-index: 69; inset: 0; background: rgba(0, 0, 0, .45); }
+.rr-card-grab { display: none; }
+.rr-card[data-form="sheet"] .rr-card-grab { display: block; width: 40px; height: 4px; margin: 7px auto 0; border-radius: 2px; background: var(--border); }
+.rr-card-h { display: flex; align-items: center; gap: .5em; min-width: 0; padding: .5em .5em .5em 1em; border-bottom: 1px solid var(--border); }
+.rr-card-t { display: inline-flex; align-items: center; gap: .45em; min-width: 0; font-weight: 600; font-size: 1.05em; }
+.rr-card-t .rg-ic { color: var(--fg-dim); }
+.rr-card-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-ib { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: none; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-dim); cursor: pointer; }
+.rr-card[data-form="sheet"] .rr-ib { width: 44px; height: 44px; }
+.rr-ib:hover { background: var(--bg-hover); color: var(--fg); }
+.rr-ib:focus-visible, .rr-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rr-card-b { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .45em .9em; margin: 0; padding: .8em 1em; }
+.rr-card-b dt { color: var(--fg-dim); }
+.rr-card-b dd { margin: 0; min-width: 0; display: flex; align-items: center; gap: .4em; flex-wrap: wrap; }
+.rr-swatch { width: .7em; height: .7em; border-radius: 2px; flex: none; background: var(--rr-desk); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent); }
+.rr-st.wait { color: var(--alert-text); font-weight: 600; }
+.rr-st.work { color: color-mix(in srgb, var(--ok) 70%, var(--fg)); }
+.rr-st.zz, .rr-st.off { font-style: italic; color: var(--fg-dim); }
+.rr-ago { color: var(--fg-dim); }
+.rr-card-f { display: flex; align-items: center; gap: .5em; padding: .7em 1em; border-top: 1px solid var(--border); background: var(--bg-3); color: var(--fg-dim); font-size: .92em; line-height: 1.35; }
+.rr-card-f .ph { width: 1.15em; height: 1.15em; flex: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .rr-card:not([data-form="sheet"]) { animation: rr-card-in .18s cubic-bezier(.2, .7, .2, 1); }
+  .rr-card[data-form="sheet"] { animation: rr-card-up .22s cubic-bezier(.2, .7, .2, 1); }
+}
+@keyframes rr-card-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes rr-card-up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+
+/* ---------- offline: the machine out of reach. Nothing to show but the notice and when we last spoke ---------- */
+.rr-off { grid-row: 2; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: auto; padding: 2em 1.25em calc(2em + var(--sab)); }
+.rr-off-in { max-width: 26em; display: flex; flex-direction: column; align-items: flex-start; gap: .8em; }
+.rr-off-ic { display: inline-grid; place-items: center; width: 2em; height: 2em; border-radius: .55em; font-size: 1.5em; color: var(--fg-dim); background: var(--bg-2); border: 1px solid var(--border); }
+.rr-off h1 { margin: 0; font-size: 1.45em; line-height: 1.25; font-weight: 650; }
+.rr-off p { margin: 0; line-height: 1.5; }
+.rr-off-fine { display: flex; align-items: center; gap: .5em; color: var(--fg-dim); font-size: .9em; }
+.rr-btn { display: inline-flex; align-items: center; justify-content: center; gap: .45em; min-height: 44px; padding: 0 1.2em; border-radius: .6em; font: inherit; font-weight: 600; cursor: pointer; color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.rr-btn:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.rr[data-tier="wide"] .rr-btn { min-height: 58px; }
+.rr[data-tier="mobile"] .rr-off .rr-btn { align-self: stretch; }
+.rr-off-list { margin: .2em 0 0; padding-left: 1.1em; color: var(--fg-dim); font-size: .9em; line-height: 1.55; }

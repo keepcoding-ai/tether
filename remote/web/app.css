@@ -1,36 +1,14 @@
 /* The remote web client's skeleton. Designed at 390 px (phone): one thing per screen, targets of at least 44 px.
    The wider tiers are derived below with the least intent that keeps the reading right: tablet (768) centres a
    column, desktop (1280) widens it a little, TV (2560) scales the whole type ramp and lays the list in columns, so the
-   width does not become an empty middle. Colours are tokens by intent, the same names and values as the app's
-   (app/renderer/styles.css), dark first and light by the system's scheme. */
+   width does not become an empty middle. Colours are tokens by intent: the app's own sheet of tokens
+   (app/renderer/tokens.css), which the build puts in front of this file, dark first and light by the system's scheme. */
 
 :root {
-  --bg: #1b1b1f;
-  --bg-2: #232329;
-  --bg-3: #2c2c34;
-  --fg: #d8d8dc;
-  --fg-dim: #9a9aa3;
-  --accent: #6aa6ff;
-  --accent-hover: #86b7ff;
-  --on-accent: #0d1320;
-  --border: #35353d;
-  --ok: #5fcf80;
-  --warn: #e6b450;
-  --err: #ef6a6a;
   --radius: 10px;
   --gutter: 16px;
   --column: 100%;
   --target: 2.75rem; /* 44 px at the phone's 16 px */
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #fbfbfd; --bg-2: #f1f2f5; --bg-3: #e6e7ec;
-    --fg: #24292f; --fg-dim: #5f6368; --accent: #1f6fe0; --accent-hover: #3b84ea; --on-accent: #ffffff;
-    --border: #cfd1d8; --ok: #1a8a3c; --warn: #9a6b00; --err: #c62828;
-    color-scheme: light;
-  }
 }
 
 *, *::before, *::after { box-sizing: border-box; }

@@ -1,17 +1,22 @@
 {
+  // The web client imports the Regency's shared screen (extensions/regency/renderer, extensions/channels/renderer). Their
+  // type graph reaches the daemon's wire types (type-only imports), so this program is checked with the same library and
+  // Node types as the app's renderer (app/renderer/tsconfig.json). What actually reaches the bundle is checked by the
+  // build itself (build.mjs refuses a Node module, an HTML sink, eval) and by test/unit/remote.web-bundle.test.ts.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": [],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["node"],
     "module": "esnext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src", "bench/page", "../../app/renderer/svg.d.ts"]
 }

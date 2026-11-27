@@ -1,0 +1,47 @@
+/* What the shared screen (extensions/channels/renderer/channels.css, extensions/regency/renderer/regency.css) takes for
+   granted from the app's own sheet (app/renderer/styles.css): the base of a button, the size of an icon, the counter, the
+   agent's identity and the emblem chip. Copied by value and scoped to the Regency's casing (`.rr`) inside `:where`, so each
+   rule keeps the specificity it has in the app and the two sheets above decide exactly what they decide there. The build
+   puts this file BEFORE those two. */
+
+:where(.rr) button {
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+:where(.rr) button:hover { background: var(--bg-hover); }
+:where(.rr) input { font: inherit; }
+
+:where(.rr) .ph { width: 1em; height: 1em; display: inline-block; vertical-align: -0.15em; flex: none; }
+
+:where(.rr) .cnt { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; background: var(--x-alert); color: var(--x-alert-foreground); box-shadow: 0 0 0 2px var(--desk-bg); }
+:where(.rr) .cnt[hidden] { display: none; }
+
+/* The emblem chip (app: tab-emblems.ts; here: ui-lite.ts, the icon inline in the chip). */
+:where(.rr) .emb-chip { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; flex: none; }
+:where(.rr) .emb-chip[hidden] { display: none; }
+:where(.rr) .emb-chip svg { width: 11px; height: 11px; fill: currentColor; }
+:where(.rr) .emb-chip.emb-none { box-shadow: inset 0 0 0 1px var(--border); }
+:where(.rr) .emb-chip .emb-l { display: none; }
+
+/* The agent's identity (agent-identity.ts): [engine icon] [emblem or letter] name. */
+:where(.rr) .aid { display: inline-flex; align-items: center; gap: 4px; flex: none; vertical-align: middle; }
+:where(.rr) .aid-eng { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; height: 14px; color: var(--fg-dim); }
+:where(.rr) .aid-eng svg { width: 14px; height: 14px; }
+:where(.rr) .aid-mark { display: inline-flex; flex: none; border-radius: 4px; }
+:where(.rr) .aid-mark.crown { box-shadow: 0 0 0 1.5px hsl(var(--aid-hue, var(--oh, 0)) var(--mark-solid-s) var(--mark-solid-l)); }
+:where(.rr) .aid-mark .emb-chip { margin: 0; }
+:where(.rr) .aid-letter { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; flex: none; font-size: 10px; font-weight: 700; line-height: 1;
+  color: hsl(var(--aid-hue, 0) var(--mark-s) var(--mark-fg-l)); background: hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-bg-a));
+  box-shadow: inset 0 0 0 1px hsl(var(--aid-hue, 0) var(--mark-s) 50% / var(--mark-line-a)); }
+:where(.rr) .aid.compact { position: relative; gap: 0; }
+:where(.rr) .aid.compact .aid-eng { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg-2); color: var(--fg); }
+:where(.rr) .aid.compact .aid-eng svg { width: 8px; height: 8px; }
+:where(.rr) .aid-seal { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg-2); color: var(--fg); }
+:where(.rr) .aid-seal svg { width: 8px; height: 8px; }
+:where(.rr) .aid-view { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+:where(.rr) .aid-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
