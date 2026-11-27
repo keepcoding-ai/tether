@@ -18,6 +18,7 @@ import {
   pairWaitScreen, retryText, unsupportedScreen, type Guard, type Lock, type PairNotice,
 } from './screens.ts'
 import { deleteHouse, loadHouse, saveHouse, type HouseRecord } from './store.ts'
+import { paramsOfUrlState, parseUrlState, urlStateOf, writeUrlState } from './url-state.ts'
 
 const root = document.getElementById('app') as HTMLElement
 const relayUrl = document.querySelector<HTMLMetaElement>('meta[name="tether-relay"]')?.content ?? ''
@@ -190,7 +191,13 @@ function offerOver(): void {
 // ---- the Regency ------------------------------------------------------------------------------------------------------
 
 function casing(): RemoteRegency {
-  regency ??= mountRegency(root, { houseName: record?.houseName ?? '', onRetry: retryNow })
+  regency ??= mountRegency(root, {
+    houseName: record?.houseName ?? '', onRetry: retryNow,
+    layout: {
+      initial: paramsOfUrlState(parseUrlState(location.search)),
+      changed: l => writeUrlState(location, history, urlStateOf(l)),
+    },
+  })
   return regency
 }
 
@@ -388,5 +395,18 @@ setInterval(() => {
 }, SINCE_REFRESH_MS)
 addEventListener('online', () => { if (view.s === 'offline') retryNow() })
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view.s === 'offline') retryNow() })
+
+// The service worker holds the shell only (sw.ts): a new version takes over at the next visit, never under a screen in use.
+if ('serviceWorker' in navigator) {
+  // Trusted Types makes the worker's script URL a sink: the one policy the CSP names hands out only this file's name.
+  const tt = (window as unknown as { trustedTypes?: { createPolicy(name: string, rules: { createScriptURL(u: string): string }): { createScriptURL(u: string): unknown } } }).trustedTypes
+  const swPolicy = tt?.createPolicy('tether-sw', {
+    createScriptURL: u => { if (u !== 'sw.js') throw new TypeError('sw.js only'); return u },
+  })
+  addEventListener('load', () => {
+    const url = swPolicy ? (swPolicy.createScriptURL('sw.js') as string) : 'sw.js'
+    navigator.serviceWorker.register(url, { scope: './' }).catch(() => undefined)
+  })
+}
 
 void boot()

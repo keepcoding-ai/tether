@@ -48,13 +48,14 @@ const FORBIDDEN_TEXT = [
 ]
 
 /**
- * Bundles `entry` for the browser. Returns the text, the inputs and, when the bundle holds what it may not, why
+ * Bundles `entry` for the browser (`define`: constants the build writes into the text, e.g. the service worker's file list).
+ * Returns the text, the inputs and, when the bundle holds what it may not, why
  * (`refusal`, in the words the build prints).
  */
-export async function bundle(entry, outfile) {
+export async function bundle(entry, outfile, define) {
   const result = await build({
     bundle: true, platform: 'browser', format: 'esm', target: 'es2022', logLevel: 'warning', sourcemap: false,
-    legalComments: 'none', metafile: true, charset: 'utf8', write: false,
+    legalComments: 'none', metafile: true, charset: 'utf8', write: false, ...(define ? { define } : {}),
     loader: { '.svg': 'text' }, plugins: [shellLite],
     entryPoints: [entry], outfile: outfile ?? join(here, 'dist', 'out.js'),
   })

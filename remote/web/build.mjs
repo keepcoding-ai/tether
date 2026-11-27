@@ -7,6 +7,8 @@
 //               shared screen's own two sheets as they are (channels.css, regency.css), and the Regency's casing on the
 //               web (regency.css)
 //   index.html  the template with the relay written into <meta name="tether-relay"> and the CSP's connect-src
+//   manifest.webmanifest, icons/  what makes it installable (icons.mjs draws the PNGs)
+//   sw.js       the service worker of the shell: the list of the files above and a version (the hash of their bytes)
 // With `--bench` (never in what is published): bench.html and bench.js, the Regency's screen over a made-up house
 // (bench/page/regency-bench.ts), under the same CSP, to look at it and to capture it.
 // The relay is this origin's relay (spec 3.2: the typed code uses the origin's default relay): `--relay`, else
@@ -14,9 +16,11 @@
 // The build refuses a bundle that pulled in src/remote/testing.ts (the fixed-entropy seam, spec 9.1), a module of Node, of
 // the daemon or of the app's main process, or that contains eval / new Function or an HTML sink (bundle.mjs).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { dirname, join, resolve } from 'node:path'
 import { paletteCss } from '../../app/shared/palette.ts'
 import { bundle, repoRoot, webDir as here } from './bundle.mjs'
+import { iconFiles } from './icons.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined }
@@ -35,8 +39,8 @@ const origin = `${u.protocol}//${u.host}`
 
 mkdirSync(out, { recursive: true })
 
-async function script(entry, name) {
-  const b = await bundle(entry, join(out, name))
+async function script(entry, name, define) {
+  const b = await bundle(entry, join(out, name), define)
   if (b.refusal) fail(`${name}: ${b.refusal}`)
   writeFileSync(join(out, name), b.js)
   return b
@@ -61,10 +65,24 @@ const html = readFileSync(join(here, 'index.html'), 'utf8').replaceAll('%CONNECT
 if (html.includes('%')) fail('index.html com marcador sem valor')
 writeFileSync(join(out, 'index.html'), html)
 
+// The installable shell: the manifest, the icons, and the service worker that keeps exactly these files (and the ones above)
+// under a version that is the hash of their bytes. sw.js is not in its own list: the browser fetches it by itself, from the
+// network, to see whether there is a new version.
+const shell = new Map([['index.html', html], ['app.js', app.js], ['app.css', css], ['manifest.webmanifest', readFileSync(join(here, 'manifest.webmanifest'))], ...iconFiles()])
+const hash = createHash('sha256')
+for (const [path, bytes] of [...shell].sort(([a], [b]) => (a < b ? -1 : 1))) hash.update(path).update('\0').update(bytes).update('\0')
+const version = hash.digest('hex').slice(0, 12)
+for (const [path, bytes] of shell) {
+  mkdirSync(dirname(join(out, path)), { recursive: true })
+  writeFileSync(join(out, path), bytes)
+}
+const files = [...shell.keys()].sort()
+const worker = await script(join(here, 'src', 'sw.ts'), 'sw.js', { __SHELL_FILES__: JSON.stringify(files), __SHELL_VERSION__: JSON.stringify(version) })
+
 let benchNote = ''
 if (bench) {
   const b = await script(join(here, 'bench', 'page', 'regency-bench.ts'), 'bench.js')
   writeFileSync(join(out, 'bench.html'), readFileSync(join(here, 'bench', 'bench.html'), 'utf8'))
   benchNote = `, bancada com ${Math.round(b.js.length / 1024)} KiB de bench.js`
 }
-console.log(`remote-web:build  ${out} (relay ${origin}, ${Math.round(app.js.length / 1024)} KiB de app.js, ${Math.round(css.length / 1024)} KiB de app.css${benchNote})`)
+console.log(`remote-web:build  ${out} (relay ${origin}, ${Math.round(app.js.length / 1024)} KiB de app.js, ${Math.round(css.length / 1024)} KiB de app.css, shell ${version} com ${files.length} arquivos, ${Math.round(worker.js.length / 1024)} KiB de sw.js${benchNote})`)

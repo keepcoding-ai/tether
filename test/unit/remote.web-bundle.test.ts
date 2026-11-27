@@ -72,7 +72,8 @@ describe('the web bundle of the Regency', () => {
       assert.match(csp, /script-src 'self'(;|$)/)
       assert.match(csp, /style-src 'self'(;|$)/)
       assert.match(csp, /require-trusted-types-for 'script'/)
-      assert.match(csp, /trusted-types 'none'/)
+      // The client's page names one policy, the service worker's script URL (main.ts); the bench has no worker.
+      assert.match(csp, page.endsWith('index.html') ? /trusted-types tether-sw(;|$)/ : /trusted-types 'none'/)
       assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|data:/)
       assert.doesNotMatch(html, /<style|style="|<script(?![^>]*\bsrc=)/)
     }
