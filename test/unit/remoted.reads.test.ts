@@ -227,7 +227,7 @@ const ANSWERS: Record<ExtReadOp, unknown> = {
     channel: { id: 'c_1', name: 'obra', title: `Obra em C:\\Users\\${MARKER}`, members: 1, seenByUser: 3, createdAt: ISO, ...later() },
     lines: [{ seq: 5, at: ISO, kind: 'message', from: { id: 'a1b2c3d4', name: 'conferente', role: 'member' }, body: 'oi', files: [{ name: 'a.txt', path: `C:/Users/${MARKER}/a.txt`, size: 3, type: 'text/plain' }], ...later() }],
     reactions: [], polls: [], more: true, last: 5,
-    members: [{ id: 'a1b2c3d4', name: `conferente em C:\\Users\\${MARKER}\\obra`, muted: true, since: ISO, by: MARKER, alive: true, path: 'inside', ...later() }],
+    members: [{ id: 'a1b2c3d4', name: `conferente em /mnt/c/Users/${MARKER}/obra`, muted: true, since: ISO, by: MARKER, alive: true, path: 'inside', ...later() }],
     moderator: { name: 'Guga', ...later() }, ...later(),
   },
   'regency.tree': {
@@ -238,6 +238,11 @@ const ANSWERS: Record<ExtReadOp, unknown> = {
         { id: 'desk-2', name: `C:/Users/${MARKER}/obra`, color: 'blue', kind: 'queue', asleep: false, panes: [
           { id: 'a2', type: 'terminal', icon: 'terminal', title: `C:\\Users\\${MARKER}\\tether` },
           { id: 'b1', type: 'browser', icon: 'browser', title: `file:///C:/Users/${MARKER}/docs/plano.html` },
+          // RR3 final gate B-2: the same home as Git Bash, WSL and a lowercase mount name it.
+          { id: 'a3', type: 'terminal', icon: 'terminal', title: `rodando em /c/Users/${MARKER}/proj` },
+          { id: 'a4', type: 'terminal', icon: 'terminal', title: `/mnt/c/Users/${MARKER}/proj` },
+          { id: 'a5', type: 'terminal', icon: 'terminal', title: `/users/${MARKER}/proj` },
+          { id: 'a6', type: 'terminal', icon: 'terminal', title: `c:\\users\\${MARKER}\\proj` },
         ] },
       ] },
       owners: { desk: {}, pane: {} },
@@ -280,7 +285,7 @@ describe('the three reads through a real House', () => {
     })
     const page = await s.request(OP_CODES['channels.page'], { channel: 'c_1', before: 9 })
     assert.equal(page.status, RES_STATUS.ok)
-    assert.deepEqual([page.body.members, page.body.moderator], [[{ id: 'a1b2c3d4', name: 'conferente em ~\\obra', muted: true }], { name: 'Guga' }], 'the members by id, name and mute only')
+    assert.deepEqual([page.body.members, page.body.moderator], [[{ id: 'a1b2c3d4', name: 'conferente em ~/obra', muted: true }], { name: 'Guga' }], 'the members by id, name and mute only')
     assert.deepEqual((page.body.lines as { files: unknown }[])[0]!.files, [{ name: 'a.txt', size: 3, type: 'text/plain' }], 'an attachment by its name, never its path')
     assert.equal(page.body.before, undefined, 'seq 5 of 5 with a page of 50: the start')
     const tree = await s.request(OP_CODES['regency.tree'])
@@ -291,7 +296,7 @@ describe('the three reads through a real House', () => {
     const d2 = input.desks.desks[1]!
     assert.deepEqual(
       { desk: d2.name, panes: d2.panes.map((p) => p.title), closed: input.closed[0]!.title, channel: input.channels[0]!.title, agent: input.agents[0]!.name },
-      { desk: '~/obra', panes: ['~\\tether', '~/…/plano.html'], closed: '~\\antigo', channel: '~/obra', agent: '~\\tether' },
+      { desk: '~/obra', panes: ['~\\tether', '~/…/plano.html', 'rodando em ~/proj', '~/proj', '~/proj', '~\\proj'], closed: '~\\antigo', channel: '~/obra', agent: '~\\tether' },
       'the home is `~`, a file: address its last segment',
     )
     assert.equal((page.body.channel as { title: string }).title, 'Obra em ~')

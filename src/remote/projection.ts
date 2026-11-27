@@ -322,14 +322,24 @@ const num = (v: unknown): number | undefined => (typeof v === 'number' && Number
 // label's word next to a path is the price; the login never goes.
 const FILE_URL_RE = /\bfile:\/\/[^\s"'<>]*/gi
 const WIN_HOME_RE = /\b[A-Za-z]:[\\/]+users[\\/]+[^\\/]+/gi
-const POSIX_HOME_RE = /(^|[\s"'(=:,;[])\/(?:Users|home)\/[^/]+/g
+// The drive reached from a POSIX shell: Git Bash/MSYS `/c/Users/<login>`, WSL `/mnt/c/Users/<login>`; macOS ignores case.
+const POSIX_HOME_RE = /(^|[\s"'(=:,;[])(?:\/mnt)?(?:\/[a-z])?\/(?:users|home)\/[^/]+/gi
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** `home` (when known) and every shape of a home folder in `s` become `~`. */
 function homesOut(s: string, home: string | undefined): string {
   let out = s
   const h = home?.trim().replace(/[\\/]+$/, '')
-  if (h && h.length > 1) out = out.replace(new RegExp(h.split(/[\\/]+/).map(escapeRe).join('[\\\\/]+'), 'gi'), '~')
+  if (h && h.length > 1) {
+    const parts = h.split(/[\\/]+/)
+    out = out.replace(new RegExp(parts.map(escapeRe).join('[\\\\/]+'), 'gi'), '~')
+    // The same folder as a POSIX shell names it: `C:\Users\x` is also `/c/Users/x` and `/mnt/c/Users/x`.
+    const drive = /^([A-Za-z]):$/.exec(parts[0]!)
+    if (drive && parts.length > 1) {
+      const rest = parts.slice(1).map(escapeRe).join('/+')
+      out = out.replace(new RegExp(`(^|[\\s"'(=:,;[])(?:/mnt)?/${drive[1]}/+${rest}`, 'gi'), '$1~')
+    }
+  }
   return out.replace(WIN_HOME_RE, '~').replace(POSIX_HOME_RE, '$1~')
 }
 

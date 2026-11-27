@@ -407,6 +407,13 @@ describe('the reads of an extension, by allow list', () => {
       ['D:\\perfis\\guga\\proj', '~\\proj', 'D:\\perfis\\guga'],
       ['d:/PERFIS/guga', '~', 'D:\\perfis\\guga\\'],
       ['github.com/users/guga', 'github.com/users/guga'],
+      ['rodando em /c/Users/guga/proj', 'rodando em ~/proj'],
+      ['/mnt/c/Users/guga/proj · claude', '~/proj · claude'],
+      ['em /users/guga/x', 'em ~/x'],
+      ['em /C/USERS/guga', 'em ~'],
+      ['/d/perfis/guga/proj', '~/proj', 'D:\\perfis\\guga'],
+      ['/mnt/d/Perfis/guga', '~', 'D:\\perfis\\guga'],
+      ['file:///c/Users/guga/a.pdf', '~/…/a.pdf'],
       ['Agente', 'Agente'],
     ]
     for (const [from, to, home] of cases) assert.equal(pathsOut(from, home), to, from)
