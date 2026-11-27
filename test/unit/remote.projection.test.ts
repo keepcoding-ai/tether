@@ -15,7 +15,7 @@ import {
 } from '../../src/remote/index.ts'
 import {
   ATTENTION_MAX, attentionItem, attentionList, CHANGED_IDS_MAX, channelsChanged, channelsMarks, channelsPage, emptyBody, errorBody,
-  eventBody, LINE_BODY_MAX, MARK_MEMBERS_MAX, MARKS_MAX, MARKS_MEMBER_IDS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, PAGE_MEMBERS_MAX, pathsOut,
+  eventBody, LINE_BODY_MAX, MARK_MEMBERS_MAX, MARKS_BYTES_MAX, MARKS_MAX, MARKS_MEMBER_IDS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, PAGE_MEMBERS_MAX, pathsOut,
   READ_BODY_MAX, SEAL_LINE_MAX, SEAL_LINES_MAX, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
   RESULTS, sessionInfo, type MarkRowSource, type ProcSource, type ProfileSource, type RegencyTree, type SlotSource,
 } from '../../src/remote/projection.ts'
@@ -258,6 +258,26 @@ describe('the reads of an extension, by allow list', () => {
     assert.deepEqual([full.channels.at(-1)!.members, full.channels.at(-1)!.membersMore], [[], MARK_MEMBERS_MAX], 'a row past it counts only')
     const worst = channelsMarks({ channels: Array.from({ length: MARKS_MAX }, (_, r) => ({ ...row, channel: `c_${r}`.padEnd(64, 'x'), name: 'é'.repeat(64), members: Array.from({ length: MARK_MEMBERS_MAX }, (_, i) => `${r}_${i}`.padEnd(64, 'y')) })) })
     assert.ok(utf8(JSON.stringify(worst)).length < READ_BODY_MAX, 'the longest ids and names still fit a read')
+  })
+
+  // RR3 final gate B-3: the row count and the member ids were capped, the bytes were not.
+  test('channels.marks: a byte budget under the read ceiling; the channels that call the person stay, the rest is `more`', () => {
+    const quiet = { unread: 0, toMe: 0, seen: 0, asks: 0, owed: 0 }
+    const heavy = (id: string, extra: object = {}) => ({
+      channel: id.padEnd(64, 'x'), name: '漢'.repeat(64), ...quiet, members: Array.from({ length: 4 }, (_, i) => `${id}_${i}`.padEnd(64, 'y')), ...extra,
+    })
+    const call = { toMe: 1, firstToMe: 5, firstCall: { why: 'to-you', text: '"漢'.repeat(120) } }
+    // The quiet channels come first in tetherd's order and the calling ones last: the cut must not take the callers.
+    const calling = 150
+    const rows = [...Array.from({ length: MARKS_MAX - calling }, (_, r) => heavy(`q${r}`)), ...Array.from({ length: calling }, (_, r) => heavy(`k${r}`, call))]
+    const out = channelsMarks({ channels: rows })
+    assert.ok(utf8(JSON.stringify(out)).length <= MARKS_BYTES_MAX, `${utf8(JSON.stringify(out)).length} bytes`)
+    assert.ok(MARKS_BYTES_MAX < READ_BODY_MAX)
+    assert.ok(out.more > 0, 'rows went to `more`')
+    assert.equal(out.channels.length + out.more, rows.length)
+    assert.equal(out.channels.filter((c) => c.toMe > 0).length, calling, 'every channel that calls the person stays')
+    assert.deepEqual(out.channels.slice(0, calling).map((c) => c.toMe), Array(calling).fill(1), 'the ones that call the person come first')
+    assert.deepEqual(channelsMarks({ channels: rows }), out, 'the cut is deterministic')
   })
 
   test('channels.page: the members now (by name without paths, muted marked, capped) and the person\'s name', () => {

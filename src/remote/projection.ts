@@ -270,6 +270,8 @@ export function remoteProfile(p: ProfileSource): RemoteProfile {
 export const READ_BODY_MAX = 224 * 1024
 /** Rows of channels.marks; the rest is counted in `more`. */
 export const MARKS_MAX = 256
+/** Bytes of one channels.marks' JSON, under READ_BODY_MAX: past it the rows that do not call the person go to `more` first. */
+export const MARKS_BYTES_MAX = 192 * 1024
 /** Lines of one channels.page (the default and the ceiling of `limit`). */
 export const PAGE_LINES_MAX = 50
 /** Bytes of one channels.page's JSON: over it, the oldest lines go and the cursor follows the oldest one kept. */
@@ -390,10 +392,20 @@ export interface MarksSource { channels: readonly MarkRowSource[]; moderator?: {
 /** The agents' ids of a member list: an id of the shape of ID_RE, each once, the person left out. */
 const memberIds = (v: unknown): string[] => [...new Set(arr(v, 4096).filter((id): id is string => typeof id === 'string' && id !== 'user' && ID_RE.test(id)))]
 
+/** A row that calls the person (a call, a mention, a request or a poll owed): it is kept before the quiet ones when the answer is cut. */
+const callsMe = (r0: unknown): boolean => {
+  const r = rec(r0)
+  return rec(r.firstCall).why !== undefined || (int(r.toMe) ?? 0) > 0 || (int(r.asks) ?? 0) > 0 || (int(r.owed) ?? 0) > 0
+}
+
 export function channelsMarks(s: MarksSource): ChannelsMarks {
   const rows: MarkRow[] = []
-  const all = Array.isArray(rec(s).channels) ? (s.channels as readonly unknown[]) : []
+  const given = Array.isArray(rec(s).channels) ? (s.channels as readonly unknown[]) : []
+  // Stable: the callers first, each group in tetherd's order, so the cut below is the same for the same answer.
+  const all = [...given.filter(callsMe), ...given.filter((r) => !callsMe(r))]
+  const moderator = { name: name64(rec(rec(s).moderator).name) }
   let room = MARKS_MEMBER_IDS_MAX
+  let bytes = byteLength({ channels: [], more: all.length, moderator })
   for (const r0 of all) {
     if (rows.length >= MARKS_MAX) break
     const r = rec(r0)
@@ -403,13 +415,17 @@ export function channelsMarks(s: MarksSource): ChannelsMarks {
     const why = oneOf(f.why, FIRST_WHY)
     const ids = memberIds(r.members)
     const members = ids.slice(0, Math.min(MARK_MEMBERS_MAX, room))
-    room -= members.length
-    rows.push(opt<MarkRow>(
+    const row = opt<MarkRow>(
       { channel, name: name64(r.name), unread: int(r.unread) ?? 0, toMe: int(r.toMe) ?? 0, seen: int(r.seen) ?? 0, asks: int(r.asks) ?? 0, owed: int(r.owed) ?? 0, members },
       { firstToMe: int(r.firstToMe, 1), firstCall: why ? { why, text: line(f.text, 240) } : undefined, membersMore: ids.length > members.length ? ids.length - members.length : undefined },
-    ))
+    )
+    const size = byteLength(row) + 1
+    if (bytes + size > MARKS_BYTES_MAX) break
+    bytes += size
+    room -= members.length
+    rows.push(row)
   }
-  return { channels: rows, more: Math.max(0, all.length - rows.length), moderator: { name: name64(rec(rec(s).moderator).name) } }
+  return { channels: rows, more: Math.max(0, all.length - rows.length), moderator }
 }
 
 // ---- channels.page
