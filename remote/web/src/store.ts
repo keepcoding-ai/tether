@@ -28,6 +28,11 @@ export interface HouseRecord {
   /** `pending` until the first HS_DONE of a normal session (spec 3.4 step 14, E-15). */
   state: 'pending' | 'active'
   pairedAtMs: number
+  /**
+   * The id of the platform credential registered on the pairing session (spec 7.4 point 1), for `allowCredentials`.
+   * Absent: nothing was registered, and this device only reads. Not a secret; the key stays in the authenticator.
+   */
+  credentialId?: Bytes
 }
 
 const DB = 'tether-remote'

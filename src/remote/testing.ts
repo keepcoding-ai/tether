@@ -25,6 +25,7 @@ import { actDigest, elevateDigest, unlockDigest, UV_PURPOSE, uvChallenge, uvRegC
 import { recordAad, recordNonce, sealRecordAt } from './record.ts'
 import { DeviceHandshake, HouseHandshake } from './session.ts'
 import { pair as PTH, sasFromBits, session as STH, th2 as TH2 } from './transcript.ts'
+import { assertionChallenge, registrationChallenge, verifyAssertion, verifyRegistration } from './webauthn.ts'
 
 const subtle = (): SubtleCrypto => globalThis.crypto.subtle
 const P256 = { namedCurve: 'P-256' } as const
@@ -600,5 +601,68 @@ export async function checkVectors(v: Vectors): Promise<VectorResult[]> {
   })
   // The whole point of a hash: two different inputs of the file must not collapse to one.
   await section('sanity', async () => same('sanity: SHA-256 of the empty string', toHex(await sha256()), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'))
+  return out
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// WebAuthn fixed vectors of the house (spec 7.4, step 2.4): the `house` block of test/unit/remote.webauthn.vectors.json.
+// The checker is pure over the file and the module, so Node and a browser run the same vectors through the same code.
+// ---------------------------------------------------------------------------------------------------------------
+
+type WebAuthnRefused = { ok: false; reason: string }
+export type WebAuthnRegExpect =
+  | { ok: true; credentialId: string; publicKey: string; signCount: number; backupEligible: boolean; backedUp: boolean }
+  | WebAuthnRefused
+export type WebAuthnAssertExpect = { ok: true; signCount: number; backedUp: boolean } | WebAuthnRefused
+
+export interface WebAuthnRegCase { name: string; challenge: string; clientDataJSON: string; attestationObject: string; expect: WebAuthnRegExpect }
+export interface WebAuthnAssertCase {
+  name: string; challenge: string; publicKey: string; storedSignCount: number
+  authenticatorData: string; clientDataJSON: string; signature: string; expect: WebAuthnAssertExpect
+}
+
+/** The house block: the relying party, the context the challenges are built from, and every recorded ceremony. */
+export interface WebAuthnHouse {
+  rp: { origin: string; rpId: string }
+  context: { sessionId: string; otherSessionId: string; pubD: string; deviceId: string; otherDeviceId: string; uvCtr: number; op: number; actId: string; body: string }
+  challenges: { registration: string; unlock: string; elevate: string; act: string }
+  registrations: WebAuthnRegCase[]
+  assertions: WebAuthnAssertCase[]
+}
+
+async function runRegistration(h: WebAuthnHouse, c: WebAuthnRegCase): Promise<WebAuthnRegExpect> {
+  const v = await verifyRegistration({
+    rp: h.rp, challenge: fromHex(c.challenge), clientDataJSON: fromHex(c.clientDataJSON), attestationObject: fromHex(c.attestationObject),
+  })
+  if (!v.ok) return { ok: false, reason: v.reason }
+  const k = v.credential
+  return { ok: true, credentialId: toHex(k.credentialId), publicKey: toHex(k.publicKey), signCount: k.signCount, backupEligible: k.backupEligible, backedUp: k.backedUp }
+}
+
+async function runAssertion(h: WebAuthnHouse, c: WebAuthnAssertCase): Promise<WebAuthnAssertExpect> {
+  const v = await verifyAssertion({
+    rp: h.rp, challenge: fromHex(c.challenge),
+    proof: { authenticatorData: fromHex(c.authenticatorData), clientDataJSON: fromHex(c.clientDataJSON), signature: fromHex(c.signature) },
+    credential: { publicKey: fromHex(c.publicKey), signCount: c.storedSignCount },
+  })
+  return v.ok ? { ok: true, signCount: v.signCount, backedUp: v.backedUp } : { ok: false, reason: v.reason }
+}
+
+/** Checks the house block against this module: the four challenges, then every registration and assertion verdict. */
+export async function checkWebAuthnHouse(h: WebAuthnHouse): Promise<VectorResult[]> {
+  const out: VectorResult[] = []
+  const same = (name: string, got: unknown, want: unknown): void => {
+    const a = JSON.stringify(got)
+    const b = JSON.stringify(want)
+    out.push(a === b ? { name, ok: true } : { name, ok: false, detail: `got ${a}, want ${b}` })
+  }
+  const sid = fromHex(h.context.sessionId)
+  const act = { purpose: 'act', op: h.context.op, actId: fromHex(h.context.actId), body: fromHex(h.context.body) } as const
+  same('challenge: registration', toHex(await registrationChallenge(sid, fromHex(h.context.pubD))), h.challenges.registration)
+  same('challenge: unlock', toHex(await assertionChallenge(sid, h.context.uvCtr, { purpose: 'unlock' })), h.challenges.unlock)
+  same('challenge: elevate', toHex(await assertionChallenge(sid, h.context.uvCtr, { purpose: 'elevate', deviceId: fromHex(h.context.deviceId) })), h.challenges.elevate)
+  same('challenge: act', toHex(await assertionChallenge(sid, h.context.uvCtr, act)), h.challenges.act)
+  for (const c of h.registrations) same(c.name, await runRegistration(h, c), c.expect)
+  for (const c of h.assertions) same(c.name, await runAssertion(h, c), c.expect)
   return out
 }

@@ -4,7 +4,7 @@
 // (`tick` once a second lets PING and HB_TIMEOUT happen); nothing here asks the house for news: events are pushed.
 import {
   buildDeviceAdmit, decodeEvt, decodeRes, DeviceHandshake, encodeReq, randomBytes, roleKey, WireError,
-  type CloseCode, type DeviceHsFailure, type HsDoneInfo, type Session, type SessionEffect,
+  type Bytes, type CloseCode, type DeviceHsFailure, type UvProof, type HsDoneInfo, type Session, type SessionEffect,
 } from '../../../src/remote/index.ts'
 import { LinkClosed, RelayLink } from './link.ts'
 import type { HouseRecord } from './store.ts'
@@ -108,10 +108,18 @@ export class Live {
     }
   }
 
-  /** One request. Resolves with the answer; status -1 when the session ended before it came. */
-  request(op: number, body: Record<string, unknown> = {}, o: { mutates?: boolean } = {}): Promise<Reply> {
+  /** The session's id: what every presence challenge of this session is bound to (spec 7.4). */
+  get sessionId(): Bytes { return this.#session.sessionId }
+
+  /**
+   * One request. Resolves with the answer; status -1 when the session ended before it came. `body` given as bytes goes
+   * out as is (an act bound to a presence proof is hashed over these exact bytes); `actId` fixes the act's id.
+   */
+  request(op: number, body: Record<string, unknown> | Bytes = {}, o: { mutates?: boolean; actId?: Bytes; uvProof?: UvProof } = {}): Promise<Reply> {
     const reqId = this.#reqId++
-    const content = encodeReq({ reqId, op, ...(o.mutates ? { actId: randomBytes(16) } : {}), body: new TextEncoder().encode(JSON.stringify(body)) })
+    const actId = o.actId ?? (o.mutates ? randomBytes(16) : undefined)
+    const bytes = body instanceof Uint8Array ? body : new TextEncoder().encode(JSON.stringify(body))
+    const content = encodeReq({ reqId, op, ...(actId ? { actId } : {}), ...(o.uvProof ? { uvProof: o.uvProof } : {}), body: bytes })
     const got = new Promise<Reply>((resolve) => {
       this.#waiting.set(reqId, resolve)
       setTimeout(() => { if (this.#waiting.delete(reqId)) resolve({ status: -1, body: {} }) }, REQUEST_MS)

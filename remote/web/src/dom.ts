@@ -4,7 +4,7 @@
 
 type Attr = 'class' | 'id' | 'type' | 'role' | 'for' | 'name' | 'inputmode' | 'autocomplete' | 'autocapitalize'
   | 'spellcheck' | 'enterkeyhint' | 'maxlength' | 'placeholder' | 'datetime' | 'aria-live' | 'aria-label'
-  | 'aria-describedby' | 'aria-hidden' | `data-${string}`
+  | 'aria-describedby' | 'aria-hidden' | 'aria-labelledby' | 'aria-busy' | 'disabled' | `data-${string}`
 
 export type Child = Node | string | false | null | undefined
 

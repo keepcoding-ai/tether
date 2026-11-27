@@ -3,6 +3,7 @@
 import { kindLabel, waitedFor, type WaitingList } from './attention.ts'
 import { h, type Child } from './dom.ts'
 import type { PairFailKind } from './pair.ts'
+import type { PresenceFail } from './presence.ts'
 
 export type PairNotice = 'bad-code' | 'used-code' | 'unreachable' | 'not-accepted' | 'revoked' | 'pending-failed'
 
@@ -124,14 +125,86 @@ export function retryText(s: number | undefined): string {
   return s === undefined || s <= 0 ? 'Tentando agora…' : `Tento de novo em ${s} s.`
 }
 
-export function listScreen(o: { list: WaitingList; nowMs: number; houseName: string; notice?: string; problem?: string }): HTMLElement {
+// ---- presence: the offer to protect this device, its state, and the unlock -------------------------------------
+
+/** Where this device stands on presence. `offer` lives only while the pairing session still accepts the registration. */
+export type Guard =
+  | { s: 'offer'; fail?: PresenceFail }
+  | { s: 'registering' }
+  | { s: 'protected' }
+  | { s: 'read-only'; fail?: PresenceFail }
+
+/** The session asked for presence before it lets the list through (status "trancado"). */
+export interface Lock { busy: boolean; fail?: PresenceFail }
+
+const REGISTER_FAIL: Record<PresenceFail, string> = {
+  cancelled: 'O cadastro foi cancelado. Você pode tentar de novo agora.',
+  'no-biometrics': 'Este aparelho não tem biometria nem bloqueio de tela que o navegador possa usar. Ele continua só vendo.',
+  'browser-refused': 'O navegador não deixou cadastrar a biometria. Tente de novo; se continuar, este aparelho fica só vendo.',
+  'house-refused': 'A máquina não aceitou a biometria deste aparelho. Tente de novo.',
+  'too-late': 'O prazo para proteger acabou. Para proteger este aparelho, pareie de novo.',
+  cut: 'A conexão caiu antes de terminar. Tente de novo.',
+  'no-credential': 'Este aparelho não tem biometria cadastrada.',
+}
+
+const UNLOCK_FAIL: Record<PresenceFail, string> = {
+  cancelled: 'Cancelado. Toque em Destrancar quando quiser.',
+  'no-biometrics': 'O navegador não encontrou a biometria deste aparelho. Tente de novo.',
+  'browser-refused': 'O navegador não deixou confirmar a biometria. Tente de novo.',
+  'house-refused': 'A máquina não aceitou a confirmação. Tente de novo.',
+  'too-late': 'A confirmação demorou demais. Tente de novo.',
+  cut: 'A conexão caiu antes de terminar. Tente de novo.',
+  'no-credential': 'Este aparelho não tem biometria cadastrada: ele só vê. Para proteger, pareie de novo.',
+}
+
+/** One line under the house's name: protected, or read only. */
+function guardState(g: Guard): HTMLElement {
+  const on = g.s === 'protected'
+  return h('p', { class: 'guard-state', 'data-guard': on ? 'protected' : 'read-only' },
+    h('span', { class: `dot ${on ? 'dot--ok' : 'dot--warn'}`, 'aria-hidden': 'true' }),
+    h('span', {}, on ? 'Protegido pela biometria deste aparelho' : 'Só leitura: sem biometria cadastrada'))
+}
+
+function guardPanel(g: Guard, onProtect: () => void): HTMLElement | undefined {
+  if (g.s !== 'offer' && g.s !== 'registering') return g.s === 'read-only' && g.fail ? notice('warn', REGISTER_FAIL[g.fail]) : undefined
+  const busy = g.s === 'registering'
+  const b = button(busy ? 'Esperando a biometria…' : 'Proteger com a biometria', onProtect)
+  b.id = 'guard-protect'
+  if (busy) { b.disabled = true; b.setAttribute('aria-busy', 'true') }
+  return h('section', { class: 'panel', 'data-panel': 'guard', 'aria-labelledby': 'guard-title' },
+    h('h2', { id: 'guard-title', class: 'panel-title' }, 'Proteger com a biometria deste aparelho'),
+    h('p', { class: 'lead' }, 'Sem isso, este aparelho só vê: não fala, não responde e não aprova nada em seu nome.'),
+    g.s === 'offer' && g.fail && notice('warn', REGISTER_FAIL[g.fail]),
+    b,
+    h('p', { class: 'fine' }, 'A digital, o rosto ou o bloqueio de tela ficam neste aparelho. A máquina recebe só a prova de que foi você.'),
+  )
+}
+
+function lockPanel(l: Lock, onUnlock: () => void): HTMLElement {
+  const b = button(l.busy ? 'Esperando a biometria…' : 'Destrancar', onUnlock)
+  b.id = 'unlock'
+  if (l.busy) { b.disabled = true; b.setAttribute('aria-busy', 'true') }
+  return h('section', { class: 'panel', 'data-panel': 'lock', 'aria-labelledby': 'lock-title' },
+    h('h2', { id: 'lock-title', class: 'panel-title' }, 'Trancado'),
+    h('p', { class: 'lead' }, 'Confirme com a biometria deste aparelho que é você para ver quem espera você.'),
+    l.fail && notice('warn', UNLOCK_FAIL[l.fail]),
+    b,
+  )
+}
+
+export function listScreen(o: {
+  list: WaitingList; nowMs: number; houseName: string; notice?: string; problem?: string
+  guard: Guard; lock?: Lock; onProtect: () => void; onUnlock: () => void
+}): HTMLElement {
   const where = o.houseName ? `Conectado a ${o.houseName}` : 'Conectado'
   const items = o.list.items.map((w) =>
     h('li', { class: 'waiting-item', 'data-id': w.id, 'data-since': String(w.sinceMs) },
       h('span', { class: 'wi-name' }, w.name),
       h('span', { class: 'wi-meta' }, h('span', { class: 'wi-kind' }, kindLabel(w.kind)), h('span', { class: 'wi-sep', 'aria-hidden': 'true' }, '·'), h('span', { class: 'wi-since' }, waitedFor(w.sinceMs, o.nowMs))),
     ))
-  const body: Child = o.problem
+  const body: Child = o.lock
+    ? lockPanel(o.lock, o.onUnlock)
+    : o.problem
     ? notice('warn', o.problem)
     : items.length === 0
       ? h('div', { class: 'empty' }, h('p', { class: 'empty-title' }, 'Ninguém espera você agora.'), h('p', { class: 'fine' }, 'Quando um agente pedir a sua atenção, ele aparece aqui.'))
@@ -140,8 +213,10 @@ export function listScreen(o: { list: WaitingList; nowMs: number; houseName: str
     h('header', { class: 'screen-head list-head' },
       h('h1', {}, 'Esperam você'),
       h('p', { class: 'meta' }, h('span', { class: 'dot dot--ok', 'aria-hidden': 'true' }), h('span', { class: 'meta-text' }, where)),
+      o.guard.s !== 'offer' && o.guard.s !== 'registering' && guardState(o.guard),
     ),
     o.notice && notice('ok', o.notice),
+    guardPanel(o.guard, o.onProtect),
     body,
     o.list.more > 0 && h('p', { class: 'fine more' }, `e mais ${o.list.more} esperando`),
   )

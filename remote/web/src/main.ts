@@ -7,9 +7,10 @@ import { parseWaiting, waitedFor, type WaitingList } from './attention.ts'
 import { mount } from './dom.ts'
 import { connect, type Ended, type Live } from './live.ts'
 import { pair, type PairInput } from './pair.ts'
+import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
 import {
   connectingScreen, hardScreen, idleScreen, isPairNotice, listScreen, offlineScreen, pairFailedScreen, pairScreen,
-  pairWaitScreen, retryText, unsupportedScreen, type PairNotice,
+  pairWaitScreen, retryText, unsupportedScreen, type Guard, type Lock, type PairNotice,
 } from './screens.ts'
 import { deleteHouse, loadHouse, saveHouse, type HouseRecord } from './store.ts'
 
@@ -19,6 +20,8 @@ const relayUrl = document.querySelector<HTMLMetaElement>('meta[name="tether-rela
 const WATCH = opByName('attention.watch')!.code
 /** A pending record whose first handshake fails this soon after pairing may be dropped (spec 3.4 step 14, E-15). */
 const PENDING_GRACE_MS = 10 * 60_000
+/** The pairing session accepts `uv.register` for 5 min (spec 7.4 point 1); the offer closes a little before. */
+const REGISTER_WINDOW_MS = 5 * 60_000 - 15_000
 const RETRY_MAX_MS = 30_000
 const SINCE_REFRESH_MS = 30_000
 
@@ -39,6 +42,13 @@ let list: WaitingList = { items: [], more: 0 }
 /** House clock minus this clock, from the last HS_DONE: "há quanto tempo" is measured on the house's clock. */
 let skewMs = 0
 let busy = false
+/** The session that concluded the pairing, kept only while it may still register the presence credential. */
+let pairing: Live | undefined
+let pairingTimer: ReturnType<typeof setTimeout> | 0 = 0
+let regChallenge: Uint8Array = new Uint8Array(0)
+/** Presence of this device when nothing is registered; a stored credential always reads as protected. */
+let guard: Guard = { s: 'read-only' }
+let lock: Lock | undefined
 const retry = { attempt: 0, timer: 0 as ReturnType<typeof setTimeout> | 0, atMs: 0 }
 
 const TITLE: Record<View['s'], string> = {
@@ -69,7 +79,11 @@ function render(): void {
     case 'pair-failed': mount(root, pairFailedScreen(v.kind, () => show({ s: 'pair' }))); return
     case 'connecting': mount(root, connectingScreen()); return
     case 'list':
-      mount(root, listScreen({ list, nowMs: Date.now() + skewMs, houseName: record?.houseName ?? '', ...(v.notice ? { notice: v.notice } : {}), ...(v.problem ? { problem: v.problem } : {}) }))
+      mount(root, listScreen({
+        list, nowMs: Date.now() + skewMs, houseName: record?.houseName ?? '', ...(v.notice ? { notice: v.notice } : {}), ...(v.problem ? { problem: v.problem } : {}),
+        guard: record?.credentialId ? { s: 'protected' } : guard, ...(lock ? { lock } : {}),
+        onProtect: () => void protect(), onUnlock: () => void unlock(),
+      }))
       return
     case 'offline': mount(root, offlineScreen({ retryInS: retryInS(), onRetry: retryNow })); return
     case 'hard': mount(root, hardScreen({ retryInS: retryInS(), onRetry: retryNow })); return
@@ -94,7 +108,6 @@ async function startPair(input: Omit<PairInput, 'relayUrl' | 'onSas'>): Promise<
     }
     record = out.record
     fresh = out.live
-    fresh.onEnded = () => {}
   } catch {
     show({ s: 'unsupported' })
     return
@@ -103,9 +116,70 @@ async function startPair(input: Omit<PairInput, 'relayUrl' | 'onSas'>): Promise<
   }
   // The session that concluded the pairing stays quiet: the portal of RR1.3 may lose a record that arrives right after
   // PAIR_ACK, before it adopts the session. A normal session follows at once (it also makes the record definitive,
-  // E-15); the quiet one is closed only after, when the house surely holds it as a session.
+  // E-15). The quiet one is the only session that may register the presence credential (spec 7.4 point 1), so it is
+  // kept open for the registration window, while the screen offers it, and closed when the offer is over.
+  const kept = fresh
+  pairing = kept
+  kept.onEnded = () => { if (pairing === kept) { pairing = undefined; offerOver() } }
+  regChallenge = await registrationOf(kept, record.kD.pub)
+  guard = (await biometricsAvailable()) ? { s: 'offer' } : { s: 'read-only', fail: 'no-biometrics' }
+  pairingTimer = setTimeout(() => endPairingSession(), REGISTER_WINDOW_MS)
   await reconnect({ afterPair: true })
-  void fresh.close(CLOSE.normal)
+  if (guard.s === 'read-only') endPairingSession()
+}
+
+// ---- presence (spec 7.4) ---------------------------------------------------------------------------------------------
+
+function endPairingSession(): void {
+  if (pairingTimer) clearTimeout(pairingTimer)
+  pairingTimer = 0
+  const p = pairing
+  pairing = undefined
+  if (p && !p.ended) void p.close(CLOSE.normal)
+  offerOver()
+}
+
+/** The registration window closed: an offer still open becomes "read only". */
+function offerOver(): void {
+  if (guard.s !== 'offer' && guard.s !== 'registering') return
+  guard = { s: 'read-only' }
+  if (view.s === 'list') render()
+}
+
+async function protect(): Promise<void> {
+  const rec = record
+  const p = pairing
+  if (!rec || guard.s !== 'offer') return
+  if (!p) { guard = { s: 'read-only', fail: 'too-late' }; render(); return }
+  guard = { s: 'registering' }
+  render()
+  const r = await registerPresence({ fresh: p, challenge: regChallenge, houseName: rec.houseName })
+  if (!r.ok) {
+    guard = r.fail === 'too-late' || r.fail === 'no-biometrics' ? { s: 'read-only', fail: r.fail } : { s: 'offer', fail: r.fail }
+    if (guard.s === 'read-only') endPairingSession()
+    render()
+    return
+  }
+  record = { ...rec, credentialId: r.credentialId }
+  await saveHouse(record)
+  guard = { s: 'protected' }
+  endPairingSession()
+  render()
+  // The pairing session is born locked (E-10); the first unlock follows the registration at once.
+  if (live) void unlock()
+}
+
+/** Asks for presence ("destrancar") and, once the machine takes it, asks for the list again. */
+async function unlock(): Promise<void> {
+  const l = live
+  if (!l || lock?.busy) return
+  lock = { busy: true }
+  render()
+  const r = await withPresence({ live: l, credentialId: record?.credentialId, ask: { purpose: 'unlock' } })
+  if (live !== l) return
+  if (!r.ok) { lock = { busy: false, fail: r.fail }; render(); return }
+  lock = undefined
+  await watch(l)
 }
 
 // ---- the session --------------------------------------------------------------------------------------------------
@@ -120,11 +194,20 @@ async function adopt(l: Live, notice?: string): Promise<void> {
     list = w
     if (view.s === 'list') show({ s: 'list' })
   }
-  l.onEnded = (e) => { if (live === l) { live = undefined; void ended(e) } }
+  l.onEnded = (e) => { if (live === l) { live = undefined; lock = undefined; void ended(e) } }
+  lock = undefined
+  await watch(l, notice)
+}
+
+/** Subscribes to the list. A locked session (status 0x04) asks for presence first: the unlock panel takes its place. */
+async function watch(l: Live, notice?: string): Promise<void> {
   const r = await l.request(WATCH)
-  if (l.ended) return
+  if (l.ended || live !== l) return
   if (r.status === RES_STATUS.ok) {
     list = parseWaiting(r.body) ?? { items: [], more: 0 }
+    show({ s: 'list', ...(notice ? { notice } : {}) })
+  } else if (r.status === RES_STATUS.locked) {
+    lock = { busy: false }
     show({ s: 'list', ...(notice ? { notice } : {}) })
   } else {
     show({ s: 'list', problem: r.status === RES_STATUS.noScope ? 'Este aparelho não tem permissão para ver quem espera você.' : 'A máquina não mandou a lista agora.' })
@@ -171,6 +254,8 @@ async function ended(e: Ended): Promise<void> {
     if (record) await deleteHouse(record.id).catch(() => undefined)
     record = undefined
     list = { items: [], more: 0 }
+    endPairingSession()
+    guard = { s: 'read-only' }
     show({ s: 'pair', notice: 'revoked' })
     return
   }

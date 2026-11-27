@@ -19,6 +19,10 @@ import {
   assertionChallenge, AUTH_FLAG, parseAttestationObject, parseAuthenticatorData, registrationChallenge, relyingParty,
   verifyAssertion, verifyRegistration, WEBAUTHN_LIMITS, WebAuthnRefusal, type RelyingParty, type WebAuthnFailure,
 } from '../../src/remote/webauthn.ts'
+import {
+  checkWebAuthnHouse as checkHouse, type WebAuthnAssertCase as AssertCase, type WebAuthnHouse as House,
+  type WebAuthnRegCase as RegCase,
+} from '../../src/remote/testing.ts'
 
 const FILE = join(dirname(fileURLToPath(import.meta.url)), 'remote.webauthn.vectors.json')
 const subtle = globalThis.crypto.subtle
@@ -118,24 +122,6 @@ interface W3cCeremony {
   authentication?: { challenge: string; authenticatorData: string; clientDataJSON: string; signature: string }
 }
 
-type Refused = { ok: false; reason: string }
-type RegExpect = { ok: true; credentialId: string; publicKey: string; signCount: number; backupEligible: boolean; backedUp: boolean } | Refused
-type AssertExpect = { ok: true; signCount: number; backedUp: boolean } | Refused
-
-interface RegCase { name: string; challenge: string; clientDataJSON: string; attestationObject: string; expect: RegExpect }
-interface AssertCase {
-  name: string; challenge: string; publicKey: string; storedSignCount: number
-  authenticatorData: string; clientDataJSON: string; signature: string; expect: AssertExpect
-}
-
-interface House {
-  rp: { origin: string; rpId: string }
-  context: { sessionId: string; otherSessionId: string; pubD: string; deviceId: string; otherDeviceId: string; uvCtr: number; op: number; actId: string; body: string }
-  challenges: { registration: string; unlock: string; elevate: string; act: string }
-  registrations: RegCase[]
-  assertions: AssertCase[]
-}
-
 interface VectorFile {
   about: string
   w3c: {
@@ -147,44 +133,7 @@ interface VectorFile {
 
 const readFile = (): VectorFile => JSON.parse(readFileSync(FILE, 'utf8')) as VectorFile
 
-async function runRegistration(h: House, c: RegCase): Promise<RegExpect> {
-  const v = await verifyRegistration({
-    rp: h.rp, challenge: fromHex(c.challenge), clientDataJSON: fromHex(c.clientDataJSON), attestationObject: fromHex(c.attestationObject),
-  })
-  if (!v.ok) return { ok: false, reason: v.reason }
-  const k = v.credential
-  return { ok: true, credentialId: toHex(k.credentialId), publicKey: toHex(k.publicKey), signCount: k.signCount, backupEligible: k.backupEligible, backedUp: k.backedUp }
-}
-
-async function runAssertion(h: House, c: AssertCase): Promise<AssertExpect> {
-  const v = await verifyAssertion({
-    rp: h.rp, challenge: fromHex(c.challenge),
-    proof: { authenticatorData: fromHex(c.authenticatorData), clientDataJSON: fromHex(c.clientDataJSON), signature: fromHex(c.signature) },
-    credential: { publicKey: fromHex(c.publicKey), signCount: c.storedSignCount },
-  })
-  return v.ok ? { ok: true, signCount: v.signCount, backedUp: v.backedUp } : { ok: false, reason: v.reason }
-}
-
-interface Check { name: string; ok: boolean; detail?: string }
-
-/** Pure over the file and the module: a browser harness can run the same vectors through the same function. */
-async function checkHouse(h: House): Promise<Check[]> {
-  const out: Check[] = []
-  const same = (name: string, got: unknown, want: unknown): void => {
-    const a = JSON.stringify(got)
-    const b = JSON.stringify(want)
-    out.push(a === b ? { name, ok: true } : { name, ok: false, detail: `got ${a}, want ${b}` })
-  }
-  const sid = fromHex(h.context.sessionId)
-  const act = { purpose: 'act', op: h.context.op, actId: fromHex(h.context.actId), body: fromHex(h.context.body) } as const
-  same('challenge: registration', toHex(await registrationChallenge(sid, fromHex(h.context.pubD))), h.challenges.registration)
-  same('challenge: unlock', toHex(await assertionChallenge(sid, h.context.uvCtr, { purpose: 'unlock' })), h.challenges.unlock)
-  same('challenge: elevate', toHex(await assertionChallenge(sid, h.context.uvCtr, { purpose: 'elevate', deviceId: fromHex(h.context.deviceId) })), h.challenges.elevate)
-  same('challenge: act', toHex(await assertionChallenge(sid, h.context.uvCtr, act)), h.challenges.act)
-  for (const c of h.registrations) same(c.name, await runRegistration(h, c), c.expect)
-  for (const c of h.assertions) same(c.name, await runAssertion(h, c), c.expect)
-  return out
-}
+// The checker lives in src/remote/testing.ts, so a browser runs the same vector file through the same code.
 
 // ---------------------------------------------------------------------------------------------------------------
 // The generator of the house block
