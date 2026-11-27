@@ -250,7 +250,12 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   const view = (v: string, ms = 20_000): Promise<unknown> => page.waitForSelector(`#app[data-view="${v}"]`, { timeout: ms })
   const shot = async (name: string): Promise<void> => { await page.screenshot({ path: join(shots, `rr3-live-${name}.png`) }) }
   const text = async (sel: string): Promise<string> => (await page.textContent(sel)) ?? ''
-  const msgsHave = (needle: string): Promise<boolean> => page.evaluate((n) => (document.querySelector('.ch-msgs')?.textContent ?? '').includes(n), needle)
+  /**
+   * A tap on what was just seen on screen, which may go before it lands (the screen moves on its own): a short wait, never
+   * the 30 s default that would outlast the check around it.
+   */
+  const tap = (sel: string): Promise<void> => page.click(sel, { timeout: 1_500 }).catch(() => undefined)
+  const msgsHave =(needle: string): Promise<boolean> => page.evaluate((n) => (document.querySelector('.ch-msgs')?.textContent ?? '').includes(n), needle)
   const credentials = async (): Promise<VirtualCredential[]> =>
     ((await cdp.send('WebAuthn.getCredentials', { authenticatorId })) as { credentials: VirtualCredential[] }).credentials
   const devices = async (): Promise<DeviceRow[]> => (await ext(app, 'device.list')).devices as DeviceRow[]
@@ -275,8 +280,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
    */
   const toRegency = async (ms = 45_000): Promise<void> => {
     await eventually(async () => {
-      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock').catch(() => undefined)
-      else if (await page.isVisible('.rr-off .rr-btn')) await page.click('.rr-off .rr-btn').catch(() => undefined)
+      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await tap('#unlock')
+      else if (await page.isVisible('.rr-off .rr-btn')) await tap('.rr-off .rr-btn')
       return (await page.isVisible('.rr[data-link="live"] .rg-tree [data-key]')) || undefined
     }, ms, 'the Regency, live')
   }
@@ -479,9 +484,19 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
         const m = document.querySelector<HTMLElement>('.ch-msgs')
         if (m) { m.scrollTop = 0; m.dispatchEvent(new Event('scroll')) }
       })
-      if (await page.isVisible('.ch-older')) await page.click('.ch-older').catch(() => undefined)
+      if (await page.isVisible('.ch-older')) await tap('.ch-older')
       return undefined
-    }, 30_000, 'the first line of the channel, by paging back')
+    }, 30_000, 'the first line of the channel, by paging back').catch(async (e: Error) => {
+      const state = await page.evaluate((n) => {
+        const m = document.querySelector<HTMLElement>('.ch-msgs')
+        const rows = [...document.querySelectorAll<HTMLElement>('.ch-msgs [data-seq]')]
+        const seqs = rows.map((r) => Number(r.dataset.seq))
+        const all = m?.textContent ?? ''
+        const missing = Array.from({ length: n },(_, i) => `linha ${String(i + 1).padStart(3, '0')}`).filter((l) => !all.includes(l))
+        return { firsts: rows.slice(0, 6).map((r) => `${r.className}#${r.dataset.seq}:${(r.textContent ?? '').slice(0, 50)}`), missing, rows: seqs.length, min: Math.min(...seqs), max: Math.max(...seqs), scrollTop: m?.scrollTop, scrollHeight: m?.scrollHeight, clientHeight: m?.clientHeight, older: document.querySelector('.ch-older') !== null, view: document.getElementById('app')?.dataset.view, link: document.querySelector<HTMLElement>('.rr')?.dataset.link }
+      }, LINES)
+      throw new Error(`${e.message}; the view: ${JSON.stringify(state)}; errors: ${JSON.stringify(pageErrors)}`)
+    })
     const all = await page.evaluate(() => document.querySelector('.ch-msgs')?.textContent ?? '')
     const missing = Array.from({ length: LINES }, (_, i) => `linha ${pad(i + 1)}`).filter((l) => !all.includes(l))
     assert.deepEqual(missing, [], 'every line of the channel, no hole between the pages')
@@ -494,7 +509,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     assert.deepEqual(await remoteOn(), { on: true })
     await houseUp()
     await eventually(async () => {
-      if (await page.isVisible('.rr-off .rr-btn')) await page.click('.rr-off .rr-btn').catch(() => undefined)
+      if (await page.isVisible('.rr-off .rr-btn')) await tap('.rr-off .rr-btn')
       return (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) || undefined
     }, 40_000, 'the unlock panel')
     assert.match(await text('[data-panel="lock"]'), /Trancado/)
@@ -619,8 +634,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await publish()
     appOpens()
     await eventually(async () => {
-      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock').catch(() => undefined)
-      else if (await page.isVisible('.rr-off .rr-btn')) await page.click('.rr-off .rr-btn').catch(() => undefined)
+      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await tap('#unlock')
+      else if (await page.isVisible('.rr-off .rr-btn')) await tap('.rr-off .rr-btn')
       const why = await page.isVisible('.rr-why') ? await text('.rr-why') : ''
       return (/ver a Regência/.test(why) && /ler os canais/.test(why)) || undefined
     }, 45_000, 'the lines that say why')
