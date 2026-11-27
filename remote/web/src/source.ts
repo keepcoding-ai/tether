@@ -96,7 +96,10 @@ export function pageOf(b: Record<string, unknown>, channel: string, before: numb
   if (!isRec(ch) || ch.id !== channel || !Array.isArray(b.lines) || !Array.isArray(b.reactions) || !Array.isArray(b.polls)
     || !isInt(b.last) || (b.before !== undefined && !isInt(b.before, 1)) || !listOk(b.members) || !moderatorOk(b.moderator)
     || (b.membersMore !== undefined && !isInt(b.membersMore, 1))) throw malformed()
-  // The projector reads an open poll's votes as tetherd keeps them (by who voted); the wire carries them as a list.
+  // The projector reads an open poll's votes as tetherd keeps them (by who voted); the wire carries them as a list. The
+  // projector is not idempotent: run on its own output it reads the list's indexes as voters. So the list goes back to
+  // tetherd's map before the cleaning (the first vote of an id stands), and pollOf gives the pane its map after. Keep this
+  // while src/remote/projection.ts reads `votes` as a map (test/unit/remote.web-source.test.ts holds it).
   const polls = b.polls.map(p0 => {
     if (!isRec(p0) || !isRec(p0.open) || !Array.isArray(p0.open.votes)) return p0
     const votes: Record<string, unknown> = {}

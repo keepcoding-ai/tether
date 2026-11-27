@@ -233,6 +233,31 @@ describe('the source over the session', () => {
     assert.equal('lines' in closed.input.desks.desks[0]!.panes[0]!, false, 'the app closed: what the agent WAS doing is not said')
   })
 
+  test('an open poll\'s votes: the wire\'s list goes back to tetherd\'s map before the cleaning (the projector is not idempotent)', async () => {
+    const open = (votes: unknown): Record<string, unknown> => ({
+      type: 'choice', question: 'Qual?', options: ['a', 'b'], to: [{ id: 'p2', name: 'revisor' }, { id: 'p3', name: 'leitor' }],
+      closesAt: '2026-11-27T11:00:00.000Z', author: { id: 'p1', name: 'conferente' }, votes,
+    })
+    const wire = [
+      { id: 'p2', name: 'revisor‮', option: 2, reason: 'mais curta' },
+      { id: 'p2', name: 'revisor', option: 1 },
+      { id: 'p3', name: 'leitor', option: 1 },
+      { id: '', name: 'ninguém', option: 1 },
+    ]
+    const s = fakeSession(op => (op === 'page' ? ok({ ...pageBody(), polls: [{ seq: 3, open: open(wire) }] }) : answering(op)))
+    const p = await sessionSource(s).page('obra')
+    // The pane's map, by who voted: the first vote of an id stands, the text cleaned, an empty id dropped.
+    assert.deepEqual(p.polls[0]?.open?.votes, {
+      p2: { option: 2, name: 'revisor', at: '', reason: 'mais curta' },
+      p3: { option: 1, name: 'leitor', at: '' },
+    })
+    // Why the contour is there: the house's projector over the wire's own list does not find the voters. When this changes
+    // (the projector reads a list too), the conversion in pageOf can go.
+    const { channelsPage, PAGE_LINES_MAX } = await import('../../src/remote/projection.ts')
+    const raw = channelsPage({ answer: { ...pageBody(), polls: [{ seq: 3, open: open(wire) }] }, limit: PAGE_LINES_MAX })
+    assert.notDeepEqual(raw.polls[0]?.open?.votes.map(v => v.id), ['p2', 'p3'])
+  })
+
   test('hostile text of a good body is cleaned by the house\'s rules before the screen sees it', async () => {
     const s = fakeSession(op => (op === 'page'
       ? ok({ ...pageBody({ from: 1, to: 1 }), lines: [line(1, 'oi\u202e\u0007 mundo')], channel: { id: 'obra', name: 'obra', title: 'C:\\Users\\guga\\obra' } })
