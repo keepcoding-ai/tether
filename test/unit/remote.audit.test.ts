@@ -3,14 +3,16 @@
 // is a gesture leaves a line whether the house accepted it or refused it.
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { agentExecutor } from '../../src/agents/agent-exec.ts'
 import { OPS } from '../../src/remote/index.ts'
 import { audited } from '../../src/remoted/house.ts'
-import { AUDIT_FILES_MAX, AUDIT_MAX_BYTES, AuditLog, auditField, type AuditDeps } from '../../extensions/remote/daemon/audit.ts'
+import {
+  AUDIT_FILES_MAX, AUDIT_MAX_BYTES, AUDIT_SECURITY_FILES_MAX, AuditLog, auditField, auditFile, securityFile, securityLine, type AuditDeps,
+} from '../../extensions/remote/daemon/audit.ts'
 import { READ_REQUESTS, RemoteService } from '../../extensions/remote/daemon/service.ts'
 import type { RemoteRequest } from '../../extensions/remote/rules.ts'
 import type { DaemonIo } from '../../src/daemon/ext-api.ts'
@@ -84,7 +86,8 @@ describe('the writer does not hold the loop and does not grow when the disk stal
       const io: AuditDeps['io'] = { ...realIo, appendText: async (p, t) => { writes++; if (writes === 1) await stalled; await appendFile(p, t) } }
       const log = new AuditLog({ dir, io, now: () => 1, log: () => {}, pendingMax: 8 })
       const t0 = Date.now()
-      for (let i = 0; i < 5_000; i++) log.record({ act: 'limit.req', result: 'limit' })
+      // Distinct lines: equal ones would be counted in one window, not queued (see the M-3 tests below).
+      for (let i = 0; i < 5_000; i++) log.record({ act: 'limit.req', result: `limit:${i}` })
       assert.ok(Date.now() - t0 < 500, 'five thousand records are queued without waiting for the disk')
       release()
       await log.flush()
@@ -93,6 +96,95 @@ describe('the writer does not hold the loop and does not grow when the disk stal
       const dropped = all.find((l) => l.act === 'audit.dropped')
       assert.ok(dropped && Number(dropped.result!.replace('n:', '')) >= 4_900, 'the loss is said, with its count')
     } finally { await removeHome(dir) }
+  })
+})
+
+describe('the audited cannot rotate the audit away (M-3 of the RR2 gate)', () => {
+  const DEV = 'ab'.repeat(16)
+  const OTHER = 'cd'.repeat(16)
+  /** What one line stands for: itself, or the count it carries. */
+  const weight = (l: Record<string, unknown>): number => (typeof l.n === 'number' ? l.n : 1)
+  const all = (dir: string, name: (n: number) => string, files: number): Record<string, unknown>[] => {
+    const out: Record<string, unknown>[] = []
+    for (let n = files - 1; n >= 0; n--) if (existsSync(join(dir, name(n)))) out.push(...lines(join(dir, name(n))))
+    return out
+  }
+  const security = (dir: string) => all(dir, securityFile, AUDIT_SECURITY_FILES_MAX)
+
+  test('a read-only device sends 10 000 uv.assert at the rate ceiling for 80 min: the lines come coalesced, the pairing of an hour before stays', async () => {
+    const dir = benchHome('remote-audit-')
+    try {
+      let now = Date.parse('2026-11-27T10:00:00Z')
+      const log = new AuditLog({ dir, io: realIo, now: () => now, log: (m) => assert.fail(m) })
+      log.record({ act: 'pair.done', device: DEV, result: 'active' })
+      log.record({ act: 'remote.on', result: 'by:app' })
+      log.record({ act: 'device.revoke', device: OTHER, result: 'by:app' })
+      // The lines the house writes for this flood (src/remoted/house.ts): the refused proof, the refused lock attempt
+      // of a session family act, and the rate's own line.
+      for (let i = 0; i < 10_000; i++) {
+        now += 480 // 125 a minute
+        log.record({ act: 'uv.assert', device: DEV, result: 'refused:no-credential' })
+        if (i % 10 === 0) log.record({ act: 'limit.req', device: DEV, target: 'uv.assert', result: 'limit' })
+        if (i % 500 === 0) await log.flush()
+      }
+      await log.flush()
+      const common = all(dir, auditFile, AUDIT_FILES_MAX)
+      const asserts = common.filter((l) => l.act === 'uv.assert')
+      assert.equal(asserts.reduce((s, l) => s + weight(l), 0), 10_000, 'every refusal is counted')
+      assert.ok(common.length < 500, `a few lines a minute, not 137 (${common.length})`)
+      assert.ok(asserts.some((l) => typeof l.n === 'number' && l.n > 100), 'a line carries the count of its window')
+      for (const l of [...common, ...security(dir)]) assert.deepEqual(Object.keys(l).filter((k) => !['ts', 'act', 'device', 'target', 'result', 'n'].includes(k)), [])
+      assert.ok(common.some((l) => l.act === 'pair.done' && l.device === DEV), 'the pairing is still in the log')
+      assert.deepEqual(security(dir).map((l) => l.act), ['pair.done', 'remote.on', 'device.revoke'], 'refusals never reach the security rotation')
+    } finally { await removeHome(dir) }
+  })
+
+  test('even when the common log rotates whole, the security lines stay in their own rotation', async () => {
+    const dir = benchHome('remote-audit-')
+    try {
+      let now = Date.parse('2026-11-27T10:00:00Z')
+      const log = new AuditLog({ dir, io: realIo, now: () => now, log: (m) => assert.fail(m), maxBytes: 2_000, maxFiles: 3 })
+      log.record({ act: 'pair.done', device: DEV, result: 'active' })
+      log.record({ act: 'uv.register', device: DEV, result: 'ok' })
+      log.record({ act: 'uv.assert', device: DEV, result: 'ok:unlock' })
+      log.record({ act: 'uv.lockout', device: DEV, target: 'uv.assert', result: 'locked' })
+      log.record({ act: 'relay.notice', result: 'deny-full' })
+      // Lines that differ, so nothing coalesces: the common rotation is pushed out several times over.
+      for (let i = 0; i < 2_000; i++) {
+        now += 10
+        log.record({ act: 'device.revoke', device: DEV, result: `refused:x${i}` })
+        if (i % 50 === 0) await log.flush()
+      }
+      await log.flush()
+      const common = all(dir, auditFile, 3)
+      assert.ok(!common.some((l) => l.act === 'pair.done'), 'the common rotation lost it')
+      assert.deepEqual(security(dir).map((l) => `${l.act}:${l.result}`),
+        ['pair.done:active', 'uv.register:ok', 'uv.assert:ok:unlock', 'uv.lockout:locked', 'relay.notice:deny-full'])
+    } finally { await removeHome(dir) }
+  })
+
+  test('equal lines in one window are one line and a count, written when the window closes; another window starts a line again', async () => {
+    const dir = benchHome('remote-audit-')
+    try {
+      let now = 0
+      const log = new AuditLog({ dir, io: realIo, now: () => now, log: (m) => assert.fail(m), coalesceMs: 1_000 })
+      for (let i = 0; i < 5; i++) log.record({ act: 'session.lock', device: DEV, result: 'ok' })
+      log.record({ act: 'session.lock', device: OTHER, result: 'ok' })
+      now = 1_000
+      log.record({ act: 'session.lock', device: DEV, result: 'ok' })
+      await log.flush()
+      assert.deepEqual(lines(join(dir, 'audit.jsonl')).map((l) => [l.device, l.n ?? 1]), [[DEV, 1], [OTHER, 1], [DEV, 4], [DEV, 1]])
+    } finally { await removeHome(dir) }
+  })
+
+  test('which lines are security lines', () => {
+    for (const [act, result] of [['pair.begin', 'by:app'], ['pair.refused', 'sas'], ['remote.on', 'by:app'], ['remote.off', 'by:cli'], ['device.revoke', 'by:app'],
+      ['device.revoke', 'ok'], ['device.revoke-self', 'ok'], ['device.revoke.closed', 'ok'], ['uv.register', 'ok'], ['uv.assert', 'ok:elevate'],
+      ['uv.lockout', 'locked'], ['uv.sign-count', 'refused'], ['relay.notice', 'deny-full'], ['portal.exit', '0']] as const) assert.ok(securityLine(act, result), `${act} ${result}`)
+    for (const [act, result] of [['uv.assert', 'refused:no-credential'], ['uv.register', 'presenceRequired'], ['device.revoke', 'presenceRequired'],
+      ['device.revoke', 'refused:challenge'], ['session.lock', 'ok'], ['limit.req', 'limit'], ['session.open', 'ok'], ['admit.renew', 'limit:gap']] as const) {
+      assert.ok(!securityLine(act, result), `${act} ${result}`)
+    }
   })
 })
 
