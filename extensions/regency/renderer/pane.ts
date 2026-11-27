@@ -248,10 +248,14 @@ export class RegencyPane {
 
   get id(): string | undefined { return this.api?.id }
 
-  /** The shape of dockview's `init`: the frame and the parameters the layout was kept in. */
-  init(p: { api: RegencyFrame; params?: unknown }): void {
+  /**
+   * The shape of dockview's `init`: the frame and the parameters the layout was kept in. `keepTab`: the phone's tab of the
+   * parameters was asked for (the web's address names it), so the pane does not choose its opening tab (by default it does).
+   */
+  init(p: { api: RegencyFrame; params?: unknown; keepTab?: boolean }): void {
     this.api = p.api
     this.state = readLayout(p.params)
+    if (p.keepTab === true) this.opened = true
     this.setShown(this.host.visible())
     this.left.setAttribute('aria-label', 'Esperam você e canais')
     this.left.append(this.waitHost, this.convHost)

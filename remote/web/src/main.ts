@@ -196,6 +196,7 @@ function casing(): RemoteRegency {
     layout: {
       initial: paramsOfUrlState(parseUrlState(location.search)),
       changed: l => writeUrlState(location, history, urlStateOf(l)),
+      tabAsked: () => parseUrlState(location.search).narrowTab !== undefined,
     },
   })
   return regency

@@ -91,7 +91,15 @@ export interface RegencyOptions {
   onRetry(): void
   now?: () => number
   /** The layout kept in the address: where a first session starts (the pane's parameters) and what to tell when it changes. */
-  layout?: { initial: Record<string, unknown>; changed(layout: RegencyLayout): void }
+  layout?: {
+    initial: Record<string, unknown>
+    changed(layout: RegencyLayout): void
+    /**
+     * The address names the phone's tab: a session starts on it (a reload comes back to the tab it was on). Without it the
+     * pane chooses, as in the app: "Esperam você" when someone waits, and "Mesas" when the app is closed on the machine.
+     */
+    tabAsked?(): boolean
+  }
 }
 
 /** What is up while the link is: the house's data, the pane over it and the reading card. */
@@ -308,6 +316,8 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   let frame = 0
   let opened = false
   let channelChosen = false
+  /** The address named the phone's tab when this session started: neither the pane nor the casing chooses another. */
+  let tabAsked = false
   let disposed = false
   // The arrows of the TV's remote (and of a keyboard anywhere): src/focus.ts.
   const focus = mountSpatialFocus(shell, {
@@ -386,7 +396,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       opened = true
       s.pane.paint()
       // (The casing's own tier: the pane learns its width a frame later.)
-      if (link === 'closed' && tier === 'mobile') s.pane.setTab('tether')
+      if (link === 'closed' && tier === 'mobile' && !tabAsked) s.pane.setTab('tether')
     }
     s.pane.paint()
     s.card.refresh()
@@ -433,7 +443,12 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     }))
     const p = pane
     // The layout is the page's while it lives: a new session starts from where the last one was.
-    p.init({ api: { id: 'regency:main', updateParameters: () => o.layout?.changed(p.state) }, params: lastLayout ? layoutParams(lastLayout) : (o.layout?.initial ?? {}) })
+    tabAsked = o.layout?.tabAsked?.() === true
+    p.init({
+      api: { id: 'regency:main', updateParameters: () => o.layout?.changed(p.state) },
+      params: lastLayout ? layoutParams(lastLayout) : (o.layout?.initial ?? {}),
+      keepTab: tabAsked,
+    })
     stage.replaceChildren(p.element)
     p.setShown(true)
     const subs = [house.onDidChange(schedule), ...views.disposables]
