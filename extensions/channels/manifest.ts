@@ -28,6 +28,9 @@ export const CMD = {
   reopen: 'channels.reopen',
 } as const
 
+/** The chat's font size in px when the setting is untouched: the size channels.css always had. */
+export const FONT_SIZE_DEFAULT = 13
+
 /** The top bar icon (`contributes.status`), never renamed. */
 export const STATUS_ID = 'channels.status'
 
@@ -52,6 +55,10 @@ export const manifest: ExtensionManifest = {
       { command: CMD.close, title: 'Encerrar canal…', category: CATEGORY, icon: 'prohibit' },
       { command: CMD.reopen, title: 'Reabrir canal…', category: CATEGORY, icon: 'arrow-counter-clockwise' },
     ],
+    settings: {
+      // Applied live as the CSS custom property --channels-font-size (renderer.ts); the conversation and the typing box scale with it.
+      fontSize: { type: 'integer', default: FONT_SIZE_DEFAULT, min: 10, max: 28, title: 'Tamanho da fonte do chat', description: 'Tamanho do texto das mensagens e do campo de digitação nos canais, em pixels. Vale na hora, sem reiniciar.', order: 1 },
+    },
     status: [{ id: STATUS_ID, icon: 'chats-circle', order: 60 }],
     paneTypes: [{
       id: 'channel', idPrefix: CHANNEL_PANE_PREFIX, component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB,
