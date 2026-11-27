@@ -1287,3 +1287,12 @@ Item aprovado pelo PO: uma guia de agente ociosa (sem turno e sem uso da pessoa 
 - Ícone da suspensa: folha (Phosphor `leaf`), sem lua nem olho.
 - Ao abrir o app, o "último uso" desconhecido conta a partir da abertura: nada é suspenso na primeira hora.
 - A ronda retoma a guia suspensa a cada ronda devida (uma guia com ronda curta quase não fica suspensa).
+
+## Suspender guia por escolha (2026-11-27, branch agent/tether-suspend-manual)
+
+A suspensão por economia ganhou entrada manual, como alternativa a hibernar: a pessoa e os donos (agentes) suspendem UMA guia (nunca mesa). Mesmo mecanismo e mesmo estado do varredor: `suspendedPanes`, selo "Suspensa", retomada ao uso, persistência no layout.
+
+- **App.** `SuspendBook.suspendNow` e as regras puras `canSuspendNow` / `isBusyTurn` (`app/renderer/suspend.ts`); `main.ts` ganha `suspendNowPanes` (comum ao varredor e ao manual) e `suspendPane`. Entrada "Suspender guia" (ícone folha) no menu da guia, antes de "Hibernar guia", e comando `pane.suspend` na paleta. Só para agente `running` com `canRestart`, que não é shell nem está suspenso/hibernado. Turno ocupado pergunta (`suspendSituation`), como o hibernar.
+- **For-agents.** Verbo `suspend` (arg `guia`, permissão `open-close`), evento `suspend` na ponte do `hibernate` (`sleep-names.ts`, `renderer/sleep.ts`, `ui.panes.suspend`). Recusas: própria guia `bad-request`, com a pessoa `with-user`, sem processo `no-conductor`, shell `not-agent`, sessão não confirmada `unconfirmed`, hibernada `asleep`, parada `not-running`. Já suspensa responde `already: true`. `agents list` marca `suspended: true` e "suspensa". `wake` já retoma guia suspensa (é uma guia parada). Instrução do servidor e skill atualizadas.
+- **Prova.** `test/unit/ext.for-agents-suspend.test.ts`, bloco novo em `app.suspend.test.ts`, `app.commands.test.ts`, `ext.for-agents-verbs.test.ts`.
+- **Entrega pede reiniciar o tetherd** (mudou o verbo e a instrução do for-agents, carregados pelo daemon) e rebuild do app.
