@@ -55,6 +55,25 @@ function clock(start = Date.parse('2026-11-27T13:05:00.000Z')) {
   }
 }
 
+test('publisher: state still absent at start does not throw and publishes nothing; the first change publishes', async () => {
+  const c = clock()
+  let state: RegencyInput | undefined
+  const sent: { sig: string; tree?: RegencyInput }[] = []
+  const pub = new TreePublisher({
+    read: () => state,
+    send: async (args) => { sent.push(args); return { sig: args.sig } as PublishAnswer },
+    setTimeout: c.setTimeout, clearTimeout: c.clear, setInterval: c.setInterval, clearInterval: c.clear, log: () => {},
+  })
+  pub.start()
+  await c.advance(0)
+  assert.equal(sent.length, 0)
+  state = entry()
+  pub.changed()
+  await c.advance(1000)
+  assert.equal(sent.length, 1)
+  pub.dispose()
+})
+
 /** An app publisher wired to a keeper, as ui.daemon.request would be; counts what went over the pipe. */
 function wired(read: () => RegencyInput, c = clock()) {
   const events: { name: string; payload: unknown }[] = []

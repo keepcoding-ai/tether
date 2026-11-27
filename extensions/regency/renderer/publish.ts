@@ -9,8 +9,8 @@ import { LEASE_MS, publishedTreeOf, signatureOf, TREE_MAX_BYTES, treeJson, utf8L
 export const PUBLISH_DEBOUNCE_MS = 400
 
 export interface PublisherDeps {
-  /** The Regency's entry as it is now. */
-  read: () => RegencyInput
+  /** The Regency's entry as it is now; `undefined` while the app's state does not exist yet (nothing to publish). */
+  read: () => RegencyInput | undefined
   /** `ui.daemon.request('tree.publish', args)`. */
   send: (args: { sig: string; tree?: RegencyInput }) => Promise<PublishAnswer>
   debounceMs?: number
@@ -64,7 +64,9 @@ export class TreePublisher {
   async flush(force = false): Promise<void> {
     if (this.#disposed) return
     if (this.#inFlight) { this.#again = true; return }
-    const tree = publishedTreeOf(this.#d.read())
+    const entry = this.#d.read()
+    if (!entry) return
+    const tree = publishedTreeOf(entry)
     const json = treeJson(tree)
     const sig = signatureOf(json)
     if (!force && (sig === this.#sent || sig === this.#refused)) return

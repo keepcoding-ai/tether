@@ -168,7 +168,8 @@ export function activate(ui: TetherUi): Disposable[] {
   }
   /** The entry goes to tetherd for a remote screen (RR3 3.2): every source event marks it, the publisher debounces and dedups. */
   const publisher = new TreePublisher({
-    read: () => inputOf([]),
+    // At activation the app's desks do not exist yet and `ui.desks.tree()` throws: nothing to publish until the first tree change.
+    read: () => { try { ui.desks.tree() } catch { return undefined } return inputOf([]) },
     send: args => ui.daemon.request<PublishAnswer>(TREE_REQ.publish, args),
   })
   const schedule = (): void => {
