@@ -28,6 +28,11 @@ export const RENEW_DENY_AFTER_MS = 60_000
 const INFLIGHT_MAX = 16
 /** Every session of the portal, all devices together. */
 const SESSIONS_MAX = 32
+/**
+ * Frames waiting on one route. A device keeps at most INFLIGHT_MAX requests open, plus a handshake frame or a CLOSE:
+ * twice that leaves room for an honest burst; more is a relay or device flooding the house's memory, and the route goes.
+ */
+const ROUTE_QUEUE_MAX = 2 * INFLIGHT_MAX
 const PAIR_STATE_WAIT_MS = 5_000
 const PAIR_REDRAWS = 3
 
@@ -91,6 +96,8 @@ const STRICT_KEYS: Record<string, readonly string[]> = {
 export class House {
   readonly #d: HouseDeps
   readonly #routes = new Map<number, Route>()
+  /** The frames of each route waiting their turn (see #routeData); gone when the route goes. */
+  readonly #queues = new Map<number, { tail: Promise<void>; pending: number }>()
   readonly #devices = new Map<string, PortalDevice>()
   readonly #mem = new Map<string, DeviceMem>()
   /** ticketId → exp (Unix s): what the relay must refuse; resent whole at each link up (spec 6.1). */
@@ -164,6 +171,7 @@ export class House {
       else if (r.kind === 'admit') void r.hs.routeClosed()
     }
     this.#routes.clear()
+    this.#queues.clear()
     if (this.#pairing && !this.#isOver(this.#pairing.view.state)) void this.#pairing.p.cancel(this.#d.now()).then((fx) => this.#pairEffects(fx))
     this.#d.note({ note: 'link', state: 'down' })
     this.#d.note({ note: 'sessions', count: 0 })
@@ -226,22 +234,51 @@ export class House {
     }
   }
 
+  /**
+   * Frames of one route are handled one after the other: frame N+1 is dispatched only after frame N was handled and
+   * its effects applied (a pairing that becomes a session, the AES-GCM counter per direction). The kind of the route is
+   * read at dispatch, never at arrival.
+   */
   #routeData(route: number, inner: Bytes): void {
+    if (!this.#routes.has(route)) return
+    let q =this.#queues.get(route)
+    if (!q) { q = { tail: Promise.resolve(), pending: 0 }; this.#queues.set(route, q) }
+    if (q.pending >= ROUTE_QUEUE_MAX) {
+      this.#d.log(`route ${route}: more than ${ROUTE_QUEUE_MAX} frames waiting; closed`)
+      this.#routeClosed(route)
+      this.#d.send(encodeOuter({ type: 'ROUTE_CLOSE', routeId: route }))
+      return
+    }
+    const queue = q
+    queue.pending++
+    queue.tail = queue.tail.then(async () => {
+      try {
+        if (this.#queues.get(route) === queue) await this.#dispatch(route, inner)
+      } catch (e) {
+        this.#d.log(`route ${route}: frame failed (${(e as Error).message})`)
+      } finally {
+        queue.pending--
+      }
+    })
+  }
+
+  async #dispatch(route: number, inner: Bytes): Promise<void> {
     const r = this.#routes.get(route)
     if (!r) return
     const nowMs = this.#d.now()
-    if (r.kind === 'admit') void r.hs.onFrame(inner, nowMs).then((fx) => this.#hsEffects(r, fx))
+    if (r.kind === 'admit') this.#hsEffects(r, await r.hs.onFrame(inner, nowMs))
     else if (r.kind === 'pair') {
       const pr = this.#pairing
       if (!pr) return this.#close(route)
-      void pr.p.onFrame(route, inner, nowMs).then((fx) => this.#pairEffects(fx))
-    } else void r.session.receive(inner, nowMs).then((fx) => this.#sessionEffects(r, fx))
+      this.#pairEffects(await pr.p.onFrame(route, inner, nowMs))
+    } else this.#sessionEffects(r, await r.session.receive(inner, nowMs))
   }
 
   #routeClosed(route: number): void {
     const r = this.#routes.get(route)
     if (!r) return
     this.#routes.delete(route)
+    this.#queues.delete(route)
     if (r.kind === 'admit') void r.hs.routeClosed()
     else if (r.kind === 'pair') void this.#pairing?.p.routeClosed(route, this.#d.now()).then((fx) => this.#pairEffects(fx))
     else this.#endSession(r, 'route closed by the relay')
@@ -249,6 +286,7 @@ export class House {
 
   #close(route: number): void {
     this.#routes.delete(route)
+    this.#queues.delete(route)
     this.#d.send(encodeOuter({ type: 'ROUTE_CLOSE', routeId: route }))
   }
 
@@ -325,7 +363,7 @@ export class House {
   }
 
   #endSession(s: SessionRoute, _reason: string): void {
-    if (this.#routes.get(s.route) === s) this.#routes.delete(s.route)
+    if (this.#routes.get(s.route) === s) { this.#routes.delete(s.route); this.#queues.delete(s.route) }
     this.#mem.get(s.deviceId)?.sessions.delete(s)
     s.session.drop('ended')
     this.#d.note({ note: 'sessions', count: this.#sessionCount() })
