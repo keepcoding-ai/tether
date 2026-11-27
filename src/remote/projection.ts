@@ -299,6 +299,40 @@ const idOf = (v: unknown, max = 128): string => (typeof v === 'string' && v.leng
 /** Who spoke or voted: the person, the tether, or an agent's id. */
 const whoOf = (v: unknown): string => (v === 'user' || v === 'tether' ? v : typeof v === 'string' && ID_RE.test(v) ? v : '')
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+
+// ---- the machine's paths in a label (RR3 gate B-4)
+// A pane's title is often its session's folder, a browser tab's a `file:` address: the user's home (with the login) is
+// `~`, a `file:` address its last segment. Without the person's home, any shape of a home folder counts as one: a
+// drive's `Users\<login>` (any slash, any case) and a `/Users/<login>` or `/home/<login>` that begins a path. Losing a
+// label's word next to a path is the price; the login never goes.
+const FILE_URL_RE = /\bfile:\/\/[^\s"'<>]*/gi
+const WIN_HOME_RE = /\b[A-Za-z]:[\\/]+users[\\/]+[^\\/]+/gi
+const POSIX_HOME_RE = /(^|[\s"'(=:,;[])\/(?:Users|home)\/[^/]+/g
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** `home` (when known) and every shape of a home folder in `s` become `~`. */
+function homesOut(s: string, home: string | undefined): string {
+  let out = s
+  const h = home?.trim().replace(/[\\/]+$/, '')
+  if (h && h.length > 1) out = out.replace(new RegExp(h.split(/[\\/]+/).map(escapeRe).join('[\\\\/]+'), 'gi'), '~')
+  return out.replace(WIN_HOME_RE, '~').replace(POSIX_HOME_RE, '$1~')
+}
+
+/** A label of the house without the machine's paths: `file:` addresses reduced to `~/…/<last segment>`, homes to `~`. */
+export function pathsOut(s: string, home?: string): string {
+  const files = s.replace(FILE_URL_RE, (u) => {
+    let path = u.replace(/^file:\/\//i, '').replace(/[?#].*$/, '')
+    try { path = decodeURIComponent(path) } catch { /* kept as it came */ }
+    const segs = homesOut(path, home).split(/[\\/]+/).filter(Boolean)
+    const last = segs[segs.length - 1]
+    return !last || last === '~' || segs.length === 1 ? '~' : `~/…/${last}`
+  })
+  return homesOut(files, home)
+}
+
+/** A title or a name of the tree: one line of hostile text, without the machine's paths, capped. */
+const label = (v: unknown, max: number, home: string | undefined): string =>
+  typeof v === 'string' ? pathsOut(sanitizeDeclaredName(v), home).slice(0, max) : ''
 const byteLength = (v: unknown): number => utf8(JSON.stringify(v)).length
 
 // ---- channels.marks
@@ -381,7 +415,13 @@ export interface ChannelPage {
 }
 
 /** The `history` answer of tetherd (extensions/channels/daemon/requests.ts), with what the portal asked: unknown JSON. */
-export interface PageSource { answer: unknown; before?: number; limit: number }
+export interface PageSource {
+  answer: unknown
+  before?: number
+  limit: number
+  /** The person's home folder: it becomes `~` in the channel's title (regencyTree's rule). */
+  home?: string
+}
 
 const person = (v: unknown): Person => { const p = rec(v); return { id: whoOf(p.id), name: name64(p.name) } }
 const persons = (v: unknown, max = 64): Person[] => arr(v, max).map(person)
@@ -470,7 +510,7 @@ export function channelsPage(s: PageSource): ChannelPage {
   const a = rec(s.answer)
   const ch = rec(a.channel)
   const channel = opt<ChannelPage['channel']>(
-    { id: typeof ch.id === 'string' && ID_RE.test(ch.id) ? ch.id : '', name: name64(ch.name), title: line(ch.title, 256) },
+    { id: typeof ch.id === 'string' && ID_RE.test(ch.id) ? ch.id : '', name: name64(ch.name), title: label(ch.title, 256, s.home) },
     { closed: ch.closed ? true : undefined },
   )
   const limit = int(s.limit, 1, PAGE_LINES_MAX) ?? PAGE_LINES_MAX
@@ -531,7 +571,12 @@ export interface RemoteRegencyInput {
 export interface RegencyTree { input: RemoteRegencyInput; live: boolean; asOf?: number; sig?: string }
 
 /** The `tree.read` answer of tetherd (publish-rules.ts RegencyView), and whether the device holds `channels`. */
-export interface RegencyTreeSource { view: unknown; channels: boolean }
+export interface RegencyTreeSource {
+  view: unknown
+  channels: boolean
+  /** The person's home folder, as the portal's machine knows it: it becomes `~` in every title and name. */
+  home?: string
+}
 
 const TREE_DESKS_MAX = 256
 const TREE_PANES_MAX = 512
@@ -542,18 +587,18 @@ const TREE_CLOSED_MAX = 50
 
 const short = (v: unknown, max = 32): string => idOf(v, max)
 
-function remotePane(v: unknown): RemotePane {
+function remotePane(v: unknown, home: string | undefined): RemotePane {
   const p = rec(v)
   return opt<RemotePane>(
-    { id: idOf(p.id), type: short(p.type), icon: short(p.icon), title: line(p.title, 256) },
+    { id: idOf(p.id), type: short(p.type), icon: short(p.icon), title: label(p.title, 256, home) },
     { attention: oneOf(p.attention, ['done', 'waiting'] as const), busy: p.busy === true ? true : undefined, asleep: p.asleep === true ? true : undefined, exited: p.exited === true ? true : undefined },
   )
 }
 
-function remoteDesk(v: unknown): RemoteDesk {
+function remoteDesk(v: unknown, home: string | undefined): RemoteDesk {
   const d = rec(v)
   return opt<RemoteDesk>(
-    { id: idOf(d.id), name: line(d.name, 128), color: short(d.color), kind: oneOf(d.kind, ['queue', 'system', 'drawer'] as const) ?? 'queue', asleep: d.asleep === true, panes: arr(d.panes, TREE_PANES_MAX).map(remotePane) },
+    { id: idOf(d.id), name: label(d.name, 128, home), color: short(d.color), kind: oneOf(d.kind, ['queue', 'system', 'drawer'] as const) ?? 'queue', asleep: d.asleep === true, panes: arr(d.panes, TREE_PANES_MAX).map(p => remotePane(p, home)) },
     { icon: typeof d.icon === 'string' ? short(d.icon) : undefined },
   )
 }
@@ -566,20 +611,20 @@ function byId<T>(v: unknown, f: (x: unknown) => T): Record<string, T> {
   return out
 }
 
-function remoteChannel(v: unknown): RemoteChannel {
+function remoteChannel(v: unknown, home: string | undefined): RemoteChannel {
   const c = rec(v)
   const o = rec(c.owner)
   const ended = rec(c.ownerEnded)
   const closed = rec(c.closed)
   return opt<RemoteChannel>(
     {
-      id: idOf(c.id), name: name64(c.name), title: line(c.title, 256),
-      owner: o.kind === 'agent' ? { kind: 'agent', id: idOf(o.id), name: name64(o.name) } : { kind: 'user' },
+      id: idOf(c.id), name: label(c.name, 64, home), title: label(c.title, 256, home),
+      owner: o.kind === 'agent' ? { kind: 'agent', id: idOf(o.id), name: label(o.name, 64, home) } : { kind: 'user' },
       members: int(c.members) ?? 0, seenByUser: int(c.seenByUser) ?? 0, createdAt: iso(c.createdAt) ?? '',
     },
     {
       desk: typeof c.desk === 'string' ? idOf(c.desk) : undefined,
-      ownerEnded: c.ownerEnded ? { at: iso(ended.at) ?? '', name: name64(ended.name), why: oneOf(ended.why, ['forgotten', 'left', 'removed'] as const) ?? 'removed' } : undefined,
+      ownerEnded: c.ownerEnded ? { at: iso(ended.at) ?? '', name: label(ended.name, 64, home), why: oneOf(ended.why, ['forgotten', 'left', 'removed'] as const) ?? 'removed' } : undefined,
       closed: c.closed ? { at: iso(closed.at) ?? '', by: whoOf(closed.by) } : undefined,
     },
   )
@@ -596,41 +641,43 @@ function remoteMarks(v: unknown, withText: boolean): RemoteChannelMarks {
   )
 }
 
-function remoteAgent(v: unknown): RemoteAgent {
+function remoteAgent(v: unknown, home: string | undefined): RemoteAgent {
   const a = rec(v)
   const e = rec(a.emblem)
   return opt<RemoteAgent>(
-    { id: idOf(a.id), kind: short(a.kind), name: name64(a.name) },
-    { emblem: a.emblem ? { name: line(e.name, 128), color: short(e.color), icon: short(e.icon) } : undefined },
+    { id: idOf(a.id), kind: short(a.kind), name: label(a.name, 64, home) },
+    { emblem: a.emblem ? { name: label(e.name, 128, home), color: short(e.color), icon: short(e.icon) } : undefined },
   )
 }
 
-function remoteClosed(v: unknown): RemoteClosed {
+function remoteClosed(v: unknown, home: string | undefined): RemoteClosed {
   const c = rec(v)
   return opt<RemoteClosed>(
-    { slotId: idOf(c.slotId), kind: short(c.kind), name: name64(c.name) },
-    { title: typeof c.title === 'string' ? line(c.title, 256) : undefined, endedAt: typeof c.endedAt === 'string' ? (iso(c.endedAt) ?? '') : undefined },
+    { slotId: idOf(c.slotId), kind: short(c.kind), name: label(c.name, 64, home) },
+    { title: typeof c.title === 'string' ? label(c.title, 256, home) : undefined, endedAt: typeof c.endedAt === 'string' ? (iso(c.endedAt) ?? '') : undefined },
   )
 }
 
+/** Titles and names of the tree go through `label`: without the machine's paths (`home`: the person's, when the portal knows it). */
 export function regencyTree(s: RegencyTreeSource): RegencyTree {
   const view = rec(s.view)
   const i = rec(view.input)
   const owners = rec(i.owners)
+  const home = s.home
   const since: Record<string, number> = {}
   for (const [k, at] of Object.entries(byId(i.since, num))) if (at !== undefined) since[k] = at
-  const owner = (x: unknown): RemoteOwner => ({ id: idOf(rec(x).id), name: name64(rec(x).name) })
+  const owner = (x: unknown): RemoteOwner => ({ id: idOf(rec(x).id), name: label(rec(x).name, 64, home) })
   const input = opt<RemoteRegencyInput>(
     {
-      desks: { desks: arr(rec(i.desks).desks, TREE_DESKS_MAX).map(remoteDesk) },
+      desks: { desks: arr(rec(i.desks).desks, TREE_DESKS_MAX).map(d => remoteDesk(d, home)) },
       owners: { desk: byId(owners.desk, owner), pane: byId(owners.pane, owner) },
-      channels: arr(i.channels, TREE_CHANNELS_MAX).map(remoteChannel),
+      channels: arr(i.channels, TREE_CHANNELS_MAX).map(c => remoteChannel(c, home)),
       channelMarks: byId(i.channelMarks, x => remoteMarks(x, s.channels === true)),
-      agents: arr(i.agents, TREE_AGENTS_MAX).map(remoteAgent),
+      agents: arr(i.agents, TREE_AGENTS_MAX).map(a => remoteAgent(a, home)),
       since,
       collapsed: [],
     },
-    { selfDeskId: typeof i.selfDeskId === 'string' ? idOf(i.selfDeskId) : undefined, closed: Array.isArray(i.closed) ? arr(i.closed, TREE_CLOSED_MAX).map(remoteClosed) : undefined },
+    { selfDeskId: typeof i.selfDeskId === 'string' ? idOf(i.selfDeskId) : undefined, closed: Array.isArray(i.closed) ? arr(i.closed, TREE_CLOSED_MAX).map(c => remoteClosed(c, home)) : undefined },
   )
   const live = view.live === true
   return opt<RegencyTree>(

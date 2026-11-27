@@ -12,7 +12,7 @@
 // It leaves when the pipe closes, when the IPC channel goes (tetherd died) or on `stop`: a portal never outlives the
 // tetherd that spawned it, so the credential and the pairing tickets die with both. Async fs only (sync-fs ratchet root).
 import { appendFile, readFile } from 'node:fs/promises'
-import { userInfo } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { agentExecutor } from '../agents/agent-exec.ts'
 import { remoteBenchOn, tetherHome } from '../core/paths.ts'
@@ -144,6 +144,7 @@ async function main(): Promise<void> {
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
     // The class `ext-read` of PIPE_REACH: the only path from a device to tetherd's extensions (./reads.ts).
     reads: pipeReads((body) => client.request(body)),
+    userHome: homedir(),
     ...(channelsGap !== undefined || regencyGap !== undefined
       ? { noticeGapsMs: { ...(channelsGap !== undefined ? { channels: channelsGap } : {}), ...(regencyGap !== undefined ? { regency: regencyGap } : {}) } }
       : {}),

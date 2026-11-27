@@ -83,6 +83,8 @@ export interface HouseDeps {
   reads?: PipeReads
   /** Bench: shorter gaps between the thin notices (./feeds.ts). */
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
+  /** The person's home folder (os.homedir()): it becomes `~` in the titles and names the reads carry (projection.ts pathsOut). */
+  userHome?: string
 }
 
 interface DeviceMem {
@@ -683,13 +685,13 @@ export class House {
           if (before !== undefined && !count(before, 1, Number.MAX_SAFE_INTEGER)) return bad
           if (!count(limit, 1, PAGE_LINES_MAX)) return bad
           const at = before !== undefined ? { before } : {}
-          bytes = resultBody(op, { answer: await reads.read(op, { channel, limit, ...at }), limit, ...at })
+          bytes = resultBody(op, { answer: await reads.read(op, { channel, limit, ...at }), limit, ...at, home: this.#d.userHome })
           break
         }
         case 'regency.tree': {
           const view = await reads.read(op, {})
           // The first call's text is a line of a channel: the tree carries it only to a device that may read the channels.
-          bytes = resultBody(op, { view, channels: scopes.includes(opByName('channels.marks')!.scope) })
+          bytes = resultBody(op, { view, channels: scopes.includes(opByName('channels.marks')!.scope), home: this.#d.userHome })
           const v = (view && typeof view === 'object' ? view : {}) as { live?: unknown; sig?: unknown; asOf?: unknown }
           this.#feeds.sawTree(regencyChanged(v as RegencyChanged))
           break

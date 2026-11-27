@@ -15,7 +15,7 @@ import {
 } from '../../src/remote/index.ts'
 import {
   ATTENTION_MAX, attentionItem, attentionList, CHANGED_IDS_MAX, channelsChanged, channelsMarks, channelsPage, emptyBody, errorBody,
-  eventBody, LINE_BODY_MAX, MARKS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
+  eventBody, LINE_BODY_MAX, MARKS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, pathsOut, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
   RESULTS, sessionInfo, type MarkRowSource, type ProcSource, type ProfileSource, type RegencyTree, type SlotSource,
 } from '../../src/remote/projection.ts'
 import { utf8 } from '../../src/remote/bytes.ts'
@@ -319,6 +319,34 @@ describe('the reads of an extension, by allow list', () => {
     assert.equal(regencyTree({ view: { ...view, live: true }, channels: true }).asOf, undefined, 'live: no "como estavam às"')
     assert.equal(regencyTree({ view: { ...view, sig: MARKER }, channels: true }).sig, undefined)
     assert.deepEqual(regencyTree({ view: 7, channels: true }).input.desks, { desks: [] }, 'an odd answer is an empty tree')
+  })
+
+  // RR3 gate B-4: the tree's titles carried the machine's paths, with the login.
+  test('the machine\'s paths out of every label: the home is `~`, a file: address its last segment', () => {
+    const cases: Array<[string, string, string?]> = [
+      ['C:\\Users\\guga\\tether', '~\\tether'],
+      ['c:/users/guga/obra · claude', '~/obra · claude'],
+      ['/home/guga/x', '~/x'],
+      ['em /Users/guga', 'em ~'],
+      ['file:///C:/Users/guga/docs/plano%20novo.html', '~/…/plano novo.html'],
+      ['file:///C:/Users/guga/', '~'],
+      ['Plano — file:///home/guga/a.pdf', 'Plano — ~/…/a.pdf'],
+      ['D:\\perfis\\guga\\proj', '~\\proj', 'D:\\perfis\\guga'],
+      ['d:/PERFIS/guga', '~', 'D:\\perfis\\guga\\'],
+      ['github.com/users/guga', 'github.com/users/guga'],
+      ['Agente', 'Agente'],
+    ]
+    for (const [from, to, home] of cases) assert.equal(pathsOut(from, home), to, from)
+    const view = {
+      input: {
+        desks: { desks: [{ id: 'd', name: 'C:\\Users\\guga', color: '', kind: 'queue', asleep: false, panes: [{ id: 'p', type: 'terminal', icon: 'terminal', title: 'D:\\perfis\\guga\\tether' }] }] },
+        owners: { desk: { d: { id: 'a', name: '/home/guga' } }, pane: {} }, channels: [], channelMarks: {}, agents: [], since: {}, collapsed: [],
+        closed: [{ slotId: 's', kind: 'claude', name: 'claude', title: 'file:///D:/perfis/guga/x.md' }],
+      },
+      live: true,
+    }
+    const t = regencyTree({ view, channels: true, home: 'D:\\perfis\\guga' })
+    assert.equal(JSON.stringify(t).includes('guga'), false, JSON.stringify(t))
   })
 
   test('the thin notices: ids only, capped, and the tree by signature, time and liveness', () => {

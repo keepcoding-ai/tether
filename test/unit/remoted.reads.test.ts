@@ -221,15 +221,25 @@ describe('ReadFeeds: thin notices, paced, never lost', () => {
 const ANSWERS: Record<ExtReadOp, unknown> = {
   'channels.marks': { channels: [{ channel: 'c_1', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi' }, ...later() }], ...later() },
   'channels.page': {
-    channel: { id: 'c_1', name: 'obra', title: 'Obra', members: 1, seenByUser: 3, createdAt: ISO, ...later() },
+    channel: { id: 'c_1', name: 'obra', title: `Obra em C:\\Users\\${MARKER}`, members: 1, seenByUser: 3, createdAt: ISO, ...later() },
     lines: [{ seq: 5, at: ISO, kind: 'message', from: { id: 'a1b2c3d4', name: 'conferente', role: 'member' }, body: 'oi', files: [{ name: 'a.txt', path: `C:/Users/${MARKER}/a.txt`, size: 3, type: 'text/plain' }], ...later() }],
     reactions: [], polls: [], more: true, last: 5, ...later(),
   },
   'regency.tree': {
     input: {
-      desks: { desks: [{ id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...later() }] }] },
-      owners: { desk: {}, pane: {} }, channels: [], channelMarks: { c_1: { unread: 1, toMe: 1, asks: 0, owed: 0, first: { why: 'to-you', text: 'conferente: oi' } } },
-      agents: [], since: {}, collapsed: [MARKER], query: MARKER, ...later(),
+      desks: { desks: [
+        { id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...later() }] },
+        // RR3 gate B-4: titles carry the machine's paths (a session titled by its folder, a browser tab on a file).
+        { id: 'desk-2', name: `C:/Users/${MARKER}/obra`, color: 'blue', kind: 'queue', asleep: false, panes: [
+          { id: 'a2', type: 'terminal', icon: 'terminal', title: `C:\\Users\\${MARKER}\\tether` },
+          { id: 'b1', type: 'browser', icon: 'browser', title: `file:///C:/Users/${MARKER}/docs/plano.html` },
+        ] },
+      ] },
+      owners: { desk: {}, pane: {} },
+      channels: [{ id: 'c_1', name: 'obra', title: `/home/${MARKER}/obra`, owner: { kind: 'user' }, members: 1, seenByUser: 0, createdAt: ISO }],
+      channelMarks: { c_1: { unread: 1, toMe: 1, asks: 0, owed: 0, first: { why: 'to-you', text: 'conferente: oi' } } },
+      agents: [{ id: 'a2', kind: 'claude', name: `C:\\Users\\${MARKER}\\tether` }], since: {}, collapsed: [MARKER], query: MARKER,
+      closed: [{ slotId: 's9', kind: 'claude', name: 'claude', title: `c:\\users\\${MARKER}\\antigo`, endedAt: ISO }], ...later(),
     },
     live: true, sig: '0123456789abcdef', ...later(),
   },
@@ -267,6 +277,14 @@ describe('the three reads through a real House', () => {
     const tree = await s.request(OP_CODES['regency.tree'])
     assert.equal(tree.status, RES_STATUS.ok)
     assert.deepEqual([tree.body.live, tree.body.sig, (tree.body.input as { collapsed: unknown }).collapsed], [true, '0123456789abcdef', []])
+    const input = tree.body.input as { desks: { desks: { name: string; panes: { title: string }[] }[] }; closed: { title: string }[]; channels: { title: string }[]; agents: { name: string }[] }
+    const d2 = input.desks.desks[1]!
+    assert.deepEqual(
+      { desk: d2.name, panes: d2.panes.map((p) => p.title), closed: input.closed[0]!.title, channel: input.channels[0]!.title, agent: input.agents[0]!.name },
+      { desk: '~/obra', panes: ['~\\tether', '~/…/plano.html'], closed: '~\\antigo', channel: '~/obra', agent: '~\\tether' },
+      'the home is `~`, a file: address its last segment',
+    )
+    assert.equal((page.body.channel as { title: string }).title, 'Obra em ~')
     assert.deepEqual(calls, [
       { op: 'channels.marks', args: {} },
       { op: 'channels.page', args: { channel: 'c_1', limit: PAGE_LINES_MAX, before: 9 } },
