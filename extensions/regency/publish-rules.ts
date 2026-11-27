@@ -193,6 +193,8 @@ export interface KeptTree {
   at: number
   /** When the app last said "still this tree" (a publish or a lease), epoch ms. */
   seenAt: number
+  /** The pipe connection that published it: the only one whose lease counts (daemon.ts). */
+  conn?: number
 }
 
 /** The app is publishing: its lease is fresh. */

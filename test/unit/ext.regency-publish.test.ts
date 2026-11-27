@@ -176,6 +176,30 @@ describe('the app publishes the Regency entry', () => {
     assert.equal(keeper.read().live, false)
   })
 
+  // RR3 gate B-3: the lease named only the signature, which goes to every client in `tree.changed`: another connection that
+  // says `app` kept `live` true after the app left, and the phone never put the live slots over the tree.
+  test('the lease counts only from the connection that published the tree', async () => {
+    const c = clock()
+    const events: { name: string; payload: unknown }[] = []
+    const k = new TreeKeeper({ now: c.now, emit: (name, payload) => events.push({ name, payload }), setTimer: c.setTimeout, clearTimer: c.clear })
+    const { sig } = k.publish({ tree: entry() }, APP) as { sig: string }
+    const other = { client: 'app', conn: 2 }
+    await c.advance(LEASE_MS)
+    assert.deepEqual(k.publish({ sig }, other), { need: 'tree' }, 'another connection: refused')
+    assert.deepEqual(k.publish({ sig }, { client: 'app' }), { need: 'tree' }, 'a connection without a number: refused')
+    assert.deepEqual(k.publish({ sig }, APP), { sig }, 'the publisher renews')
+    const before = events.length
+    await c.advance(LEASE_MS)
+    for (let i = 0; i < 4; i++) { k.publish({ sig }, other); await c.advance(LEASE_MS / 2) }
+    assert.equal(k.read().live, false, 'the app left: live falls, whatever the other connection renews')
+    assert.deepEqual(events.slice(before).map(e => (e.payload as { live: boolean }).live), [false], 'only the end of the lease is told')
+    // A new tree from another connection is a new publish (its own lease from then on).
+    k.publish({ tree: entry('Outro') }, other)
+    assert.equal(k.read().live, true)
+    assert.deepEqual(k.publish({ sig: k.kept!.sig }, APP), { need: 'tree' })
+    k.dispose()
+  })
+
   test('utf8Length counts as TextEncoder does', () => {
     for (const s of ['', 'abc', 'ação', '😀x', '\ud800', '€'.repeat(3)]) assert.equal(utf8Length(s), new TextEncoder().encode(s).length, s)
   })

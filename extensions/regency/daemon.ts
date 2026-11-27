@@ -64,7 +64,10 @@ export class TreeKeeper {
     const now = this.#now()
     if (a.tree === undefined) {
       if (typeof a.sig !== 'string' || !SIG_RE.test(a.sig)) throw new DoorError('bad-request', 'tree.publish sem sig nem árvore')
-      if (!this.#kept || this.#kept.sig !== a.sig) return { need: 'tree' }
+      // The lease counts only from the connection that published the kept tree: the signature goes to every client in
+      // `tree.changed`, so naming it proves nothing, and a lease from elsewhere would keep `live` after the app left. Any
+      // other connection is asked for the tree (a publish of its own, visible as a new tree).
+      if (!this.#kept || this.#kept.sig !== a.sig || this.#kept.conn === undefined || this.#kept.conn !== ctx.conn) return { need: 'tree' }
       const wasLive = isLive(this.#kept, now)
       this.#kept.seenAt = now
       this.#arm()
@@ -80,7 +83,7 @@ export class TreeKeeper {
     const same = this.#kept?.sig === sig
     const wasLive = isLive(this.#kept, now)
     // The same tree again keeps its time: "como estavam às" names when it last changed, not when it was last sent.
-    this.#kept = { tree, sig, bytes, at: same ? this.#kept!.at : now, seenAt: now }
+    this.#kept = { tree, sig, bytes, at: same ? this.#kept!.at : now, seenAt: now, ...(ctx.conn !== undefined ? { conn: ctx.conn } : {}) }
     this.#arm()
     if (!same || !wasLive) this.#emit(EVT_CHANGED, { sig, at: this.#kept.at, live: true })
     return { sig, at: this.#kept.at }
