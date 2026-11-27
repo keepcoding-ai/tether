@@ -24,6 +24,13 @@ export interface Limits {
    */
   routeQueueMax: number
   /**
+   * Bytes of the frames waiting on one route (B-3 of the RR2 gate): the frame count alone let a relay hold 32 frames of
+   * MAX_INNER on each of 32 routes, 256 MiB. 1 MiB is the relay's own queue per route (fio-spec 5.7); over it the route goes.
+   */
+  routeQueueBytesMax: number
+  /** Bytes waiting on every route of the house together: 8 MiB, the relay's queue of the house socket (5.7). Over it, the route that would pass it goes. */
+  houseQueueBytesMax: number
+  /**
    * Requests per minute per device, all its sessions together. The app asks for the attention list when it opens and
    * then watches; a person tapping through screens makes a few per second at most. 120 is two per second sustained:
    * far above a person, far below a loop.
@@ -75,6 +82,8 @@ export const LIMITS: Readonly<Limits> = Object.freeze({
   hsRateDenyS: 600,
   inflightMax: 16,
   routeQueueMax: 2 * 16,
+  routeQueueBytesMax: 1024 * 1024,
+  houseQueueBytesMax: 8 * 1024 * 1024,
   reqPerDevicePerMin: 120,
   gesturesPerDevicePerMin: 30,
   strikesMax: 5,

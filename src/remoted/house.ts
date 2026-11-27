@@ -113,7 +113,9 @@ export class House {
   readonly #lim: Limits
   readonly #routes = new Map<number, Route>()
   /** The frames of each route waiting their turn (see #routeData); gone when the route goes. */
-  readonly #queues = new Map<number, { tail: Promise<void>; pending: number }>()
+  readonly #queues = new Map<number, { tail: Promise<void>; pending: number; bytes: number }>()
+  /** Bytes of every frame waiting in #queues (limits.ts `houseQueueBytesMax`). */
+  #queuedBytes = 0
   readonly #devices = new Map<string, PortalDevice>()
   readonly #mem = new Map<string, DeviceMem>()
   /** ticketId → exp (Unix s): what the relay must refuse; resent whole at each link up (spec 6.1). */
@@ -172,6 +174,9 @@ export class House {
   }
 
   get fingerprint(): string { return this.#fingerprint }
+
+  /** Bytes of the relay's frames waiting their turn, all routes together (diagnostics and tests). */
+  get queuedBytes(): number { return this.#queuedBytes }
 
   status(): PortalStatus {
     return { link: this.#linkUp ? 'up' : 'down', sessions: this.#sessionCount(), houseFingerprint: this.#fingerprint, live: this.#live() }
@@ -316,23 +321,33 @@ export class House {
    */
   #routeData(route: number, inner: Bytes): void {
     if (!this.#routes.has(route)) return
-    let q =this.#queues.get(route)
-    if (!q) { q = { tail: Promise.resolve(), pending: 0 }; this.#queues.set(route, q) }
-    if (q.pending >= this.#lim.routeQueueMax) {
-      this.#d.log(`route ${route}: more than ${this.#lim.routeQueueMax} frames waiting; closed`)
+    let q = this.#queues.get(route)
+    if (!q) { q = { tail: Promise.resolve(), pending: 0, bytes: 0 }; this.#queues.set(route, q) }
+    // Counted in frames and in bytes, per route and for the house: a frame that would pass any ceiling closes its route.
+    const n = inner.length
+    const over = q.pending >= this.#lim.routeQueueMax ? `more than ${this.#lim.routeQueueMax} frames`
+      : q.bytes + n > this.#lim.routeQueueBytesMax ? `more than ${this.#lim.routeQueueBytesMax} bytes`
+        : this.#queuedBytes + n > this.#lim.houseQueueBytesMax ? `the house over ${this.#lim.houseQueueBytesMax} bytes` : undefined
+    if (over) {
+      this.#d.log(`route ${route}: ${over} waiting; closed`)
       this.#routeClosed(route)
       this.#d.send(encodeOuter({ type: 'ROUTE_CLOSE', routeId: route }))
       return
     }
     const queue = q
     queue.pending++
+    queue.bytes += n
+    this.#queuedBytes += n
     queue.tail = queue.tail.then(async () => {
       try {
         if (this.#queues.get(route) === queue) await this.#dispatch(route, inner)
       } catch (e) {
         this.#d.log(`route ${route}: frame failed (${(e as Error).message})`)
       } finally {
+        // Released when the frame leaves memory: handled, or skipped because its route went.
         queue.pending--
+        queue.bytes -= n
+        this.#queuedBytes -= n
       }
     })
   }

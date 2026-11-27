@@ -6,7 +6,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { CLOSE, RES_STATUS, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE } from '../../src/remote/index.ts'
+import {
+  CERT_ROLE_TICKET, CLOSE, decodeOuter, encodeOuter, generateRoleKey, issueKeyCert, MAX_INNER, RES_STATUS, ROUTE_KIND, ROUTES_PER_HOUSE,
+  SESSIONS_PER_DEVICE,
+} from '../../src/remote/index.ts'
+import { AttentionView } from '../../src/remoted/attention.ts'
+import { House } from '../../src/remoted/house.ts'
 import { DeviceLimiter, LIMITS } from '../../src/remoted/limits.ts'
 import { startHouseBench, type HouseBench } from './remoted.house-bench.ts'
 import { until } from './remoted.helpers.ts'
@@ -27,6 +32,49 @@ describe('the limits that already existed keep their values and live in one plac
   test('the house declares no limit of its own', () => {
     const src = readFileSync(join(ROOT, 'src', 'remoted', 'house.ts'), 'utf8')
     assert.doesNotMatch(src, /\bconst (HS_PER_TICKET_PER_MIN|HS_PENDING_MAX|HS_RATE_DENY_S|INFLIGHT_MAX|SESSIONS_MAX|ROUTE_QUEUE_MAX)\b/)
+  })
+})
+
+// B-3 of the RR2 gate (B10): the queue of a route was counted in frames only, so a relay could hold 32 frames of MAX_INNER
+// on each of 32 routes (256 MiB) in the portal. Now bytes per route and per house, too; over either, the route goes.
+describe('the frames waiting in the portal have a ceiling in bytes, per route and for the house', () => {
+  test('a relay that sends 32 frames of MAX_INNER on 32 routes without waiting: the routes are cut, the memory stays under the ceiling', async () => {
+    assert.deepEqual([LIMITS.routeQueueBytesMax, LIMITS.houseQueueBytesMax], [1024 * 1024, 8 * 1024 * 1024])
+    const kH = (await generateRoleKey('house')).key
+    const kT = (await generateRoleKey('ticket')).key
+    const nowS = Math.floor(Date.now() / 1000)
+    const certT = await issueKeyCert(kH, { role: CERT_ROLE_TICKET, pub: kT.pub, notBefore: nowS - 60, notAfter: nowS + 86_400 })
+    const closed = new Set<number>()
+    const house = new House({
+      keys: { kH, kT, certT }, aud: 'localhost:9', houseName: 'Casa de teste', attention: new AttentionView(),
+      send: (b) => { const f = decodeOuter('house', 'end', b); if (f.type === 'ROUTE_CLOSE') closed.add(f.routeId) },
+      ask: async () => {}, note: () => {}, notice: () => {}, log: () => {}, now: Date.now,
+      // Every route an admission, so the 32 of them fit: the handshake ceilings are not what this test is about.
+      limits: { hsPerTicketPerMin: 1_000, hsPendingMax: 64 },
+    })
+    await house.init([], [])
+    house.linkUp()
+    const frame = (route: number): Uint8Array => encodeOuter({ type: 'ROUTE_DATA', routeId: route, inner: new Uint8Array(MAX_INNER) })
+    let peak = 0
+    // One synchronous burst: nothing is dispatched before the relay's last frame is in (the worst case for the queue).
+    for (let route = 1; route <= ROUTES_PER_HOUSE; route++) {
+      house.onFrame(encodeOuter({ type: 'ROUTE_OPEN', routeId: route, kind: ROUTE_KIND.admit, hint: crypto.getRandomValues(new Uint8Array(16)) }))
+      const f = frame(route)
+      for (let i = 0; i < 32; i++) { house.onFrame(f); peak = Math.max(peak, house.queuedBytes) }
+    }
+    assert.ok(peak <= LIMITS.houseQueueBytesMax, `the portal held ${peak} bytes at most`)
+    assert.equal(closed.size, ROUTES_PER_HOUSE, 'every route went: four frames fill one, eight routes fill the house')
+    await until(() => house.queuedBytes === 0 || undefined, 10_000, 'the frames of the cut routes released')
+
+    // Within the ceilings, nothing is cut: four frames of MAX_INNER fit one route exactly.
+    closed.clear()
+    house.onFrame(encodeOuter({ type: 'ROUTE_OPEN', routeId: 100, kind: ROUTE_KIND.admit, hint: crypto.getRandomValues(new Uint8Array(16)) }))
+    for (let i = 0; i < 4; i++) house.onFrame(frame(100))
+    assert.equal(house.queuedBytes, 4 * MAX_INNER)
+    assert.equal(closed.has(100), false, 'four fit')
+    house.onFrame(frame(100))
+    assert.equal(closed.has(100), true, 'the fifth passes 1 MiB: the route goes')
+    await house.shutdown()
   })
 })
 
