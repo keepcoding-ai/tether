@@ -211,6 +211,28 @@ describe('the app publishes the Regency entry', () => {
     k.dispose()
   })
 
+  // RR3 final gate B-1: the same tree again from another connection took the lease in silence.
+  test('the same tree published again by another connection is a new tree: new `at`, `tree.changed`, the lease is its own', async () => {
+    const c = clock()
+    const events: { name: string; payload: unknown }[] = []
+    const k = new TreeKeeper({ now: c.now, emit: (name, payload) => events.push({ name, payload }), setTimer: c.setTimeout, clearTimer: c.clear })
+    const first = k.publish({ tree: entry() }, APP) as { sig: string; at: number }
+    await c.advance(LEASE_MS / 2)
+    const before = events.length
+    const intruder = { client: 'app', conn: 2 }
+    const again = k.publish({ tree: entry() }, intruder) as { sig: string; at: number }
+    assert.equal(again.sig, first.sig)
+    assert.notEqual(again.at, first.at, 'a new `at`')
+    assert.equal(events.length, before + 1, 'tree.changed went out')
+    assert.deepEqual(k.publish({ sig: first.sig }, APP), { need: 'tree' }, 'the lease is the intruder\'s now, and the app is asked for the tree')
+    // The same connection again keeps its time and says nothing.
+    const quiet = events.length
+    const same = k.publish({ tree: entry() }, intruder) as { at: number }
+    assert.equal(same.at, again.at)
+    assert.equal(events.length, quiet)
+    k.dispose()
+  })
+
   test('utf8Length counts as TextEncoder does', () => {
     for (const s of ['', 'abc', 'ação', '😀x', '\ud800', '€'.repeat(3)]) assert.equal(utf8Length(s), new TextEncoder().encode(s).length, s)
   })

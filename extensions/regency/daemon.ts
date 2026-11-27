@@ -80,7 +80,8 @@ export class TreeKeeper {
     const bytes = utf8Length(json)
     if (bytes > TREE_MAX_BYTES) throw new DoorError('bad-request', `árvore grande demais (${bytes} bytes; o teto é ${TREE_MAX_BYTES})`)
     const sig = signatureOf(json)
-    const same = this.#kept?.sig === sig
+    // The same tree from another connection is a new publish (the lease changes hands in the open, as a new tree).
+    const same = this.#kept?.sig === sig && this.#kept.conn === ctx.conn
     const wasLive = isLive(this.#kept, now)
     // The same tree again keeps its time: "como estavam às" names when it last changed, not when it was last sent.
     this.#kept = { tree, sig, bytes, at: same ? this.#kept!.at : now, seenAt: now, ...(ctx.conn !== undefined ? { conn: ctx.conn } : {}) }
