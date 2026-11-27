@@ -25,7 +25,7 @@ import {
   emptyBody, errorBody, eventBody, PAGE_LINES_MAX, READ_BODY_MAX, regencyChanged, resultBody, type EventSource, type MarksSource, type RegencyChanged,
 } from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
-import { FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp } from './gate.ts'
+import { EXT_READS, FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp } from './gate.ts'
 import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import { ReadError, SharedRead, type PipeReads } from './reads.ts'
@@ -169,7 +169,7 @@ export class House {
 
   /** An `ext-event` of tetherd: only what makes a thin notice is kept (./feeds.ts); its payload never goes to a device. */
   extEvent(ext: string, name: string, payload: unknown): void {
-    if (ext === 'channels') this.#marks?.invalidate()
+    if (ext === EXT_READS['channels.marks'].ext) this.#marks?.invalidate()
     this.#feeds.extEvent(ext, name, payload)
   }
 
