@@ -22,6 +22,8 @@ export interface HouseBenchOptions {
   presenceClock?: Partial<PresenceClock>
   /** The old ticket of a renewal is denied this long after it (the portal's default is a minute). */
   renewDenyAfterMs?: number
+  /** The portal's clock (the house's `now`); absent, Date.now. A test moves it to let the presence clocks run. */
+  now?: () => number
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -113,7 +115,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
   let tick: NodeJS.Timeout | undefined
   const up = async (devices: PortalDevice[]): Promise<House> => {
     const house = new House({
-      keys, aud, houseName: 'bench', attention: new AttentionView(), log: () => {}, now: Date.now, ask: answer,
+      keys, aud, houseName: 'bench', attention: new AttentionView(), log: () => {}, now: o.now ?? Date.now, ask: answer,
       send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
     })

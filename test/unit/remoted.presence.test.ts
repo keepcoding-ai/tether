@@ -16,7 +16,7 @@ import { until, type DeviceSession, type TestDevice } from './remoted.helpers.ts
 
 const ORIGIN = 'https://pwa.example'
 const RP_ID = 'pwa.example'
-const OP = { info: 0x0001, renew: 0x0002, challenge: 0x0003, assert: 0x0004, register: 0x0005, lock: 0x0007, list: 0x0100, revoke: 0x0601 }
+const OP = { info: 0x0001, renew: 0x0002, challenge: 0x0003, assert: 0x0004, register: 0x0005, lock: 0x0007, list: 0x0100, watch: 0x0101, revoke: 0x0601 }
 const { UP, UV, AT } = AUTH_FLAG
 const subtle = globalThis.crypto.subtle
 const actId = (): Bytes => new Uint8Array(randomBytes(16))
@@ -283,6 +283,49 @@ describe('presence in the portal', () => {
     assert.equal(back.info!.presence, PRESENCE.locked, 'the lockout dropped the unlock')
     assert.equal((await back.request(OP.challenge, { purpose: 'unlock' })).status, RES_STATUS.limit, 'locked out')
     back.leg.close()
+  })
+})
+
+// Test 56 of fio-spec 9.2 (E-11): only a gesture resets the idle clock. A PWA that follows who waits and reads in the
+// background for 16 min, by the portal's clock, is locked at IDLE_LOCK; the session family stays, and a proof unlocks.
+describe('idle by background reads (fio-spec 9.2 test 56)', () => {
+  let bench: HouseBench
+  let offsetMs = 0
+  const STEP_MS = 30_000 // under HB_TIMEOUT: every step carries a record, so the session lives while the clock runs
+  before(async () => {
+    bench = await startHouseBench({
+      origin: ORIGIN, now: () => Date.now() + offsetMs,
+      limits: { reqPerDevicePerMin: 10_000, gesturesPerDevicePerMin: 10_000, hsPerTicketPerMin: 1_000 },
+    })
+  })
+  after(async () => { await bench?.stop() })
+
+  test('16 min of attention.watch, attention.list, session.info and uv.challenge without a gesture: locked; uv.assert unlocks', async () => {
+    const auth = await SoftAuthenticator.make()
+    const fresh = bench.fresh
+    const reg = await fresh.request(OP.register, await auth.register(await registrationChallenge(fresh.session.sessionId, bench.device.kD.pub)), { actId: actId() })
+    assert.equal(reg.status, RES_STATUS.ok)
+    fresh.leg.close()
+    const s = await bench.connect()
+    assert.equal((await present(s, auth)).status, RES_STATUS.ok, 'the last gesture: the unlock')
+    assert.equal((await s.request(OP.watch)).status, RES_STATUS.ok)
+
+    const steps = 32 // 16 min
+    const idleSteps = 15 * 60_000 / STEP_MS
+    for (let i = 1; i <= steps; i++) {
+      offsetMs += STEP_MS
+      const want = i < idleSteps ? RES_STATUS.ok : RES_STATUS.locked
+      assert.equal((await s.request(i % 2 ? OP.list : OP.watch)).status, want, `background read at ${i * STEP_MS / 1000} s`)
+      assert.equal((await s.request(OP.info)).status, RES_STATUS.ok, 'the session family answers')
+      assert.equal((await s.request(OP.challenge, { purpose: 'unlock' })).status, RES_STATUS.ok, 'a challenge is no gesture')
+    }
+    assert.equal(s.closed, undefined, 'background reads keep the session, never the unlock')
+    assert.equal((await s.request(OP.info)).body.presence, PRESENCE.locked)
+    assert.equal((await s.request(OP.list)).status, RES_STATUS.locked)
+
+    assert.deepEqual((await present(s, auth)).body, { presence: PRESENCE.unlocked, elevUntil: 0 }, 'uv.challenge + uv.assert unlock again')
+    assert.equal((await s.request(OP.list)).status, RES_STATUS.ok)
+    s.leg.close()
   })
 })
 
