@@ -46,7 +46,7 @@ export const INSTRUCTIONS = [
   'You can own desks and panes of the tether: the person gives them to you, and over what is in them you have the power she has.',
   '`agents list` shows what is yours and what you may do with each pane; run it to find your way again after compacting.',
   '`agents hibernate` puts one of your panes, or a desk of yours (`desk`), to sleep as the person does (the processes stop and do not start with the tether); `agents wake` brings them back; `agents list` marks what sleeps with `asleep`.',
-  '`agents suspend` stops one of your panes to save resources but, unlike hibernate, the pane comes back on its own when anything uses it (a send, a read, the person); hibernate only returns with `agents wake`. `agents list` marks it `suspended`.',
+  '`agents suspend` stops one of your panes to save resources but, unlike hibernate, the pane comes back on its own when anything uses it (a send, a read, the person); hibernate only returns with `agents wake`. `agents list` marks it `suspended`. A pane the person marked "Não suspender" shows `noSuspend` in `agents list` and `agents suspend` refuses it with `no-suspend` (only the person lifts the mark; hibernate is still allowed).',
   'What happens in your panes reaches you as <channel source="tether" origin="for-agents" ...>. The person sees everything and may take any pane back at any time; an act on a pane she holds answers `with-user`.',
 ].join('\n')
 

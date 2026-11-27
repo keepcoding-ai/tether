@@ -15,7 +15,7 @@ function stubHost(calls: string[]): CommandHost {
   const log = (name: string) => (...args: unknown[]): void => { calls.push([name, ...args.map(a => JSON.stringify(a))].join(' ')) }
   return {
     newPanel: log('newPanel'), newTab: log('newTab'), duplicateActive: log('duplicateActive'), activePane: () => 'slot-1',
-    renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), suspendPane: log('suspendPane'), hibernatePane: log('hibernatePane'), toggleUnread: log('toggleUnread'), toggleDetails: log('toggleDetails'),
+    renamePane: log('renamePane'), switchProfile: log('switchProfile'), restartAgent: log('restartAgent'), suspendPane: log('suspendPane'), toggleNoSuspend: log('toggleNoSuspend'), hibernatePane: log('hibernatePane'), toggleUnread: log('toggleUnread'), toggleDetails: log('toggleDetails'),
     copyLink: log('copyLink'), copyFolder: log('copyFolder'), openFolder: log('openFolder'), movePane: log('movePane'), closePane: log('closePane'),
     createDesk: log('createDesk'), cycleDesk: log('cycleDesk'), goToDesk: log('goToDesk'), moveActiveDesk: log('moveActiveDesk'), deskActions: log('deskActions'), toggleBuilder: log('toggleBuilder'), closeDesk: log('closeDesk'),
     toggleDrawer: log('toggleDrawer'), quickShell: log('quickShell'), closePeek: log('closePeek'), pickPeek: log('pickPeek'), asleepMenu: log('asleepMenu'),
@@ -164,6 +164,17 @@ describe('the app commands', () => {
     assert.ok(!titles().some(t => /desta guia/.test(t)), 'there is no peek at the active tab: it is in view')
     ctx.peekOpen = true
     assert.ok(titles().includes('Fechar o cartão de espiar'))
+  })
+
+  test('"Não suspender": one command of the pair per agent pane, none for a shell; a marked pane loses "Suspender guia"', async () => {
+    calls.length = 0
+    const r = new CommandRegistry(() => CTX)
+    r.register(...list)
+    const ids = (ctx: CommandContext) => r.available(ctx).map(c => c.id).filter(id => id === 'pane.no-suspend' || id === 'pane.allow-suspend' || id === 'pane.suspend')
+    assert.deepEqual(ids({ ...CTX, noSuspend: false }), ['pane.suspend', 'pane.no-suspend'])
+    assert.deepEqual(ids({ ...CTX, noSuspend: true }), ['pane.allow-suspend'])
+    assert.deepEqual(ids(CTX), ['pane.suspend'])
+    assert.equal(await r.run('pane.no-suspend'), 'unavailable')
   })
 
   test('the unread mark: one command of the pair per slot pane, none for other panes', async () => {

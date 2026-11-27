@@ -16,7 +16,7 @@ const OTHER = 'pane-2'
 
 describe('for-agents: suspend', () => {
   let slot: Record<string, unknown>
-  let mark: { asleep?: true; suspended?: true }
+  let mark: { asleep?: true; suspended?: true; noSuspend?: true }
   let hand: 'owner' | 'user'
   let appAnswer: SuspendAnswer | 'silent'
   let emitted: SuspendEvent[]
@@ -108,6 +108,13 @@ describe('for-agents: suspend', () => {
     assert.deepEqual(emitted, [])
   })
 
+  test('a pane marked "Não suspender" is refused with no-suspend, before asking the app', async () => {
+    mark = { noSuspend: true }
+    assert.equal(codeOf(await suspend()), 'no-suspend')
+    assert.deepEqual(emitted, [])
+    assert.deepEqual(touched, [])
+  })
+
   test('the app refusing (cannot), a missing pane and no app answer', async () => {
     appAnswer = 'cannot'
     assert.equal(codeOf(await suspend()), 'cannot-suspend')
@@ -130,6 +137,19 @@ describe('for-agents: suspend', () => {
     const r = await listVerb.run(deps, caller, {}).catch(failOf)
     assert.match(r.text, /suspensa/)
     assert.equal(JSON.stringify(r.data).includes('"suspended":true'), true)
+  })
+
+  test('list marks a "Não suspender" pane with noSuspend: true', async () => {
+    mark = { noSuspend: true }
+    const d = deps as unknown as { api: Record<string, unknown>; store: Record<string, unknown> }
+    d.api.objects = { get: () => undefined }
+    d.api.delivery = { pathOf: () => 'wait', pending: () => [] }
+    d.store.ownedDesks = () => []
+    d.store.ownedPanes = () => [[PANE, { owner: OWNER, since: '' }]]
+    d.store.deskFacts = () => ({})
+    ;(deps as unknown as { pending: unknown }).pending = { held: () => [], count: () => 0 }
+    const r = await listVerb.run(deps, caller, {}).catch(failOf)
+    assert.equal(JSON.stringify(r.data).includes('"noSuspend":true'), true)
   })
 
   test('the app half answers the event through ui.panes.suspend', async () => {

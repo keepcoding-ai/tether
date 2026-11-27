@@ -1297,3 +1297,12 @@ A suspensão por economia ganhou entrada manual, como alternativa a hibernar: a 
 - **For-agents.** Verbo `suspend` (arg `guia`, permissão `open-close`), evento `suspend` na ponte do `hibernate` (`sleep-names.ts`, `renderer/sleep.ts`, `ui.panes.suspend`). Recusas: própria guia `bad-request`, com a pessoa `with-user`, sem processo `no-conductor`, shell `not-agent`, sessão não confirmada `unconfirmed`, hibernada `asleep`, parada `not-running`. Já suspensa responde `already: true`. `agents list` marca `suspended: true` e "suspensa". `wake` já retoma guia suspensa (é uma guia parada). Instrução do servidor e skill atualizadas.
 - **Prova.** `test/unit/ext.for-agents-suspend.test.ts`, bloco novo em `app.suspend.test.ts`, `app.commands.test.ts`, `ext.for-agents-verbs.test.ts`.
 - **Entrega pede reiniciar o tetherd** (mudou o verbo e a instrução do for-agents, carregados pelo daemon) e rebuild do app.
+
+## Não suspender (2026-11-27, branch agent/tether-no-suspend)
+
+- **O que é.** Marca por guia de agente que a impede de ser suspensa. Menu da guia: "Não suspender" / "Permitir suspender" (item com `checked` e ícone `push-pin`); paleta: `pane.no-suspend` e `pane.allow-suspend` (um do par por guia; nenhum para shell). Selo discreto `push-pin` na aba, dica "Não suspende".
+- **Estado.** `noSuspendPanes` no layout (guardado no `SuspendBook`, `loadNoSuspend`/`noSuspendToLayout`/`setNoSuspend`), salvo e carregado como `suspendedPanes`; sobrevive ao reinício e é podado no codec de sync junto com as outras listas.
+- **Regras.** O varredor pula a guia (`SuspendCandidate.noSuspend`); `canSuspendNow` ganhou o 4º parâmetro `noSuspend` e retorna falso, então "Suspender guia" some do menu e da paleta (`when` com `ctx.noSuspend`); marcar uma guia suspensa a retoma (`resume` do outcome); hibernar continua permitido.
+- **Mapa e MCP.** `DeskMapPane.noSuspend` (protocolo, `deskMapOf`, `parseDeskMap`). `agents list` mostra `noSuspend: true`. O verbo `suspend` recusa com `no-suspend` checando o mapa no daemon (caminho mais simples, sem ida ao app; o app ainda recusa com `cannot-suspend` pela porta `door.suspend`). Skill e instrução do servidor atualizadas.
+- **Prova.** Blocos novos em `app.suspend`, `app.commands`, `ext.for-agents-suspend`. `tsc -p .` limpo.
+- **Entrega pede reiniciar o tetherd** (verbo, mapa e instrução são do daemon) e rebuild do app.

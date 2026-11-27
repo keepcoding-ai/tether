@@ -235,6 +235,50 @@ describe('suspend: by hand (menu, palette, owner)', () => {
   })
 })
 
+describe('suspend: "Não suspender"', () => {
+  const slot = (o: Partial<SlotState> = {}): SlotState => ({ slotId: 's1', kind: 'claude', status: 'running', canRestart: true, ...o }) as SlotState
+
+  test('the sweep skips a marked pane, whatever its idleness', () => {
+    assert.equal(suspends(candidate({ noSuspend: true })), false)
+    const ids = sweepSuspend([candidate({ noSuspend: true }, { slotId: 'x1' }), candidate({}, { slotId: 'x2' })], DEFAULT_SUSPEND, NOW, APP_START)
+    assert.deepEqual(ids, ['x2'])
+  })
+
+  test('canSuspendNow is false for a marked pane (menu and palette lose "Suspender guia")', () => {
+    assert.equal(canSuspendNow(slot(), false, false, false), true)
+    assert.equal(canSuspendNow(slot(), false, false, true), false)
+  })
+
+  test('the mark persists in the layout, drops gone panes, and stays out of the file when empty', () => {
+    const book = new SuspendBook()
+    assert.equal(book.noSuspendToLayout(), undefined)
+    book.setNoSuspend('a1', true); book.setNoSuspend('a2', true)
+    const saved = book.noSuspendToLayout()
+    assert.deepEqual(saved, ['a1', 'a2'])
+    const reopened = new SuspendBook()
+    reopened.loadNoSuspend(saved, id => id !== 'a2')
+    assert.equal(reopened.isNoSuspend('a1'), true)
+    assert.equal(reopened.isNoSuspend('a2'), false)
+    assert.equal(reopened.setNoSuspend('a1', false).changed, true)
+    assert.equal(reopened.noSuspendToLayout(), undefined)
+  })
+
+  test('marking a suspended pane resumes it; marking a live one only saves; the same mark again does nothing', () => {
+    const book = new SuspendBook()
+    book.suspend('a1')
+    assert.deepEqual(book.setNoSuspend('a1', true), { changed: true, resume: true })
+    assert.deepEqual(book.setNoSuspend('a1', true), { changed: false })
+    assert.deepEqual(book.setNoSuspend('a2', true), { changed: true })
+  })
+
+  test('the desk map carries the mark (with or without another seal) and the daemon keeps it', () => {
+    const layout: Layout = { ...emptyLayout(), desks: [desk('d1', { a1: 'terminal', a2: 'terminal' })], activeDesk: 'd1', noSuspendPanes: ['a1'], suspendedPanes: ['a2'] }
+    const map = deskMapOf(layout, c => c)
+    assert.deepEqual(map.desks[0]!.panes, [{ id: 'a1', type: 'terminal', noSuspend: true }, { id: 'a2', type: 'terminal', suspended: true }])
+    assert.deepEqual(parseDeskMap(JSON.parse(JSON.stringify(map)))!.desks[0]!.panes[0], { id: 'a1', type: 'terminal', noSuspend: true })
+  })
+})
+
 describe('suspend: mouse movement is not use', () => {
   const sgr = (b: number, x = 10, y = 4, end = 'M'): string => `\x1b[<${b};${x};${y}${end}`
   const x10 = (b: number, x = 10, y = 4): string => '\x1b[M' + String.fromCharCode(b + 32, x + 32, y + 32)
