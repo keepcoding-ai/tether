@@ -9,10 +9,11 @@ import { DoorError } from '../../../src/daemon/door/port.ts'
 import type { ExtRequestContext } from '../../../src/daemon/door/types.ts'
 import type { TetherDaemon } from '../../../src/daemon/ext-api.ts'
 import type { ErrorCode } from '../../../src/daemon/protocol.ts'
-import { isCalled, personAsks, REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
+import { REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
 import { refusalText, type FileRefusal } from '../attachments.ts'
 import type { Channels, Outcome } from './fanout.ts'
 import { parseSources } from './files.ts'
+import { allMarks, pendingOf } from './marks.ts'
 import { PAGE } from './store.ts'
 
 /** How long `seen` waits before it writes the index: a pane that scrolls sends many. */
@@ -48,8 +49,7 @@ export interface MemberInfo {
   asleep?: true
 }
 
-/** An open poll that calls the person and has no vote of hers: what lights the seal of the channel's tab. */
-export interface PollOwed { seq: number; closesAt: string }
+export type { PollOwed } from '../mark-board.ts'
 
 export function summaryOf(ch: Channel): ChannelSummary {
   return {
@@ -307,15 +307,14 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
     }],
 
     // The reactions that ask the person (❓/❌ of an agent on her speeches) and she has not seen: the tail of the channel, one read.
+    // The open polls that call her and wait for her vote (the index holds only the open ones): no "seen" mark clears them, only her vote or the close.
     ['asks', async (c, a) => {
-      const ch = channelOf(c, a)
-      const last = await c.store.lastSeq(ch.id)
-      const tail = await c.store.since(ch.id, Math.max(0, last - REACTION_WINDOW), REACTION_WINDOW)
-      // The open polls that call her and wait for her vote (the index holds only the open ones): no "seen" mark clears them, only her vote or the close.
-      const polls: PollOwed[] = ch.closed ? [] : Object.values(ch.polls ?? {})
-        .filter((p) => isCalled(ch, p, USER) && !Object.hasOwn(p.votes, USER)).map((p) => ({ seq: p.seq, closesAt: p.closesAt }))
-      return { asks: personAsks(tail).filter((k) => k.seq > ch.seenByUser), polls }
+      const { asks, polls } = await pendingOf(c.store, channelOf(c, a))
+      return { asks, polls }
     }],
+
+    // The marks of every open channel (what a remote device shows without the app): the app's rule, from the record (daemon/marks.ts).
+    ['marks', async (c) => ({ channels: await allMarks(c.store, c.nameOf(USER)) })],
 
     // The person saw up to `seq`: raised in memory now, written once after a delay (one timer for every channel).
     ['seen', async (c, a, ctx) => {
