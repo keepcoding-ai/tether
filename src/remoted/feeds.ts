@@ -12,7 +12,7 @@ export const CHANNELS_NOTICE_GAP_MS = 2_000
 export const REGENCY_NOTICE_GAP_MS = 5_000
 
 /** The events of the `channels` extension that change what marks or a page show. */
-const CHANNEL_EVENTS = new Set(['line', 'channel', 'poll', 'reaction'])
+const CHANNEL_EVENTS = new Set(['line', 'channel', 'poll', 'reaction', 'seen'])
 const ID_RE = /^[\w.:-]{1,64}$/
 const SIG_RE = /^[0-9a-f]{16}$/
 

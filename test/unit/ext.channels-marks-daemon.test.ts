@@ -277,4 +277,35 @@ describe('the `marks` request', () => {
     const after = await allMarks(store, MOD)
     assert.deepEqual(after[0]!.members, [...was, 'n3w4g3nt'])
   })
+
+  // RR3 temper O-1: a "seen" that moves the mark is told thin (id and mark); one that does not move it is silent.
+  test('`seen` that advances emits a thin event and the next `marks` reflects it; one that does not advance emits nothing', async () => {
+    const store = await openStore(fsIo, await newHome(), options)
+    const b = await Bench.open(store)
+    const l1 = await b.say(agent(A), 'um', [MOD])
+    const l2 = await b.say(agent(A), 'dois', [MOD])
+    const handlers = new Map<string, (args: unknown, ctx: unknown) => Promise<unknown>>()
+    const emitted: Array<[string, unknown]> = []
+    const api = {
+      requests: { handle: (name: string, fn: (args: unknown, ctx: unknown) => Promise<unknown>) => { handlers.set(name, fn); return { dispose: () => {} } } },
+      events: { emit: (name: string, payload: unknown) => { emitted.push([name, payload]) } },
+    }
+    const channels = { store, nameOf: (who: string) => (who === USER ? MOD : who) }
+    const disposables = registerChannelRequests(api as never, Promise.resolve(channels as never), 1)
+    const marks = async (): Promise<RemoteMarks> => ((await handlers.get('marks')!(undefined, { client: 'remote' })) as { channels: RemoteMarks[] }).channels[0]!
+    assert.equal((await marks()).unread, 2)
+
+    await handlers.get('seen')!({ channel: b.id, seq: l1.seq }, { client: 'app' })
+    assert.deepEqual(emitted, [['seen', { channelId: b.id, seenByUser: l1.seq }]])
+    assert.equal((await marks()).unread, 1)
+
+    await handlers.get('seen')!({ channel: b.id, seq: l1.seq }, { client: 'app' })
+    await handlers.get('seen')!({ channel: b.id, seq: 0 }, { client: 'app' })
+    assert.equal(emitted.length, 1, 'no advance, no event')
+
+    await handlers.get('seen')!({ channel: b.id, seq: l2.seq }, { client: 'app' })
+    assert.equal(emitted.length, 2)
+    assert.equal((await marks()).unread, 0)
+    for (const d of disposables) d.dispose()
+  })
 })

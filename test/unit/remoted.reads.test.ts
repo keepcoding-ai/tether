@@ -190,7 +190,8 @@ describe('ReadFeeds: thin notices, paced, never lost', () => {
     f.extEvent('channels', 'channel', { channel: { id: 'c_2', name: MARKER } })
     f.extEvent('channels', 'typing', { channelId: 'c_3' })
     f.extEvent('other', 'line', { channelId: 'c_4' })
-    assert.deepEqual(f.takeChannels(10_000), { channels: ['c_1', 'c_2'] })
+    f.extEvent('channels', 'seen', { channelId: 'c_5', seenByUser: 9 })
+    assert.deepEqual(f.takeChannels(10_000), { channels: ['c_1', 'c_2', 'c_5'] })
     f.extEvent('channels', 'reaction', { channelId: 'c_1' })
     assert.equal(f.takeChannels(10_000 + CHANNELS_NOTICE_GAP_MS - 1), undefined, 'inside the gap')
     assert.deepEqual(f.takeChannels(10_000 + CHANNELS_NOTICE_GAP_MS), { channels: ['c_1'] }, 'and right after it')
@@ -403,6 +404,20 @@ describe('the three reads through a real House', () => {
     assert.equal((await s.request(OP_CODES['channels.marks'])).status, RES_STATUS.ok)
     assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 2, 'a channels event: asked again')
     answer = async (op) => ANSWERS[op]
+  })
+
+  // RR3 temper O-1: "seen" on the machine changes the marks a device holds; the event is thin and works like any channels event.
+  test('a `seen` event of the machine: the shared marks are asked again and the device gets a thin notice', async () => {
+    await s.request(OP_CODES['channels.marks'])
+    calls.length = 0
+    await s.request(OP_CODES['channels.marks'])
+    assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 0, 'kept')
+    const from = s.events.length
+    bench.house.extEvent('channels', 'seen', { channelId: 'c_1', seenByUser: 7 })
+    await until(() => s.events.slice(from).find((e) => e.evt === 0x0200) || undefined, 5_000, 'the channels notice')
+    assert.deepEqual(s.events.slice(from).find((e) => e.evt === 0x0200)?.body, { channels: ['c_1'] })
+    assert.equal((await s.request(OP_CODES['channels.marks'])).status, RES_STATUS.ok)
+    assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 1, 'asked again after the event')
   })
 
   test('canary: the marker tetherd put in every extra field crossed the relay in no byte', () => {

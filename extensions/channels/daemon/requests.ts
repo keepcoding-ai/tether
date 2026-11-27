@@ -20,7 +20,10 @@ import { PAGE } from './store.ts'
 export const SEEN_DELAY_MS = 1500
 
 /** `desks` (optional) tells a sleeping desk from a stopped process, for the card's "quem falta". */
-export type RequestsApi = Pick<TetherDaemon, 'requests' | 'slots' | 'delivery'> & Partial<Pick<TetherDaemon, 'desks'>>
+export type RequestsApi = Pick<TetherDaemon, 'requests' | 'slots' | 'delivery'> & Partial<Pick<TetherDaemon, 'desks' | 'events'>>
+
+/** Event `seen`: the person's "seen" of a channel advanced. Thin on purpose: the id and the new mark, never text. */
+export interface SeenEvent { channelId: ChannelId; seenByUser: number }
 
 /** The channel as the pane lists it. */
 export interface ChannelSummary {
@@ -336,7 +339,10 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const ch = channelOf(c, a)
       const seq = int(a, 'seq')
       if (seq === undefined) throw refuse('bad-request', 'o argumento seq é um inteiro')
+      const was = ch.seenByUser
       c.store.markSeen(ch.id, seq)
+      // Only a "seen" that moved the mark changes what a remote device shows; the marks memo keys on it, so the next read is fresh.
+      if (ch.seenByUser > was) api.events?.emit('seen', { channelId: ch.id, seenByUser: ch.seenByUser } satisfies SeenEvent)
       if (!timer) {
         timer = setTimeout(() => {
           timer = undefined
