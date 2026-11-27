@@ -5,9 +5,10 @@ import { describe, test } from 'node:test'
 import { TreeKeeper } from '../../extensions/regency/daemon.ts'
 import { regencyModelOf, type RegencyInput } from '../../extensions/regency/model.ts'
 import {
-  asOfLabel, LEASE_MS, publishedTreeOf, regencyViewOf, signatureOf, STALE_MS, TREE_MAX_BYTES, treeJson, utf8Length,
+  asOfLabel, LEASE_MS, publishedTreeOf, regencyViewOf, signatureOf, STALE_MS, TREE_MAX_BYTES, treeJson, utf8Length, VIEW_MAX_BYTES,
   type PublishAnswer,
 } from '../../extensions/regency/publish-rules.ts'
+import { READ_BODY_MAX, resultBody } from '../../src/remote/projection.ts'
 import { TreePublisher } from '../../extensions/regency/renderer/publish.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 
@@ -228,6 +229,43 @@ describe('the kept tree joined with the live slots', () => {
     k.publish({ sig: k.kept!.sig }, APP)
     assert.equal(k.read().live, true)
     assert.equal(events.at(-1)!.payload && (events.at(-1)!.payload as { live: boolean }).live, true)
+  })
+
+  // RR3 gate B-6: tetherd took a tree of up to 256 KiB and the portal refuses a read over 224 KiB: a big house never reached
+  // the phone, and with the app closed the slots over the tree only made it bigger.
+  test('every tree tree.publish accepts fits regency.tree, the live slots over it included', async () => {
+    assert.ok(TREE_MAX_BYTES + 16 * 1024 <= VIEW_MAX_BYTES && VIEW_MAX_BYTES + 8 * 1024 <= READ_BODY_MAX, `${TREE_MAX_BYTES} < ${VIEW_MAX_BYTES} < ${READ_BODY_MAX}`)
+    const pane = (id: string): RegencyInput['desks']['desks'][number]['panes'][number] => ({ id, type: 'agent', icon: 'claude', title: 'é'.repeat(100) })
+    const tree = (n: number): RegencyInput => {
+      const desks = Array.from({ length: Math.ceil(n / 500) }, (_, d) => ({ id: `d${d}`, name: 'Mesa', color: 'blue', kind: 'queue' as const, asleep: false, panes: [] as ReturnType<typeof pane>[] }))
+      for (let i = 0; i < n; i++) desks[Math.floor(i / 500)]!.panes.push(pane(`p${i}`))
+      return { desks: { desks }, owners: { desk: {}, pane: {} }, channels: [], channelMarks: {}, agents: [], since: {}, collapsed: [] }
+    }
+    const size = (n: number): number => utf8Length(treeJson(publishedTreeOf(tree(n))))
+    let n = Math.floor(TREE_MAX_BYTES / (size(2) - size(1)))
+    while (size(n) > TREE_MAX_BYTES) n--
+    const biggest = tree(n)
+    const c = clock()
+    // Every pane of the tree is a slot that waits and works now; 512 slots more were born after the app closed.
+    const slots: SlotState[] = [
+      ...Array.from({ length: n }, (_, i) => slot(`p${i}`, { attention: 'waiting', turn: 'busy' })),
+      ...Array.from({ length: 512 }, (_, i) => slot(`new${i}`, { title: 'ü'.repeat(256) })),
+    ]
+    const k = new TreeKeeper({ now: c.now, live: () => ({ slots }), setTimer: c.setTimeout, clearTimer: c.clear })
+    k.publish({ tree: biggest }, APP)
+    await c.advance(STALE_MS + 10)
+    const view = k.read()
+    assert.equal(view.live, false)
+    const body = resultBody('regency.tree', { view, channels: true })
+    assert.ok(body.length <= READ_BODY_MAX, `regency.tree is ${body.length} bytes (ceiling ${READ_BODY_MAX})`)
+    assert.ok(utf8Length(JSON.stringify(view)) <= VIEW_MAX_BYTES)
+    // A small house keeps every newcomer.
+    const small = new TreeKeeper({ now: c.now, live: () => ({ slots: [slot('a1'), slot('new1')] }), setTimer: c.setTimeout, clearTimer: c.clear })
+    small.publish({ tree: entry() }, APP)
+    await c.advance(STALE_MS + 10)
+    assert.deepEqual(small.read().input.desks.desks.find(d => d.id === 'remote:slots')?.panes.map(p => p.id), ['new1'])
+    k.dispose()
+    small.dispose()
   })
 
   test('no tree at all: the floor of remote-input alone, not live', () => {

@@ -13,8 +13,17 @@ import { remoteInputOf, type RemoteState } from './remote-input.ts'
 type Desk = RegencyInput['desks']['desks'][number]
 type Pane = Desk['panes'][number]
 
-/** The most bytes (UTF-8 of the JSON) one published tree may have: a bigger one is refused, never cut. */
-export const TREE_MAX_BYTES = 256 * 1024
+/**
+ * The most bytes (UTF-8 of the JSON) one published tree may have: a bigger one is refused, never cut. Below VIEW_MAX_BYTES
+ * with room for the live slots, and that below the portal's ceiling of a read (src/remote/projection.ts READ_BODY_MAX, 224
+ * KiB; the test of ext.regency-publish ties the three), so every tree tetherd keeps reaches the phone.
+ */
+export const TREE_MAX_BYTES = 192 * 1024
+/**
+ * The most bytes of the view `tree.read` answers (regencyViewOf): with the app closed, the slots born after it go over the
+ * tree while they fit; past this, the rest are left out (they are still in the attention list and in the next tree).
+ */
+export const VIEW_MAX_BYTES = 208 * 1024
 /** The app renews its lease this often while it is open (a signature only, no tree). */
 export const LEASE_MS = 30_000
 /** A tree whose lease was not renewed for this long is the app's last: the app closed (or hangs), nobody publishes. */
@@ -242,9 +251,31 @@ export function regencyViewOf(kept: KeptTree | undefined, live: RemoteState, now
     return out
   }
   const desks: Desk[] = kept.tree.desks.desks.map(d => ({ ...d, panes: d.panes.map(over) }))
-  const newcomers = [...floorPanes.values()].filter(p => !seen.has(p.id))
-  if (newcomers.length > 0) desks.push({ id: FLOOR_DESK_ID, name: 'Sessões', color: '', kind: 'queue', asleep: false, panes: newcomers })
-
-  const agents = [...kept.tree.agents, ...floor.agents.filter(a => !agentIds.has(a.id))]
-  return { input: { ...kept.tree, desks: { desks }, agents }, live: false, asOf: kept.at, sig: kept.sig }
+  const agents = [...kept.tree.agents]
+  const view: RegencyView = { input: { ...kept.tree, desks: { desks }, agents }, live: false, asOf: kept.at, sig: kept.sig }
+  // The view stays under VIEW_MAX_BYTES: the tree with the live state of its own panes first (in a pathological tree whose
+  // flags alone pass it, the tree as it was kept), then the newcomers and their agents while they fit.
+  let room = VIEW_MAX_BYTES - utf8Length(JSON.stringify(view))
+  if (room < 0) return { input: kept.tree, live: false, asOf: kept.at, sig: kept.sig }
+  const cost = (v: unknown): number => utf8Length(JSON.stringify(v)) + 1
+  const extra: Desk = { id: FLOOR_DESK_ID, name: 'Sessões', color: '', kind: 'queue', asleep: false, panes: [] }
+  room -= cost(extra)
+  const fit = new Set<string>()
+  for (const p of floorPanes.values()) {
+    if (seen.has(p.id)) continue
+    const n = cost(p)
+    if (n > room) break
+    room -= n
+    extra.panes.push(p)
+    fit.add(p.id)
+  }
+  if (extra.panes.length > 0) desks.push(extra)
+  for (const a of floor.agents) {
+    if (agentIds.has(a.id) || (!seen.has(a.id) && !fit.has(a.id))) continue
+    const n = cost(a)
+    if (n > room) break
+    room -= n
+    agents.push(a)
+  }
+  return view
 }
