@@ -154,11 +154,12 @@ export interface DeskMapDesk {
   /**
    * Every pane of the desk. `type`: 'terminal' for a slot's pane (id = slotId), else the pane type id ('note', 'browser.tab'...).
    * `asleep`: the pane is hibernated in the app (layout `asleepPanes`). `suspended`: the app stopped the pane's idle agent to
-   * save resources (layout `suspendedPanes`); unlike `asleep`, anything that needs the pane resumes it first.
+   * save resources (layout `suspendedPanes`); unlike `asleep`, anything that needs the pane resumes it first. `noSuspend`: the person marked the pane
+   * "Não suspender" (layout `noSuspendPanes`): it is never suspended.
    */
   panes: DeskMapPane[]
 }
-export interface DeskMapPane { id: string; type: string; asleep?: true; suspended?: true }
+export interface DeskMapPane { id: string; type: string; asleep?: true; suspended?: true; noSuspend?: true }
 export interface DeskMap {
   desks: DeskMapDesk[]
   /** The drawer, which is not a desk. */

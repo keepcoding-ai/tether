@@ -1844,6 +1844,9 @@ body.dim-unfocused:not(:has(.frame:focus-within, .frame.kbd-focused, .frame.draw
 .tether-tab .ronda-mark { display: inline-flex; flex: none; color: var(--accent); }
 .tether-tab .ronda-mark[hidden] { display: none; }
 .tether-tab .ronda-mark .ph { width: 12px; height: 12px; }
+.tether-tab .pin-mark { display: inline-flex; flex: none; color: var(--fg-dim); opacity: .8; }
+.tether-tab .pin-mark[hidden] { display: none; }
+.tether-tab .pin-mark .ph { width: 11px; height: 11px; }
 /* Ronda colour: blue (accent) while the agent is idle, green (ok) while its turn is running. */
 .status-bar .ronda.busy { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .status-bar .ronda.busy:hover { background: color-mix(in srgb, var(--ok) 24%, transparent); }

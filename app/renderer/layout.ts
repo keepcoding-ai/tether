@@ -91,6 +91,8 @@ export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
    * app opens; any use of the pane resumes it. Separate from `asleepPanes`: a pane is in one or the other.
    */
   suspendedPanes?: string[]
+  /** Panes the person marked "Não suspender" (slot ids): the sweep and the manual suspension skip them. Survives a restart. */
+  noSuspendPanes?: string[]
 }
 
 export type Layout = LayoutV4

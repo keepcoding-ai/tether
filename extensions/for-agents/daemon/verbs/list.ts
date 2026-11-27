@@ -8,10 +8,10 @@ import { ok, me, offOf, optFlag, optString, paneName, paneTypeOf, targetOf, type
 type Relation = 'command' | 'see' | 'self'
 
 /** What the app's desk map says of the pane (in a desk or in the drawer): hibernated (`asleep`) or suspended to save resources. */
-export function sleepMarkOf(deps: VerbDeps, paneId: string): { asleep: boolean; suspended: boolean } {
+export function sleepMarkOf(deps: VerbDeps, paneId: string): { asleep: boolean; suspended: boolean; noSuspend: boolean } {
   const map = deps.api.desks.map()
   const hit = map?.desks.flatMap((d) => d.panes).find((p) => p.id === paneId) ?? map?.drawer.find((p) => p.id === paneId)
-  return { asleep: hit?.asleep === true, suspended: hit?.suspended === true }
+  return { asleep: hit?.asleep === true, suspended: hit?.suspended === true, noSuspend: hit?.noSuspend === true }
 }
 
 function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string, unknown> | undefined {
@@ -46,6 +46,7 @@ function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string
   const mark = sleepMarkOf(deps, paneId)
   if (mark.asleep) entry.asleep = true
   else if (mark.suspended) entry.suspended = true
+  if (mark.noSuspend) entry.noSuspend = true
   if (last) entry.last = last
   return entry
 }

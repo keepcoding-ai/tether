@@ -9,6 +9,7 @@ import type { FontSizeCommand } from '../shared/font.ts'
 import type { ThemeSetting } from '../shared/theme.ts'
 import type { DimLevel } from '../shared/ui-settings.ts'
 import type { Level } from './shortcuts.ts'
+import { ALLOW_SUSPEND_LABEL, NO_SUSPEND_LABEL } from './suspend.ts'
 import type { PaletteMode } from './palette-rules.ts'
 
 /** The unread mark's two labels (the tab menu and the palette); the pair follows `SlotState.attentionHeld`. */
@@ -41,6 +42,8 @@ export interface CommandHost {
   restartAgent(id: string): void
   /** "Hibernar guia": stop the pane's process and keep it asleep (not started on launch) until woken. */
   suspendPane(id: string): void
+  /** "Não suspender" / "Permitir suspender": toggles the mark that keeps an agent pane out of the suspension. */
+  toggleNoSuspend(id: string): void
   hibernatePane(id: string): void
   /** "Marcar como não lido" / "Marcar como lido": toggles the unread mark of a slot's pane (the daemon keeps it through focus). */
   toggleUnread(id: string): void
@@ -171,7 +174,10 @@ export function appCommands(host: CommandHost): Command[] {
     { id: 'pane.switch-profile', title: 'Trocar perfil do painel…', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.switchProfile(id)) },
     { id: 'pane.restart', title: 'Reiniciar agente do painel', group: GROUP.pane, icon: 'arrow-clockwise', ...pane, run: withPane(id => host.restartAgent(id)) },
     { id: 'pane.asleep', title: 'Guias hibernadas…', group: GROUP.pane, icon: 'moon', run: () => host.asleepMenu() },
-    { id: 'pane.suspend', title: 'Suspender guia', group: GROUP.pane, icon: 'leaf', ...pane, run: withPane(id => host.suspendPane(id)) },
+    { id: 'pane.suspend', title: 'Suspender guia', group: GROUP.pane, icon: 'leaf', when: ctx => ctx.pane && ctx.noSuspend !== true, run: withPane(id => host.suspendPane(id)) },
+    // One command per label of the pair (agent panes only: `ctx.noSuspend` is absent for a shell).
+    { id: 'pane.no-suspend', title: NO_SUSPEND_LABEL, group: GROUP.pane, icon: 'push-pin', when: ctx => ctx.pane && ctx.noSuspend === false, run: withPane(id => host.toggleNoSuspend(id)) },
+    { id: 'pane.allow-suspend', title: ALLOW_SUSPEND_LABEL, group: GROUP.pane, icon: 'push-pin', when: ctx => ctx.pane && ctx.noSuspend === true, run: withPane(id => host.toggleNoSuspend(id)) },
     { id: 'pane.hibernate', title: 'Hibernar guia', group: GROUP.pane, icon: 'moon', ...pane, run: withPane(id => host.hibernatePane(id)) },
     // One command per label of the pair: the palette lists the one that applies to the active slot's pane.
     { id: 'pane.mark-unread', title: UNREAD_LABEL, group: GROUP.pane, icon: 'bell', when: ctx => ctx.pane && ctx.unread === false, run: withPane(id => host.toggleUnread(id)) },

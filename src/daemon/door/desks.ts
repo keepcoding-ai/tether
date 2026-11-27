@@ -20,8 +20,8 @@ export function desksPath(home: string): string {
 const isPane = (p: unknown): p is { id: string; type: string } =>
   typeof p === 'object' && p !== null && typeof (p as { id?: unknown }).id === 'string' && typeof (p as { type?: unknown }).type === 'string'
 
-/** A pane of the map, normalised: `asleep` and `suspended` kept only when they are `true`. */
-const paneOf = (p: DeskMapPane): DeskMapPane => ({ id: p.id, type: p.type, ...(p.asleep === true ? { asleep: true as const } : {}), ...(p.suspended === true ? { suspended: true as const } : {}) })
+/** A pane of the map, normalised: `asleep`, `suspended` and `noSuspend` kept only when they are `true`. */
+const paneOf = (p: DeskMapPane): DeskMapPane => ({ id: p.id, type: p.type, ...(p.asleep === true ? { asleep: true as const } : {}), ...(p.suspended === true ? { suspended: true as const } : {}), ...(p.noSuspend === true ? { noSuspend: true as const } : {}) })
 
 /** Validates and normalises what the app sent (or what the disk holds); undefined when it is not a desk map. */
 export function parseDeskMap(raw: unknown): DeskMap | undefined {
