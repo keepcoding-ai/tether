@@ -5,17 +5,19 @@
 //
 // What a device can get in this milestone: the session family (session.info, admit.renew, device.revoke-self) and
 // attention.list / attention.watch. Every other line of the table answers `failed` with `not-implemented`, after the
-// gate: nothing is ever forwarded to the pipe, and no pipe object leaves whole (attention.ts is the projection).
+// gate: nothing is ever forwarded to the pipe, and no pipe object leaves whole (every body of a RES or EVT is built by
+// src/remote/projection.ts).
 import {
   ActCache, ADMIT_TTL_S, CLOSE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
   parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE,
-  admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT,
+  admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT, SCOPE_FAMILIES,
   type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OuterFrame, type Req, type ResStatus,
   type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
+import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
-import { gate } from './gate.ts'
+import { gate, gateEvent } from './gate.ts'
 import type { DenyRow, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus } from './ipc.ts'
 
 /** Spec 5.8: at most this many handshakes per minute per ticketId hint, and pending in total. */
@@ -87,11 +89,6 @@ type Route =
   | { kind: 'admit'; route: number; hs: HouseHandshake; hint: string }
   | { kind: 'pair'; route: number }
   | SessionRoute
-
-const json = (v: unknown): Bytes => new TextEncoder().encode(JSON.stringify(v))
-const STRICT_KEYS: Record<string, readonly string[]> = {
-  'session.info': [], 'admit.renew': ['pubA'], 'device.revoke-self': [], 'attention.list': [], 'attention.watch': [],
-}
 
 export class House {
   readonly #d: HouseDeps
@@ -389,13 +386,15 @@ export class House {
     }
     const nowMs = this.#d.now()
     s.lastReqMs = nowMs
-    if (s.inflight >= INFLIGHT_MAX) return this.#answer(s, req.reqId, RES_STATUS.limit, {})
+    if (s.inflight >= INFLIGHT_MAX) return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
     const dv = this.#devices.get(s.deviceId)
+    // RR1 has no presence credential yet (WebAuthn is step 2.4): every session is "no credential".
+    const presence = PRESENCE.noCredential
     const verdict = gate(req, {
-      scopes: new Set(dv?.scopes ?? []), presence: PRESENCE.noCredential, elevUntilS: 0, freshPair: s.freshPair,
+      scopes: new Set(dv?.scopes ?? []), presence, elevUntilS: 0, freshPair: s.freshPair,
       openedMs: s.openedMs, nowMs,
     })
-    if (!verdict.ok) return this.#answer(s, req.reqId, verdict.status, verdict.status === RES_STATUS.unknownOp ? { error: 'unknown-op' } : {})
+    if (!verdict.ok) return this.#send(s, req.reqId, verdict.status, verdict.status === RES_STATUS.unknownOp ? errorBody('unknown-op') : emptyBody())
     const line = verdict.line
     const mem = this.#memOf(s.deviceId)
     if (req.actId) {
@@ -405,53 +404,55 @@ export class House {
     let body: Record<string, unknown>
     try {
       body = parseJsonObject(req.body)
-      const allowed = STRICT_KEYS[line.name]
+      const allowed = line.body
       if (allowed && Object.keys(body).some((k) => !allowed.includes(k))) throw new WireError('malformed', 'unknown field')
-    } catch { return this.#answer(s, req.reqId, RES_STATUS.badRequest, { error: 'bad-request' }) }
+    } catch { return this.#send(s, req.reqId, RES_STATUS.badRequest, errorBody('bad-request')) }
     s.inflight++
+    // Every body below is built by the projector of its op (src/remote/projection.ts): nothing the portal holds goes out whole.
     let status: ResStatus = RES_STATUS.ok
-    let out: unknown = {}
+    let bytes: Bytes
     try {
       switch (line.name) {
         case 'session.info':
-          out = { house: this.#fingerprint, name: sanitizeDeclaredName(this.#d.houseName).slice(0, 64), deviceId: s.deviceId, ver: s.session.ver, presence: PRESENCE.noCredential, scopes: dv?.scopes ?? [] }
+          bytes = resultBody('session.info', { house: this.#fingerprint, name: this.#d.houseName, deviceId: s.deviceId, ver: s.session.ver, presence, scopes: dv?.scopes ?? [] })
           break
         case 'attention.list':
-          out = this.#d.attention.items()
+          bytes = resultBody('attention.list', this.#d.attention.items())
           break
         case 'attention.watch':
           s.watching = true
-          out = this.#d.attention.items()
+          bytes = resultBody('attention.watch', this.#d.attention.items())
           break
         case 'admit.renew':
-          ({ status, out } = await this.#renew(s, body))
+          ({ status, bytes } = await this.#renew(s, body))
           break
         case 'device.revoke-self':
           // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
           this.#d.note({ note: 'revoke-self', deviceId: s.deviceId })
+          bytes = resultBody('device.revoke-self', {})
           break
         default:
           status = RES_STATUS.failed
-          out = { error: 'not-implemented' }
+          bytes = errorBody('not-implemented')
       }
     } catch (e) {
       this.#d.log(`request ${line.name} failed: ${(e as Error).message}`)
       status = RES_STATUS.failed
-      out = { error: 'failed' }
+      bytes = errorBody('failed')
     } finally { s.inflight-- }
-    const bytes = json(out)
     if (line.mutates && req.actId) mem.acts.put(req.actId, { status, body: bytes }, this.#d.now())
     await this.#send(s, req.reqId, status, bytes)
   }
 
-  async #renew(s: SessionRoute, body: Record<string, unknown>): Promise<{ status: ResStatus; out: unknown }> {
-    const refused = { status: RES_STATUS.failed, out: { error: 'refused' } }
+  async #renew(s: SessionRoute, body: Record<string, unknown>): Promise<{ status: ResStatus; bytes: Bytes }> {
+    const refused = { status: RES_STATUS.failed, bytes: errorBody('refused') }
+    const bad = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
     const dv = this.#devices.get(s.deviceId)
     const mem = this.#mem.get(s.deviceId)
     if (!dv || dv.state !== 'active' || mem?.revoking) return refused
-    if (typeof body.pubA !== 'string') return { status: RES_STATUS.badRequest, out: { error: 'bad-request' } }
+    if (typeof body.pubA !== 'string') return bad
     let pubA: Bytes
-    try { pubA = fromB64url(body.pubA) } catch { return { status: RES_STATUS.badRequest, out: { error: 'bad-request' } } }
+    try { pubA = fromB64url(body.pubA) } catch { return bad }
     if (!(await admitRenewKeyAllowed(pubA, fromHex(dv.pubD), dv.usedKeyIds.map(fromHex)))) return refused
     const { ticket, row } = await this.#issue(pubA)
     const old = dv.tickets.slice()
@@ -464,7 +465,7 @@ export class House {
       if (added.length) this.#sendDeny(added)
     }, this.#d.renewDenyAfterMs ?? RENEW_DENY_AFTER_MS).unref?.()
     this.#d.note({ note: 'audit', act: 'admit.renew', deviceId: s.deviceId, result: 'ok' })
-    return { status: RES_STATUS.ok, out: { ticket: b64url(ticket) } }
+    return { status: RES_STATUS.ok, bytes: resultBody('admit.renew', { ticket: b64url(ticket) }) }
   }
 
   async #issue(pubA: Bytes): Promise<{ ticket: Bytes; row: { ticketId: string; exp: number; keyId: string } }> {
@@ -477,10 +478,7 @@ export class House {
     return { ticket, row: { ticketId: toHex(t.ticketId), exp: t.exp, keyId: toHex(await keyIdOf(pubA)) } }
   }
 
-  #answer(s: SessionRoute, reqId: number, status: ResStatus, body: unknown): Promise<void> {
-    return this.#send(s, reqId, status, json(body))
-  }
-
+  /** `body` comes from a projector of src/remote/projection.ts (resultBody, errorBody, emptyBody), never built here. */
   async #send(s: SessionRoute, reqId: number, status: ResStatus, body: Bytes): Promise<void> {
     if (s.session.state !== 'open') return
     try {
@@ -508,12 +506,12 @@ export class House {
   }
 
   async #pushAttention(): Promise<void> {
-    const body = json(this.#d.attention.items())
-    const evt = encodeEvt({ evt: EVT.attentionChanged.code, body })
+    const line = EVT.attentionChanged
+    const evt = encodeEvt({ evt: line.code, body: eventBody(line.name, this.#d.attention.items()) })
     for (const r of [...this.#routes.values()]) {
       if (r.kind !== 'session' || !r.watching || r.session.state !== 'open') continue
       const dv = this.#devices.get(r.deviceId)
-      if (!dv?.scopes.includes(EVT.attentionChanged.scope)) continue
+      if (!gateEvent(line, { scopes: new Set(dv?.scopes ?? []), presence: PRESENCE.noCredential })) continue
       try { this.#sessionEffects(r, await r.session.send('EVT', evt, this.#d.now())) } catch (e) { if (!(e instanceof WireError)) throw e }
     }
   }
@@ -668,10 +666,7 @@ export class House {
 }
 
 /** Every scope a device gets at pairing (plano §2 "Escopos": all on, adjustable on the machine from RR2). */
-export const DEFAULT_SCOPES = [
-  'attention', 'channels', 'regency:read', 'manage:agents', 'manage:desks', 'manage:procs', 'manage:destructive',
-  'peek:terminal:read', 'peek:terminal:write', 'peek:browser',
-] as const
+export const DEFAULT_SCOPES = SCOPE_FAMILIES
 
 export class PortalError extends Error {
   readonly code: string

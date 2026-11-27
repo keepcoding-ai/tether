@@ -1,32 +1,14 @@
 // Who is waiting for the person, as the portal may tell a device (RR1 step 1.3, item 4): the slots in `waiting`, from
 // what the pipe already gives (the `list` reply and the `state` / `removed` events). The projection is an ALLOW list:
 // id, name, kind and since when; nothing of the slot leaves whole, and never the text of what the agent asks, its
-// folder, its args, its profile or its env. Names are hostile text (sanitized, capped).
-import { sanitizeDeclaredName } from '../remote/index.ts'
+// folder, its args, its profile or its env. Names are hostile text (sanitized, capped). The projection itself is the one
+// of src/remote/projection.ts, where every body that leaves for a device is built.
+import { ATTENTION_MAX, attentionItem, type AttentionItem } from '../remote/projection.ts'
 import type { SlotState } from '../daemon/protocol.ts'
 
-export interface AttentionItem {
-  /** The slot's id (only ids of the shape `^[\w.:-]{1,64}$` are shown). */
-  id: string
-  /** The slot's own name, else its kind. Sanitized, at most 64 characters. */
-  name: string
-  /** The kind of pane: `claude`, `soul`, `codex`, `shell`… */
-  kind: string
-  /** Since when it waits (ISO), as far as the portal knows. */
-  since: string
-}
+export { ATTENTION_MAX, type AttentionItem }
 
-const ID_RE = /^[\w.:-]{1,64}$/
-const KIND_RE = /^[a-z][a-z0-9-]{0,31}$/
-/** At most this many items in one list: the rest is counted, not sent. */
-export const ATTENTION_MAX = 64
-
-export function projectWaiting(slot: SlotState, since: string): AttentionItem | undefined {
-  if (slot.attention !== 'waiting' || !ID_RE.test(slot.slotId)) return undefined
-  const kind = typeof slot.kind === 'string' && KIND_RE.test(slot.kind) ? slot.kind : 'agent'
-  const own = typeof slot.name === 'string' ? sanitizeDeclaredName(slot.name).slice(0, 64) : ''
-  return { id: slot.slotId, name: own || kind, kind, since }
-}
+export const projectWaiting = (slot: SlotState, since: string): AttentionItem | undefined => attentionItem(slot, since)
 
 /**
  * The waiting list, kept from the pipe's events. `onChange` fires (coalesced by the caller's tick) when the projected

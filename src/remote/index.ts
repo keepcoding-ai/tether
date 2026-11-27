@@ -51,8 +51,13 @@ export {
 export type { RelayHouse, HouseAuthFailure, AdmitCheck, AdmitVerdict } from './admission.ts'
 
 // Operations and presence on the wire (spec 7)
-export { OPS, opByCode, opByName, ActCache, EVT, evtByCode } from './ops.ts'
-export type { OpLine, OpScope, PresenceClass, EvtLine } from './ops.ts'
+export { OPS, OP_CODES, OP_TABLE, opByCode, opByName, EVT, evtByCode, SCOPE_FAMILIES, RANGE_SCOPES, knownScopes } from './scopes.ts'
+export type { OpLine, OpName, OpRule, OpScope, ScopeFamily, PresenceClass, EvtLine, EvtName } from './scopes.ts'
+export { ActCache } from './ops.ts'
+// What a device receives (the projectors themselves are the portal's: src/remote/projection.ts, imported where they run).
+export type {
+  SessionInfo, AdmitRenewed, AttentionItem, AttentionList, RemoteProc, RemoteProfile, RemoteAuthor, ErrorCode,
+} from './projection.ts'
 export {
   UV_PURPOSE, uvChallenge, unlockDigest, elevateDigest, actDigest, uvRegChallenge, derToP1363,
 } from './presence.ts'
