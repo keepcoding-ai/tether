@@ -63,9 +63,16 @@ export function treeOf(b: Record<string, unknown>): TreeAnswer {
   return regencyTree({ view: b, channels: true })
 }
 
+/** `moderator` of an answer: absent from an old house (the name is then `''`), else a record with a string name. */
+const moderatorOk = (v: unknown): boolean => v === undefined || (isRec(v) && typeof v.name === 'string')
+/** A list the contract says is always there: absent from an old house, else a list. */
+const listOk = (v: unknown): boolean => v === undefined || Array.isArray(v)
+
 export function marksOf(b: Record<string, unknown>): MarksAnswer {
-  if (!Array.isArray(b.channels) || !isInt(b.more)) throw malformed()
-  return { channels: channelsMarks(b as unknown as MarksSource).channels, more: b.more }
+  if (!Array.isArray(b.channels) || !isInt(b.more) || !moderatorOk(b.moderator)
+    || !b.channels.every(r => !isRec(r) || listOk(r.members))) throw malformed()
+  const m = channelsMarks(b as unknown as MarksSource)
+  return { channels: m.channels, more: b.more, moderator: m.moderator }
 }
 
 /** The app's pane holds an open poll's votes by who voted; the wire sends them as a list. */
@@ -87,7 +94,8 @@ function pollOf(p: PagePollState): PollState {
 export function pageOf(b: Record<string, unknown>, channel: string, before: number | undefined): PageAnswer {
   const ch = b.channel
   if (!isRec(ch) || ch.id !== channel || !Array.isArray(b.lines) || !Array.isArray(b.reactions) || !Array.isArray(b.polls)
-    || !isInt(b.last) || (b.before !== undefined && !isInt(b.before, 1))) throw malformed()
+    || !isInt(b.last) || (b.before !== undefined && !isInt(b.before, 1)) || !listOk(b.members) || !moderatorOk(b.moderator)
+    || (b.membersMore !== undefined && !isInt(b.membersMore, 1))) throw malformed()
   // The projector reads an open poll's votes as tetherd keeps them (by who voted); the wire carries them as a list.
   const polls = b.polls.map(p0 => {
     if (!isRec(p0) || !isRec(p0.open) || !Array.isArray(p0.open.votes)) return p0
@@ -101,6 +109,7 @@ export function pageOf(b: Record<string, unknown>, channel: string, before: numb
   const ceiling = before ?? p.last + 1
   return {
     channel: p.channel, lines: p.lines, reactions: p.reactions, polls: p.polls.map(pollOf), last: p.last,
+    members: p.members, moderator: p.moderator, ...(p.membersMore !== undefined ? { membersMore: p.membersMore } : {}),
     ...(cursor !== undefined && cursor < ceiling ? { before: cursor } : {}),
   }
 }

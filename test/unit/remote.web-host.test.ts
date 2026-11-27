@@ -124,14 +124,14 @@ describe('the channel view over the house', () => {
     const asked: Array<number | undefined> = []
     const source: RemoteSource = {
       tree: () => fakeHouse().tree(),
-      marks: async () => ({ channels: [], more: 0 }),
+      marks: async () => ({ channels: [], more: 0, moderator: { name: '' } }),
       // The house gives at most 20 lines per answer here (as if the page were too big), with the cursor of what is left.
       page: async (_channel, before): Promise<PageAnswer> => {
         asked.push(before)
         const upTo = before === undefined ? all : all.filter(l => l.seq < before)
         const lines = upTo.slice(-20)
         const first = lines[0]!.seq
-        return { channel: { id: 'c', name: 'c', title: 'c' }, lines, reactions: [], polls: [], last: 120, ...(first > 1 ? { before: first } : {}) }
+        return { channel: { id: 'c', name: 'c', title: 'c' }, lines, reactions: [], polls: [], last: 120, members: [], moderator: { name: '' }, ...(first > 1 ? { before: first } : {}) }
       },
       onNotice: () => ({ dispose: () => {} }),
     }

@@ -22,8 +22,8 @@ const treeBody = (o: { live?: boolean; sig?: string; asOf?: number; desk?: strin
   live: o.live ?? true, ...(o.sig !== undefined ? { sig: o.sig } : { sig: SIG }), ...(o.asOf !== undefined ? { asOf: o.asOf } : {}),
 })
 const marksBody = (): Record<string, unknown> => ({
-  channels: [{ channel: 'obra', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstToMe: 4, firstCall: { why: 'to-you', text: 'bancada: qual fica?' } }],
-  more: 0,
+  channels: [{ channel: 'obra', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstToMe: 4, firstCall: { why: 'to-you', text: 'bancada: qual fica?' }, members: ['p1', 'user', 'p2'] }],
+  more: 0, moderator: { name: 'Guga' },
 })
 const line = (seq: number, body = `fala ${seq}`): Record<string, unknown> =>
   ({ seq, at: '2026-11-27T10:00:00.000Z', kind: 'message', from: { id: 'p1', name: 'conferente', role: 'member' }, body })
@@ -64,6 +64,8 @@ describe('the source over the session', () => {
       return ok({
         ...pageBody({ from: 5, to: 6, before: 5, last: 9 }),
         polls: [{ seq: 6, open: { type: 'ok', question: 'Aplico?', options: ['ok', 'não ok'], to: [{ id: 'p2', name: 'revisor' }], closesAt: '2026-11-27T11:00:00.000Z', author: { id: 'p1', name: 'conferente' }, votes: [{ id: 'p2', name: 'revisor', option: 1 }] } }],
+        members: [{ id: 'p1', name: 'conferente' }, { id: 'user', name: 'Guga' }, { id: 'p2', name: 'revisor', muted: true, path: 'C:\\x' }],
+        moderator: { name: 'Guga' },
         extra: 'not in the contract', ...(body.before !== undefined ? {} : {}),
       })
     })
@@ -73,8 +75,13 @@ describe('the source over the session', () => {
     assert.equal(t.sig, SIG)
     assert.deepEqual(t.input.desks.desks.map(d => d.name), ['Obra'])
     const m = await src.marks()
-    assert.deepEqual(m.channels[0], { channel: 'obra', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstToMe: 4, firstCall: { why: 'to-you', text: 'bancada: qual fica?' } })
+    // The person is in every channel: never a member id.
+    assert.deepEqual(m.channels[0], { channel: 'obra', name: 'obra', unread: 2, toMe: 1, seen: 3, asks: 0, owed: 0, firstToMe: 4, firstCall: { why: 'to-you', text: 'bancada: qual fica?' }, members: ['p1', 'p2'] })
+    assert.deepEqual(m.moderator, { name: 'Guga' })
     const p = await src.page('obra', 7)
+    assert.deepEqual(p.members, [{ id: 'p1', name: 'conferente' }, { id: 'p2', name: 'revisor', muted: true }])
+    assert.deepEqual(p.moderator, { name: 'Guga' })
+    assert.equal(p.membersMore, undefined)
     assert.deepEqual(s.calls.map(c => c.op), ['tree', 'marks', 'page'])
     assert.deepEqual(s.calls[2]!.body, { channel: 'obra', before: 7 })
     assert.deepEqual(p.lines.map(l => l.seq), [5, 6])
@@ -175,6 +182,55 @@ describe('the source over the session', () => {
     assert.equal(src.heard(EVT.regencyChanged.code, { live: 'yes' }), true)
     await settle()
     assert.equal(s.calls.length, before)
+  })
+
+  test('the fields of 3.4d: a wrong shape is thrown away; an old house that sends none still reads', async () => {
+    let body: (op: string) => Record<string, unknown> = op => answering(op).body
+    const src = sessionSource(fakeSession(op => ok(body(op))))
+    const refused = (e: unknown): boolean => e instanceof SourceRefused && e.why === 'malformed'
+    for (const moderator of ['Guga', { name: 7 }, []]) {
+      body = () => ({ ...marksBody(), moderator })
+      await assert.rejects(src.marks(), refused, `marks' moderator ${JSON.stringify(moderator)}`)
+      body = () => ({ ...pageBody(), moderator })
+      await assert.rejects(src.page('obra'), refused, `page's moderator ${JSON.stringify(moderator)}`)
+    }
+    body = () => ({ ...marksBody(), channels: [{ ...(marksBody().channels as Record<string, unknown>[])[0], members: 'p1' }] })
+    await assert.rejects(src.marks(), refused, 'a row\'s members that is not a list')
+    body = () => ({ ...pageBody(), members: { p1: 'conferente' } })
+    await assert.rejects(src.page('obra'), refused, 'page members that is not a list')
+    body = () => ({ ...pageBody(), members: [], membersMore: -1 })
+    await assert.rejects(src.page('obra'), refused, 'membersMore that is no count')
+
+    // An old house: no members, no moderator. The lists come empty and the name is ''.
+    const old = marksBody()
+    delete old.moderator
+    delete (old.channels as Record<string, unknown>[])[0]!.members
+    body = op => (op === 'marks' ? old : pageBody())
+    const m = await src.marks()
+    assert.deepEqual(m.channels[0]?.members, [])
+    assert.deepEqual(m.moderator, { name: '' })
+    const p = await src.page('obra')
+    assert.deepEqual(p.members, [])
+    assert.deepEqual(p.moderator, { name: '' })
+  })
+
+  test('the seal\'s lines of the tree come only while the app publishes, cleaned as a title', async () => {
+    const withLines = (live: boolean): Record<string, unknown> => {
+      const b = treeBody({ live, ...(live ? {} : { asOf: 1_800_000_000_000 }) })
+      const pane = ((b.input as { desks: { desks: { panes: Record<string, unknown>[] }[] } }).desks.desks[0]!.panes[0])!
+      pane.lines = ['Esperando você', 'lendo C:\\Users\\guga\\obra\\a.ts\u202e', 'três', 'quatro']
+      return b
+    }
+    let live = true
+    const src = sessionSource(fakeSession(op => (op === 'tree' ? ok(withLines(live)) : answering(op))))
+    const open = await src.tree()
+    const lines = (open.input.desks.desks[0]!.panes[0] as { lines?: string[] }).lines
+    assert.equal(lines?.length, 3, 'at most SEAL_LINES_MAX')
+    assert.equal(lines?.[0], 'Esperando você')
+    assert.doesNotMatch(lines?.[1] ?? '', /Users|\u202e/)
+    live = false
+    const closed = await src.tree()
+    assert.equal('lines' in closed.input.desks.desks[0]!.panes[0]!, false, 'the app closed: what the agent WAS doing is not said')
   })
 
   test('hostile text of a good body is cleaned by the house\'s rules before the screen sees it', async () => {

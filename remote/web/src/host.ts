@@ -39,8 +39,13 @@ export interface MarkRow {
   owed: number
   firstToMe?: number
   firstCall?: { why: 'to-you' | 'reaction-asks' | 'poll-owed'; text: string }
+  /** The ids of the agents in the channel now (the panes' ids of the tree), in the order they came in; never the person. */
+  members: string[]
+  /** How many ids were left out of `members`. */
+  membersMore?: number
 }
-export interface MarksAnswer { channels: MarkRow[]; more: number }
+/** `moderator.name`: the person's name in the channels (`''`: an old house that does not say it). */
+export interface MarksAnswer { channels: MarkRow[]; more: number; moderator: { name: string } }
 
 /** A line of `channels.page`: a speech, a notice or a poll (reactions, votes and closes come summed, never as lines). */
 export interface PageLine {
@@ -67,10 +72,16 @@ export interface PageAnswer {
   polls: PollState[]
   last: number
   before?: number
+  /** Who is in the channel now (the channel's, the same on every page of it), in the order they came in; never the person. */
+  members: RemoteMember[]
+  /** How many were left out of `members`. */
+  membersMore?: number
+  /** The person's name in the channels, as in `channels.marks`. */
+  moderator: { name: string }
 }
 
-/** Who is in a channel, as much as a remote reading may know. */
-export interface RemoteMember { id: string; name: string; muted?: boolean }
+/** Who is in a channel. */
+export interface RemoteMember { id: string; name: string; muted?: true }
 
 /** A thin notice of the house: it brings no content, only what to read again. */
 export type RemoteNotice = { what: 'regency' } | { what: 'channels'; channels: readonly string[]; all?: boolean }

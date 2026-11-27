@@ -71,13 +71,22 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
     ],
   }
 
+  const members: Record<string, RemoteMember[]> = {
+    obra: [{ id: 'p1', name: 'conferente' }, { id: 'p2', name: 'bancada' }],
+    extra: [{ id: 'p2', name: 'bancada' }],
+    migra: [{ id: 'p5', name: 'migra' }, { id: 'p6', name: 'revisor', muted: true }],
+  }
+  const ids = (channelId: string): string[] => (members[channelId] ?? []).map(m => m.id)
+  const moderator = { name: 'usuário' }
+
   const marks: MarksAnswer = {
     channels: [
-      { channel: 'obra', name: 'obra', unread: 0, toMe: 0, seen: 8, asks: 0, owed: 0 },
-      { channel: 'extra', name: 'extra', unread: 1, toMe: 1, seen: 2, asks: 0, owed: 0, firstToMe: 3, firstCall: { why: 'to-you', text: 'bancada: Qual das duas telas de filtro fica?' } },
-      { channel: 'migra', name: 'migra', unread: 4, toMe: 0, seen: 5, asks: 0, owed: 0 },
+      { channel: 'obra', name: 'obra', unread: 0, toMe: 0, seen: 8, asks: 0, owed: 0, members: ids('obra') },
+      { channel: 'extra', name: 'extra', unread: 1, toMe: 1, seen: 2, asks: 0, owed: 0, firstToMe: 3, firstCall: { why: 'to-you', text: 'bancada: Qual das duas telas de filtro fica?' }, members: ids('extra') },
+      { channel: 'migra', name: 'migra', unread: 4, toMe: 0, seen: 5, asks: 0, owed: 0, members: ids('migra') },
     ],
     more: 0,
+    moderator,
   }
 
   const me: PageLine['from'] = { id: 'user', name: 'usuário', role: 'moderator' }
@@ -115,12 +124,6 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
     ],
   }
 
-  const members: Record<string, RemoteMember[]> = {
-    obra: [{ id: 'p1', name: 'conferente' }, { id: 'p2', name: 'bancada' }],
-    extra: [{ id: 'p2', name: 'bancada' }],
-    migra: [{ id: 'p5', name: 'migra' }, { id: 'p6', name: 'revisor' }],
-  }
-
   const tree = (): TreeAnswer => (o.appClosed
     ? { input, live: false, asOf: t0 - 8 * MIN, sig: 'bench' }
     : { input, live: true, sig: 'bench' })
@@ -137,7 +140,7 @@ export function fakeHouse(o: FakeOptions = {}): FakeHouse {
       return {
         channel: { id: channelId, name: channelId, title: channelId },
         lines, reactions: channelId === 'obra' ? [{ seq: 3, tallies: [{ emoji: '👍', name: 'agree', by: [{ id: 'p2', name: 'bancada' }, { id: 'user', name: 'usuário' }] }] }] : [],
-        polls: [], last: all[all.length - 1]?.seq ?? 0,
+        polls: [], last: all[all.length - 1]?.seq ?? 0, members: members[channelId] ?? [], moderator,
         ...(first !== undefined && first > 1 ? { before: first } : {}),
       }
     },
