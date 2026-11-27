@@ -1287,6 +1287,7 @@ Item aprovado pelo PO: uma guia de agente ociosa (sem turno e sem uso da pessoa 
 - Ícone da suspensa: folha (Phosphor `leaf`), sem lua nem olho.
 - Ao abrir o app, o "último uso" desconhecido conta a partir da abertura: nada é suspenso na primeira hora.
 - A ronda retoma a guia suspensa a cada ronda devida (uma guia com ronda curta quase não fica suspensa).
+- Movimento do mouse (hover) não retoma nem conta como uso (2026-11-27, `agent/tether-suspend-hover`): com o modo de mouse ligado pelo agente, cada movimento chegava ao `onData` do xterm (`panel.ts`) e `takeInput` o tratava como tecla (retomava e renovava o último uso). `isMouseMotion` (`suspend.ts`) reconhece movimento SGR/X10; o painel o descarta com a guia suspensa ou retomando (não entra nos 64 KB) e, com o agente de pé, o repassa sem renovar o uso. Clique, roda, tecla e colar seguem retomando.
 
 ## Suspender guia por escolha (2026-11-27, branch agent/tether-suspend-manual)
 

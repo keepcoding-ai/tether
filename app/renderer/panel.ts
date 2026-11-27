@@ -27,7 +27,7 @@ import { IS_MAC, paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
-import { RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
+import { isMouseMotion, RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem, setTabLetter } from './tab-emblems.ts'
 import { letterOf } from './agent-identity-rules.ts'
@@ -526,6 +526,13 @@ export class TerminalPanel implements IContentRenderer {
     }
     this.term.onData(data => {
       if (!this.slotId) return
+      // Mouse movement with no button (a program with mouse mode on gets one report per pointer move) is not use of the
+      // pane: it never resumes a suspended pane, is dropped while suspended or resuming (it must not reach the agent when it
+      // returns), and while the agent is up it goes through without renewing the pane's last use.
+      if (isMouseMotion(data)) {
+        if (!this.host.isSuspended?.(this.slotId)) window.tether.notice({ t: 'input', slotId: this.slotId, data })
+        return
+      }
       if (this.host.takeInput?.(this.slotId, data)) return
       perfKey(this.slotId)
       if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp

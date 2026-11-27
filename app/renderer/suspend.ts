@@ -99,6 +99,28 @@ export class ResumeInput {
   drop(slotId: string): void { this.held.delete(slotId) }
 }
 
+/**
+ * Terminal mouse reports that are only movement (the pointer hovering, or dragging with a button already down): SGR
+ * `CSI < b ; x ; y M|m` and X10 `CSI M b x y`, with the motion bit (32) in `b` and not the wheel bit (64). A program that
+ * turns the mouse mode on (Claude Code) gets one per pointer move; they are not use of the pane (they neither resume it
+ * nor renew its last use) and are dropped while the pane is suspended. Clicks, the wheel, keys and paste are not motion.
+ */
+const SGR_REPORT = /^\x1b\[<(\d+);\d+;\d+[Mm]/
+const motionCode = (b: number): boolean => (b & 32) !== 0 && (b & 64) === 0
+export function isMouseMotion(data: string): boolean {
+  let i = 0
+  if (!data) return false
+  while (i < data.length) {
+    const rest = data.slice(i)
+    const sgr = SGR_REPORT.exec(rest)
+    if (sgr) { if (!motionCode(Number(sgr[1]))) return false; i += sgr[0].length; continue }
+    // X10: ESC [ M, then button, column and row, each a character of code value + 32.
+    if (rest.startsWith('\x1b[M') && rest.length >= 6) { if (!motionCode(rest.charCodeAt(3) - 32)) return false; i += 6; continue }
+    return false
+  }
+  return true
+}
+
 /** What the panes' suspension asks of main.ts after an event. */
 export interface SuspendOutcome {
   /** The set of suspended panes changed: the layout (and the desk map) must be saved. */

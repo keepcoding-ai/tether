@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { deskMapOf } from '../../app/renderer/door/desk-map.ts'
 import { emptyLayout, type DeskLayout, type Layout } from '../../app/renderer/layout.ts'
-import { canSuspendNow, DEFAULT_SUSPEND, isBusyTurn, normalizeSuspend, RESUME_INPUT_MAX, ResumeInput, shouldSuspend, SuspendBook, sweepSuspend, SUSPEND_ENABLED_KEY, SUSPEND_IDLE_KEY, type SuspendCandidate } from '../../app/renderer/suspend.ts'
+import { canSuspendNow, DEFAULT_SUSPEND, isBusyTurn, isMouseMotion, normalizeSuspend, RESUME_INPUT_MAX, ResumeInput, shouldSuspend, SuspendBook, sweepSuspend, SUSPEND_ENABLED_KEY, SUSPEND_IDLE_KEY, type SuspendCandidate } from '../../app/renderer/suspend.ts'
 import { CORE_SETTINGS } from '../../app/shared/core-settings.ts'
 import { parseDeskMap } from '../../src/daemon/door/desks.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
@@ -232,5 +232,44 @@ describe('suspend: by hand (menu, palette, owner)', () => {
     const again = new SuspendBook()
     again.load(book.toLayout(), () => true)
     assert.equal(again.has('s1'), true)
+  })
+})
+
+describe('suspend: mouse movement is not use', () => {
+  const sgr = (b: number, x = 10, y = 4, end = 'M'): string => `\x1b[<${b};${x};${y}${end}`
+  const x10 = (b: number, x = 10, y = 4): string => '\x1b[M' + String.fromCharCode(b + 32, x + 32, y + 32)
+
+  test('SGR and X10 movement (no button, or dragging) is motion', () => {
+    assert.equal(isMouseMotion(sgr(35)), true, 'hover, no button')
+    assert.equal(isMouseMotion(sgr(32)), true, 'move with the left button down')
+    assert.equal(isMouseMotion(sgr(43)), true, 'hover with a modifier (shift)')
+    assert.equal(isMouseMotion(x10(35)), true)
+    assert.equal(isMouseMotion(x10(32)), true)
+    assert.equal(isMouseMotion(sgr(35) + sgr(35, 11) + x10(35)), true, 'several reports in one chunk')
+  })
+
+  test('clicks, releases and the wheel are not motion', () => {
+    assert.equal(isMouseMotion(sgr(0)), false, 'left press')
+    assert.equal(isMouseMotion(sgr(0, 10, 4, 'm')), false, 'left release')
+    assert.equal(isMouseMotion(sgr(2)), false, 'right press')
+    assert.equal(isMouseMotion(sgr(64)), false, 'wheel up')
+    assert.equal(isMouseMotion(sgr(65)), false, 'wheel down')
+    assert.equal(isMouseMotion(x10(0)), false)
+    assert.equal(isMouseMotion(x10(64)), false)
+    assert.equal(isMouseMotion(sgr(35) + sgr(0)), false, 'a click among movements is use')
+  })
+
+  test('keys and paste are not motion', () => {
+    for (const d of ['a', '\r', '\x1b', '\x1b[A', '\x1b[I', '\x1b[200~hello\x1b[201~', '\x1b[<35;1;1M text', 'oi', '']) assert.equal(isMouseMotion(d), false, JSON.stringify(d))
+  })
+
+  test('motion the pane drops while suspended never reaches the held input; a click still resumes', () => {
+    const book = new SuspendBook()
+    book.load(['a1'], () => true)
+    // the panel drops motion before takeInput; the book only ever sees what is use
+    const typed = ['\x1b[<35;5;5M', 'x'].filter(d => !isMouseMotion(d))
+    const o = book.userInput('a1', typed.join(''))
+    assert.equal(o.resume, true)
+    assert.equal(book.stateChanged({ slotId: 'a1', kind: 'claude', cwd: '/w', status: 'exited' }, { slotId: 'a1', kind: 'claude', cwd: '/w', status: 'running' }).flush, 'x')
   })
 })
