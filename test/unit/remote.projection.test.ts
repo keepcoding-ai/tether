@@ -21,6 +21,10 @@ import { AttentionView } from '../../src/remoted/attention.ts'
 import { House } from '../../src/remoted/house.ts'
 import { toEmbedProc, type EmbedProc } from '../../extensions/processes/embed.ts'
 import { remoteInputOf } from '../../extensions/regency/remote-input.ts'
+import { TreeKeeper } from '../../extensions/regency/daemon.ts'
+import type { RegencyInput } from '../../extensions/regency/model.ts'
+import { publishedTreeOf, STALE_MS } from '../../extensions/regency/publish-rules.ts'
+import { TreePublisher } from '../../extensions/regency/renderer/publish.ts'
 import type { Profile } from '../../src/core/profile.ts'
 import type { ProcState } from '../../src/daemon/procs.ts'
 import type { SlotState } from '../../src/daemon/protocol.ts'
@@ -108,6 +112,46 @@ describe('projections by allow list', () => {
     assert.deepEqual(items.items.map(i => i.id), ['slot-1'])
     assert.equal(has(items), false)
     assert.equal(has(remoteInputOf({ slots: [slot] })), false, "the Regency's floor for a remote screen keeps none of it either")
+  })
+
+  test("the Regency's published tree: no env, profile or path the app holds is published, kept or read back", async () => {
+    // Every object of the entry carries fields the app might hold beside the allowed ones (an env, a profile, args, a
+    // folder, a later field); the allow list copies none of them, the app sends none, tetherd keeps and gives none.
+    const leak = (): Record<string, unknown> => ({
+      ...later(), env: { GITHUB_TOKEN: MARKER }, profile: hostileProfile(), args: ['--token', MARKER], cwd: `C:/${MARKER}`, folder: `C:/${MARKER}`, keyPath: `C:/${MARKER}/.keys`,
+    })
+    const pane = { id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...leak() }
+    const desk = { id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [pane], ...leak() }
+    const entry = {
+      desks: { desks: [desk], ...leak() },
+      owners: { desk: { 'desk-1': { id: 'a1', name: 'Agente', ...leak() } }, pane: {}, ...leak() },
+      channels: [{ id: 'c1', name: 'geral', title: 'Geral', owner: { kind: 'agent', id: 'a1', name: 'Agente', ...leak() }, members: 2, seenByUser: 0, createdAt: ISO, closed: { at: ISO, by: 'user', ...leak() }, ...leak() }],
+      channelMarks: { c1: { unread: 1, toMe: 0, asks: 0, owed: 0, first: { why: 'to-you', text: 'oi', ...leak() }, ...leak() } },
+      agents: [{ id: 'a1', kind: 'claude', name: 'Agente', emblem: { name: 'e', color: 'red', icon: 'star', ...leak() }, ...leak() }],
+      since: { 'agent:a1': 1 }, collapsed: [MARKER], query: MARKER, selfDeskId: 'regency.main',
+      closed: [{ slotId: 's9', kind: 'claude', name: 'Velha', ...leak() }],
+      ...leak(),
+    } as unknown as RegencyInput
+    const tree = publishedTreeOf(entry)
+    assert.equal(has(tree), false, JSON.stringify(tree))
+    assert.equal(tree.desks.desks[0]!.panes[0]!.title, 'Agente', 'the allowed fields do go')
+
+    const sent: unknown[] = []
+    let now = Date.parse(ISO)
+    const keeper = new TreeKeeper({ now: () => now, live: () => ({ slots: [hostileSlot('a1'), hostileSlot('s2')] }), setTimer: () => 0, clearTimer: () => {} })
+    const pub = new TreePublisher({ read: () => entry, send: async (a) => { sent.push(a); return keeper.publish(a, { client: 'app' }) }, setInterval: () => 0, clearInterval: () => {}, log: () => {} })
+    await pub.flush()
+    pub.dispose()
+    assert.equal(sent.length, 1)
+    assert.equal(has(sent), false, 'nothing of it goes over the pipe')
+    // tetherd projects again what arrives: a hostile client that skips the app's projection keeps nothing either.
+    keeper.publish({ tree: entry }, { client: 'app' })
+    assert.equal(has(keeper.kept), false)
+    assert.equal(has(keeper.read()), false, 'live')
+    now += STALE_MS + 1
+    const stale = keeper.read()
+    assert.equal(stale.live, false)
+    assert.equal(has(stale), false, 'app closed: the live slots over the tree carry none of theirs either')
   })
 
   test('the session info keeps only known scopes and a sanitized name', () => {

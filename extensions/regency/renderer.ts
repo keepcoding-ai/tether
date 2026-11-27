@@ -30,6 +30,8 @@ import {
 import { DEFAULT_LAYOUT, layoutParams, type RegencyLayout } from './renderer/layout-rules.ts'
 import { RegencyPane, RegencyTab, type RegencyHost, type TreeQuery } from './renderer/pane.ts'
 import { targetOf } from './renderer/columns.ts'
+import { TreePublisher } from './renderer/publish.ts'
+import { TREE_REQ, type PublishAnswer } from './publish-rules.ts'
 
 export { manifest }
 
@@ -163,7 +165,13 @@ export function activate(ui: TetherUi): Disposable[] {
     if (!shown) { if (panes.size > 0) inputOf([]); return }
     for (const p of panes) p.paint()
   }
+  /** The entry goes to tetherd for a remote screen (RR3 3.2): every source event marks it, the publisher debounces and dedups. */
+  const publisher = new TreePublisher({
+    read: () => inputOf([]),
+    send: args => ui.daemon.request<PublishAnswer>(TREE_REQ.publish, args),
+  })
   const schedule = (): void => {
+    publisher.changed()
     if (frame) return
     frame = requestAnimationFrame(flush)
   }
@@ -687,7 +695,9 @@ export function activate(ui: TetherUi): Disposable[] {
   })
 
   schedule()
+  publisher.start()
   return [
+    { dispose: () => publisher.dispose() },
     // The person's key or the palette: only the Regency in sight changes (hidden, it would change out of her view).
     ui.commands.registerCommand(CMD.immersion, () => { if (visible()) livePane()?.toggleMode() }),
     // "Regência: Novo…" from the palette: the person asked for the Regency's card, so it comes to view first.
