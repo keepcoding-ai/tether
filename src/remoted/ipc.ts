@@ -16,6 +16,8 @@ export interface PortalDevice {
   tickets: TicketRow[]
   /** keyId(pub_A) of every admission key this device ever had (E-2: a renewal never reuses one). */
   usedKeyIds: string[]
+  /** Its superseded tickets still alive, denied until their exp: what the ceiling of renewals per device counts. */
+  denied?: DenyRow[]
   /** The presence credential registered in the pairing session (spec 7.4 point 1). Absent: the device only reads (E-8). */
   credential?: CredentialRow
 }

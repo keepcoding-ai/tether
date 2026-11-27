@@ -13,7 +13,7 @@
 // the PWA configured) and its state from the portal's memory (src/remoted/uv.ts), never from what the PWA says. Every
 // proof is checked here against a challenge the portal computes, and one device verifies one proof at a time.
 import {
-  ActCache, ADMIT_TTL_S, CLOSE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
+  ActCache, ADMIT_TTL_S, CLOCK_SKEW_S, CLOSE, DENY_MAX, NOTICE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
   opByCode, parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND,
   admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT, SCOPE_FAMILIES,
@@ -83,6 +83,8 @@ interface DeviceMem {
   revoking: boolean
   /** Unlocked, the window, the invalid proofs and the lane that verifies one proof of this device at a time. */
   presence: DevicePresence
+  /** When this portal last accepted an admit.renew of the device (limits.ts `renewMinGapS`). */
+  lastRenewMs?: number
 }
 
 interface SessionRoute {
@@ -116,6 +118,12 @@ export class House {
   readonly #mem = new Map<string, DeviceMem>()
   /** ticketId → exp (Unix s): what the relay must refuse; resent whole at each link up (spec 6.1). */
   readonly #deny = new Map<string, number>()
+  /** The entries of #deny that the handshake rate put there (bounded by `rateDenyMax`). */
+  readonly #rateDeny = new Map<string, number>()
+  /** Old tickets of renewals whose denial is still due (RENEW_DENY_AFTER_MS): room of the list already promised. */
+  #denyPending = 0
+  /** When the person last got the native notice of a refused deny list. */
+  #relayNoticeMs: number | undefined
   /** ticketId hint → arrival instants within the last minute (spec 5.8). */
   readonly #hsRate = new Map<string, number[]>()
   readonly #lockout = new PairLockout()
@@ -218,7 +226,7 @@ export class House {
       case 'ROUTE_DATA': return this.#routeData(f.routeId, f.inner)
       case 'ROUTE_CLOSE': return this.#routeClosed(f.routeId)
       case 'R_PAIR_STATE': this.#pairing?.waitState?.(f.code); return
-      case 'R_NOTICE': this.#d.log(`relay notice ${f.code}`); return
+      case 'R_NOTICE': return this.#relayNotice(f.code)
       default: return
     }
   }
@@ -241,8 +249,12 @@ export class House {
     this.#hsRate.set(hintHex, recent)
     if (this.#hsRate.size > 1024) this.#hsRate.delete(this.#hsRate.keys().next().value!)
     if (recent.length > this.#lim.hsPerTicketPerMin) {
-      if (hint.length === 16 && this.#addDeny(hintHex, Math.floor(nowMs / 1000) + this.#lim.hsRateDenyS)) {
-        this.#sendDeny([{ ticketId: hintHex, exp: Math.floor(nowMs / 1000) + this.#lim.hsRateDenyS }])
+      // The hint is unauthenticated: its denials have a share of their own and never take the revocations' reserve.
+      const exp = Math.floor(nowMs / 1000) + this.#lim.hsRateDenyS
+      const room = hint.length === 16 && (this.#deny.has(hintHex) || (this.#denyRoom(1, this.#lim.denyRevokeReserve) && this.#rateDeny.size < this.#lim.rateDenyMax))
+      if (room && this.#addDeny(hintHex, exp)) {
+        this.#rateDeny.set(hintHex, exp)
+        this.#sendDeny([{ ticketId: hintHex, exp }])
       }
       return this.#close(route)
     }
@@ -548,10 +560,7 @@ export class House {
       case 'attention.watch':
         if (!s.watching) { s.watching = true; this.#noteSessions() }
         return ok(resultBody('attention.watch', this.#d.attention.items()))
-      case 'admit.renew': {
-        const r = await this.#renew(s, body)
-        return { status: r.status, bytes: r.bytes }
-      }
+      case 'admit.renew': return this.#renew(s, body)
       case 'device.revoke-self':
         // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
         this.#d.note({ note: 'revoke-self', deviceId: s.deviceId })
@@ -719,23 +728,43 @@ export class House {
     this.#sessionEffects(s, await s.session.close(CLOSE.limit, this.#d.now()))
   }
 
-  async #renew(s: SessionRoute, body: Record<string, unknown>): Promise<{ status: ResStatus; bytes: Bytes }> {
-    const refused = { status: RES_STATUS.failed, bytes: errorBody('refused') }
-    const bad = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+  /**
+   * admit.renew: exempt from proof, never from a ceiling (src/remoted/limits.ts). Refused with `limit`, before anything is
+   * issued or written, when the device renewed less than `renewMinGapS` ago, when its live ticket has not lived
+   * `renewMinAgeS`, when its superseded tickets would pass `deniedPerDevice`, or when the relay's list has no room left
+   * outside the revocations' reserve. Every refusal is audited (the line mutates) with its reason.
+   */
+  async #renew(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const refused: Served = { status: RES_STATUS.failed, bytes: errorBody('refused') }
+    const bad: Served = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const limit = (why: string): Served => ({ status: RES_STATUS.limit, bytes: emptyBody(), audit: `limit:${why}` })
     const dv = this.#devices.get(s.deviceId)
-    const mem = this.#mem.get(s.deviceId)
-    if (!dv || dv.state !== 'active' || mem?.revoking) return refused
+    const mem = this.#memOf(s.deviceId)
+    if (!dv || dv.state !== 'active' || mem.revoking) return refused
     if (typeof body.pubA !== 'string') return bad
     let pubA: Bytes
     try { pubA = fromB64url(body.pubA) } catch { return bad }
+    const nowMs = this.#d.now()
+    const nowS = Math.floor(nowMs / 1000)
+    if (mem.lastRenewMs !== undefined && nowMs - mem.lastRenewMs < this.#lim.renewMinGapS * 1000) return limit('gap')
+    const liveExp = Math.max(0, ...dv.tickets.map((t) => t.exp))
+    if (nowS < liveExp - ADMIT_TTL_S + this.#lim.renewMinAgeS) return limit('age')
+    const old = dv.tickets.slice()
+    const denied = [...(dv.denied ?? []), ...old.map((t) => ({ ticketId: t.ticketId, exp: t.exp }))].filter((t) => t.exp + CLOCK_SKEW_S >= nowS)
+    if (denied.length > this.#lim.deniedPerDevice) return limit('denied')
+    if (!this.#denyRoom(old.length, this.#lim.denyRevokeReserve)) return limit('deny-list')
     if (!(await admitRenewKeyAllowed(pubA, fromHex(dv.pubD), dv.usedKeyIds.map(fromHex)))) return refused
     const { ticket, row } = await this.#issue(pubA)
-    const old = dv.tickets.slice()
     try { await this.#d.ask({ ask: 'renew', deviceId: s.deviceId, ticket: row }) } catch { return refused }
+    mem.lastRenewMs = nowMs
     dv.tickets = [row]
-    dv.usedKeyIds = [...dv.usedKeyIds, row.keyId]
-    // One live ticket per device, plus the slack of the switch: the previous ones are denied a minute later.
+    dv.denied = denied
+    dv.usedKeyIds = [...dv.usedKeyIds, row.keyId].slice(-this.#lim.usedKeyIdsPerDevice)
+    // One live ticket per device, plus the slack of the switch: the previous ones are denied a minute later. They count
+    // against the room of the list from now on, so two renewals within the minute never promise the same room twice.
+    this.#denyPending += old.length
     setTimeout(() => {
+      this.#denyPending -= old.length
       const added = old.filter((t) => this.#addDeny(t.ticketId, t.exp)).map((t) => ({ ticketId: t.ticketId, exp: t.exp }))
       if (added.length) this.#sendDeny(added)
     }, this.#d.renewDenyAfterMs ?? RENEW_DENY_AFTER_MS).unref?.()
@@ -799,9 +828,33 @@ export class House {
     return true
   }
 
+  /** Drops what the relay drops too (spec 11 Q13: `now > exp + CLOCK_SKEW`), so both count the same list. */
   #pruneDeny(): void {
     const nowS = Math.floor(this.#d.now() / 1000)
-    for (const [id, exp] of this.#deny) if (nowS > exp + 300) this.#deny.delete(id)
+    for (const [id, exp] of this.#deny) if (nowS > exp + CLOCK_SKEW_S) this.#deny.delete(id)
+    for (const [id, exp] of this.#rateDeny) if (nowS > exp + CLOCK_SKEW_S) this.#rateDeny.delete(id)
+  }
+
+  /** `n` more entries fit in the relay's list leaving `reserve` free (the denials due after renewals already count). */
+  #denyRoom(n: number, reserve: number): boolean {
+    this.#pruneDeny()
+    return this.#deny.size + this.#denyPending + n <= DENY_MAX - reserve
+  }
+
+  /**
+   * R_NOTICE from the relay. 0x02: an H_DENY was refused whole (its list is at DENY_MAX), so what it carried (a revocation,
+   * a superseded ticket) is not refused there: the portal still refuses those devices, the relay no longer does. Audited
+   * every time; the person gets a native notice at most once per `relayNoticeEveryS`.
+   */
+  #relayNotice(code: number): void {
+    const name = code === NOTICE.limit ? 'deny-full' : code === NOTICE.secondHouse ? 'second-house' : String(code)
+    this.#d.log(`relay notice ${code}`)
+    this.#audit('relay.notice', name)
+    if (code !== NOTICE.limit) return
+    const nowMs = this.#d.now()
+    if (this.#relayNoticeMs !== undefined && nowMs - this.#relayNoticeMs < this.#lim.relayNoticeEveryS * 1000) return
+    this.#relayNoticeMs = nowMs
+    this.#d.notice('O relay recusou a lista de bloqueio deste computador: um aparelho revogado ainda chega ao relay, mas não entra na máquina. Confira os aparelhos na tela do tether.')
   }
 
   #sendDeny(rows: readonly DenyRow[]): void {

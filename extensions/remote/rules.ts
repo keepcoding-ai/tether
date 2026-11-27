@@ -105,7 +105,7 @@ export function serializeRegistry(devices: readonly DeviceEntry[]): string {
 export function toPortalDevice(d: DeviceEntry): PortalDevice {
   return {
     deviceId: d.deviceId, pubD: d.pubD, state: d.state, maxVerUsed: d.maxVerUsed, scopes: [...d.scopes], tickets: d.tickets.map((t) => ({ ...t })),
-    usedKeyIds: [...d.usedKeyIds], ...(d.credential ? { credential: { ...d.credential } } : {}),
+    usedKeyIds: [...d.usedKeyIds], denied: d.denied.map((t) => ({ ...t })), ...(d.credential ? { credential: { ...d.credential } } : {}),
   }
 }
 
@@ -129,6 +129,20 @@ export function pruneRegistry(devices: readonly DeviceEntry[], nowS: number): De
     out.push(denied.length === d.denied.length ? d : { ...d, denied })
   }
   return out
+}
+
+/**
+ * A renewal written to the registry (the portal already checked its rhythm): the live tickets become denied, the new one is
+ * the only live ticket. Bounded twice, so devices.json never grows because of one device: expired denied tickets go, and a
+ * renewal that would leave more than `deniedMax` alive is refused; the past keys keep the newest `keyIdsMax`.
+ */
+export function renewDevice(d: DeviceEntry, ticket: TicketRow, nowS: number, deniedMax: number, keyIdsMax: number): void {
+  if (d.usedKeyIds.includes(ticket.keyId)) throw new Error('admission key already used')
+  const denied = [...d.denied, ...d.tickets.map((t) => ({ ticketId: t.ticketId, exp: t.exp }))].filter((t) => t.exp + 300 >= nowS)
+  if (denied.length > deniedMax) throw new Error('too many superseded tickets')
+  d.denied = denied
+  d.tickets = [ticket]
+  d.usedKeyIds = [...d.usedKeyIds, ticket.keyId].slice(-keyIdsMax)
 }
 
 /**

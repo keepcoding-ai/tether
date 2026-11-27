@@ -20,6 +20,8 @@ export interface HouseBenchOptions {
   /** Every answer of the registry waits this long (a slow disk): what the lanes per device must survive. */
   askDelayMs?: number
   presenceClock?: Partial<PresenceClock>
+  /** The old ticket of a renewal is denied this long after it (the portal's default is a minute). */
+  renewDenyAfterMs?: number
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -38,6 +40,8 @@ export interface HouseBench {
   asks: PortalAsk[]
   /** Every note the house sent the extension, in order. */
   notes: PortalNote[]
+  /** Every native notice the house gave the person. */
+  notices: string[]
   /** The audit lines among them. */
   audits(): Extract<PortalNote, { note: 'audit' }>[]
   /** A normal session of the paired device (admission + handshake). */
@@ -59,6 +63,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
   const notes: PortalNote[] = []
   const asks: PortalAsk[] = []
   const registry = new Map<string, PortalDevice>()
+  const notices: string[] = []
 
   const answer = async (a: PortalAsk): Promise<void> => {
     asks.push(a)
@@ -73,6 +78,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
       case 'renew': {
         const d = registry.get(a.deviceId)
         if (!d || d.state !== 'active') throw new Error('device not active')
+        d.denied = [...(d.denied ?? []), ...d.tickets.map((t) => ({ ticketId: t.ticketId, exp: t.exp }))]
         d.tickets = [a.ticket]
         d.usedKeyIds.push(a.ticket.keyId)
         return
@@ -108,8 +114,8 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
   const up = async (devices: PortalDevice[]): Promise<House> => {
     const house = new House({
       keys, aud, houseName: 'bench', attention: new AttentionView(), log: () => {}, now: Date.now, ask: answer,
-      send: (f) => link?.send(f), note: onNote, notice: () => {},
-      ...(o.limits ? { limits: o.limits } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
+      send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
+      ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
     })
     await house.init(devices, [])
     current = house
@@ -127,7 +133,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
 
   const bench: HouseBench = {
     house: await up([]),
-    relay, rp, registry, asks, notes,
+    relay, rp, registry, asks, notes, notices,
     device: undefined as unknown as TestDevice,
     fresh: undefined as unknown as DeviceSession,
     audits: () => notes.filter((n): n is Extract<PortalNote, { note: 'audit' }> => n.note === 'audit'),

@@ -189,26 +189,19 @@ describe('remote portal on the bench (RR1.3)', () => {
     assert.equal((await session.request(OP.info, {}, { raw: new TextEncoder().encode('[1]') })).status, RES_STATUS.badRequest)
   })
 
-  test('admit.renew: one act per actId, the same answer [44]; the old ticket is refused once its deny is due [61]', async () => {
+  // The renewal itself, [47] and [61] run in-process with the rhythm lowered (remoted.renew.test.ts): here the real portal
+  // keeps its rhythm, and a ticket just issued is not renewed (M-1).
+  test('admit.renew: a ticket just issued is not renewed (limit, nothing written); one act per actId, the same answer [44]', async () => {
+    const before = readFileSync(join(home, 'remote', 'devices.json'), 'utf8')
     const kA2 = (await generateRoleKey('admission')).key
     const actId = new Uint8Array(randomBytes(16))
     const a = await session.request(OP.renew, { pubA: b64url(kA2.pub) }, { actId })
     const b = await session.request(OP.renew, { pubA: b64url(kA2.pub) }, { actId })
-    assert.equal(a.status, RES_STATUS.ok)
+    assert.equal(a.status, RES_STATUS.limit)
     assert.deepEqual(b, a)
-    const reuse = await session.request(OP.renew, { pubA: b64url(device.kD.pub) }, { actId: randomBytes(16) })
-    assert.equal(reuse.status, RES_STATUS.failed, 'pub_A = pub_D refused [47]')
-    const oldTicket = device.result!.admitTicket
-    const oldKA = device.kA
-    device.renewed(fromB64url(String(a.body.ticket)), kA2)
-    await new Promise((r) => setTimeout(r, 2_500)) // TETHER_TEST_REMOTE_DENY_AFTER_MS = 1500
-    const withOld = new TestDevice(relay)
-    withOld.kD = device.kD
-    withOld.kA = oldKA
-    withOld.result = { ...device.result!, admitTicket: oldTicket }
-    assert.deepEqual(await withOld.connect(), { failed: 'relay-refused' })
+    assert.equal(readFileSync(join(home, 'remote', 'devices.json'), 'utf8'), before, 'the registry was not written')
     const ok = await device.connect()
-    assert.ok(!('failed' in ok))
+    assert.ok(!('failed' in ok), 'the device keeps its ticket')
     ;(ok as DeviceSession).leg.close()
   })
 

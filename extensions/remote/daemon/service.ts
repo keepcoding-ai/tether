@@ -19,13 +19,14 @@ import type { Executor } from '../../../src/exec/executor.ts'
 import { relayUrlAllowed } from '../../../src/remote/index.ts'
 import { DEFAULT_SCOPES } from '../../../src/remoted/house.ts'
 import { KEY_FILES } from '../../../src/remoted/keyfiles.ts'
+import { LIMITS } from '../../../src/remoted/limits.ts'
 import {
   PORTAL_EXIT, type FromPortal, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalNote, type PortalStatus,
   type SessionEnded,
 } from '../../../src/remoted/ipc.ts'
 import {
   denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, isCredential, originAllowed, PAIR_ID_RE, parseConfig,
-  parseRegistry, pruneRegistry, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
+  parseRegistry, pruneRegistry, renewDevice, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
   type RemoteRequest,
 } from '../rules.ts'
 import { AuditLog } from './audit.ts'
@@ -286,10 +287,7 @@ export class RemoteService {
     }
     // A revocation is written before anything else happens to the device (spec 6.1), so a renewal after it is refused.
     if (!d || d.state !== 'active') throw new Error('device not active')
-    if (d.usedKeyIds.includes(a.ticket.keyId)) throw new Error('admission key already used')
-    d.denied = [...d.denied, ...d.tickets.map((t) => ({ ticketId: t.ticketId, exp: t.exp }))]
-    d.tickets = [a.ticket]
-    d.usedKeyIds = [...d.usedKeyIds, a.ticket.keyId].slice(-64)
+    renewDevice(d, a.ticket, Math.floor(this.#now / 1000), LIMITS.deniedPerDevice, LIMITS.usedKeyIdsPerDevice)
     await this.#saveRegistry()
   }
 

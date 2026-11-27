@@ -1,7 +1,7 @@
 // Every limit of the portal in one place (fio-spec 5.8; plano §2, threat "DoS na casa pelo relay": tickets, limits at the
 // relay per house and IP, ceilings at the portal per device). The values that already existed are unchanged; the two
 // per-device rates and the strike count are new. Pure: no node:*.
-import { ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE } from '../remote/index.ts'
+import { ADMIT_TTL_S, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE } from '../remote/index.ts'
 
 export interface Limits {
   /** Routes the relay may hold open on the house's socket (admissions, pairing and sessions together). */
@@ -39,6 +39,31 @@ export interface Limits {
    * number of attempts a pairing ticket tolerates (plano §2): enough for a bug or a retry, not for insisting.
    */
   strikesMax: number
+  /**
+   * admit.renew is exempt from proof (a device without a credential must keep its admission), never from a ceiling: each
+   * accepted renewal writes the registry and adds a deny entry at the relay for 30 days. At most one per device in this
+   * long. Kept in the portal's memory; across a restart the ticket's own age (below) still holds, it is on disk.
+   */
+  renewMinGapS: number
+  /** A renewal is accepted only once the device's live ticket lived this long: half of ADMIT_TTL. */
+  renewMinAgeS: number
+  /**
+   * Superseded tickets of one device still alive (denied until their exp), in the registry and in the relay's list. With
+   * the two rules above a device reaches at most 30 d / 20 h = 36; a person's device, renewing past half its ticket, holds
+   * one or two. A renewal that would pass the ceiling is refused: the list never grows because of one device.
+   */
+  deniedPerDevice: number
+  /** keyIds of past admission keys kept per device (E-2), as the registry keeps them. */
+  usedKeyIdsPerDevice: number
+  /** Live deny entries the handshake rate (hsRateDenyS) may hold at the relay: the hint is unauthenticated. */
+  rateDenyMax: number
+  /**
+   * Room of the relay's list (DENY_MAX) that renewals and the handshake rate never take: a revocation always fits. Budget:
+   * 32 devices × deniedPerDevice (512) + rateDenyMax (256) + this (256) = DENY_MAX.
+   */
+  denyRevokeReserve: number
+  /** The native notice of a refused deny list (R_NOTICE 0x02) at most once in this long; the audit gets every one. */
+  relayNoticeEveryS: number
 }
 
 export const LIMITS: Readonly<Limits> = Object.freeze({
@@ -53,6 +78,13 @@ export const LIMITS: Readonly<Limits> = Object.freeze({
   reqPerDevicePerMin: 120,
   gesturesPerDevicePerMin: 30,
   strikesMax: 5,
+  renewMinGapS: 20 * 3600,
+  renewMinAgeS: ADMIT_TTL_S / 2,
+  deniedPerDevice: 16,
+  usedKeyIdsPerDevice: 64,
+  rateDenyMax: 256,
+  denyRevokeReserve: 256,
+  relayNoticeEveryS: 3600,
 })
 
 const WINDOW_MS = 60_000
