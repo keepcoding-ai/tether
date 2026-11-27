@@ -33,6 +33,7 @@ describe('remote operations registry', () => {
       [0x0008, 'house.key-rotate.ack', 'session', 'unlocked', false, true],
       [0x0100, 'attention.list', 'attention', 'unlocked', false, false],
       [0x0101, 'attention.watch', 'attention', 'unlocked', false, false],
+      [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
     ])
@@ -49,7 +50,7 @@ describe('remote operations registry', () => {
     for (const l of OPS) {
       assert.ok(Number.isInteger(l.code) && l.code > 0 && l.code <= 0xffff, l.name)
       const family = l.code >>> 8
-      assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : 'manage:destructive', l.name)
+      assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
       assert.ok(l.scope.length > 0, 'a line always declares its scope')
     }
   })

@@ -276,6 +276,7 @@ export const RESULTS = {
   'house.key-rotate.ack': unbuilt,
   'attention.list': attentionList,
   'attention.watch': attentionList,
+  'regency.tree': unbuilt,
   'device.list': unbuilt,
   'device.revoke': empty,
 } as const satisfies { readonly [K in OpName]: (src: never) => unknown }
