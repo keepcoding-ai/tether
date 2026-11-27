@@ -54,13 +54,34 @@ const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
 /** The keys of a record, sorted: the JSON of a projected tree does not depend on the order the app built it in. */
 const keysOf = (v: unknown, max: number): string[] => Object.keys(rec(v)).filter(k => k.length <= ID_MAX).sort().slice(0, max)
 
+/**
+ * The seal's lines of a pane (the terminal's line and the extensions' messages: what the agent is doing, in a line or two):
+ * at most SEAL_LINES_MAX, each cut at SEAL_LINE_MAX characters. Text the agent writes; the portal sanitizes it again.
+ */
+export const SEAL_LINES_MAX = 3
+export const SEAL_LINE_MAX = 160
+
+function sealLines(v: unknown): string[] | undefined {
+  const out = (Array.isArray(v) ? v : []).filter((l): l is string => typeof l === 'string' && l !== '').slice(0, SEAL_LINES_MAX).map(l => l.slice(0, SEAL_LINE_MAX))
+  return out.length > 0 ? out : undefined
+}
+
 function pane(p: Pane): Pane {
   const out: Pane = { id: str(p?.id, ID_MAX), type: str(p?.type, 32), icon: str(p?.icon, 32), title: str(p?.title, TITLE_MAX) }
   if (p?.attention === 'done' || p?.attention === 'waiting') out.attention = p.attention
   if (p?.busy === true) out.busy = true
   if (p?.asleep === true) out.asleep = true
   if (p?.exited === true) out.exited = true
+  const lines = sealLines(p?.lines)
+  if (lines) out.lines = lines
   return out
+}
+
+/** A pane of a tree the app no longer publishes: its seal says what the agent WAS doing, so it goes. */
+const withoutLines = (p: Pane): Pane => {
+  if (p.lines === undefined) return p
+  const { lines: _l, ...rest } = p
+  return rest
 }
 
 function desk(d: Desk): Desk {
@@ -241,8 +262,8 @@ export function regencyViewOf(kept: KeptTree | undefined, live: RemoteState, now
     const f = floorPanes.get(p.id)
     if (!f) {
       // An agent's pane whose slot tetherd no longer has: it ended while the app was closed.
-      if (!knowSlots || !agentIds.has(p.id)) return p
-      const { attention: _a, busy: _b, ...rest } = p
+      if (!knowSlots || !agentIds.has(p.id)) return withoutLines(p)
+      const { attention: _a, busy: _b, lines: _l, ...rest } = p
       return { ...rest, exited: true }
     }
     const out: Pane = { id: p.id, type: p.type, icon: p.icon, title: p.title }
@@ -258,7 +279,7 @@ export function regencyViewOf(kept: KeptTree | undefined, live: RemoteState, now
   // The view stays under VIEW_MAX_BYTES: the tree with the live state of its own panes first (in a pathological tree whose
   // flags alone pass it, the tree as it was kept), then the newcomers and their agents while they fit.
   let room = VIEW_MAX_BYTES - utf8Length(JSON.stringify(view))
-  if (room < 0) return { input: kept.tree, live: false, asOf: kept.at, sig: kept.sig }
+  if (room < 0) return { input: { ...kept.tree, desks: { desks: kept.tree.desks.desks.map(d => ({ ...d, panes: d.panes.map(withoutLines) })) } }, live: false, asOf: kept.at, sig: kept.sig }
   const cost = (v: unknown): number => utf8Length(JSON.stringify(v)) + 1
   const extra: Desk = { id: FLOOR_DESK_ID, name: 'Sessões', color: '', kind: 'queue', asleep: false, panes: [] }
   room -= cost(extra)
