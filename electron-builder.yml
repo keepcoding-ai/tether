@@ -23,6 +23,9 @@ files:
   - package.json
   - app/dist/**
   - app/renderer/**
+  - app/shared/**
+  - brand/brand.json
+  - brand/assets/app/mask.json
   - extensions/**
   - src/**
   - node_modules/@xterm/xterm/css/xterm.css
@@ -38,7 +41,11 @@ files:
 # Binaries and files read by a process outside Electron (rg, node-pty's conpty, the daemon's .ts) cannot live in the asar.
 asarUnpack:
   - node_modules/@vscode/ripgrep-*/**
+  - app/shared/**
+  - brand/brand.json
+  - brand/assets/app/mask.json
   - node_modules/node-pty/**
+  - node_modules/jsonc-parser/**
   # koffi (user32 for the browser process's embedded windows) is a native module: it loads from outside the asar.
   - node_modules/koffi/**
   - src/**

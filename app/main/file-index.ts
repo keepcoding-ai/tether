@@ -24,6 +24,7 @@ import { SearchCache } from './vscode-raw-search.ts'
 import { type FileEntry, fileEntry, relAccessor } from './file-entry.ts'
 import { ShardPool, STALE } from './file-index-shard.ts'
 import type { ListSource, QuickOpenItem, QuickOpenResult } from '../shared/quick-open.ts'
+import { externalPath } from '../shared/unpacked-path.ts'
 
 export type { ListSource, QuickOpenItem, QuickOpenResult }
 
@@ -60,7 +61,8 @@ export function findRipgrep(from: string = moduleDir): string | undefined {
   const name = process.platform === 'win32' ? 'rg.exe' : 'rg'
   try {
     const p = req.resolve(`@vscode/ripgrep-${process.platform}-${process.arch}/bin/${name}`)
-    return existsSync(p) ? p : undefined
+    const real = externalPath(p)
+    return existsSync(real) ? real : undefined
   } catch { return undefined }
 }
 
