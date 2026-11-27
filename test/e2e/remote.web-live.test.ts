@@ -102,7 +102,7 @@ async function eventually<T>(f: () => Promise<T | undefined>, ms: number, what: 
 interface VirtualCredential { credentialId: string; signCount: number }
 interface DeviceRow { id: string; state: string; biometrics: boolean }
 /** What the page says of the element that holds the keyboard. */
-interface Held { key: string; left: number; right: number; inTree: boolean; inLeft: boolean; ring: boolean }
+interface Held { key: string; left: number; right: number; inTree: boolean; inLeft: boolean; inRight: boolean; ring: boolean }
 
 describe('remote web client live (RR3): the real PWA over the real relay, portal and tetherd of the bench', () => {
   const home = benchHome('tether-remote-web-live-')
@@ -290,7 +290,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const d = a.dataset
     return {
       key: d.key ?? d.target ?? d.filter ?? d.action ?? a.className, left: r.left, right: r.right,
-      inTree: a.closest('.rg-tree') !== null, inLeft: a.closest('.rg-left') !== null,
+      inTree: a.closest('.rg-tree') !== null, inLeft: a.closest('.rg-left') !== null, inRight: a.closest('.rg-right') !== null,
       ring: (cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px') || cs.boxShadow !== 'none',
     }
   })
@@ -410,5 +410,225 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     assert.match(await text('.rg-waiting'), /revisor/, 'who waits for the person')
     await eventually(async () => (await msgsHave(`linha ${pad(LINES)}`)) || undefined, 15_000, "the channel's newest page in the centre")
     await shot('4-arvore')
+  })
+
+  test('5. uma fala num canal faz a tela reler as marcas: "para você" e a conta de não lidas chegam sem recarregar', async () => {
+    const conv = `.rg-conv[data-target="channel:${channelId}"]`
+    assert.equal(await page.locator(`${conv} .rg-tome`).count(), 0, "the person's own lines call nobody")
+    await agent('say', { canal: channelId, text: 'Qual das duas telas de filtro fica?', to: ['usuário'] })
+    await page.waitForSelector(`${conv} .rg-tome`, { timeout: 15_000 })
+    assert.equal(await text(`${conv} .rg-mk .cnt`), '1', 'one line unread')
+    await eventually(async () => (await msgsHave('Qual das duas telas de filtro fica?')) || undefined, 15_000, 'the new line in the open channel')
+    await shot('5-marcas')
+  })
+
+  test('6. app fechado: a tela diz "como estavam às HH:MM" e segue mostrando as mesas; o app abre e volta "ao vivo"', async () => {
+    appCloses()
+    lease.skewMs = STALE_MS + 5_000
+    lease.expire?.()
+    await page.waitForSelector('.rr[data-link="closed"] .rr-snap-l', { timeout: 15_000 })
+    const hhmm = await page.evaluate((ms) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }, treeAt)
+    assert.equal(await text('.rr-snap-l'), `O tether está fechado na máquina. As mesas são como estavam às ${hhmm}.`)
+    assert.match(await text('.rr-where-t'), /app fechado na máquina/)
+    assert.match(await text('.rg-tree'), /conferente/, 'the desks stay')
+    await shot('6-app-fechado')
+    lease.skewMs = 0
+    await publish()
+    appOpens()
+    await page.waitForSelector('.rr[data-link="live"]', { timeout: 15_000 })
+    assert.equal(await page.locator('.rr-snap').count(), 0, 'the band goes with the app open')
+  })
+
+  test('7. offline: com a máquina fora do alcance, só o aviso; nada da casa fica na tela; ela volta e a Regência também', async () => {
+    await ext(app, 'remote.off')
+    await page.waitForSelector('.rr[data-link="offline"] .rr-off', { timeout: 20_000 })
+    assert.match(await text('.rr-off'), /Seu tether está offline/)
+    assert.equal(await page.isVisible('.rr-stage'), false, 'the stage is hidden')
+    assert.equal(await page.locator('.rg-tree, .ch-msgs, .rg-conv').count(), 0, 'nothing of the house is kept on the screen')
+    assert.doesNotMatch(await text('#app'), /conferente|linha 0|revisor/)
+    await shot('7-offline')
+    assert.deepEqual(await remoteOn(), { on: true })
+    await houseUp()
+    // The portal came back without its memory of the unlock: the device is asked for presence again.
+    await toRegency()
+  })
+
+  test('9. enquete aparece só para leitura: o cartão com a pergunta e as opções, nenhuma delas vota', async () => {
+    await agent('poll', { canal: channelId, question: 'Qual tela de filtro fica?', options: ['a de cima', 'a de baixo'], to: ['usuário'] })
+    await page.waitForSelector('.ch-poll[data-state="open"]', { timeout: 15_000 })
+    const card = page.locator('.ch-poll[data-state="open"]').last()
+    assert.match((await card.textContent()) ?? '', /Qual tela de filtro fica\?/)
+    assert.equal(await card.locator('.ch-opt').count(), 2)
+    assert.equal(await card.locator('button.ch-opt').count(), 0, 'no option is a button')
+    await card.locator('.ch-opt').first().click()
+    await page.keyboard.press('1')
+    await sleep(800)
+    const h = await ext(app, 'history', { channel: channelId }, 'channels')
+    const open = (h.polls as { open?: { votes: Record<string, unknown> } }[]).find((p) => p.open)
+    assert.ok(open, 'the poll is open in the house')
+    assert.deepEqual(open.open!.votes, {}, 'a tap or a key on the device voted nothing')
+    await card.scrollIntoViewIfNeeded()
+    await shot('9-enquete')
+  })
+
+  test('10. paginar o histórico do canal: subindo, as páginas anteriores chegam até a primeira fala', async () => {
+    assert.equal(await msgsHave('linha 001'), false, 'the first line is not on the newest page')
+    await eventually(async () => {
+      if (await msgsHave('linha 001')) return true
+      await page.evaluate(() => {
+        const m = document.querySelector<HTMLElement>('.ch-msgs')
+        if (m) { m.scrollTop = 0; m.dispatchEvent(new Event('scroll')) }
+      })
+      if (await page.isVisible('.ch-older')) await page.click('.ch-older').catch(() => undefined)
+      return undefined
+    }, 30_000, 'the first line of the channel, by paging back')
+    const all = await page.evaluate(() => document.querySelector('.ch-msgs')?.textContent ?? '')
+    const missing = Array.from({ length: LINES }, (_, i) => `linha ${pad(i + 1)}`).filter((l) => !all.includes(l))
+    assert.deepEqual(missing, [], 'every line of the channel, no hole between the pages')
+    await shot('10-paginas')
+  })
+
+  test('11. trancar: a máquina tranca o aparelho (o portal recomeça sem o destrancado); a tela vira "Trancado", sem nada da casa, e Destrancar devolve', async () => {
+    const signs = (await credentials())[0]!.signCount
+    await ext(app, 'remote.off')
+    assert.deepEqual(await remoteOn(), { on: true })
+    await houseUp()
+    await eventually(async () => {
+      if (await page.isVisible('.rr-off .rr-btn')) await page.click('.rr-off .rr-btn').catch(() => undefined)
+      return (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) || undefined
+    }, 40_000, 'the unlock panel')
+    assert.match(await text('[data-panel="lock"]'), /Trancado/)
+    assert.equal(await page.locator('.rr, .rg-tree, .ch-msgs').count(), 0, 'nothing of the house while locked')
+    await shot('11-trancado')
+    await page.click('#unlock')
+    await toRegency()
+    assert.ok((await credentials())[0]!.signCount > signs, 'the unlock was a new proof')
+  })
+
+  test('11b. trancar pelo aparelho', { skip: 'a PWA não oferece o gesto: session.lock (0x0007) existe no protocolo e no portal, mas nenhuma tela de remote/web/src o manda' }, () => {})
+
+  test('12. rajada de eventos não quebra a tela: falas, uma enquete e árvores em sequência rápida, e a tela chega ao último estado', async () => {
+    const errors = pageErrors.length
+    const N = 60
+    const burst: Promise<unknown>[] = []
+    for (let i = 1; i <= N; i++) {
+      burst.push(i % 2 === 0
+        ? agent('say', { canal: channelId, text: `rajada ${pad(i)}` })
+        : ext(app, 'say', { channel: channelId, text: `rajada ${pad(i)}` }, 'channels'))
+      if (i % 10 === 0) burst.push(publish({ conferente: `conferente · passo ${i / 10}` }))
+    }
+    await Promise.all(burst)
+    await eventually(async () => (await msgsHave(`rajada ${pad(N)}`) && (await text('.rg-tree')).includes(`passo ${N / 10}`)) || undefined, 60_000, 'the last line and the last tree')
+    assert.equal(await page.getAttribute('#app', 'data-view'), 'regency')
+    assert.equal(await page.getAttribute('.rr', 'data-link'), 'live', 'the session stood (no limit closed it)')
+    assert.deepEqual(pageErrors.slice(errors), [], 'no error in the page')
+    await shot('12-rajada')
+    // More than a page came at once: the view holds the newest page (mergeNewest) and the rest is a scroll up away.
+    await eventually(async () => {
+      if (await msgsHave('rajada 001')) return true
+      await page.evaluate(() => {
+        const m = document.querySelector<HTMLElement>('.ch-msgs')
+        if (m) { m.scrollTop = 0; m.dispatchEvent(new Event('scroll')) }
+      })
+      return undefined
+    }, 30_000, 'the first line of the burst, by paging back')
+    const all = await page.evaluate(() => document.querySelector('.ch-msgs')?.textContent ?? '')
+    const missing = Array.from({ length: N }, (_, i) => `rajada ${pad(i + 1)}`).filter((l) => !all.includes(l))
+    assert.deepEqual(missing, [], 'every line of the burst, no hole between the pages')
+  })
+
+  const tv = (name: string): Promise<Buffer> => page.screenshot({ path: join(tvShots, name) })
+  /** The first key the walk would give on the TV (focus-rules.ts initialKeyOf): who waits, else the first channel. */
+  const firstOfTv = (): Promise<string | undefined> => page.evaluate(() => {
+    const e = document.querySelector<HTMLElement>('.rg-waiting [data-target]') ?? document.querySelector<HTMLElement>('.rg-convs .rg-conv[data-target]')
+    return e?.dataset.target
+  })
+  let firstHeld: Held | undefined
+
+  // Product defect found by this test (reported, not fixed here: remote/web/src is not this test's): the casing paints the
+  // pane once while the house is still being read (regency.ts `online` -> paint -> focus.afterPaint), when the only items are
+  // the filter chips; the walk gives the keyboard to the first of them ("Todos") and, once someone holds it, keeps it there
+  // (keptKeyOf), so the TV opens on "Todos" and not on who waits.
+  test('TV (2560) 2. foco inicial ao abrir: quem espera a pessoa segura o teclado', {
+    todo: 'defeito de produto: a TV abre com o foco no chip "Todos", não em quem espera (a 1a pintura, antes da árvore, dá o foco ao 1o chip e ele fica)',
+  }, async () => {
+    await page.setViewportSize({ width: 2560, height: 1440 })
+    await page.reload()
+    await toRegency()
+    await page.waitForSelector('.rr[data-tier="wide"][data-keys="on"]', { timeout: 10_000 })
+    firstHeld = await eventually(held, 10_000, 'the first focus on the TV')
+    await sleep(300)
+    await tv('2-foco-inicial.png')
+    const want = await firstOfTv()
+    assert.equal(firstHeld.key, want, `the TV opens on who waits (${want}); it opened on ${firstHeld.key}`)
+  })
+
+  test('TV (2560) 1, 3, 4 e 5: o anel de foco, a faixa de teclas, as setas entre colunas e o foco que fica quando a árvore muda', async () => {
+    assert.ok(firstHeld, 'the TV is open')
+    // The ring follows the arrows.
+    await page.keyboard.press('ArrowDown')
+    const ring = await eventually(held, 5_000, 'the focus after an arrow')
+    assert.notEqual(ring.key, firstHeld.key, 'the arrow moved the focus')
+    assert.ok(ring.ring, `the ring is drawn on ${ring.key}`)
+    await tv('1-anel-de-foco.png')
+    // The strip of the remote's keys, on top.
+    assert.ok(await page.isVisible('.rr-keys'), 'the strip of keys shows on the TV')
+    await page.locator('.rr-top').screenshot({ path: join(tvShots, '3-faixa-de-teclas.png') })
+    // From the left column into the desks' column: the walk crosses the centre (nothing to open there).
+    let at = ring
+    for (let i = 0; i < 6 && !at.inLeft; i++) {
+      await page.keyboard.press('ArrowLeft')
+      at = await eventually(held, 5_000, 'the focus after ArrowLeft')
+    }
+    assert.ok(at.inLeft, `the arrows reach the left column (${at.key})`)
+    const from = at
+    await page.keyboard.press('ArrowRight')
+    at = await eventually(held, 5_000, 'the focus after ArrowRight')
+    assert.ok(at.inRight && at.left > from.right, `one ArrowRight crossed from ${from.key} into the desks' column (${at.key})`)
+    assert.ok(at.ring)
+    await tv('5-setas-entre-colunas.png')
+    // Down into the desks' rows.
+    for (let i = 0; i < 8 && !at.inTree; i++) {
+      await page.keyboard.press('ArrowDown')
+      at = await eventually(held, 5_000, 'the focus after ArrowDown')
+    }
+    assert.ok(at.inTree, `the arrows reach a desk's row (${at.key})`)
+    // The tree changes in the house (another pane's title): the focus stays on its row.
+    await publish({ revisor: 'revisor · olhando a migração' })
+    await eventually(async () => (await text('.rg-tree')).includes('olhando a migração') || undefined, 15_000, 'the new tree')
+    await sleep(300)
+    const kept = await eventually(held, 5_000, 'the focus after the tree changed')
+    assert.equal(kept.key, at.key, 'the focus is held by the row, not by its node')
+    assert.ok(kept.ring)
+    await tv('4-foco-apos-mudanca.png')
+    await page.setViewportSize({ width: 1440, height: 900 })
+  })
+
+  // Last, because nothing after it could read: the device's scopes live in the machine's registry only, so the bench stops
+  // tetherd, narrows them there and starts it again (the portal is born with the registry it is given).
+  test('8. sem escopo: a tela diz que este aparelho não pode ver a Regência nem ler os canais, e não mostra nada deles', async () => {
+    await stopHouse()
+    const file = join(home, 'remote', 'devices.json')
+    const reg = JSON.parse(readFileSync(file, 'utf8')) as { devices: { state: string; scopes: string[] }[] }
+    for (const d of reg.devices) if (d.state !== 'revoked') d.scopes = d.scopes.filter((s) => s !== 'regency:read' && s !== 'channels')
+    writeFileSync(file, `${JSON.stringify(reg, null, 2)}\n`)
+    await startHouse()
+    assert.deepEqual(await remoteOn(), { on: true })
+    await houseUp()
+    // The app is open and publishing: the tree is there; this device may not see it.
+    await publish()
+    appOpens()
+    await eventually(async () => {
+      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock').catch(() => undefined)
+      else if (await page.isVisible('.rr-off .rr-btn')) await page.click('.rr-off .rr-btn').catch(() => undefined)
+      const why = await page.isVisible('.rr-why') ? await text('.rr-why') : ''
+      return (/ver a Regência/.test(why) && /ler os canais/.test(why)) || undefined
+    }, 45_000, 'the lines that say why')
+    const why = await text('.rr-why')
+    assert.match(why, /As mesas não aparecem: este aparelho não tem permissão para ver a Regência\./)
+    assert.match(why, /Os canais não aparecem: este aparelho não tem permissão para ler os canais\./)
+    assert.equal(await page.locator('.rg-conv, .ch-msgs').count(), 0, 'no channel, no page')
+    assert.doesNotMatch(await text('.rr'), /conferente|revisor|Obra|linha 0|rajada/, 'nothing of the desks or the channels')
+    await shot('8-sem-escopo')
   })
 })
