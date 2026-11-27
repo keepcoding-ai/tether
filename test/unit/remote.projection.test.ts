@@ -321,6 +321,23 @@ describe('the reads of an extension, by allow list', () => {
     assert.deepEqual(regencyTree({ view: 7, channels: true }).input.desks, { desks: [] }, 'an odd answer is an empty tree')
   })
 
+  // RR3 gate O-3: a line's body kept the format characters (Trojan Source): bidi overrides and isolates, zero-width ones.
+  test('bidi and zero-width characters out of a line\'s body and of the names; an emoji sequence keeps its joiner', () => {
+    const coder = '\u{1F469}‍\u{1F4BB}'
+    const flag = '\u{1F3F3}️‍\u{1F308}'
+    const body = `ok‮txt.exe‬ fim⁦x⁩ a​b‌‎‏⁠﻿ c‍d ${coder} ${flag}\nlinha 2`
+    const answer = {
+      channel: { id: 'c_1', name: 'obra', title: 'O‮bra' },
+      lines: [{ seq: 1, at: ISO, kind: 'message', from: { id: 'a1b2c3d4', name: 'con‮ferente', role: 'member' }, body, files: [{ name: 'a‮gpj.exe', size: 1, type: 'text/plain' }] }],
+      reactions: [{ seq: 1, tallies: [{ emoji: `‮${coder}`, by: [] }] }], polls: [], last: 1,
+    }
+    const page = channelsPage({ answer, limit: PAGE_LINES_MAX })
+    const line = page.lines[0]!
+    assert.equal(line.body, `oktxt.exe fimx ab cd ${coder} ${flag}\nlinha 2`)
+    assert.deepEqual([line.from.name, line.files![0]!.name, page.channel.title], ['conferente', 'agpj.exe', 'Obra'])
+    assert.equal(page.reactions[0]!.tallies[0]!.emoji, coder)
+  })
+
   // RR3 gate B-4: the tree's titles carried the machine's paths, with the login.
   test('the machine\'s paths out of every label: the home is `~`, a file: address its last segment', () => {
     const cases: Array<[string, string, string?]> = [

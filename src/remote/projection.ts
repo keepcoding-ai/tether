@@ -283,6 +283,12 @@ const SIG_RE = /^[0-9a-f]{16}$/
 const MIME_RE = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/
 const CTRL_RE = /[\p{Cc}\p{Cf}\s]/u
 const BODY_CTRL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+/** Bidi marks, embeddings, overrides and isolates, and the zero-width characters (RR3 gate O-3, Trojan Source). */
+const FORMAT_RE = /[؜​‌‎‏‪-‮⁠-⁤⁦-⁩﻿]/g
+/** A zero-width joiner that does not join two emoji: an emoji sequence (👩‍💻) keeps its joiner, a word loses it. */
+const LONE_ZWJ_RE = /(?<![\p{Extended_Pictographic}\p{Emoji_Modifier}️])‍|‍(?!\p{Extended_Pictographic})/gu
+/** Text of many lines (a line's body, an emoji): no controls but the line breaks, no bidi, no zero-width but an emoji's joiner. */
+const multiline = (s: string): string => s.replace(BODY_CTRL_RE, '').replace(FORMAT_RE, '').replace(LONE_ZWJ_RE, '')
 const ROLES = ['owner', 'member', 'moderator', 'system'] as const
 const LINE_EVENTS = ['create', 'join', 'leave', 'remove', 'mute', 'unmute', 'close', 'reopen', 'owner-ended', 'owner-changed', 'poll-close'] as const
 const FIRST_WHY = ['to-you', 'reaction-asks', 'poll-owed'] as const
@@ -440,7 +446,7 @@ function pageLine(v: unknown): PageLine | undefined {
   const seq = int(l.seq, 1)
   if (!kind || seq === undefined) return undefined
   const from = rec(l.from)
-  const raw = typeof l.body === 'string' ? l.body.replace(BODY_CTRL_RE, '') : ''
+  const raw = typeof l.body === 'string' ? multiline(l.body) : ''
   const ev = rec(l.event)
   const evType = kind === 'notice' ? oneOf(ev.type, LINE_EVENTS) : undefined
   const event = evType ? opt<NonNullable<PageLine['event']>>({ type: evType }, { who: whoOf(ev.who) || undefined, by: whoOf(ev.by) || undefined }) : undefined
@@ -464,7 +470,7 @@ function pageReactions(v: unknown): PageReactions | undefined {
   if (seq === undefined) return undefined
   const tallies = arr(r.tallies, 32).map((t0) => {
     const t = rec(t0)
-    const emoji = typeof t.emoji === 'string' ? t.emoji.replace(BODY_CTRL_RE, '').slice(0, 32) : ''
+    const emoji = typeof t.emoji === 'string' ? multiline(t.emoji).slice(0, 32) : ''
     return opt<PageReactions['tallies'][number]>({ emoji, by: persons(t.by) }, { name: typeof t.name === 'string' && KIND_RE.test(t.name) ? t.name : undefined })
   }).filter(t => t.emoji !== '')
   return { seq, tallies }
