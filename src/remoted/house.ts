@@ -385,17 +385,20 @@ export class House {
     this.#d.send(encodeOuter({ type: 'ROUTE_DATA', routeId: route, inner }))
   }
 
-  /** At `notBeforeMs`, when given (the uniform failure of spec 4.2 rule 7). */
-  #later(notBeforeMs: number | undefined, fn: () => void): void {
-    const wait = notBeforeMs === undefined ? 0 : notBeforeMs - this.#d.now()
-    if (wait <= 0) fn()
-    else setTimeout(fn, wait)
-  }
-
   #hsEffects(r: Extract<Route, { kind: 'admit' }>, fx: HouseHsEffect[]): void {
-    for (const e of fx) {
-      if (e.t === 'send') this.#later(e.notBeforeMs, () => this.#data(r.route, e.frame))
-      else if (e.t === 'close') this.#later(e.notBeforeMs, () => { if (this.#routes.get(r.route) === r) this.#close(r.route) })
+    for (const [i, e] of fx.entries()) {
+      const at = e.t === 'established' ? undefined : e.notBeforeMs
+      const wait = at === undefined ? 0 : at - this.#d.now()
+      if (at !== undefined && wait > 0) {
+        // `notBeforeMs` (the uniform failure of spec 4.2 rule 7): this effect and the rest leave from one timer, in their
+        // order, after one reading of the clock. A timer and a clock reading per effect let the clock cross the instant
+        // between two effects: the close went at once and the HS_FAIL it follows was dropped with its route.
+        const rest = fx.slice(i).map((x) => (x.t !== 'established' && x.notBeforeMs !== undefined && x.notBeforeMs <= at ? { ...x, notBeforeMs: undefined } : x))
+        setTimeout(() => this.#hsEffects(r, rest), wait)
+        return
+      }
+      if (e.t === 'send') this.#data(r.route, e.frame)
+      else if (e.t === 'close') { if (this.#routes.get(r.route) === r) this.#close(r.route) }
       else {
         const deviceId = toHex(e.device.deviceId)
         if (this.#routes.get(r.route) !== r || this.#sessionCount() >= this.#lim.sessionsMax) {
