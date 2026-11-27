@@ -42,6 +42,25 @@
 .rr-watch { display: inline-flex; align-items: center; gap: .4em; flex: none; height: 2.3em; padding: 0 .85em; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); font-size: .82em; white-space: nowrap; }
 .rr-watch .ph { width: 1.2em; height: 1.2em; }
 .rr[data-tier="mobile"] :is(.rr-watch, .rr-clock) { display: none; }
+/* The TV's keys, in the strip: what the remote does here (only the TV shows it; a keyboard elsewhere knows its arrows). */
+.rr-keys { display: none; align-items: center; gap: .4em; flex: none; color: var(--fg-dim); font-size: .8em; white-space: nowrap; }
+.rr[data-tier="wide"] .rr-keys { display: inline-flex; }
+.rr-keys kbd { font: 600 .92em var(--ui); color: var(--fg); background: var(--bg-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: .3em; padding: .05em .4em; }
+
+/* ---------- the walk by arrows (src/focus.ts): a thick ring seen from the sofa, that takes no room ----------
+   On while the person walks by keys (`data-keys`: by default on the TV, after an arrow anywhere; a pointer turns it off).
+   The pane's parts are zoomed on the TV (1.6): the ring is set in their units, so it lands at 4 px on the screen. Inset, so
+   the columns' own clipping never cuts it. */
+.rr[data-keys] :is(.rg-wait, .rg-conv, .rg-convs .rg-tg, .rg-chip, .rg-tree [data-key]):focus {
+  outline: 3px solid var(--accent); outline-offset: -3px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  position: relative; z-index: 2;
+}
+.rr[data-keys] .rg[data-tier="wide"] :is(.rg-wait, .rg-conv, .rg-convs .rg-tg, .rg-chip, .rg-tree [data-key]):focus {
+  outline-width: 2.5px; outline-offset: -2.5px; box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rr[data-keys] .rg[data-tier="wide"] :is(.rg-wait, .rg-conv, .rg-chip, .rg-tree [data-key]) { transition: outline-color .12s, box-shadow .12s; }
+}
 
 /* ---------- the stage: the whole screen on the phone and the tablet; a card on the ground on the desk and the TV ---------- */
 .rr-top { grid-row: 1; }
