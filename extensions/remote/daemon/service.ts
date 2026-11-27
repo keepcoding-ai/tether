@@ -21,7 +21,7 @@ import { DEFAULT_SCOPES } from '../../../src/remoted/house.ts'
 import { KEY_FILES } from '../../../src/remoted/keyfiles.ts'
 import { LIMITS } from '../../../src/remoted/limits.ts'
 import {
-  PORTAL_EXIT, type FromPortal, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalNote, type PortalStatus,
+  PORTAL_EXIT, webRelyingParty, type FromPortal, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalNote, type PortalStatus,
   type SessionEnded,
 } from '../../../src/remoted/ipc.ts'
 import {
@@ -73,6 +73,8 @@ export class RemoteService {
   #respawnTimer: NodeJS.Timeout | undefined
   #stopping = false
   #chain: Promise<unknown> = Promise.resolve()
+  /** `webUrl` changed while no portal was up: the next init says so (ToPortal `webChanged`). */
+  #webChanged = false
 
   constructor(deps: RemoteDeps) {
     this.#d = deps
@@ -84,6 +86,9 @@ export class RemoteService {
   }
 
   get #now(): number { return (this.#d.now ?? Date.now)() }
+
+  /** A device for the screen: `biometrics` only for a credential that serves under the current address of the phone's app. */
+  #view(d: DeviceEntry): ReturnType<typeof deviceView> { return deviceView(d, webRelyingParty(this.#config.webUrl)) }
   get #bench(): boolean { return remoteBenchOn(this.#d.env, this.#d.home) }
 
   /** One writer at a time: every change of the registry, the config or the keys runs in this chain. */
@@ -218,9 +223,10 @@ export class RemoteService {
       case 'want-init':
         child.send({
           t: 'init', relayUrl: this.#config.relayUrl!, houseName: this.#config.houseName,
-          ...(this.#config.webUrl ? { webUrl: this.#config.webUrl } : {}),
+          ...(this.#config.webUrl ? { webUrl: this.#config.webUrl } : {}), ...(this.#webChanged ? { webChanged: true } : {}),
           devices: this.#devices.map(toPortalDevice), deny: denyList(this.#devices, Math.floor(this.#now / 1000)),
         })
+        this.#webChanged = false
         return
       case 'ready':
         this.#portalState = { kind: 'up' }
@@ -272,7 +278,8 @@ export class RemoteService {
       // Once per device, never over another one: changing the credential is pairing again (spec 7.4 point 1).
       if (!d || d.state === 'revoked') throw new Error('device not paired')
       if (d.credential) throw new Error('credential already registered')
-      if (!isCredential(a.credential)) throw new Error('credential malformed')
+      // A new credential always says the relying party it was registered with (only rows of before go without).
+      if (!isCredential(a.credential) || a.credential.rpId === undefined) throw new Error('credential malformed')
       d.credential = { ...a.credential }
       d.registeredAt = nowIso
       await this.#saveRegistry()
@@ -362,7 +369,7 @@ export class RemoteService {
     const a = (typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>
     switch (name) {
       case 'remote.status': return this.#status()
-      case 'device.list': return { devices: this.#devices.map(deviceView) }
+      case 'device.list': return { devices: this.#devices.map((d) => this.#view(d)) }
       case 'remote.off':
         return this.#serial(async () => {
           const was = this.#config.on
@@ -388,6 +395,12 @@ export class RemoteService {
           this.#config = { ...rest, on: true, relayUrl: url, ...(web !== undefined ? { webUrl: web } : {}) }
           await this.#saveConfig()
           this.#audit('remote.on', `by:${ctx.client ?? '?'}`)
+          // The origin of the PWA is the relying party of the biometrics: its change is a security line of its own, with the
+          // host; the portal checks the registered credentials against it and gives the notice (web, or init after this).
+          if (old !== web) {
+            this.#audit('remote.web', web !== undefined ? `web:${new URL(web).host}` : 'web:none', undefined, ctx.client ?? '?')
+            if (!tellWeb) this.#webChanged = true
+          }
           await this.#startPortal()
           if (tellWeb) this.#portal?.send(web !== undefined ? { t: 'web', webUrl: web } : { t: 'web' })
           return { on: true }
@@ -398,7 +411,7 @@ export class RemoteService {
         if (d === 'ambiguous') throw new DoorError('bad-request', 'esse começo de id serve a mais de um aparelho: dê mais dígitos')
         if (!d) throw new DoorError('bad-request', 'nenhum aparelho com esse id')
         await this.#serial(() => this.#revoke(d, ctx.client ?? '?'))
-        return { device: deviceView(d) }
+        return { device: this.#view(d) }
       }
       case 'session.end': {
         const d = findDevice(this.#devices, a.device)
@@ -407,7 +420,7 @@ export class RemoteService {
         // Not revoked, nothing denied: the device may connect again. The line says who ended it.
         const r = await this.#command({ cmd: 'session.end', deviceId: d.deviceId }) as SessionEnded
         this.#audit('session.end', `by:${ctx.client ?? '?'}`, d.deviceId)
-        return { device: deviceView(d), ended: r.ended }
+        return { device: this.#view(d), ended: r.ended }
       }
       case 'pair.begin': {
         if (ctx.conn === undefined) throw new DoorError('bad-request', 'conexão sem número')
@@ -449,7 +462,7 @@ export class RemoteService {
       live: this.#config.on ? (portal ? sanitizeLive(portal.live) : this.#live) : [],
       ...(portal ? { fingerprint: portal.houseFingerprint } : {}),
       ...(this.#config.webUrl ? { webUrl: this.#config.webUrl } : {}),
-      devices: this.#devices.map(deviceView),
+      devices: this.#devices.map((d) => this.#view(d)),
     }
   }
 

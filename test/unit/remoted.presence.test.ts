@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { ascii, b64url, concat, fromB64url, toHex, u16, u32, u8, utf8, type Bytes } from '../../src/remote/bytes.ts'
 import { sha256 } from '../../src/remote/crypto.ts'
-import { assertionChallenge, CLOSE, PRESENCE, registrationChallenge, RES_STATUS, type UvProof } from '../../src/remote/index.ts'
+import { assertionChallenge, CLOSE, PRESENCE, registrationChallenge, relyingParty, RES_STATUS, type UvProof } from '../../src/remote/index.ts'
 import { AUTH_FLAG } from '../../src/remote/webauthn.ts'
 import { deviceView, parseRegistry, serializeRegistry, type DeviceEntry } from '../../extensions/remote/rules.ts'
 import { startHouseBench, type HouseBench } from './remoted.house-bench.ts'
@@ -148,6 +148,7 @@ describe('presence in the portal', () => {
     assert.deepEqual(ok.body, { presence: PRESENCE.locked, elevUntil: 0 }, 'registered: locked until the first uv.assert')
     const stored = bench.registry.get(id)?.credential
     assert.deepEqual([stored?.credentialId, stored?.publicKey, stored?.signCount], [b64url(auth.credentialId), toHex(auth.pub), 0])
+    assert.deepEqual([stored?.rpId, stored?.origin], [RP_ID, ORIGIN], 'the relying party it was registered with is kept [B-4]')
     assert.equal(lastAudit(bench, 'uv.register')?.result, 'ok')
 
     const again = await fresh.request(OP.register, await auth.register(await registrationChallenge(fresh.session.sessionId, bench.device.kD.pub)), { actId: actId() })
@@ -329,6 +330,73 @@ describe('idle by background reads (fio-spec 9.2 test 56)', () => {
   })
 })
 
+// B-4 (B6 of the RR2 gate): the credential keeps the relying party it was registered with. Another origin of the PWA voids
+// it (the device only reads, and its attempts never count toward the lockout), with one security line and a native notice;
+// a credential written before the fields were kept serves under no origin.
+describe('a credential keeps its relying party; another origin of the PWA voids it', () => {
+  let bench: HouseBench
+  let auth: SoftAuthenticator
+  let id: string
+  const OTHER = 'https://other.example'
+  before(async () => {
+    bench = await startHouseBench({ origin: ORIGIN, limits: { reqPerDevicePerMin: 10_000, gesturesPerDevicePerMin: 10_000, hsPerTicketPerMin: 1_000 } })
+    auth = await SoftAuthenticator.make()
+    id = toHex(bench.device.result!.deviceId)
+    const fresh = bench.fresh
+    const reg = await fresh.request(OP.register, await auth.register(await registrationChallenge(fresh.session.sessionId, bench.device.kD.pub)), { actId: actId() })
+    assert.equal(reg.status, RES_STATUS.ok)
+    fresh.leg.close()
+    await until(() => bench.house.status().sessions === 0 || undefined, 5_000, 'the pairing session gone')
+  })
+  after(async () => { await bench?.stop() })
+
+  test('the same origin set again says nothing; another one leaves a line with the host and one notice', () => {
+    const before = bench.notices.length
+    bench.house.setRelyingParty(relyingParty(ORIGIN))
+    assert.equal(lastAudit(bench, 'uv.credential-stale'), undefined)
+    assert.equal(bench.notices.length, before)
+    bench.house.setRelyingParty(relyingParty(OTHER))
+    const line = lastAudit(bench, 'uv.credential-stale')
+    assert.deepEqual([line?.result, line?.target], ['n:1', 'other.example'])
+    assert.equal(bench.notices.length, before + 1)
+    assert.match(bench.notices.at(-1)!, /endereço do app do celular mudou: um aparelho/)
+  })
+
+  test('under the other origin the device only reads: the sixth attempt to unlock says "no credential", never locked-out', async () => {
+    const s = await bench.connect()
+    assert.equal(s.info!.presence, PRESENCE.noCredential)
+    for (let i = 0; i < 6; i++) {
+      assert.equal((await s.request(OP.challenge, { purpose: 'unlock' })).status, RES_STATUS.presenceRequired, `attempt ${i + 1}`)
+      // A proof signed for any challenge: refused as of another origin, before any verification, without counting.
+      const proof = await auth.assert(new Uint8Array(32), i + 1, { origin: OTHER })
+      assert.equal((await s.request(OP.assert, {}, { actId: actId(), uvProof: proof })).status, RES_STATUS.presenceRequired)
+      assert.equal(lastAudit(bench, 'uv.assert')?.result, 'refused:other-origin')
+    }
+    assert.equal(lastAudit(bench, 'uv.lockout'), undefined, 'no lockout')
+    assert.equal(s.closed, undefined)
+    assert.equal((await s.request(OP.list)).status, RES_STATUS.ok, 'it reads')
+    s.leg.close()
+  })
+
+  test('back to the origin of the registration the credential serves again; a stored row without the fields serves under none', async () => {
+    bench.house.setRelyingParty(relyingParty(ORIGIN))
+    await until(() => bench.house.status().sessions < 3 || undefined, 5_000, 'room for a session')
+    const s = await bench.connect()
+    assert.equal(s.info!.presence, PRESENCE.locked)
+    assert.deepEqual((await present(s, auth)).body, { presence: PRESENCE.unlocked, elevUntil: 0 }, 'the refused attempts counted for nothing')
+    s.leg.close()
+
+    const dv = bench.registry.get(id)!
+    const { rpId: _r, origin: _o, ...legacy } = dv.credential!
+    bench.house.upsertDevice({ ...structuredClone(dv), credential: legacy })
+    await until(() => bench.house.status().sessions < 3 || undefined, 5_000, 'room for a session')
+    const old = await bench.connect()
+    assert.equal(old.info!.presence, PRESENCE.noCredential, 'a credential of before: strict, the device only reads')
+    assert.equal((await old.request(OP.challenge, { purpose: 'unlock' })).status, RES_STATUS.presenceRequired)
+    old.leg.close()
+  })
+})
+
 describe('the registry keeps the credential (extensions/remote/rules.ts)', () => {
   const entry = (o: Partial<DeviceEntry> = {}): DeviceEntry => ({
     deviceId: 'ab'.repeat(16), pubD: '04' + '11'.repeat(64), name: 'x', access: 'code', state: 'active', scopes: [], createdAt: '2026-11-27T00:00:00.000Z',
@@ -340,8 +408,19 @@ describe('the registry keeps the credential (extensions/remote/rules.ts)', () =>
     const back = parseRegistry(serializeRegistry([entry({ credential })]))
     assert.deepEqual([back.dropped, back.devices[0]?.credential], [0, credential])
     assert.equal(parseRegistry(serializeRegistry([entry({ credential: { ...credential, publicKey: '04' } })])).dropped, 1)
-    assert.equal(deviceView(entry({ credential })).biometrics, true)
+    assert.equal(deviceView(entry({ credential: { ...credential, rpId: RP_ID, origin: ORIGIN } }), relyingParty(ORIGIN)).biometrics, true)
     assert.equal(deviceView(entry()).biometrics, false)
     assert.doesNotMatch(JSON.stringify(deviceView(entry({ credential }))), /2222|credentialId/)
+  })
+
+  test('the relying party of the credential: both fields or neither; the screen says biometrics only under the same origin', () => {
+    const kept = { ...credential, rpId: RP_ID, origin: ORIGIN }
+    assert.deepEqual(parseRegistry(serializeRegistry([entry({ credential: kept })])).devices[0]?.credential, kept)
+    assert.equal(parseRegistry(serializeRegistry([entry({ credential: { ...credential, rpId: RP_ID } })])).dropped, 1, 'one without the other')
+    assert.equal(parseRegistry(serializeRegistry([entry({ credential: { ...kept, origin: 'https://x.example/path' } })])).dropped, 1)
+    assert.equal(deviceView(entry({ credential: kept }), relyingParty(ORIGIN)).biometrics, true)
+    assert.equal(deviceView(entry({ credential: kept }), relyingParty('https://other.example')).biometrics, false)
+    assert.equal(deviceView(entry({ credential: kept })).biometrics, false, 'no address of the app: no biometrics')
+    assert.equal(deviceView(entry({ credential }), relyingParty(ORIGIN)).biometrics, false, 'a row of before serves under none')
   })
 })

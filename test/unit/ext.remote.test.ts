@@ -226,6 +226,57 @@ describe('the registry: revocation runs before a renewal [63], states pending â†
   })
 })
 
+describe('the address of the phone app is the relying party of the biometrics [B-4]', () => {
+  const home = benchHome()
+  after(async () => { await removeHome(home) })
+
+  test('a new credential says its relying party; changing webUrl is a security line with the host, told to the portal; the screen follows', async () => {
+    const toPortal: ToPortal[] = []
+    let onMessage!: (m: FromPortal) => void
+    const fake: PortalChild = { pid: 4243, send: (m) => toPortal.push(m), kill: async () => {} }
+    const svc = new RemoteService({
+      home, io: nodeIo, log: () => {}, env: {}, executor: agentExecutor(),
+      spawn: async (o) => { onMessage = o.onMessage; return fake },
+    })
+    const app = { client: 'app', conn: 1 } as const
+    await svc.handle('remote.on', { relayUrl: 'ws://localhost:9/v1/house', webUrl: 'https://pwa.example' }, app)
+    onMessage({ t: 'want-init' })
+    assert.deepEqual([toPortal[0]?.t, (toPortal[0] as { webChanged?: boolean }).webChanged], ['init', true], 'set while no portal was up: init says so')
+    onMessage({ t: 'ready', pid: 4243 })
+    const answers = (): ToPortal[] => toPortal.filter((m) => m.t === 'answer')
+    const deviceId = 'ab'.repeat(16)
+    const ticket = { ticketId: 'cd'.repeat(16), exp: Math.floor(Date.now() / 1000) + 3600, keyId: 'ef'.repeat(8) }
+    onMessage({ t: 'ask', id: 1, ask: 'paired', device: { deviceId, pubD: '04' + '11'.repeat(64), name: 'x', ver: 1, access: 'code' }, ticket })
+    await until(() => answers().length === 1, 5_000, 'paired answered')
+    onMessage({ t: 'note', note: 'acked', deviceId })
+    const credential = { credentialId: 'AAAAAAAAAAAAAAAAAAAAAA', publicKey: '04' + '22'.repeat(64), signCount: 0, backupEligible: false }
+    onMessage({ t: 'ask', id: 2, ask: 'credential', deviceId, credential })
+    await until(() => answers().length === 2, 5_000, 'credential answered')
+    assert.equal((answers()[1] as { ok: boolean }).ok, false, 'a new credential without its relying party is refused')
+    onMessage({ t: 'ask', id: 3, ask: 'credential', deviceId, credential: { ...credential, rpId: 'pwa.example', origin: 'https://pwa.example' } })
+    await until(() => answers().length === 3, 5_000, 'credential answered')
+    assert.equal((answers()[2] as { ok: boolean }).ok, true)
+    const bio = async (): Promise<boolean | undefined> =>
+      ((await svc.handle('device.list', {}, app)) as { devices: { biometrics: boolean }[] }).devices[0]?.biometrics
+    assert.equal(await bio(), true)
+
+    await svc.handle('remote.on', { webUrl: 'https://other.example:8443' }, app)
+    assert.deepEqual(toPortal.filter((m) => m.t === 'web').at(-1), { t: 'web', webUrl: 'https://other.example:8443' }, 'the portal up learns it at once')
+    assert.equal(await bio(), false, 'the screen no longer says biometrics')
+    const read = (f: string): Record<string, string>[] => {
+      try { return readFileSync(join(home, 'remote', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>) } catch { return [] }
+    }
+    for (const f of ['audit.jsonl', 'audit-security.jsonl']) {
+      await until(() => read(f).some((l) => l.act === 'remote.web' && l.result === 'web:other.example:8443') || undefined, 5_000, `the change in ${f}`)
+    }
+    assert.ok(read('audit-security.jsonl').some((l) => l.act === 'remote.web' && l.result === 'web:pwa.example' && l.target === 'app'))
+    await svc.handle('remote.on', { webUrl: 'https://other.example:8443' }, app)
+    await svc.handle('remote.off', {}, { client: 'cli', conn: 2 })
+    await until(() => read('audit.jsonl').some((l) => l.act === 'remote.off') || undefined, 5_000, 'off written')
+    assert.equal(read('audit.jsonl').filter((l) => l.act === 'remote.web').length, 2, 'the same address again is no change')
+  })
+})
+
 describe('no codec of the Sync touches <home>/remote/ [M-7]', () => {
   test('the sync engine and its codecs never name the remote folder or its files', () => {
     const dir = join(ROOT, 'src', 'core', 'sync')

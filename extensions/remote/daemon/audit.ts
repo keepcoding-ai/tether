@@ -12,7 +12,7 @@
 // - A line equal to one written less than COALESCE_WINDOW_MS ago (same act, device, target and result) is not written
 //   again: it is counted, and when the window closes one line with the same fields and `n:<count>` says how many came.
 // - The security lines (pairing, revocation, the registration and the accepted proofs of biometrics, the lockout, the
-//   notices of the relay, the remote turned on or off) also go to audit-security.jsonl, a rotation of their own that no
+//   notices of the relay, the remote turned on or off, the address of the phone's app and the credentials it voids) also go to audit-security.jsonl, a rotation of their own that no
 //   common line touches, so a flood of refusals never pushes them off the disk.
 import { join } from 'node:path'
 import type { DaemonIo } from '../../../src/daemon/ext-api.ts'
@@ -60,7 +60,7 @@ export function auditField(v: string): string {
 }
 
 /** Acts that are security lines whatever their result: none of them can be repeated at will by a paired device. */
-const SECURITY_ACTS = /^(pair\.[\w.-]+|remote\.(on|off)|relay\.notice|portal\.exit|uv\.lockout|uv\.sign-count|device\.revoke\.closed)$/
+const SECURITY_ACTS = /^(pair\.[\w.-]+|remote\.(on|off|web)|relay\.notice|portal\.exit|uv\.lockout|uv\.sign-count|uv\.credential-stale|device\.revoke\.closed)$/
 /** Acts that are security lines when they happened (a device's refused attempts are common lines: it can repeat them). */
 const SECURITY_WHEN_DONE = /^(uv\.register|uv\.assert|device\.revoke|device\.revoke-self)$/
 const DONE = /^(ok|by:)/

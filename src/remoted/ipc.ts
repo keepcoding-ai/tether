@@ -4,6 +4,7 @@
 // the tetherd pipe, so no client of the pipe, greeted or not, ever sees a pairing code, a typed SAS or a ticket state.
 // The credential is NOT on this channel: it goes on stdin, once, as fio-spec 1.5 says.
 // Pure module (no node:*): both sides import it; the messages are JSON (Node's 'json' serialization).
+import { relyingParty, type RelyingParty } from '../remote/webauthn.ts'
 
 /** A device as the portal needs it: identity, state and the tickets the deny list is made of. Hex for bytes. */
 export interface PortalDevice {
@@ -24,9 +25,25 @@ export interface PortalDevice {
 
 /**
  * A WebAuthn credential as the registry keeps it: the id (base64url, the device keeps it too), the uncompressed P-256 key
- * (hex), the last signature counter seen, and whether it is a synced passkey (fixed at registration).
+ * (hex), the last signature counter seen, whether it is a synced passkey (fixed at registration), and the relying party it
+ * was registered with (`rpId`, `origin`). A credential serves only while the remote's PWA has that same origin and rpId
+ * (`usableCredential`); one without them (written before they were kept) serves under none: its device only reads.
  */
-export interface CredentialRow { credentialId: string; publicKey: string; signCount: number; backupEligible: boolean }
+export interface CredentialRow { credentialId: string; publicKey: string; signCount: number; backupEligible: boolean; rpId?: string; origin?: string }
+
+/**
+ * The relying party of WebAuthn from the address of the phone's app: its origin, and its host as rpId. Without an address,
+ * or with one no browser would report as an origin, there is none and no device registers or uses a credential.
+ */
+export function webRelyingParty(webUrl: string | undefined): RelyingParty | undefined {
+  if (webUrl === undefined) return undefined
+  try { return relyingParty(new URL(webUrl).origin) } catch { return undefined }
+}
+
+/** The credential when it was registered with this relying party; otherwise none (the device only reads, no lockout counts). */
+export function usableCredential(c: CredentialRow | undefined, rp: { origin: string; rpId: string } | undefined): CredentialRow | undefined {
+  return c && rp && c.rpId === rp.rpId && c.origin === rp.origin ? c : undefined
+}
 
 export interface TicketRow { ticketId: string; exp: number; keyId: string }
 export interface DenyRow { ticketId: string; exp: number }
@@ -43,7 +60,9 @@ export type PairCmd =
 /** extension → portal */
 export type ToPortal =
   /** `webUrl`: the address of the phone's app; its origin is the relying party of WebAuthn. Absent: no presence credential. */
-  | { t: 'init'; relayUrl: string; houseName: string; webUrl?: string; devices: PortalDevice[]; deny: DenyRow[] }
+  | { t: 'init'; relayUrl: string; houseName: string; webUrl?: string; devices: PortalDevice[]; deny: DenyRow[]
+      /** `webUrl` changed while no portal was up: the portal says it as `web` would (credentials of another origin). */
+      webChanged?: boolean }
   /** The address of the phone's app changed while the portal was up. */
   | { t: 'web'; webUrl?: string }
   | ({ t: 'cmd'; id: number } & PairCmd)

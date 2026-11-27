@@ -18,10 +18,10 @@ import { agentExecutor } from '../agents/agent-exec.ts'
 import { remoteBenchOn, tetherHome } from '../core/paths.ts'
 import { DaemonClient } from '../daemon/client.ts'
 import { pipePath } from '../daemon/protocol.ts'
-import { buildHouseAuth, relyingParty, relayUrlAllowed, selfTest, type RelyingParty } from '../remote/index.ts'
+import { buildHouseAuth, relayUrlAllowed, selfTest, type RelyingParty } from '../remote/index.ts'
 import { AttentionView } from './attention.ts'
 import { House, PortalError } from './house.ts'
-import { PORTAL_EXIT, type FromPortal, type PortalAsk, type ToPortal } from './ipc.ts'
+import { PORTAL_EXIT, webRelyingParty, type FromPortal, type PortalAsk, type ToPortal } from './ipc.ts'
 import { KEY_FILES, loadKeys } from './keyfiles.ts'
 import { makeNotice } from './notice.ts'
 import { audOf, RelayLink } from './relay.ts'
@@ -69,16 +69,11 @@ function readCredential(): Promise<string | undefined> {
   })
 }
 
-/**
- * The relying party of WebAuthn from the address of the phone's app: its origin, and its host as rpId. Without an
- * address, or with one no browser would report as an origin, there is none and no device registers a credential.
- */
+/** The relying party of WebAuthn from the address of the phone's app (ipc.ts webRelyingParty), saying in the log when there is none. */
 function rpOf(webUrl: string | undefined): RelyingParty | undefined {
-  if (webUrl === undefined) return undefined
-  try { return relyingParty(new URL(webUrl).origin) } catch {
-    log('the address of the phone app gives no WebAuthn origin: no presence credential')
-    return undefined
-  }
+  const rp = webRelyingParty(webUrl)
+  if (webUrl !== undefined && !rp) log('the address of the phone app gives no WebAuthn origin: no presence credential')
+  return rp
 }
 
 /** Asks for `init` once listening (a message sent before a listener exists would be lost) and waits for it. */
@@ -149,6 +144,8 @@ async function main(): Promise<void> {
     ...(renewDenyAfterMs !== undefined ? { renewDenyAfterMs } : {}),
   })
   await house.init(init.devices, init.deny)
+  // The address changed while no portal was up: said now, as a `web` message says it to a portal already up.
+  if (init.webChanged) house.setRelyingParty(rpOf(init.webUrl))
   const relay = new RelayLink({
     url: init.relayUrl, log,
     auth: (r) => buildHouseAuth({ r, aud, pubH: keys.kH.pub, certR: keys.certR, certsT: keys.certsT, kR: keys.kR, nowS: Math.floor(Date.now() / 1000) }),

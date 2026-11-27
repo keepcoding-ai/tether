@@ -1,6 +1,6 @@
 // The remote extension's pure rules: who may ask what (E-7, A-2), the registry of devices (<home>/remote/devices.json) and
 // its transitions, the deny list it implies, and the projections that leave the extension. No I/O.
-import { LIVE_DOING, type CredentialRow, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
+import { LIVE_DOING, usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
 
 export const EXT_ID = 'remote'
 
@@ -74,6 +74,9 @@ export function isCredential(c: unknown): c is CredentialRow {
   return typeof x === 'object' && x !== null && typeof x.credentialId === 'string' && /^[A-Za-z0-9_-]{2,1364}$/.test(x.credentialId)
     && /^04[0-9a-f]{128}$/.test(String(x.publicKey)) && Number.isInteger(x.signCount) && x.signCount >= 0 && x.signCount <= 0xffffffff
     && typeof x.backupEligible === 'boolean'
+    // The relying party it was registered with: both or neither (a row written before they were kept serves under none).
+    && (x.rpId === undefined && x.origin === undefined
+      || typeof x.rpId === 'string' && /^[a-z0-9.-]{1,253}$/.test(x.rpId) && typeof x.origin === 'string' && /^https?:\/\/[a-z0-9.-]{1,253}(:\d{1,5})?$/.test(x.origin))
 }
 
 /** Reads devices.json strictly: an entry that does not parse is dropped (and the drop is the caller's to log). */
@@ -147,16 +150,16 @@ export function renewDevice(d: DeviceEntry, ticket: TicketRow, nowS: number, den
 
 /**
  * A device as status and lists show it: no key, no ticket, no credential. `biometrics`: it registered a presence credential
- * (it can unlock and act); without one it only reads.
+ * that serves under `rp`, the remote's current origin (it can unlock and act); without one it only reads.
  */
 export interface DeviceView {
   id: string; name: string; state: DeviceEntry['state']; access: DeviceEntry['access']; biometrics: boolean; createdAt: string
   lastSeenAt?: string; revokedAt?: string
 }
 
-export function deviceView(d: DeviceEntry): DeviceView {
+export function deviceView(d: DeviceEntry, rp?: { origin: string; rpId: string }): DeviceView {
   return {
-    id: d.deviceId, name: d.name, state: d.state, access: d.access, biometrics: d.credential !== undefined, createdAt: d.createdAt,
+    id: d.deviceId, name: d.name, state: d.state, access: d.access, biometrics: usableCredential(d.credential, rp) !== undefined, createdAt: d.createdAt,
     ...(d.lastSeenAt ? { lastSeenAt: d.lastSeenAt } : {}), ...(d.revokedAt ? { revokedAt: d.revokedAt } : {}),
   }
 }

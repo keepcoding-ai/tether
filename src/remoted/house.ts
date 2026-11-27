@@ -25,7 +25,7 @@ import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projectio
 import type { AttentionView } from './attention.ts'
 import { FRESH_PAIR_REGISTER_MS, gate, gateEvent } from './gate.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
-import type { DenyRow, LiveDevice, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus, SessionEnded } from './ipc.ts'
+import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
 import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
 
 /** The body of uv.register (two base64url strings within the caps of WEBAUTHN_LIMITS) fits in this, JSON included. */
@@ -140,8 +140,25 @@ export class House {
     this.#clock = { ...PRESENCE_CLOCK, ...deps.presenceClock }
   }
 
-  /** The origin of the PWA changed (or went): the presence credentials are checked against the new one from now on. */
-  setRelyingParty(rp: RelyingParty | undefined): void { this.#rp = rp }
+  /**
+   * The origin of the PWA changed (or went): the presence credentials are checked against the new one from now on. A
+   * credential keeps the relying party it was registered with, so one of another origin stops serving (its device only
+   * reads, and no attempt counts toward the lockout). When that happens to registered credentials, one security line and
+   * one native notice say so.
+   */
+  setRelyingParty(rp: RelyingParty | undefined): void {
+    this.#rp = rp
+    let stale = 0
+    for (const dv of this.#devices.values()) if (dv.state !== 'revoked' && dv.credential && !usableCredential(dv.credential, rp)) stale++
+    if (stale === 0) return
+    this.#audit('uv.credential-stale', `n:${stale}`, undefined, rp ? new URL(rp.origin).host : 'none')
+    this.#d.notice(`O endereço do app do celular mudou: ${stale === 1 ? 'um aparelho com biometria cadastrada passa' : `${stale} aparelhos com biometria cadastrada passam`} a só ler. Para destravar de novo, pareie o aparelho outra vez.`)
+  }
+
+  /** The credential of a device that serves under the current origin of the PWA (see setRelyingParty). */
+  #credential(deviceId: string): CredentialRow | undefined {
+    return usableCredential(this.#devices.get(deviceId)?.credential, this.#rp)
+  }
 
   /** One line of the audit (the extension writes and rotates it; never content, M-10). */
   #audit(act: string, result: string, deviceId?: string, target?: string): void {
@@ -277,7 +294,7 @@ export class House {
 
   /** A device's presence, as a new session of it starts: no credential, or locked / unlocked by the portal's memory. */
   #devicePresence(deviceId: string, nowMs: number): { presence: Presence; elevUntilS: number } {
-    if (!this.#rp || !this.#devices.get(deviceId)?.credential) return { presence: PRESENCE.noCredential, elevUntilS: 0 }
+    if (!this.#credential(deviceId)) return { presence: PRESENCE.noCredential, elevUntilS: 0 }
     const p = this.#memOf(deviceId).presence
     return { presence: p.presence(nowMs), elevUntilS: p.elevUntilS(nowMs) }
   }
@@ -606,7 +623,7 @@ export class House {
     const op = body.op
     if (purpose === 'act' ? typeof op !== 'number' || opByCode(op)?.presence !== 'per-act' : op !== undefined) return bad
     const nowMs = this.#d.now()
-    if (!this.#rp || !this.#devices.get(s.deviceId)?.credential) return { status: RES_STATUS.presenceRequired, bytes: emptyBody() }
+    if (!this.#credential(s.deviceId)) return { status: RES_STATUS.presenceRequired, bytes: emptyBody() }
     if (this.#memOf(s.deviceId).presence.lockedOut(nowMs)) return { status: RES_STATUS.limit, bytes: emptyBody() }
     if (s.uvCtr >= 0xffffffff) return { status: RES_STATUS.failed, bytes: errorBody('refused') }
     const uvCtr = ++s.uvCtr
@@ -644,9 +661,13 @@ export class House {
     const mem = this.#memOf(s.deviceId)
     return mem.presence.serial(async (): Promise<ProofVerdict> => {
       const nowMs = this.#d.now()
-      const rp = this.#rp
-      const cred = this.#devices.get(s.deviceId)?.credential
-      if (!rp || !cred) return { ok: false, status: RES_STATUS.presenceRequired, audit: 'refused:no-credential' }
+      const cred = this.#credential(s.deviceId)
+      if (!cred) {
+        const why = this.#devices.get(s.deviceId)?.credential ? 'other-origin' : 'no-credential'
+        return { ok: false, status: RES_STATUS.presenceRequired, audit: `refused:${why}` }
+      }
+      // The relying party stored with the credential, which usableCredential found equal to the remote's current one.
+      const rp: RelyingParty = { origin: cred.origin!, rpId: cred.rpId! }
       if (mem.presence.lockedOut(nowMs)) return { ok: false, status: RES_STATUS.limit, audit: 'refused:locked-out' }
       const isAct = line.presence === 'per-act'
       const fits = pending !== undefined && challengeLive(pending, nowMs) && pending.uvCtr === proof.uvCtr
@@ -709,7 +730,7 @@ export class House {
       if (!v.ok) return refused(v.reason)
       const credential = {
         credentialId: b64url(v.credential.credentialId), publicKey: toHex(v.credential.publicKey),
-        signCount: v.credential.signCount, backupEligible: v.credential.backupEligible,
+        signCount: v.credential.signCount, backupEligible: v.credential.backupEligible, rpId: rp.rpId, origin: rp.origin,
       }
       try { await this.#d.ask({ ask: 'credential', deviceId: s.deviceId, credential }) } catch { return { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'failed:registry' } }
       const now = this.#devices.get(s.deviceId)
