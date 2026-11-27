@@ -1,6 +1,6 @@
 // The remote extension's pure rules: who may ask what (E-7, A-2), the registry of devices (<home>/remote/devices.json) and
 // its transitions, the deny list it implies, and the projections that leave the extension. No I/O.
-import { LIVE_DOING, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
+import { LIVE_DOING, type CredentialRow, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
 
 export const EXT_ID = 'remote'
 
@@ -52,6 +52,9 @@ export interface DeviceEntry {
   usedKeyIds: string[]
   /** Tickets superseded by a renewal: denied at the relay until they expire. */
   denied: DenyRow[]
+  /** The presence credential (WebAuthn), registered once, in the pairing session. Absent: the device only reads. */
+  credential?: CredentialRow
+  registeredAt?: string
 }
 
 export interface RegistryFile { v: 1; devices: DeviceEntry[] }
@@ -63,6 +66,14 @@ const HEX = (n: number): RegExp => new RegExp(`^[0-9a-f]{${n}}$`)
 const isTicket = (t: unknown): t is TicketRow => {
   const x = t as TicketRow
   return typeof x === 'object' && x !== null && HEX(32).test(x.ticketId) && Number.isInteger(x.exp) && HEX(16).test(x.keyId)
+}
+
+/** A credential row: base64url id within the WebAuthn cap, an uncompressed P-256 point, a u32 counter, a boolean. */
+export function isCredential(c: unknown): c is CredentialRow {
+  const x = c as CredentialRow
+  return typeof x === 'object' && x !== null && typeof x.credentialId === 'string' && /^[A-Za-z0-9_-]{2,1364}$/.test(x.credentialId)
+    && /^04[0-9a-f]{128}$/.test(String(x.publicKey)) && Number.isInteger(x.signCount) && x.signCount >= 0 && x.signCount <= 0xffffffff
+    && typeof x.backupEligible === 'boolean'
 }
 
 /** Reads devices.json strictly: an entry that does not parse is dropped (and the drop is the caller's to log). */
@@ -79,6 +90,7 @@ export function parseRegistry(text: string | undefined): { devices: DeviceEntry[
       && (d.state === 'pending' || d.state === 'active' || d.state === 'revoked') && Array.isArray(d.scopes)
       && Array.isArray(d.tickets) && d.tickets.every(isTicket) && Array.isArray(d.usedKeyIds) && Array.isArray(d.denied)
       && Number.isInteger(d.maxVerUsed) && typeof d.createdAt === 'string'
+      && (d.credential === undefined || isCredential(d.credential))
     if (ok) devices.push(d as DeviceEntry)
     else dropped++
   }
@@ -91,7 +103,10 @@ export function serializeRegistry(devices: readonly DeviceEntry[]): string {
 
 /** What the portal needs of a device. */
 export function toPortalDevice(d: DeviceEntry): PortalDevice {
-  return { deviceId: d.deviceId, pubD: d.pubD, state: d.state, maxVerUsed: d.maxVerUsed, scopes: [...d.scopes], tickets: d.tickets.map((t) => ({ ...t })), usedKeyIds: [...d.usedKeyIds] }
+  return {
+    deviceId: d.deviceId, pubD: d.pubD, state: d.state, maxVerUsed: d.maxVerUsed, scopes: [...d.scopes], tickets: d.tickets.map((t) => ({ ...t })),
+    usedKeyIds: [...d.usedKeyIds], ...(d.credential ? { credential: { ...d.credential } } : {}),
+  }
 }
 
 /** The relay must refuse: every live ticket of a revoked device, and every superseded ticket, until it expires. */
@@ -116,12 +131,18 @@ export function pruneRegistry(devices: readonly DeviceEntry[], nowS: number): De
   return out
 }
 
-/** A device as status and lists show it: no key, no ticket. */
-export interface DeviceView { id: string; name: string; state: DeviceEntry['state']; access: DeviceEntry['access']; createdAt: string; lastSeenAt?: string; revokedAt?: string }
+/**
+ * A device as status and lists show it: no key, no ticket, no credential. `biometrics`: it registered a presence credential
+ * (it can unlock and act); without one it only reads.
+ */
+export interface DeviceView {
+  id: string; name: string; state: DeviceEntry['state']; access: DeviceEntry['access']; biometrics: boolean; createdAt: string
+  lastSeenAt?: string; revokedAt?: string
+}
 
 export function deviceView(d: DeviceEntry): DeviceView {
   return {
-    id: d.deviceId, name: d.name, state: d.state, access: d.access, createdAt: d.createdAt,
+    id: d.deviceId, name: d.name, state: d.state, access: d.access, biometrics: d.credential !== undefined, createdAt: d.createdAt,
     ...(d.lastSeenAt ? { lastSeenAt: d.lastSeenAt } : {}), ...(d.revokedAt ? { revokedAt: d.revokedAt } : {}),
   }
 }

@@ -107,7 +107,7 @@ test('a burst right after the frame that closes the pairing, and a burst after a
   const reqs = await burst(fresh)
   for (const f of [...ack, ...reqs]) data(1, f)
   const a1 = await answers(fresh, () => next(1))
-  assert.deepEqual([a1.get(1)!.status, a1.get(1)!.body.error], [RES_STATUS.failed, 'not-implemented'], 'uv.register passes the gate in the fresh-pair session')
+  assert.deepEqual([a1.get(1)!.status, a1.get(1)!.body.error], [RES_STATUS.failed, 'refused'], 'uv.register passes the gate in the fresh-pair session (and, with no PWA origin, registers nothing)')
   assert.equal(a1.get(2)!.status, RES_STATUS.ok)
   assert.equal(a1.get(3)!.status, RES_STATUS.ok)
   assert.ok(!closed.has(1))

@@ -1,9 +1,8 @@
-// Presence on the wire (spec 7.4): the challenges the portal computes, the strict DER-to-P1363 conversion of a
-// WebAuthn signature (E-13), and the interface of the verifier. The WebAuthn verification itself (clientDataJSON,
-// authenticatorData, origin, UP and UV bits) belongs to step 2.4 and is not here.
+// Presence on the wire (spec 7.4): the challenges the portal computes and the strict DER-to-P1363 conversion of a
+// WebAuthn signature (E-13). The WebAuthn verification itself (clientDataJSON, authenticatorData, origin, UP and UV bits)
+// is webauthn.ts; the state it opens (unlocked, the elevation window, the lockout) is the portal's (src/remoted/uv.ts).
 import { concat, fail, Reader, u16, u32, u8, type Bytes } from './bytes.ts'
 import { ELEV_WINDOW_S, LBL } from './constants.ts'
-import type { UvProof } from './content.ts'
 import { hasPointShape, sha256 } from './crypto.ts'
 
 export const UV_PURPOSE = { unlock: 0x01, elevate: 0x02, act: 0x03 } as const
@@ -77,12 +76,4 @@ export function derToP1363(der: Uint8Array): Bytes {
   const out = concat(derScalar(r), derScalar(r))
   r.end()
   return out
-}
-
-/**
- * Verifies one WebAuthn assertion against the challenge the portal expects and the credential registered at pairing.
- * The implementation arrives with step 2.4; the wire only fixes what it receives.
- */
-export interface PresenceVerifier {
-  verify(assertion: { challenge: Bytes; proof: UvProof; credential: Uint8Array }): Promise<boolean>
 }

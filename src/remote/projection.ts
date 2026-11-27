@@ -27,6 +27,16 @@ export interface SessionInfo {
 
 export interface AdmitRenewed { ticket: string }
 
+/**
+ * The answer of `uv.challenge`: the counter of the one pending challenge of the session and, for an unlock or an
+ * elevation, the 32 bytes to sign (base64url). For an act the device computes the challenge itself from the request it
+ * is about to send (`assertionChallenge`), because the portal recomputes it from the request it receives.
+ */
+export interface UvChallenged { uvCtr: number; challenge?: string }
+
+/** The presence of the device after `uv.assert`, `uv.register` or `session.lock`: the HS_DONE byte and the window end (Unix s, 0 = none). */
+export interface PresenceState { presence: Presence; elevUntil: number }
+
 export interface AttentionItem {
   /** The slot's id (only ids of the shape `^[\w.:-]{1,64}$` are shown). */
   id: string
@@ -178,6 +188,16 @@ export function admitRenewed(s: AdmitRenewed): AdmitRenewed {
   return { ticket: typeof s.ticket === 'string' && B64URL_RE.test(s.ticket) ? s.ticket : '' }
 }
 
+const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/
+
+export function uvChallenged(s: UvChallenged): UvChallenged {
+  return opt<UvChallenged>({ uvCtr: int(s.uvCtr, 0, 0xffffffff) ?? 0 }, { challenge: typeof s.challenge === 'string' && CHALLENGE_RE.test(s.challenge) ? s.challenge : undefined })
+}
+
+export function presenceState(s: { presence: number; elevUntil: number }): PresenceState {
+  return { presence: presenceOf(s.presence), elevUntil: int(s.elevUntil) ?? 0 }
+}
+
 /** A slot waiting for the person, as an attention item; undefined for a slot that does not wait or has an odd id. */
 export function attentionItem(slot: SlotSource, since: string): AttentionItem | undefined {
   if (slot.attention !== 'waiting' || typeof slot.slotId !== 'string' || !ID_RE.test(slot.slotId)) return undefined
@@ -248,16 +268,16 @@ const unbuilt = (src: never): never => src
 export const RESULTS = {
   'session.info': sessionInfo,
   'admit.renew': admitRenewed,
-  'uv.challenge': unbuilt,
-  'uv.assert': unbuilt,
-  'uv.register': unbuilt,
+  'uv.challenge': uvChallenged,
+  'uv.assert': presenceState,
+  'uv.register': presenceState,
   'device.revoke-self': empty,
-  'session.lock': unbuilt,
+  'session.lock': presenceState,
   'house.key-rotate.ack': unbuilt,
   'attention.list': attentionList,
   'attention.watch': attentionList,
   'device.list': unbuilt,
-  'device.revoke': unbuilt,
+  'device.revoke': empty,
 } as const satisfies { readonly [K in OpName]: (src: never) => unknown }
 
 /** The body of each event. Total over the events. */

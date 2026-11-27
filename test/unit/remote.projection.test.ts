@@ -148,7 +148,7 @@ describe('projections by allow list', () => {
 
   test('an op without a handler has no result to build; house.ts builds no body of its own', () => {
     const unbuilt = Object.entries(RESULTS).filter(([, f]) => f.name === 'unbuilt').map(([k]) => k).sort()
-    assert.deepEqual(unbuilt, ['device.list', 'device.revoke', 'house.key-rotate.ack', 'session.lock', 'uv.assert', 'uv.challenge', 'uv.register'])
+    assert.deepEqual(unbuilt, ['device.list', 'house.key-rotate.ack'])
     const compileOnly = (): void => {
       // @ts-expect-error the result of an op without a handler cannot be built
       resultBody('device.list', {})

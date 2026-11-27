@@ -70,16 +70,16 @@ export interface OpRule {
 export const OP_TABLE = {
   'session.info': { scope: 'session', presence: 'none', mutates: false, gesture: false, body: [], pipe: [] },
   'admit.renew': { scope: 'session', presence: 'none', mutates: true, gesture: false, body: ['pubA'], pipe: [] },
-  'uv.challenge': { scope: 'session', presence: 'none', mutates: false, gesture: false, pipe: [] },
-  'uv.assert': { scope: 'session', presence: 'none', mutates: true, gesture: true, pipe: [] },
-  'uv.register': { scope: 'session', presence: 'fresh-pair', mutates: true, gesture: true, pipe: [] },
+  'uv.challenge': { scope: 'session', presence: 'none', mutates: false, gesture: false, body: ['purpose', 'op'], pipe: [] },
+  'uv.assert': { scope: 'session', presence: 'none', mutates: true, gesture: true, body: [], pipe: [] },
+  'uv.register': { scope: 'session', presence: 'fresh-pair', mutates: true, gesture: true, body: ['clientDataJSON', 'attestationObject'], pipe: [] },
   'device.revoke-self': { scope: 'session', presence: 'none', mutates: true, gesture: true, body: [], pipe: [] },
-  'session.lock': { scope: 'session', presence: 'none', mutates: true, gesture: true, pipe: [] },
+  'session.lock': { scope: 'session', presence: 'none', mutates: true, gesture: true, body: [], pipe: [] },
   'house.key-rotate.ack': { scope: 'session', presence: 'unlocked', mutates: true, gesture: false, allowedWithoutCredential: true, pipe: [] },
   'attention.list': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'attention.watch': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
-  'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, pipe: [] },
+  'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }
 
 /** One row of the table: its code, its name and its rule. */

@@ -12,7 +12,7 @@ import {
   accessFromCode, buildDeviceAdmit, decodeEvt, decodeOuter, decodeRes, DenyList, DeviceHandshake, DevicePairing, encodeOuter,
   encodeReq, generateRoleKey, NOTICE, PAIR_STATE, R_AUTH_FAIL_CODE, ROUTE_KIND, toHex, verifyDeviceAdmit, verifyHouseAuth,
   WS_SUBPROTOCOL, type Bytes, type DeviceHsFailure, type DevicePairFailure, type HsDoneInfo, type PairResult, type RelayHouse,
-  type RoleKey, type Session, type SessionEffect,
+  type RoleKey, type Session, type SessionEffect, type UvProof,
 } from '../../src/remote/index.ts'
 
 /** Bench homes live under TETHER_BENCH_DIR when set (the house rule: C:/atrium/.tmp/…), else the system temp. */
@@ -335,9 +335,12 @@ export class DeviceSession {
     }
   }
 
-  async request(op: number, body: Record<string, unknown> = {}, o: { actId?: Bytes; raw?: Bytes } = {}): Promise<DeviceReply> {
+  async request(op: number, body: Record<string, unknown> = {}, o: { actId?: Bytes; raw?: Bytes; uvProof?: UvProof } = {}): Promise<DeviceReply> {
     const reqId = this.#reqId++
-    const content = encodeReq({ reqId, op, ...(o.actId ? { actId: o.actId } : {}), body: o.raw ?? new TextEncoder().encode(JSON.stringify(body)) })
+    const content = encodeReq({
+      reqId, op, ...(o.actId ? { actId: o.actId } : {}), ...(o.uvProof ? { uvProof: o.uvProof } : {}),
+      body: o.raw ?? new TextEncoder().encode(JSON.stringify(body)),
+    })
     const got = new Promise<DeviceReply>((resolve, reject) => {
       this.#waiting.set(reqId, resolve)
       setTimeout(() => reject(new Error(`no RES for op 0x${op.toString(16)}`)), 10_000)

@@ -57,11 +57,12 @@ export { ActCache } from './ops.ts'
 // What a device receives (the projectors themselves are the portal's: src/remote/projection.ts, imported where they run).
 export type {
   SessionInfo, AdmitRenewed, AttentionItem, AttentionList, RemoteProc, RemoteProfile, RemoteAuthor, ErrorCode,
+  UvChallenged, PresenceState,
 } from './projection.ts'
 export {
   UV_PURPOSE, uvChallenge, unlockDigest, elevateDigest, actDigest, uvRegChallenge, derToP1363,
 } from './presence.ts'
-export type { UvPurpose, PresenceVerifier } from './presence.ts'
+export type { UvPurpose } from './presence.ts'
 
 // WebAuthn: the challenges and the verification of the registration and of every assertion (spec 7.4, step 2.4)
 export {

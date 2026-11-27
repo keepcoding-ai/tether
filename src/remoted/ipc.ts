@@ -16,7 +16,15 @@ export interface PortalDevice {
   tickets: TicketRow[]
   /** keyId(pub_A) of every admission key this device ever had (E-2: a renewal never reuses one). */
   usedKeyIds: string[]
+  /** The presence credential registered in the pairing session (spec 7.4 point 1). Absent: the device only reads (E-8). */
+  credential?: CredentialRow
 }
+
+/**
+ * A WebAuthn credential as the registry keeps it: the id (base64url, the device keeps it too), the uncompressed P-256 key
+ * (hex), the last signature counter seen, and whether it is a synced passkey (fixed at registration).
+ */
+export interface CredentialRow { credentialId: string; publicKey: string; signCount: number; backupEligible: boolean }
 
 export interface TicketRow { ticketId: string; exp: number; keyId: string }
 export interface DenyRow { ticketId: string; exp: number }
@@ -32,7 +40,10 @@ export type PairCmd =
 
 /** extension → portal */
 export type ToPortal =
-  | { t: 'init'; relayUrl: string; houseName: string; devices: PortalDevice[]; deny: DenyRow[] }
+  /** `webUrl`: the address of the phone's app; its origin is the relying party of WebAuthn. Absent: no presence credential. */
+  | { t: 'init'; relayUrl: string; houseName: string; webUrl?: string; devices: PortalDevice[]; deny: DenyRow[] }
+  /** The address of the phone's app changed while the portal was up. */
+  | { t: 'web'; webUrl?: string }
   | ({ t: 'cmd'; id: number } & PairCmd)
   | { t: 'device'; device: PortalDevice }
   | { t: 'forget'; deviceId: string }
@@ -47,12 +58,18 @@ export type PortalAsk =
   | { ask: 'paired'; device: { deviceId: string; pubD: string; name: string; ver: number; access: 'code' | 'qr' }; ticket: TicketRow }
   /** admit.renew: record the new ticket; refused when the device is not active (a revocation runs first) or the key was used. */
   | { ask: 'renew'; deviceId: string; ticket: TicketRow }
+  /** uv.register verified: keep the credential; refused when the device already has one or is revoked. */
+  | { ask: 'credential'; deviceId: string; credential: CredentialRow }
+  /** An assertion verified with a new signature counter: written before the answer goes (one device at a time). */
+  | { ask: 'sign-count'; deviceId: string; signCount: number }
 
 export type PortalNote =
   | { note: 'acked'; deviceId: string }
   | { note: 'erase'; deviceId: string }
   | { note: 'seen'; deviceId: string; ver: number }
   | { note: 'revoke-self'; deviceId: string }
+  /** device.revoke with its proof checked: `deviceId` revokes `target` (spec 6.1, from another device). */
+  | { note: 'revoke-device'; deviceId: string; target: string }
   | { note: 'link'; state: 'up' | 'down' }
   /** The sessions changed (opened, ended, or what one does): the count and the devices live now. */
   | { note: 'sessions'; count: number; live: LiveDevice[] }

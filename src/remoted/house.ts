@@ -3,23 +3,39 @@
 // per device, and the gate of each request by the operations table. Transport-agnostic: frames in (`onFrame`), frames out
 // (`deps.send`), time by `tick(nowMs)`; the relay socket, the pipe and the registry's writer are the caller's.
 //
-// What a device can get in this milestone: the session family (session.info, admit.renew, device.revoke-self) and
-// attention.list / attention.watch. Every other line of the table answers `failed` with `not-implemented`, after the
-// gate: nothing is ever forwarded to the pipe, and no pipe object leaves whole (every body of a RES or EVT is built by
-// src/remote/projection.ts).
+// What a device can get in this milestone: the session family (session.info, admit.renew, device.revoke-self,
+// session.lock), the presence ceremonies (uv.register in the pairing session, uv.challenge and uv.assert), attention.list
+// / attention.watch, and device.revoke with its per-act proof. Every other line of the table answers `failed` with
+// `not-implemented`, after the gate: nothing is ever forwarded to the pipe, and no pipe object leaves whole (every body of
+// a RES or EVT is built by src/remote/projection.ts).
+//
+// Presence (fio-spec 7.3, 7.4): the class of a device comes from the registry (a credential registered, and the origin of
+// the PWA configured) and its state from the portal's memory (src/remoted/uv.ts), never from what the PWA says. Every
+// proof is checked here against a challenge the portal computes, and one device verifies one proof at a time.
 import {
   ActCache, ADMIT_TTL_S, CLOSE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
   opByCode, parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND,
   admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT, SCOPE_FAMILIES,
+  assertionChallenge, registrationChallenge, verifyAssertion, verifyRegistration, WEBAUTHN_LIMITS,
   type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OpLine, type OuterFrame, type Req,
-  type ResStatus, type RoleKey, type Session, type SessionEffect,
+  type PresenceContext, type Presence, type RelyingParty, type ResStatus, type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
 import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
-import { gate, gateEvent } from './gate.ts'
+import { FRESH_PAIR_REGISTER_MS, gate, gateEvent } from './gate.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import type { DenyRow, LiveDevice, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus, SessionEnded } from './ipc.ts'
+import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
+
+/** The body of uv.register (two base64url strings within the caps of WEBAUTHN_LIMITS) fits in this, JSON included. */
+export const UV_REGISTER_BODY_MAX = 8 * 1024
+const b64Max = (bytes: number): number => Math.ceil((bytes * 4) / 3)
+const HEX32 = /^[0-9a-f]{32}$/
+
+/** What one handler answers: the status, the body, and the audit's result when it says more than the status. */
+interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean }
+type ProofVerdict = { ok: true; purpose: UvPurposeName } | { ok: false; status: ResStatus; audit: string; lockout?: boolean }
 
 /** Old ticket denied this long after a renewal (spec 5.5). The limits are all in ./limits.ts. */
 export const RENEW_DENY_AFTER_MS = 60_000
@@ -53,6 +69,10 @@ export interface HouseDeps {
   renewDenyAfterMs?: number
   /** Bench: lower limits to reach them in a test. Absent, the values of ./limits.ts. */
   limits?: Partial<Limits>
+  /** The relying party of WebAuthn: the origin of the PWA (the remote's `webUrl`). Absent: no device holds a usable credential. */
+  rp?: RelyingParty
+  /** Bench: a shorter idle lock or absolute ceiling of the presence. */
+  presenceClock?: Partial<PresenceClock>
 }
 
 interface DeviceMem {
@@ -61,6 +81,8 @@ interface DeviceMem {
   sessions: Set<SessionRoute>
   /** A revocation started: nothing more is issued to this device. */
   revoking: boolean
+  /** Unlocked, the window, the invalid proofs and the lane that verifies one proof of this device at a time. */
+  presence: DevicePresence
 }
 
 interface SessionRoute {
@@ -73,6 +95,9 @@ interface SessionRoute {
   lastReqMs: number
   inflight: number
   watching: boolean
+  /** The counter of the last presence challenge of this session, and the one pending (spec 7.4 point 6). */
+  uvCtr: number
+  uvPending?: PendingChallenge
 }
 interface PairingEntry { p: HousePairing; view: PairView; waitState?: (code: number) => void }
 
@@ -97,11 +122,18 @@ export class House {
   #pairing: PairingEntry | undefined
   #linkUp = false
   #fingerprint = ''
+  #rp: RelyingParty | undefined
+  readonly #clock: PresenceClock
 
   constructor(deps: HouseDeps) {
     this.#d = deps
     this.#lim = { ...LIMITS, ...deps.limits }
+    this.#rp = deps.rp
+    this.#clock = { ...PRESENCE_CLOCK, ...deps.presenceClock }
   }
+
+  /** The origin of the PWA changed (or went): the presence credentials are checked against the new one from now on. */
+  setRelyingParty(rp: RelyingParty | undefined): void { this.#rp = rp }
 
   /** One line of the audit (the extension writes and rotates it; never content, M-10). */
   #audit(act: string, result: string, deviceId?: string, target?: string): void {
@@ -223,12 +255,29 @@ export class House {
     const dv = this.#devices.get(deviceId)
     if (!dv || dv.state !== 'active') return undefined
     const mem = this.#mem.get(deviceId)
+    // The class comes from the registry (a credential and the origin to check it), never from `caps` (E-12).
+    const { presence, elevUntilS } = this.#devicePresence(deviceId, this.#d.now())
     return {
       pubD: fromHex(dv.pubD), revoked: mem?.revoking === true, expired: false, maxVerUsed: dv.maxVerUsed,
-      liveSessions: mem?.sessions.size ?? 0,
-      // RR1 has no presence credential yet (WebAuthn is step 2.4): the class comes from the registry, never from `caps`.
-      presence: PRESENCE.noCredential, elevUntil: 0,
+      liveSessions: mem?.sessions.size ?? 0, presence, elevUntil: elevUntilS,
     }
+  }
+
+  /** A device's presence, as a new session of it starts: no credential, or locked / unlocked by the portal's memory. */
+  #devicePresence(deviceId: string, nowMs: number): { presence: Presence; elevUntilS: number } {
+    if (!this.#rp || !this.#devices.get(deviceId)?.credential) return { presence: PRESENCE.noCredential, elevUntilS: 0 }
+    const p = this.#memOf(deviceId).presence
+    return { presence: p.presence(nowMs), elevUntilS: p.elevUntilS(nowMs) }
+  }
+
+  /**
+   * A session's presence. The session that concluded the pairing is born locked while it may still register its credential
+   * (E-10: only the session family, then uv.register and the first uv.assert); past that, a device without one only reads.
+   */
+  #sessionPresence(s: SessionRoute, nowMs: number): { presence: Presence; elevUntilS: number } {
+    const registering = this.#rp !== undefined && s.freshPair && nowMs - s.openedMs <= FRESH_PAIR_REGISTER_MS
+    if (registering && !this.#devices.get(s.deviceId)?.credential) return { presence: PRESENCE.locked, elevUntilS: 0 }
+    return this.#devicePresence(s.deviceId, nowMs)
   }
 
   /**
@@ -320,7 +369,7 @@ export class House {
 
   #adopt(route: number, session: Session, deviceId: string, freshPair: boolean): void {
     const nowMs = this.#d.now()
-    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false }
+    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false, uvCtr: 0 }
     this.#routes.set(route, s)
     this.#memOf(deviceId).sessions.add(s)
     this.#noteSessions()
@@ -346,7 +395,10 @@ export class House {
 
   #memOf(deviceId: string): DeviceMem {
     let m = this.#mem.get(deviceId)
-    if (!m) { m = { acts: new ActCache(), limiter: new DeviceLimiter(this.#lim), sessions: new Set(), revoking: false }; this.#mem.set(deviceId, m) }
+    if (!m) {
+      m = { acts: new ActCache(), limiter: new DeviceLimiter(this.#lim), sessions: new Set(), revoking: false, presence: new DevicePresence(this.#clock) }
+      this.#mem.set(deviceId, m)
+    }
     return m
   }
 
@@ -428,10 +480,9 @@ export class House {
     const rate = mem.limiter.request(nowMs)
     if (rate !== 'ok') return this.#overRate(s, req, 'req', rate)
     const dv = this.#devices.get(s.deviceId)
-    // RR1 has no presence credential yet (WebAuthn is step 2.4): every session is "no credential".
-    const presence = PRESENCE.noCredential
+    const { presence, elevUntilS } = this.#sessionPresence(s, nowMs)
     const verdict = gate(req, {
-      scopes: new Set(dv?.scopes ?? []), presence, elevUntilS: 0, freshPair: s.freshPair,
+      scopes: new Set(dv?.scopes ?? []), presence, elevUntilS, freshPair: s.freshPair,
       openedMs: s.openedMs, nowMs,
     })
     // Every request of a line that changes state or is a gesture leaves a line, accepted or refused (plano §2; the test of
@@ -454,6 +505,7 @@ export class House {
     }
     let body: Record<string, unknown>
     try {
+      if (line.name === 'uv.register' && req.body.length > UV_REGISTER_BODY_MAX) throw new WireError('malformed', 'body too large')
       body = parseJsonObject(req.body)
       const allowed = line.body
       if (allowed && Object.keys(body).some((k) => !allowed.includes(k))) throw new WireError('malformed', 'unknown field')
@@ -462,41 +514,199 @@ export class House {
       return this.#send(s, req.reqId, RES_STATUS.badRequest, errorBody('bad-request'))
     }
     s.inflight++
-    // Every body below is built by the projector of its op (src/remote/projection.ts): nothing the portal holds goes out whole.
-    let status: ResStatus = RES_STATUS.ok
-    let bytes: Bytes
+    let served: Served
     try {
-      switch (line.name) {
-        case 'session.info':
-          bytes = resultBody('session.info', { house: this.#fingerprint, name: this.#d.houseName, deviceId: s.deviceId, ver: s.session.ver, presence, scopes: dv?.scopes ?? [] })
-          break
-        case 'attention.list':
-          bytes = resultBody('attention.list', this.#d.attention.items())
-          break
-        case 'attention.watch':
-          if (!s.watching) { s.watching = true; this.#noteSessions() }
-          bytes = resultBody('attention.watch', this.#d.attention.items())
-          break
-        case 'admit.renew':
-          ({ status, bytes } = await this.#renew(s, body))
-          break
-        case 'device.revoke-self':
-          // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
-          this.#d.note({ note: 'revoke-self', deviceId: s.deviceId })
-          bytes = resultBody('device.revoke-self', {})
-          break
-        default:
-          status = RES_STATUS.failed
-          bytes = errorBody('not-implemented')
-      }
+      served = await this.#serve(s, line, req, body, presence)
     } catch (e) {
       this.#d.log(`request ${line.name} failed: ${(e as Error).message}`)
-      status = RES_STATUS.failed
-      bytes = errorBody('failed')
+      served = { status: RES_STATUS.failed, bytes: errorBody('failed') }
     } finally { s.inflight-- }
+    const { status, bytes } = served
+    // Only an accepted gesture of the person resets the idle clock (E-11), never a refused one nor a read.
+    if (status === RES_STATUS.ok && line.gesture) mem.presence.gesture(this.#d.now())
     if (line.mutates && req.actId) mem.acts.put(req.actId, { status, body: bytes }, this.#d.now())
-    if (audited(line)) this.#audit(line.name, statusName(status), s.deviceId)
+    if (audited(line)) this.#audit(line.name, served.audit ?? statusName(status), s.deviceId, served.target)
     await this.#send(s, req.reqId, status, bytes)
+    // The fifth invalid proof (spec 7.4 point 6): the answer goes, then every session of the device.
+    if (served.lockout) await this.#closeDevice(s.deviceId, CLOSE.limit)
+  }
+
+  /** The handler of one request that passed the gate. Every body is built by the projector of its op (src/remote/projection.ts). */
+  async #serve(s: SessionRoute, line: OpLine, req: Req, body: Record<string, unknown>, presence: Presence): Promise<Served> {
+    const dv = this.#devices.get(s.deviceId)
+    const ok = (bytes: Bytes): Served => ({ status: RES_STATUS.ok, bytes })
+    // A per-act line runs only after its proof verified against the challenge recomputed from THIS request (spec 7.4 point 4).
+    if (line.presence === 'per-act') {
+      const v = await this.#checkProof(s, line, req)
+      if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, ...(v.lockout ? { lockout: true } : {}) }
+    }
+    switch (line.name) {
+      case 'session.info':
+        return ok(resultBody('session.info', { house: this.#fingerprint, name: this.#d.houseName, deviceId: s.deviceId, ver: s.session.ver, presence, scopes: dv?.scopes ?? [] }))
+      case 'attention.list':
+        return ok(resultBody('attention.list', this.#d.attention.items()))
+      case 'attention.watch':
+        if (!s.watching) { s.watching = true; this.#noteSessions() }
+        return ok(resultBody('attention.watch', this.#d.attention.items()))
+      case 'admit.renew': {
+        const r = await this.#renew(s, body)
+        return { status: r.status, bytes: r.bytes }
+      }
+      case 'device.revoke-self':
+        // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
+        this.#d.note({ note: 'revoke-self', deviceId: s.deviceId })
+        return ok(resultBody('device.revoke-self', {}))
+      case 'session.lock':
+        // Only lowers power: the device goes back to locked and the window closes, in every session of it (6.2).
+        this.#memOf(s.deviceId).presence.lock()
+        s.uvPending = undefined
+        return ok(resultBody('session.lock', this.#presenceBody(s)))
+      case 'uv.challenge': return this.#uvChallenge(s, body)
+      case 'uv.assert': return this.#uvAssert(s, line, req)
+      case 'uv.register': return this.#uvRegister(s, body)
+      case 'device.revoke': {
+        const target = body.deviceId
+        if (typeof target !== 'string' || !HEX32.test(target)) return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+        const t = this.#devices.get(target)
+        if (!t || t.state === 'revoked') return { status: RES_STATUS.notFound, bytes: emptyBody(), target }
+        // The registry's writer runs the revocation in the order of spec 6.1, and its line says which device asked.
+        this.#d.note({ note: 'revoke-device', deviceId: s.deviceId, target })
+        return { ...ok(resultBody('device.revoke', {})), target }
+      }
+      default:
+        return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
+    }
+  }
+
+  #presenceBody(s: SessionRoute): { presence: Presence; elevUntil: number } {
+    const p = this.#sessionPresence(s, this.#d.now())
+    return { presence: p.presence, elevUntil: p.elevUntilS }
+  }
+
+  // ---- presence (spec 7.4) -------------------------------------------------------------------------------------
+
+  /**
+   * `uv.challenge { purpose, op? }`: a new counter and the one pending challenge of the session (a new one replaces it).
+   * For an unlock or an elevation the answer carries the challenge; for an act only the counter, because the challenge of
+   * an act is computed from the request that carries the proof, by the device before sending and by the portal on receipt.
+   */
+  async #uvChallenge(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const bad: Served = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const purpose = body.purpose
+    if (purpose !== 'unlock' && purpose !== 'elevate' && purpose !== 'act') return bad
+    const op = body.op
+    if (purpose === 'act' ? typeof op !== 'number' || opByCode(op)?.presence !== 'per-act' : op !== undefined) return bad
+    const nowMs = this.#d.now()
+    if (!this.#rp || !this.#devices.get(s.deviceId)?.credential) return { status: RES_STATUS.presenceRequired, bytes: emptyBody() }
+    if (this.#memOf(s.deviceId).presence.lockedOut(nowMs)) return { status: RES_STATUS.limit, bytes: emptyBody() }
+    if (s.uvCtr >= 0xffffffff) return { status: RES_STATUS.failed, bytes: errorBody('refused') }
+    const uvCtr = ++s.uvCtr
+    s.uvPending = { uvCtr, purpose, ...(purpose === 'act' ? { op: op as number } : {}), issuedMs: nowMs }
+    if (purpose === 'act') return { status: RES_STATUS.ok, bytes: resultBody('uv.challenge', { uvCtr }) }
+    const challenge = await assertionChallenge(s.session.sessionId, uvCtr, this.#context(s, purpose))
+    return { status: RES_STATUS.ok, bytes: resultBody('uv.challenge', { uvCtr, challenge: b64url(challenge) }) }
+  }
+
+  #context(s: SessionRoute, purpose: 'unlock' | 'elevate'): PresenceContext {
+    return purpose === 'elevate' ? { purpose: 'elevate', deviceId: fromHex(s.deviceId) } : { purpose: 'unlock' }
+  }
+
+  /** `uv.assert` with the proof in the envelope: unlocks, or opens the elevation window (which also renews the unlock). */
+  async #uvAssert(s: SessionRoute, line: OpLine, req: Req): Promise<Served> {
+    if (!req.uvProof) return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const v = await this.#checkProof(s, line, req)
+    if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, ...(v.lockout ? { lockout: true } : {}) }
+    const p = this.#memOf(s.deviceId).presence
+    const nowMs = this.#d.now()
+    if (v.purpose === 'elevate') p.elevate(nowMs)
+    else p.unlock(nowMs)
+    return { status: RES_STATUS.ok, bytes: resultBody('uv.assert', this.#presenceBody(s)), audit: `ok:${v.purpose}` }
+  }
+
+  /**
+   * Verifies the proof of `req` against the pending challenge of the session, which is taken here whatever follows (one
+   * use). Inside the device's lane: the stored counter is compared and the new one written before the next proof of the
+   * same device is looked at. A refusal by the counter has its own line and does not count toward the lockout.
+   */
+  async #checkProof(s: SessionRoute, line: OpLine, req: Req): Promise<ProofVerdict> {
+    const pending = s.uvPending
+    s.uvPending = undefined
+    const proof = req.uvProof!
+    const mem = this.#memOf(s.deviceId)
+    return mem.presence.serial(async (): Promise<ProofVerdict> => {
+      const nowMs = this.#d.now()
+      const rp = this.#rp
+      const cred = this.#devices.get(s.deviceId)?.credential
+      if (!rp || !cred) return { ok: false, status: RES_STATUS.presenceRequired, audit: 'refused:no-credential' }
+      if (mem.presence.lockedOut(nowMs)) return { ok: false, status: RES_STATUS.limit, audit: 'refused:locked-out' }
+      const isAct = line.presence === 'per-act'
+      const fits = pending !== undefined && challengeLive(pending, nowMs) && pending.uvCtr === proof.uvCtr
+        && (isAct ? pending.purpose === 'act' && pending.op === req.op : pending.purpose !== 'act')
+      let reason = 'challenge'
+      if (fits) {
+        const ctx: PresenceContext = isAct
+          ? { purpose: 'act', op: req.op, actId: req.actId!, body: req.body }
+          : this.#context(s, pending.purpose as 'unlock' | 'elevate')
+        const challenge = await assertionChallenge(s.session.sessionId, pending.uvCtr, ctx)
+        const v = await verifyAssertion({ rp, challenge, proof, credential: { publicKey: fromHex(cred.publicKey), signCount: cred.signCount } })
+        if (v.ok) {
+          if (v.signCount !== cred.signCount) {
+            try { await this.#d.ask({ ask: 'sign-count', deviceId: s.deviceId, signCount: v.signCount }) } catch {
+              return { ok: false, status: RES_STATUS.failed, audit: 'failed:registry' }
+            }
+            cred.signCount = v.signCount
+          }
+          mem.presence.accepted()
+          return { ok: true, purpose: pending.purpose }
+        }
+        if (v.reason === 'sign-count') {
+          this.#audit('uv.sign-count', 'refused', s.deviceId, line.name)
+          return { ok: false, status: RES_STATUS.presenceRequired, audit: 'refused:sign-count' }
+        }
+        reason = v.reason
+      }
+      if (mem.presence.invalid(nowMs) === 'locked-out') {
+        this.#audit('uv.lockout', 'locked', s.deviceId, line.name)
+        return { ok: false, status: RES_STATUS.presenceRequired, audit: `refused:${reason}`, lockout: true }
+      }
+      return { ok: false, status: RES_STATUS.presenceRequired, audit: `refused:${reason}` }
+    })
+  }
+
+  /**
+   * `uv.register { clientDataJSON, attestationObject }` (base64url), only in the session that concluded the pairing (the
+   * gate) and once per device: the registration is as trustworthy as that session, the only one that can carry it. Without
+   * the origin of the PWA, or with an authenticator this profile refuses, the device stays without credential and only reads.
+   */
+  async #uvRegister(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const refused = (why: string): Served => ({ status: RES_STATUS.failed, bytes: errorBody('refused'), audit: `refused:${why}` })
+    const bad: Served = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const dv = this.#devices.get(s.deviceId)
+    const rp = this.#rp
+    if (!dv || dv.state === 'revoked' || this.#mem.get(s.deviceId)?.revoking) return refused('device')
+    if (dv.credential) return refused('already')
+    if (!rp) return refused('no-origin')
+    const cd = body.clientDataJSON
+    const ao = body.attestationObject
+    if (typeof cd !== 'string' || typeof ao !== 'string') return bad
+    if (cd.length > b64Max(WEBAUTHN_LIMITS.clientDataJSON) || ao.length > b64Max(WEBAUTHN_LIMITS.attestationObject)) return bad
+    let clientDataJSON: Bytes
+    let attestationObject: Bytes
+    try { clientDataJSON = fromB64url(cd); attestationObject = fromB64url(ao) } catch { return bad }
+    return this.#memOf(s.deviceId).presence.serial(async (): Promise<Served> => {
+      if (this.#devices.get(s.deviceId)?.credential) return refused('already')
+      const challenge = await registrationChallenge(s.session.sessionId, fromHex(dv.pubD))
+      const v = await verifyRegistration({ rp, challenge, clientDataJSON, attestationObject })
+      if (!v.ok) return refused(v.reason)
+      const credential = {
+        credentialId: b64url(v.credential.credentialId), publicKey: toHex(v.credential.publicKey),
+        signCount: v.credential.signCount, backupEligible: v.credential.backupEligible,
+      }
+      try { await this.#d.ask({ ask: 'credential', deviceId: s.deviceId, credential }) } catch { return { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'failed:registry' } }
+      const now = this.#devices.get(s.deviceId)
+      if (now) now.credential = credential
+      return { status: RES_STATUS.ok, bytes: resultBody('uv.register', this.#presenceBody(s)) }
+    })
   }
 
   /**
@@ -575,7 +785,7 @@ export class House {
     for (const r of [...this.#routes.values()]) {
       if (r.kind !== 'session' || !r.watching || r.session.state !== 'open') continue
       const dv = this.#devices.get(r.deviceId)
-      if (!gateEvent(line, { scopes: new Set(dv?.scopes ?? []), presence: PRESENCE.noCredential })) continue
+      if (!gateEvent(line, { scopes: new Set(dv?.scopes ?? []), presence: this.#sessionPresence(r, this.#d.now()).presence })) continue
       try { this.#sessionEffects(r, await r.session.send('EVT', evt, this.#d.now())) } catch (e) { if (!(e instanceof WireError)) throw e }
     }
   }

@@ -17,7 +17,7 @@ export const FRESH_PAIR_REGISTER_MS = 5 * 60_000
 export interface GateContext {
   /** The scopes the registry grants this device. The session family needs none. */
   scopes: ReadonlySet<string>
-  /** The device's presence now (from the registry and the portal's memory, never from the PWA). */
+  /** The session's presence now (the registry's credential and the portal's memory, src/remoted/uv.ts; never the PWA's word). */
   presence: Presence
   /** Unix seconds until which the elevation window is open; 0 for none. */
   elevUntilS: number
@@ -53,10 +53,14 @@ export function gate(req: Req, c: GateContext): GateVerdict {
       if (noCredential || c.elevUntilS * 1000 <= c.nowMs) return { ok: false, status: RES_STATUS.presenceRequired, line }
       break
     case 'per-act':
-      // The proof travels in the request itself and is checked by the presence verifier, which arrives with step 2.4.
-      // Until then a per-act line is refused whatever the request carries: a proof nobody checks proves nothing.
-      return { ok: false, status: RES_STATUS.presenceRequired, line }
+      // The proof travels in the request itself; the gate only demands it is there, from a device that holds a credential
+      // and is unlocked. The house verifies it against the challenge it recomputes from this request, before the act runs.
+      if (noCredential || !req.uvProof) return { ok: false, status: RES_STATUS.presenceRequired, line }
+      if (c.presence === PRESENCE.locked) return { ok: false, status: RES_STATUS.locked, line }
+      break
   }
+  // A proof means something only where it is checked: on uv.assert and on a per-act line. Anywhere else it is refused.
+  if (req.uvProof && line.presence !== 'per-act' && line.name !== 'uv.assert') return { ok: false, status: RES_STATUS.badRequest, line }
   if (line.mutates && !req.actId) return { ok: false, status: RES_STATUS.badRequest, line }
   return { ok: true, line }
 }

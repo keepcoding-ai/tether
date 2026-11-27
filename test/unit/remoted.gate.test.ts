@@ -28,8 +28,14 @@ describe('the gate of the operations table', () => {
     assert.equal(status(gate(req(0x0006, { actId: act }), ctx({ presence: PRESENCE.noCredential }))), RES_STATUS.ok, 'revoke-self only lowers power')
   })
 
-  test('per act: a uvProof is needed (its check is RR2); fresh-pair: only the pairing session, within 5 min [42]', () => {
+  test('per act: a uvProof is needed (the house checks it), from an unlocked device with a credential; fresh-pair: only the pairing session, within 5 min [42]', () => {
+    const uvProof = { uvCtr: 1, authenticatorData: new Uint8Array(37), clientDataJSON: new Uint8Array(2), signature: new Uint8Array(8) }
     assert.equal(status(gate(req(0x0601, { actId: act }), ctx())), RES_STATUS.presenceRequired)
+    assert.equal(status(gate(req(0x0601, { actId: act, uvProof }), ctx())), RES_STATUS.ok)
+    assert.equal(status(gate(req(0x0601, { actId: act, uvProof }), ctx({ presence: PRESENCE.locked }))), RES_STATUS.locked)
+    assert.equal(status(gate(req(0x0601, { actId: act, uvProof }), ctx({ presence: PRESENCE.noCredential }))), RES_STATUS.presenceRequired)
+    assert.equal(status(gate(req(0x0004, { actId: act, uvProof }), ctx({ presence: PRESENCE.locked }))), RES_STATUS.ok, 'uv.assert carries its proof')
+    assert.equal(status(gate(req(0x0100, { uvProof }), ctx())), RES_STATUS.badRequest, 'a proof where none is checked')
     assert.equal(status(gate(req(0x0005, { actId: act }), ctx())), RES_STATUS.presenceRequired)
     assert.equal(status(gate(req(0x0005, { actId: act }), ctx({ freshPair: true }))), RES_STATUS.ok)
     assert.equal(status(gate(req(0x0005, { actId: act }), ctx({ freshPair: true, nowMs: FRESH_PAIR_REGISTER_MS + 1 }))), RES_STATUS.presenceRequired)

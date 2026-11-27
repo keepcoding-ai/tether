@@ -18,7 +18,7 @@ import { agentExecutor } from '../agents/agent-exec.ts'
 import { tetherHome } from '../core/paths.ts'
 import { DaemonClient } from '../daemon/client.ts'
 import { pipePath } from '../daemon/protocol.ts'
-import { buildHouseAuth, relayUrlAllowed, selfTest } from '../remote/index.ts'
+import { buildHouseAuth, relyingParty, relayUrlAllowed, selfTest, type RelyingParty } from '../remote/index.ts'
 import { AttentionView } from './attention.ts'
 import { House, PortalError } from './house.ts'
 import { PORTAL_EXIT, type FromPortal, type PortalAsk, type ToPortal } from './ipc.ts'
@@ -67,6 +67,18 @@ function readCredential(): Promise<string | undefined> {
     process.stdin.on('end', () => done(/^[0-9a-f]{64}\n?$/.test(got) ? got.slice(0, 64) : undefined))
     process.stdin.on('error', () => done(undefined))
   })
+}
+
+/**
+ * The relying party of WebAuthn from the address of the phone's app: its origin, and its host as rpId. Without an
+ * address, or with one no browser would report as an origin, there is none and no device registers a credential.
+ */
+function rpOf(webUrl: string | undefined): RelyingParty | undefined {
+  if (webUrl === undefined) return undefined
+  try { return relyingParty(new URL(webUrl).origin) } catch {
+    log('the address of the phone app gives no WebAuthn origin: no presence credential')
+    return undefined
+  }
 }
 
 /** Asks for `init` once listening (a message sent before a listener exists would be lost) and waits for it. */
@@ -129,7 +141,7 @@ async function main(): Promise<void> {
   const idleMs = knob('TETHER_TEST_REMOTE_IDLE_MS')
   const renewDenyAfterMs = knob('TETHER_TEST_REMOTE_DENY_AFTER_MS')
   const house = new House({
-    keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now,
+    keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
     send: (f) => link?.send(f),
     note: (n) => send({ t: 'note', ...n }),
     notice: makeNotice(process.env, log),
@@ -160,6 +172,7 @@ async function main(): Promise<void> {
         return
       }
       case 'device': house.upsertDevice(m.device); return
+      case 'web': house.setRelyingParty(rpOf(m.webUrl)); return
       case 'forget': house.forgetDevice(m.deviceId); return
       case 'revoke': void house.revoke(m.deviceId, m.deny); return
       case 'stop':

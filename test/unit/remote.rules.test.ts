@@ -15,7 +15,7 @@ import { systemModelOf, type SystemInput } from '../../extensions/regency/system
 const NOW = Date.parse('2026-11-27T12:00:00Z')
 const iso = (minAgo: number): string => new Date(NOW - minAgo * 60_000).toISOString()
 const dev = (id: string, name: string, o: Partial<RemoteStatusInput['devices'][number]> = {}): RemoteStatusInput['devices'][number] =>
-  ({ id, name, state: 'active', access: 'code', createdAt: iso(60 * 24 * 2), ...o })
+  ({ id, name, state: 'active', access: 'code', biometrics: false, createdAt: iso(60 * 24 * 2), ...o })
 const status = (o: Partial<RemoteStatusInput> = {}): RemoteStatusInput =>
   ({ on: true, relay: 'relay.exemplo', portal: { state: 'up' }, link: 'up', sessions: 0, fingerprint: 'abcd efgh ijkl mnop qrst', devices: [], ...o })
 

@@ -91,7 +91,7 @@ describe('a device over its rate, on a house in this process: limit, a line, the
     const s = await bench.connect()
     const st: number[] = []
     for (let i = 0; i < 3; i++) st.push((await s.request(OP.lock, {}, { actId: actId() })).status)
-    assert.deepEqual(st, [RES_STATUS.failed, RES_STATUS.failed, RES_STATUS.limit], 'session.lock has no handler yet: failed, then limit')
+    assert.deepEqual(st, [RES_STATUS.ok, RES_STATUS.ok, RES_STATUS.limit], 'session.lock, then limit')
     const line = bench.audits().find((a) => a.act === 'limit.gesture')
     assert.deepEqual({ target: line?.target, result: line?.result }, { target: 'session.lock', result: 'limit' })
   })

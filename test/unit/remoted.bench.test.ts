@@ -139,12 +139,12 @@ describe('remote portal on the bench (RR1.3)', () => {
     assert.match(readFileSync(noticeFile, 'utf8'), /foi pareado/)
   })
 
-  test('the session that concluded the pairing answers session.info; uv.register is only for it, and it is RR2 [42]', async () => {
+  test('the session that concluded the pairing answers session.info; uv.register is only for it, and without the PWA origin it registers nothing [42]', async () => {
     const info = await fresh.request(OP.info)
     assert.equal(info.status, RES_STATUS.ok)
     assert.equal(info.body.deviceId, toHex(device.result!.deviceId))
     const reg = await fresh.request(OP.register, {}, { actId: randomBytes(16) })
-    assert.deepEqual([reg.status, reg.body.error], [RES_STATUS.failed, 'not-implemented'])
+    assert.deepEqual([reg.status, reg.body.error], [RES_STATUS.failed, 'refused'])
   })
 
   let slotA = ''

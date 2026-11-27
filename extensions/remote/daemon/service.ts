@@ -23,7 +23,7 @@ import {
   type SessionEnded,
 } from '../../../src/remoted/ipc.ts'
 import {
-  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, ENV_TEST_REMOTE, originAllowed, PAIR_ID_RE, parseConfig,
+  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, ENV_TEST_REMOTE, isCredential, originAllowed, PAIR_ID_RE, parseConfig,
   parseRegistry, pruneRegistry, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
   type RemoteRequest,
 } from '../rules.ts'
@@ -216,6 +216,7 @@ export class RemoteService {
       case 'want-init':
         child.send({
           t: 'init', relayUrl: this.#config.relayUrl!, houseName: this.#config.houseName,
+          ...(this.#config.webUrl ? { webUrl: this.#config.webUrl } : {}),
           devices: this.#devices.map(toPortalDevice), deny: denyList(this.#devices, Math.floor(this.#now / 1000)),
         })
         return
@@ -265,6 +266,23 @@ export class RemoteService {
       return
     }
     const d = this.#devices.find((x) => x.deviceId === a.deviceId)
+    if (a.ask === 'credential') {
+      // Once per device, never over another one: changing the credential is pairing again (spec 7.4 point 1).
+      if (!d || d.state === 'revoked') throw new Error('device not paired')
+      if (d.credential) throw new Error('credential already registered')
+      if (!isCredential(a.credential)) throw new Error('credential malformed')
+      d.credential = { ...a.credential }
+      d.registeredAt = nowIso
+      await this.#saveRegistry()
+      return
+    }
+    if (a.ask === 'sign-count') {
+      if (!d || d.state === 'revoked' || !d.credential) throw new Error('no credential')
+      if (!Number.isInteger(a.signCount) || a.signCount < 0 || a.signCount > 0xffffffff) throw new Error('sign count out of range')
+      d.credential = { ...d.credential, signCount: a.signCount }
+      await this.#saveRegistry()
+      return
+    }
     // A revocation is written before anything else happens to the device (spec 6.1), so a renewal after it is refused.
     if (!d || d.state !== 'active') throw new Error('device not active')
     if (d.usedKeyIds.includes(a.ticket.keyId)) throw new Error('admission key already used')
@@ -291,6 +309,12 @@ export class RemoteService {
       case 'revoke-self':
         if (d) await this.#revoke(d, 'device')
         return
+      case 'revoke-device': {
+        // The portal checked the proof of the act (spec 6.1, from another device); the asking device must still be paired.
+        const target = this.#devices.find((x) => x.deviceId === n.target)
+        if (d && d.state !== 'revoked' && target) await this.#revoke(target, `device:${n.deviceId}`)
+        return
+      }
       case 'link': this.#link = n.state; return
       case 'sessions': this.#sessions = n.count; this.#live = sanitizeLive(n.live); return
       case 'audit': this.#audit(n.act, n.result, n.deviceId, n.target); return
@@ -359,11 +383,14 @@ export class RemoteService {
           await this.#privateFolder()
           const changed = url !== this.#config.relayUrl
           if (changed && this.#portal) await this.#stopPortal()
-          const { webUrl: _old, ...rest } = this.#config
+          const { webUrl: old, ...rest } = this.#config
+          // A portal already up keeps serving: it only learns the new origin of the PWA (one that is starting reads it in init).
+          const tellWeb = this.#portal !== undefined && this.#portalState.kind === 'up' && old !== web
           this.#config = { ...rest, on: true, relayUrl: url, ...(web !== undefined ? { webUrl: web } : {}) }
           await this.#saveConfig()
           this.#audit('remote.on', `by:${ctx.client ?? '?'}`)
           await this.#startPortal()
+          if (tellWeb) this.#portal?.send(web !== undefined ? { t: 'web', webUrl: web } : { t: 'web' })
           return { on: true }
         })
       }
