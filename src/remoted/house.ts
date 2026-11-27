@@ -10,31 +10,19 @@
 import {
   ActCache, ADMIT_TTL_S, CLOSE, decodeOuter, decodeReq, encodeEvt, encodeOuter, encodeRes, fromB64url, fromHex,
   HousePairing, HouseHandshake, houseFingerprint, houseIdOf, issueAdmitTicket, keyIdOf, PairLockout, parseAdmitTicket,
-  parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE,
+  opByCode, parseJsonObject, parseKeyCert, PRESENCE, qrFragment, RES_STATUS, ROUTE_KIND,
   admitRenewKeyAllowed, b64url, sanitizeDeclaredName, toHex, WireError, PAIR_STATE, IDLE_LOCK_MS, EVT, SCOPE_FAMILIES,
-  type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OuterFrame, type Req, type ResStatus,
-  type RoleKey, type Session, type SessionEffect,
+  type Bytes, type CloseCode, type DeviceRecord, type HouseHsEffect, type HousePairEffect, type OpLine, type OuterFrame, type Req,
+  type ResStatus, type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
 import { emptyBody, errorBody, eventBody, resultBody } from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
 import { gate, gateEvent } from './gate.ts'
+import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import type { DenyRow, PairBegun, PairView, PortalAsk, PortalDevice, PortalNote, PortalStatus } from './ipc.ts'
 
-/** Spec 5.8: at most this many handshakes per minute per ticketId hint, and pending in total. */
-const HS_PER_TICKET_PER_MIN = 6
-const HS_PENDING_MAX = 32
-const HS_RATE_DENY_S = 600
-/** Old ticket denied this long after a renewal (spec 5.5). */
+/** Old ticket denied this long after a renewal (spec 5.5). The limits are all in ./limits.ts. */
 export const RENEW_DENY_AFTER_MS = 60_000
-/** Requests in flight per session; above it the request is answered `limit`. */
-const INFLIGHT_MAX = 16
-/** Every session of the portal, all devices together. */
-const SESSIONS_MAX = 32
-/**
- * Frames waiting on one route. A device keeps at most INFLIGHT_MAX requests open, plus a handshake frame or a CLOSE:
- * twice that leaves room for an honest burst; more is a relay or device flooding the house's memory, and the route goes.
- */
-const ROUTE_QUEUE_MAX = 2 * INFLIGHT_MAX
 const PAIR_STATE_WAIT_MS = 5_000
 const PAIR_REDRAWS = 3
 
@@ -63,10 +51,13 @@ export interface HouseDeps {
   /** Bench knobs (only set under TETHER_TEST_REMOTE=1 by main.ts). */
   idleMs?: number
   renewDenyAfterMs?: number
+  /** Bench: lower limits to reach them in a test. Absent, the values of ./limits.ts. */
+  limits?: Partial<Limits>
 }
 
 interface DeviceMem {
   acts: ActCache<{ status: ResStatus; body: Bytes }>
+  limiter: DeviceLimiter
   sessions: Set<SessionRoute>
   /** A revocation started: nothing more is issued to this device. */
   revoking: boolean
@@ -92,6 +83,7 @@ type Route =
 
 export class House {
   readonly #d: HouseDeps
+  readonly #lim: Limits
   readonly #routes = new Map<number, Route>()
   /** The frames of each route waiting their turn (see #routeData); gone when the route goes. */
   readonly #queues = new Map<number, { tail: Promise<void>; pending: number }>()
@@ -106,7 +98,15 @@ export class House {
   #linkUp = false
   #fingerprint = ''
 
-  constructor(deps: HouseDeps) { this.#d = deps }
+  constructor(deps: HouseDeps) {
+    this.#d = deps
+    this.#lim = { ...LIMITS, ...deps.limits }
+  }
+
+  /** One line of the audit (the extension writes and rotates it; never content, M-10). */
+  #audit(act: string, result: string, deviceId?: string, target?: string): void {
+    this.#d.note({ note: 'audit', act, result, ...(deviceId ? { deviceId } : {}), ...(target ? { target } : {}) })
+  }
 
   async init(devices: readonly PortalDevice[], deny: readonly DenyRow[]): Promise<void> {
     this.#fingerprint = houseFingerprint(await houseIdOf(this.#d.keys.kH.pub))
@@ -141,7 +141,7 @@ export class House {
     for (const r of deny) if (this.#addDeny(r.ticketId, r.exp)) added.push(r)
     if (added.length) this.#sendDeny(added)
     this.#mem.delete(deviceId)
-    this.#d.note({ note: 'audit', act: 'device.revoke', deviceId, result: 'ok' })
+    this.#audit('device.revoke.closed', 'ok', deviceId) // the registry's own line says who revoked; this one says the sessions are down
   }
 
   /** The remote goes off: every session gets CLOSE(0x06), the pairing in course is cancelled. */
@@ -193,7 +193,7 @@ export class House {
 
   #routeOpen(route: number, kind: number, hint: Bytes): void {
     if (this.#routes.has(route)) return this.#close(route)
-    if (this.#routes.size >= ROUTES_PER_HOUSE) return this.#close(route)
+    if (this.#routes.size >= this.#lim.routesPerHouse) return this.#close(route)
     if (kind === ROUTE_KIND.pair) {
       if (!this.#pairing || this.#isOver(this.#pairing.view.state)) return this.#close(route)
       this.#routes.set(route, { kind: 'pair', route })
@@ -208,13 +208,13 @@ export class House {
     recent.push(nowMs)
     this.#hsRate.set(hintHex, recent)
     if (this.#hsRate.size > 1024) this.#hsRate.delete(this.#hsRate.keys().next().value!)
-    if (recent.length > HS_PER_TICKET_PER_MIN) {
-      if (hint.length === 16 && this.#addDeny(hintHex, Math.floor(nowMs / 1000) + HS_RATE_DENY_S)) {
-        this.#sendDeny([{ ticketId: hintHex, exp: Math.floor(nowMs / 1000) + HS_RATE_DENY_S }])
+    if (recent.length > this.#lim.hsPerTicketPerMin) {
+      if (hint.length === 16 && this.#addDeny(hintHex, Math.floor(nowMs / 1000) + this.#lim.hsRateDenyS)) {
+        this.#sendDeny([{ ticketId: hintHex, exp: Math.floor(nowMs / 1000) + this.#lim.hsRateDenyS }])
       }
       return this.#close(route)
     }
-    if (pending >= HS_PENDING_MAX) return this.#close(route)
+    if (pending >= this.#lim.hsPendingMax) return this.#close(route)
     const hs = new HouseHandshake({ kH: this.#d.keys.kH, nowMs, lookup: (id) => this.#lookup(toHex(id)) })
     this.#routes.set(route, { kind: 'admit', route, hs, hint: hintHex })
   }
@@ -240,8 +240,8 @@ export class House {
     if (!this.#routes.has(route)) return
     let q =this.#queues.get(route)
     if (!q) { q = { tail: Promise.resolve(), pending: 0 }; this.#queues.set(route, q) }
-    if (q.pending >= ROUTE_QUEUE_MAX) {
-      this.#d.log(`route ${route}: more than ${ROUTE_QUEUE_MAX} frames waiting; closed`)
+    if (q.pending >= this.#lim.routeQueueMax) {
+      this.#d.log(`route ${route}: more than ${this.#lim.routeQueueMax} frames waiting; closed`)
       this.#routeClosed(route)
       this.#d.send(encodeOuter({ type: 'ROUTE_CLOSE', routeId: route }))
       return
@@ -305,7 +305,7 @@ export class House {
       else if (e.t === 'close') this.#later(e.notBeforeMs, () => { if (this.#routes.get(r.route) === r) this.#close(r.route) })
       else {
         const deviceId = toHex(e.device.deviceId)
-        if (this.#routes.get(r.route) !== r || this.#sessionCount() >= SESSIONS_MAX) {
+        if (this.#routes.get(r.route) !== r || this.#sessionCount() >= this.#lim.sessionsMax) {
           void e.session.close(CLOSE.limit, this.#d.now()).then((x) => this.#flush(r.route, x))
           continue
         }
@@ -313,7 +313,7 @@ export class House {
         const dv = this.#devices.get(deviceId)
         if (dv && e.device.ver > dv.maxVerUsed) dv.maxVerUsed = e.device.ver
         this.#d.note({ note: 'seen', deviceId, ver: e.device.ver })
-        this.#d.note({ note: 'audit', act: 'session.open', deviceId, result: 'ok' })
+        this.#audit('session.open', 'ok', deviceId)
       }
     }
   }
@@ -328,7 +328,7 @@ export class House {
 
   #memOf(deviceId: string): DeviceMem {
     let m = this.#mem.get(deviceId)
-    if (!m) { m = { acts: new ActCache(), sessions: new Set(), revoking: false }; this.#mem.set(deviceId, m) }
+    if (!m) { m = { acts: new ActCache(), limiter: new DeviceLimiter(this.#lim), sessions: new Set(), revoking: false }; this.#mem.set(deviceId, m) }
     return m
   }
 
@@ -359,8 +359,10 @@ export class House {
     }
   }
 
-  #endSession(s: SessionRoute, _reason: string): void {
+  #endSession(s: SessionRoute, reason: string): void {
     if (this.#routes.get(s.route) === s) { this.#routes.delete(s.route); this.#queues.delete(s.route) }
+    else if (!this.#mem.get(s.deviceId)?.sessions.has(s)) return // already ended: one line per session
+    this.#audit('session.end', reason, s.deviceId)
     this.#mem.get(s.deviceId)?.sessions.delete(s)
     s.session.drop('ended')
     this.#d.note({ note: 'sessions', count: this.#sessionCount() })
@@ -386,7 +388,14 @@ export class House {
     }
     const nowMs = this.#d.now()
     s.lastReqMs = nowMs
-    if (s.inflight >= INFLIGHT_MAX) return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
+    const mem = this.#memOf(s.deviceId)
+    if (s.inflight >= this.#lim.inflightMax) {
+      this.#audit('limit.inflight', 'limit', s.deviceId, opByCode(req.op)?.name)
+      return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
+    }
+    // The rate of the device, all its sessions together, before anything of the request is looked at.
+    const rate = mem.limiter.request(nowMs)
+    if (rate !== 'ok') return this.#overRate(s, req, 'req', rate)
     const dv = this.#devices.get(s.deviceId)
     // RR1 has no presence credential yet (WebAuthn is step 2.4): every session is "no credential".
     const presence = PRESENCE.noCredential
@@ -394,19 +403,33 @@ export class House {
       scopes: new Set(dv?.scopes ?? []), presence, elevUntilS: 0, freshPair: s.freshPair,
       openedMs: s.openedMs, nowMs,
     })
-    if (!verdict.ok) return this.#send(s, req.reqId, verdict.status, verdict.status === RES_STATUS.unknownOp ? errorBody('unknown-op') : emptyBody())
+    // Every request of a line that changes state or is a gesture leaves a line, accepted or refused (plano §2; the test of
+    // remote.audit walks the table). It is written before the answer goes, so the answer never outruns its record.
+    if (!verdict.ok) {
+      if (verdict.line && audited(verdict.line)) this.#audit(verdict.line.name, statusName(verdict.status), s.deviceId)
+      return this.#send(s, req.reqId, verdict.status, verdict.status === RES_STATUS.unknownOp ? errorBody('unknown-op') : emptyBody())
+    }
     const line = verdict.line
-    const mem = this.#memOf(s.deviceId)
+    if (line.gesture) {
+      const gestureRate = mem.limiter.gesture(nowMs)
+      if (gestureRate !== 'ok') return this.#overRate(s, req, 'gesture', gestureRate)
+    }
     if (req.actId) {
       const done = mem.acts.get(req.actId, nowMs)
-      if (done) return this.#send(s, req.reqId, done.status, done.body)
+      if (done) {
+        if (audited(line)) this.#audit(line.name, 'replay', s.deviceId)
+        return this.#send(s, req.reqId, done.status, done.body)
+      }
     }
     let body: Record<string, unknown>
     try {
       body = parseJsonObject(req.body)
       const allowed = line.body
       if (allowed && Object.keys(body).some((k) => !allowed.includes(k))) throw new WireError('malformed', 'unknown field')
-    } catch { return this.#send(s, req.reqId, RES_STATUS.badRequest, errorBody('bad-request')) }
+    } catch {
+      if (audited(line)) this.#audit(line.name, statusName(RES_STATUS.badRequest), s.deviceId)
+      return this.#send(s, req.reqId, RES_STATUS.badRequest, errorBody('bad-request'))
+    }
     s.inflight++
     // Every body below is built by the projector of its op (src/remote/projection.ts): nothing the portal holds goes out whole.
     let status: ResStatus = RES_STATUS.ok
@@ -441,7 +464,18 @@ export class House {
       bytes = errorBody('failed')
     } finally { s.inflight-- }
     if (line.mutates && req.actId) mem.acts.put(req.actId, { status, body: bytes }, this.#d.now())
+    if (audited(line)) this.#audit(line.name, statusName(status), s.deviceId)
     await this.#send(s, req.reqId, status, bytes)
+  }
+
+  /**
+   * The device went over its rate (src/remoted/limits.ts): the request is answered `limit` and leaves a line naming the
+   * operation; a device that insists (`close`) loses the session with CLOSE(0x07). Its counters outlive the session.
+   */
+  async #overRate(s: SessionRoute, req: Req, kind: 'req' | 'gesture', verdict: 'limit' | 'close'): Promise<void> {
+    this.#audit(`limit.${kind}`, verdict, s.deviceId, opByCode(req.op)?.name)
+    if (verdict === 'limit') return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
+    this.#sessionEffects(s, await s.session.close(CLOSE.limit, this.#d.now()))
   }
 
   async #renew(s: SessionRoute, body: Record<string, unknown>): Promise<{ status: ResStatus; bytes: Bytes }> {
@@ -464,7 +498,6 @@ export class House {
       const added = old.filter((t) => this.#addDeny(t.ticketId, t.exp)).map((t) => ({ ticketId: t.ticketId, exp: t.exp }))
       if (added.length) this.#sendDeny(added)
     }, this.#d.renewDenyAfterMs ?? RENEW_DENY_AFTER_MS).unref?.()
-    this.#d.note({ note: 'audit', act: 'admit.renew', deviceId: s.deviceId, result: 'ok' })
     return { status: RES_STATUS.ok, bytes: resultBody('admit.renew', { ticket: b64url(ticket) }) }
   }
 
@@ -564,7 +597,8 @@ export class House {
         const code = p.code()
         const qr = qrFragment(await p.qr(this.#d.aud))
         this.#d.notice('Um pareamento de aparelho foi iniciado neste computador. Se não foi você, cancele na tela do tether.')
-        this.#d.note({ note: 'audit', act: 'pair.begin', result: 'ok' })
+        // The line of the request is the extension's (`pair.begin`, by whom); the portal says the ticket is out.
+        this.#audit('pair.listen', 'ok')
         return { ...view, code, qr, fingerprint: this.#fingerprint }
       }
       await p.cancel(this.#d.now())
@@ -621,7 +655,7 @@ export class House {
             this.#devices.delete(id)
             this.#d.note({ note: 'erase', deviceId: id })
           }
-          this.#d.note({ note: 'audit', act: 'pair', result: `burned:${e.reason}` })
+          this.#audit('pair.refused', e.reason, e.eraseDeviceId ? toHex(e.eraseDeviceId) : undefined)
           if (e.countsForLockout || e.reason === 'collision') {
             this.#d.notice(e.reason === 'collision'
               ? 'Duas tentativas de pareamento ao mesmo tempo: o código foi anulado. Gere outro.'
@@ -638,7 +672,6 @@ export class House {
           if (dv) dv.state = 'active'
           this.#adopt(e.route, e.session, deviceId, true)
           this.#d.note({ note: 'acked', deviceId })
-          this.#d.note({ note: 'audit', act: 'pair', deviceId, result: 'done' })
           this.#d.notice('Um aparelho foi pareado com este computador. Você pode revogá-lo a qualquer momento.')
           break
         }
@@ -664,6 +697,12 @@ export class House {
     }
   }
 }
+
+/** A line of the table whose every request is audited: it changes state or is a gesture. */
+export const audited = (line: OpLine): boolean => line.mutates || line.gesture
+
+/** The name of a RES status, as the audit says it (`ok`, `failed`, `presenceRequired`…). */
+const statusName = (status: ResStatus): string => Object.entries(RES_STATUS).find(([, v]) => v === status)?.[0] ?? String(status)
 
 /** Every scope a device gets at pairing (plano §2 "Escopos": all on, adjustable on the machine from RR2). */
 export const DEFAULT_SCOPES = SCOPE_FAMILIES

@@ -53,8 +53,8 @@ export type PortalNote =
   | { note: 'revoke-self'; deviceId: string }
   | { note: 'link'; state: 'up' | 'down' }
   | { note: 'sessions'; count: number }
-  /** One audit line: the kind of act, the device by id, the result. Never content (M-10). */
-  | { note: 'audit'; act: string; deviceId?: string; result: string }
+  /** One audit line: the kind of act, the device by id, the target by id or operation name, the result. Never content (M-10). */
+  | { note: 'audit'; act: string; deviceId?: string; target?: string; result: string }
 
 /** portal → extension */
 export type FromPortal =

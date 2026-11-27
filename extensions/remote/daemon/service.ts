@@ -1,6 +1,7 @@
 // The daemon half of the `remote` extension: the only writer of <home>/remote/ (house keys by role, the registry of devices
 // with its states pending / active / revoked, a minimal append-only audit with a ceiling, the config), the person-facing
-// requests on the pipe with the origin rules of E-7, and the portal it starts and stops by PID.
+// requests on the pipe with the origin rules of E-7, and the portal it starts and stops by PID. The audit (audit.ts) gets
+// a line for every act: its own and the portal's notes.
 //
 // What travels where: the pipe carries only the requests below and their replies, which go to the connection that asked
 // and never in a transmission (no ext-event, no object). The pairing code (R and S), the typed SAS and the ticket's state
@@ -22,10 +23,12 @@ import {
   denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, ENV_TEST_REMOTE, originAllowed, PAIR_ID_RE, parseConfig,
   parseRegistry, pruneRegistry, serializeRegistry, toPortalDevice, type DeviceEntry, type RemoteConfig, type RemoteRequest,
 } from '../rules.ts'
+import { AuditLog } from './audit.ts'
 import { ensureKeys } from './keys.ts'
 import { newPortalCredential, spawnPortal, type PortalChild, type SpawnPortal } from './portal.ts'
 
-export const AUDIT_MAX_BYTES = 256 * 1024
+/** The requests that only read: every other one of the pipe changes state or is a gesture, so it leaves a line even when refused. */
+export const READ_REQUESTS: ReadonlySet<RemoteRequest> = new Set<RemoteRequest>(['remote.status', 'device.list', 'pair.state'])
 const CMD_TIMEOUT_MS = 15_000
 const PENDING_CMDS_MAX = 8
 const RESPAWN_FIRST_MS = 2_000
@@ -46,6 +49,7 @@ type PortalState = { kind: 'off' } | { kind: 'starting' } | { kind: 'up' } | { k
 export class RemoteService {
   readonly #d: RemoteDeps
   readonly #dir: string
+  readonly #auditLog: AuditLog
   #devices: DeviceEntry[] = []
   #config: RemoteConfig = { v: 1, on: false, houseName: 'tether' }
   #loaded: Promise<void> | undefined
@@ -65,6 +69,10 @@ export class RemoteService {
   constructor(deps: RemoteDeps) {
     this.#d = deps
     this.#dir = join(deps.home, 'remote')
+    this.#auditLog = new AuditLog({
+      dir: this.#dir, io: deps.io, now: () => this.#now, log: deps.log,
+      ensureDir: async () => { if (!(await deps.io.exists(this.#dir))) await deps.executor.run('ensurePrivateDir', [this.#dir]) },
+    })
   }
 
   get #now(): number { return (this.#d.now ?? Date.now)() }
@@ -109,15 +117,9 @@ export class RemoteService {
   #saveRegistry(): Promise<void> { return this.#write('devices.json', serializeRegistry(this.#devices)) }
   #saveConfig(): Promise<void> { return this.#write('config.json', JSON.stringify(this.#config, null, 2) + '\n') }
 
-  /** Append-only, one line per act, never content (M-10); past the ceiling the file turns into audit.1.jsonl. */
-  async #audit(act: string, result: string, deviceId?: string): Promise<void> {
-    const line = JSON.stringify({ ts: new Date(this.#now).toISOString(), act, ...(deviceId ? { device: deviceId } : {}), result }) + '\n'
-    const path = join(this.#dir, 'audit.jsonl')
-    try {
-      const st = await this.#d.io.stat(path).catch(() => undefined)
-      if (st && st.size + line.length > AUDIT_MAX_BYTES) await this.#d.io.rename(path, join(this.#dir, 'audit.1.jsonl'))
-      await this.#d.io.appendText(path, line)
-    } catch (e) { this.#d.log(`remote: audit not written (${(e as Error).message})`) }
+  /** One line per act, never content (M-10): queued here, written and rotated by AuditLog without holding the loop. */
+  #audit(act: string, result: string, deviceId?: string, target?: string): void {
+    this.#auditLog.record({ act, result, ...(deviceId ? { device: deviceId } : {}), ...(target ? { target } : {}) })
   }
 
   // ---- the portal -------------------------------------------------------------------------------------------------
@@ -190,7 +192,7 @@ export class RemoteService {
     const permanent = code === PORTAL_EXIT.folderOpen || code === PORTAL_EXIT.config || code === PORTAL_EXIT.keys || code === PORTAL_EXIT.badCredential
     if (this.#portalState.kind !== 'refused') this.#portalState = permanent ? { kind: 'refused', reason: `saiu com o código ${code}` } : { kind: 'down', reason: `saiu com o código ${code ?? 'sinal'}` }
     this.#d.log(`remote: portal exited (code ${code ?? 'signal'})`)
-    void this.#audit('portal.exit', String(code ?? 'signal'))
+    this.#audit('portal.exit', String(code ?? 'signal'))
     if (permanent || !this.#config.on) return
     const wait = this.#respawnMs
     this.#respawnMs = Math.min(RESPAWN_MAX_MS, this.#respawnMs * 2)
@@ -251,7 +253,7 @@ export class RemoteService {
         scopes: [...DEFAULT_SCOPES], createdAt: nowIso, maxVerUsed: a.device.ver, tickets: [a.ticket], usedKeyIds: [a.ticket.keyId], denied: [],
       })
       await this.#saveRegistry()
-      await this.#audit('pair.sas-ok', 'pending', a.device.deviceId)
+      this.#audit('pair.sas-ok', 'pending', a.device.deviceId)
       return
     }
     const d = this.#devices.find((x) => x.deviceId === a.deviceId)
@@ -269,11 +271,11 @@ export class RemoteService {
     switch (n.note) {
       case 'acked':
         if (d && d.state === 'pending') { d.state = 'active'; d.activatedAt = new Date(this.#now).toISOString(); await this.#saveRegistry() }
-        await this.#audit('pair.done', d ? 'active' : 'unknown', n.deviceId)
+        this.#audit('pair.done', d ? 'active' : 'unknown', n.deviceId)
         return
       case 'erase':
         if (d && d.state === 'pending') { this.#devices = this.#devices.filter((x) => x !== d); await this.#saveRegistry() }
-        await this.#audit('pair.erase', 'ok', n.deviceId)
+        this.#audit('pair.erase', 'ok', n.deviceId)
         return
       case 'seen':
         if (d) { d.lastSeenAt = new Date(this.#now).toISOString(); d.maxVerUsed = Math.max(d.maxVerUsed, n.ver); await this.#saveRegistry() }
@@ -283,7 +285,7 @@ export class RemoteService {
         return
       case 'link': this.#link = n.state; return
       case 'sessions': this.#sessions = n.count; return
-      case 'audit': await this.#audit(n.act, n.result, n.deviceId); return
+      case 'audit': this.#audit(n.act, n.result, n.deviceId, n.target); return
     }
   }
 
@@ -293,7 +295,7 @@ export class RemoteService {
     d.state = 'revoked'
     d.revokedAt = new Date(this.#now).toISOString()
     await this.#saveRegistry()
-    await this.#audit('device.revoke', `by:${by}`, d.deviceId)
+    this.#audit('device.revoke', `by:${by}`, d.deviceId)
     this.#portal?.send({ t: 'revoke', deviceId: d.deviceId, deny: d.tickets.map((t) => ({ ticketId: t.ticketId, exp: t.exp })) })
   }
 
@@ -313,6 +315,15 @@ export class RemoteService {
 
   /** The handler of one request, after the origin rule. */
   async handle(name: RemoteRequest, args: unknown, ctx: ExtRequestContext): Promise<unknown> {
+    try { return await this.#handle(name, args, ctx) } catch (e) {
+      // A request that changes state or is a gesture leaves a line when refused too: at the door, for a ticket that is not
+      // the connection's, for a bad argument or a portal that is not up. Only the kind of refusal is said, never the argument.
+      if (!READ_REQUESTS.has(name)) this.#audit(name, `refused:${e instanceof DoorError ? e.code : 'failed'}`, undefined, ctx.client ?? '?')
+      throw e
+    }
+  }
+
+  async #handle(name: RemoteRequest, args: unknown, ctx: ExtRequestContext): Promise<unknown> {
     if (!originAllowed(name, ctx.client, this.#bench)) {
       throw new DoorError('door-denied', `${name} só é aceito do app do tether, pela tela, com a pessoa diante da máquina`)
     }
@@ -327,7 +338,7 @@ export class RemoteService {
           this.#config = { ...this.#config, on: false }
           if (await this.#d.io.exists(this.#dir)) await this.#saveConfig()
           await this.#stopPortal()
-          if (was) await this.#audit('remote.off', `by:${ctx.client ?? '?'}`)
+          this.#audit('remote.off', `${was ? 'by' : 'already-off:by'}:${ctx.client ?? '?'}`)
           return { on: false }
         })
       case 'remote.on': {
@@ -339,7 +350,7 @@ export class RemoteService {
           if (changed && this.#portal) await this.#stopPortal()
           this.#config = { ...this.#config, on: true, relayUrl: url }
           await this.#saveConfig()
-          await this.#audit('remote.on', `by:${ctx.client ?? '?'}`)
+          this.#audit('remote.on', `by:${ctx.client ?? '?'}`)
           await this.#startPortal()
           return { on: true }
         })
@@ -356,7 +367,7 @@ export class RemoteService {
         const r = await this.#command({ cmd: 'pair.begin' }) as PairBegun
         this.#pairOwner.clear() // one ticket at a time: a new one voids the old
         this.#pairOwner.set(r.pairId, ctx.conn)
-        void this.#audit('pair.begin', `by:${ctx.client ?? '?'}`)
+        this.#audit('pair.begin', `by:${ctx.client ?? '?'}`)
         return r
       }
       case 'pair.sas':
@@ -367,9 +378,13 @@ export class RemoteService {
         if (ctx.conn === undefined || this.#pairOwner.get(pairId) !== ctx.conn) throw new DoorError('door-denied', 'esse pareamento é de outra tela')
         if (name === 'pair.sas') {
           if (!digitsOk(a.digits)) throw new DoorError('bad-request', 'digite os 6 números que o aparelho mostra')
-          return await this.#command({ cmd: 'pair.sas', pairId, digits: a.digits }) as PairView
+          const view = await this.#command({ cmd: 'pair.sas', pairId, digits: a.digits }) as PairView
+          this.#audit('pair.sas', 'submitted') // the digits are never in the line
+          return view
         }
-        return await this.#command({ cmd: name, pairId }) as PairView
+        const view = await this.#command({ cmd: name, pairId }) as PairView
+        if (name === 'pair.cancel') this.#audit('pair.cancel', `by:${ctx.client ?? '?'}`)
+        return view
       }
     }
   }
@@ -389,5 +404,8 @@ export class RemoteService {
     }
   }
 
-  async dispose(): Promise<void> { await this.#stopPortal() }
+  async dispose(): Promise<void> {
+    await this.#stopPortal()
+    await this.#auditLog.flush()
+  }
 }
