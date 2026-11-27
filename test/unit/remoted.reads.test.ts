@@ -19,7 +19,7 @@ import { OP_CODES, RES_STATUS, toHex } from '../../src/remote/index.ts'
 import { PAGE_LINES_MAX, READ_BODY_MAX } from '../../src/remote/projection.ts'
 import { CHANNELS_NOTICE_GAP_MS, ReadFeeds, REGENCY_NOTICE_GAP_MS } from '../../src/remoted/feeds.ts'
 import { EXT_READS, type ExtReadOp } from '../../src/remoted/gate.ts'
-import { pipeReads, ReadError, type ExtRequestFn, type PipeReads } from '../../src/remoted/reads.ts'
+import { pipeReads, ReadError, SharedRead, type ExtRequestFn, type PipeReads } from '../../src/remoted/reads.ts'
 import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
 import { USER } from '../../extensions/channels/rules.ts'
@@ -92,6 +92,38 @@ describe('pipeReads: the one place of the portal that sends ext-request', () => 
     await assert.rejects(refused.read('channels.page', {}), (e: unknown) => e instanceof ReadError && e.why === 'refused' && e.code === 'unknown-channel')
     const broken = pipeReads(async () => { throw new Error('conexão com o tetherd fechada') })
     await assert.rejects(broken.read('channels.page', {}), (e: unknown) => e instanceof ReadError && e.why === 'failed')
+  })
+
+  test('SharedRead: one request at a time, the answer kept for its time, never an answer started before an invalidation', async () => {
+    let now = 0
+    let asked = 0
+    let inFlight = 0
+    let peak = 0
+    const hold: (() => void)[] = []
+    const shared = new SharedRead(() => { asked++; inFlight++; peak = Math.max(peak, inFlight); return new Promise<number>((res) => { hold.push(() => { inFlight--; res(asked) }) }) }, { ttlMs: 100, now: () => now })
+    const a = [shared.get(), shared.get(), shared.get()]
+    await until(() => hold.length === 1 || undefined, 1_000, 'one at tetherd')
+    shared.invalidate()
+    const late = shared.get()
+    await new Promise((r) => setImmediate(r))
+    assert.equal(asked, 1, 'the read after the change waits for the one in flight')
+    hold.shift()!()
+    assert.deepEqual(await Promise.all(a), [1, 1, 1])
+    await until(() => hold.length === 1 || undefined, 1_000, 'then it asks again')
+    hold.shift()!()
+    assert.equal(await late, 2, 'the request after the change got the answer asked after it')
+    assert.equal(peak, 1, 'never two at tetherd')
+    assert.equal(await shared.get(), 2, 'kept')
+    now = 100
+    const again = shared.get()
+    await until(() => hold.length === 1 || undefined, 1_000, 'past its time')
+    hold.shift()!()
+    assert.equal(await again, 3)
+    let fail = true
+    const flaky = new SharedRead(async () => { if (fail) throw new ReadError('timeout'); return 'ok' })
+    await assert.rejects(flaky.get())
+    fail = false
+    assert.equal(await flaky.get(), 'ok', 'a failure is not kept')
   })
 
   test("no other file of the portal names ext-request: the class has one door", async () => {
@@ -269,6 +301,7 @@ describe('the three reads through a real House', () => {
     answer = async () => { throw new ReadError('refused', 'unknown-channel') }
     assert.deepEqual(await s.request(OP_CODES['channels.page'], { channel: 'c_9' }), { status: RES_STATUS.notFound, body: {} })
     answer = async () => { throw new ReadError('limit') }
+    bench.house.extEvent('channels', 'line', { channelId: 'c_1' }) // the shared marks were kept: a change lets them be asked again
     assert.deepEqual(await s.request(OP_CODES['channels.marks']), { status: RES_STATUS.limit, body: {} })
     answer = async () => { throw new ReadError('timeout') }
     assert.deepEqual(await s.request(OP_CODES['regency.tree']), { status: RES_STATUS.failed, body: { error: 'failed' } })
@@ -313,6 +346,30 @@ describe('the three reads through a real House', () => {
     await new Promise((r) => setTimeout(r, 300))
     assert.deepEqual(s.events.slice(mark).map((e) => e.evt), [0x0300])
     scopes(allScopes)
+  })
+
+  // RR3 gate M-1: every device asked tetherd for the marks on its own, each notice, and could take the 8 slots of the pipe.
+  test('channels.marks is one read for every device: one at tetherd at a time, kept until a channels event', async () => {
+    // One session stands for the devices: what it shares is the portal's, never the session's (the handshake ceilings of
+    // the bench leave no room for one more session here).
+    const other = s
+    bench.house.extEvent('channels', 'line', { channelId: 'c_1' })
+    calls.length = 0
+    let release: () => void = () => {}
+    const gateOpen = new Promise<void>((r) => { release = r })
+    answer = async (op) => { await gateOpen; return ANSWERS[op] }
+    const asked = [s, other, s, other].map((x) => x.request(OP_CODES['channels.marks']))
+    await until(() => calls.length > 0 || undefined, 5_000, 'the marks at the pipe')
+    await new Promise((r) => setTimeout(r, 50))
+    release()
+    for (const r of await Promise.all(asked)) assert.equal(r.status, RES_STATUS.ok)
+    assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 1, 'four requests at once, one read')
+    for (let i = 0; i < 5; i++) assert.equal((await other.request(OP_CODES['channels.marks'])).status, RES_STATUS.ok)
+    assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 1, 'kept: nothing changed')
+    bench.house.extEvent('channels', 'reaction', { channelId: 'c_1' })
+    assert.equal((await s.request(OP_CODES['channels.marks'])).status, RES_STATUS.ok)
+    assert.equal(calls.filter((c) => c.op === 'channels.marks').length, 2, 'a channels event: asked again')
+    answer = async (op) => ANSWERS[op]
   })
 
   test('canary: the marker tetherd put in every extra field crossed the relay in no byte', () => {

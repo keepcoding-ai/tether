@@ -108,6 +108,16 @@ export interface ChannelStore {
   history(id: ChannelId, before?: number, limit?: number): Promise<Line[]>
   /** Up to `limit` lines with seq > `since`, ascending (`channels read --since`). */
   since(id: ChannelId, since: number, limit?: number): Promise<Line[]>
+  /**
+   * The last `count` lines of the channel and its last seq, for a reader that is not the app (the marks a remote device
+   * reads, daemon/marks.ts): from the tail when it is in memory and covers them, else from the files they live in, each file
+   * read once. The tail cache is neither filled nor reordered, so such a reader never pushes out the tails the app uses.
+   */
+  peekTail(id: ChannelId, count: number): Promise<{ last: number; lines: Line[] }>
+  /** Lines lo..hi, ascending, under the same rule as `peekTail` (the tail cache untouched). */
+  peek(id: ChannelId, lo: number, hi: number): Promise<Line[]>
+  /** The last seq when the store already knows it, without reading anything; undefined when it would have to read. */
+  knownLast(id: ChannelId): number | undefined
   /** Channels whose tail is in memory, least recently used first. */
   cachedChannels(): ChannelId[]
   /** The channel's folder of files (attachments): `<home>/channels/<id>/files`, made when the first file comes. */
@@ -297,6 +307,15 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
     const tail = await warm(id)
     const first = tail.length ? tail[0]!.seq : 1
     if (lo >= first || first === 1) return tail.filter((l) => l.seq >= lo && l.seq <= hi)
+    return range(id, lo, hi)
+  }
+
+  /** Lines lo..hi from the tail when it is in memory and covers them (left where it is in the LRU), else from the files. Inside the lane. */
+  async function peekRange(id: ChannelId, lo: number, hi: number): Promise<Line[]> {
+    if (hi < lo || hi < 1) return []
+    const tail = tails.get(id)
+    const first = tail?.length ? tail[0]!.seq : 1
+    if (tail && (lo >= first || first === 1)) return tail.filter((l) => l.seq >= lo && l.seq <= hi)
     return range(id, lo, hi)
   }
 
@@ -574,6 +593,35 @@ export async function openStore(io: DaemonIo, home: string, options: StoreOption
         return slice(id, lo, Math.min(last, lo + limit - 1))
       })
     },
+
+    peekTail(id, count) {
+      return lane(id, async () => {
+        const cold = colds.get(id)
+        if (cold) return { last: cold.seq, lines: await peekRange(id, Math.max(1, cold.seq - count + 1), cold.seq) }
+        // Never read before: the newest files first until the window is covered. The newest one also says the last seq and
+        // whether it ends torn, which the store keeps (`colds`, one entry per channel) so the next read knows without disk.
+        const nums = await fileNumbers(id)
+        let lines: Line[] = []
+        let needsNewline = false
+        let last: number | undefined
+        for (let i = nums.length - 1; i >= 0; i--) {
+          const body = (await io.tryReadText(`${dirOf(id)}/${fileName(nums[i]!)}`)) ?? ''
+          if (i === nums.length - 1) needsNewline = body.length > 0 && !body.endsWith('\n')
+          lines = parseLines(body).concat(lines)
+          if (last === undefined && lines.length) last = lines[lines.length - 1]!.seq
+          if (last !== undefined && lines[0]!.seq <= last - count + 1) break
+        }
+        const seq = last ?? 0
+        colds.set(id, { seq, needsNewline })
+        return { last: seq, lines: lines.filter((l) => l.seq > seq - count) }
+      })
+    },
+
+    peek(id, lo, hi) {
+      return lane(id, () => peekRange(id, lo, hi))
+    },
+
+    knownLast: (id) => colds.get(id)?.seq,
 
     cachedChannels: () => [...tails.keys()],
     filesDir: (id) => `${dirOf(id)}/${FILES_DIR}`,

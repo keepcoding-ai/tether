@@ -3,7 +3,7 @@
 // polls after a reaction or a poll event, `viewed` / `attended` raising "seen" and sending `seen`); tetherd's side is a board
 // built from the record alone (the real store over fsIo in a temporary home), also after the record is opened again.
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -11,7 +11,7 @@ import { fsIo } from '../../src/daemon/ext-io.ts'
 import { MAX_HELD, MarkBoard } from '../../extensions/channels/renderer/marks.ts'
 import { allMarks, marksOf, pendingOf, type RemoteMarks } from '../../extensions/channels/daemon/marks.ts'
 import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
-import { openStore, type ChannelStore, type NewLine } from '../../extensions/channels/daemon/store.ts'
+import { LINES_PER_FILE, openStore, TAIL_CHANNELS, type ChannelStore, type NewLine } from '../../extensions/channels/daemon/store.ts'
 import { USER, type Channel, type Line, type OpenPoll } from '../../extensions/channels/rules.ts'
 
 const MOD = 'usuário'
@@ -196,6 +196,61 @@ describe('the marks in tetherd follow the app rule', () => {
     const b = await Bench.open(await openStore(fsIo, await newHome(), options))
     for (let i = 0; i < MAX_HELD + 40; i++) await b.say(agent(A), `fala ${i}`)
     assert.equal((await b.same('past the ceiling')).unread, MAX_HELD)
+  })
+})
+
+// RR3 gate M-1: `marks` read every channel with unseen lines from disk at every request (the same window twice, out of the
+// tail cache), and pushed the app's tails out of the LRU. The receipt: 40 channels with 2,000 unseen lines each, 100 marks
+// in a row read at most one file per channel in all, and the tails the app read last stay in memory, in their order.
+describe('the cost of `marks`', () => {
+  test('40 channels with 2,000 unseen lines: 100 marks read each channel once and never push out the app\'s tails', async () => {
+    const home = await newHome()
+    const setup = await openStore(fsIo, home, options)
+    const ids: string[] = []
+    for (let i = 0; i < 40; i++) {
+      const made = await setup.create({ name: `mesa-${i}`, owner: { kind: 'user' }, createdBy: USER })
+      assert.ok(made.ok)
+      ids.push(made.channel.id)
+    }
+    const at = new Date(Date.UTC(2026, 10, 27, 12)).toISOString()
+    for (const id of ids) {
+      const dir = join(home, 'channels', id)
+      await mkdir(dir, { recursive: true })
+      for (let f = 0; f < 2_000 / LINES_PER_FILE; f++) {
+        const lines = Array.from({ length: LINES_PER_FILE }, (_, j) => JSON.stringify({ seq: f * LINES_PER_FILE + j + 1, at, kind: 'message', from: agent(A), body: `fala ${j}` }))
+        await writeFile(join(dir, `${String(f + 1).padStart(6, '0')}.jsonl`), `${lines.join('\n')}\n`)
+      }
+    }
+    let reads = 0
+    const io = { ...fsIo, tryReadText: (p: string) => { reads++; return fsIo.tryReadText(p) } }
+    const store = await openStore(io, home, options)
+    // The app's channels pane read the last TAIL_CHANNELS channels: their tails are what the LRU holds.
+    for (const id of ids.slice(0, TAIL_CHANNELS)) await store.history(id, undefined, 50)
+    const cached = store.cachedChannels()
+    assert.equal(cached.length, TAIL_CHANNELS)
+
+    reads = 0
+    let rows: RemoteMarks[] = []
+    for (let i = 0; i < 100; i++) rows = await allMarks(store, MOD)
+    assert.ok(reads <= ids.length, `100 marks read ${reads} files (at most one per channel)`)
+    assert.deepEqual(store.cachedChannels(), cached, 'the app\'s tails stay, in their order')
+    assert.equal(rows.length, ids.length)
+    assert.ok(rows.every((r) => r.unread === MAX_HELD), 'the count stops at MAX_HELD')
+
+    // One new line in one channel: only that channel is read again (its window may span two files).
+    await store.append(ids[39]!, { kind: 'message', from: agent(B), body: 'nova', to: [MOD] })
+    reads = 0
+    rows = await allMarks(store, MOD)
+    assert.ok(reads <= 2, `one channel changed: ${reads} files read`)
+    assert.equal(rows.find((r) => r.channel === ids[39])?.firstCall?.text, 'revisor: nova')
+    assert.deepEqual(store.cachedChannels(), cached)
+
+    // Her "seen" changes the marks of that channel, and only of that one.
+    store.markSeen(ids[39]!, 2_001)
+    reads = 0
+    rows = await allMarks(store, MOD)
+    assert.ok(reads <= 2)
+    assert.deepEqual([rows.find((r) => r.channel === ids[39])?.unread, rows.find((r) => r.channel === ids[0])?.unread], [0, MAX_HELD])
   })
 })
 

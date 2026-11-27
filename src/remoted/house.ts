@@ -28,7 +28,7 @@ import type { AttentionView } from './attention.ts'
 import { FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp } from './gate.ts'
 import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
-import { ReadError, type PipeReads } from './reads.ts'
+import { ReadError, SharedRead, type PipeReads } from './reads.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
 import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
 
@@ -155,10 +155,21 @@ export class House {
     this.#rp = deps.rp
     this.#clock = { ...PRESENCE_CLOCK, ...deps.presenceClock }
     this.#feeds = new ReadFeeds(deps.noticeGapsMs)
+    const reads = deps.reads
+    this.#marks = reads ? new SharedRead(() => reads.read('channels.marks', {}), { now: () => this.#d.now() }) : undefined
   }
 
+  /**
+   * `channels.marks` takes no argument: one answer serves every device, one request at a time at tetherd, kept until the
+   * next `channels` event or SHARED_READ_TTL_MS (./reads.ts SharedRead; RR3 gate M-1).
+   */
+  readonly #marks: SharedRead<unknown> | undefined
+
   /** An `ext-event` of tetherd: only what makes a thin notice is kept (./feeds.ts); its payload never goes to a device. */
-  extEvent(ext: string, name: string, payload: unknown): void { this.#feeds.extEvent(ext, name, payload) }
+  extEvent(ext: string, name: string, payload: unknown): void {
+    if (ext === 'channels') this.#marks?.invalidate()
+    this.#feeds.extEvent(ext, name, payload)
+  }
 
   /** A slot's state changed or it went: the Regency a device sees with the app closed changed too. */
   slotsChanged(): void { this.#feeds.slotsChanged() }
@@ -663,7 +674,7 @@ export class House {
     try {
       switch (op) {
         case 'channels.marks':
-          bytes = resultBody(op, (await reads.read(op, {})) as MarksSource)
+          bytes = resultBody(op, (await this.#marks!.get()) as MarksSource)
           break
         case 'channels.page': {
           const { channel, before } = body
