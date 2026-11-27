@@ -540,13 +540,14 @@ export class House {
     const nowMs = this.#d.now()
     s.lastReqMs = nowMs
     const mem = this.#memOf(s.deviceId)
+    // The rate of the device, all its sessions together, before anything of the request is looked at, the ceiling in flight
+    // included: a request refused for being one too many in flight still counts, so insisting closes the session.
+    const rate = mem.limiter.request(nowMs)
+    if (rate !== 'ok') return this.#overRate(s, req, 'req', rate)
     if (s.inflight >= this.#lim.inflightMax) {
       this.#audit('limit.inflight', 'limit', s.deviceId, opByCode(req.op)?.name)
       return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
     }
-    // The rate of the device, all its sessions together, before anything of the request is looked at.
-    const rate = mem.limiter.request(nowMs)
-    if (rate !== 'ok') return this.#overRate(s, req, 'req', rate)
     const dv = this.#devices.get(s.deviceId)
     const { presence, elevUntilS } = this.#sessionPresence(s, nowMs)
     const verdict = gate(req, {

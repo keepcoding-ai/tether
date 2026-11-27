@@ -133,6 +133,28 @@ describe('a device over its rate, on a house in this process: limit, a line, the
     assert.equal(s.closed!.code, CLOSE.limit)
   })
 
+  // B-1 of the RR3 gate: the ceiling of requests in flight came before the rate, so a device holding its slow reads open
+  // was answered `limit` for every further REQ without it counting, and "insisting closes the session" never came.
+  test('in flight: a request over the ceiling still counts in the rate, and insisting closes the session', async () => {
+    await bench.stop()
+    const held: Array<() => void> = []
+    const reads = { read: () => new Promise<unknown>((res) => { held.push(() => res({ channels: [] })) }) }
+    bench = await startHouseBench({ reads, limits: { reqPerDevicePerMin: 4, gesturesPerDevicePerMin: 2, strikesMax: 3, inflightMax: 2 } })
+    const s = await bench.connect()
+    // Two reads that tetherd does not answer fill the session's ceiling (a page each: the marks are shared by the portal).
+    const open = [s.request(0x0201, { channel: 'c_1' }), s.request(0x0201, { channel: 'c_2' })].map((p) => p.catch(() => undefined))
+    await until(() => held.length === 2 || undefined, 5_000, 'both reads at the pipe')
+    const statuses: number[] = []
+    for (let i = 0; i < 4; i++) statuses.push((await s.request(OP.info)).status)
+    assert.deepEqual(statuses, [RES_STATUS.limit, RES_STATUS.limit, RES_STATUS.limit, RES_STATUS.limit], 'two over the flight, then two over the rate')
+    void s.request(OP.info).catch(() => undefined)
+    await until(() => s.closed || undefined, 5_000, 'the session closed by the rate')
+    assert.equal(s.closed!.code, CLOSE.limit)
+    assert.deepEqual(bench.audits().filter((a) => a.act === 'limit.req').map((a) => a.result), ['limit', 'limit', 'close'])
+    for (const h of held.splice(0)) h()
+    await Promise.allSettled(open)
+  })
+
   test('gestures: a lower ceiling of their own, recorded with the operation they were', async () => {
     await bench.stop()
     bench = await startHouseBench({ limits: { reqPerDevicePerMin: 100, gesturesPerDevicePerMin: 2, strikesMax: 5 } })
