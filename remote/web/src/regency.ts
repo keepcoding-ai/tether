@@ -15,6 +15,7 @@ import { regencyModelOf, type Target, type TreeDeskRow, type TreePaneRow } from 
 import { glyph as paneGlyph, paneStateOf } from '../../../extensions/regency/renderer/columns.ts'
 import { layoutParams, tierOf, type RegencyLayout, type Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
 import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
+import { keysStrip, mountSpatialFocus } from './focus.ts'
 import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, type RemoteSource } from './host.ts'
 import { el, registerEngines } from './ui-lite.ts'
 
@@ -88,6 +89,8 @@ export interface RegencyOptions {
   /** "Tentar agora". */
   onRetry(): void
   now?: () => number
+  /** The layout kept in the address: where a first session starts (the pane's parameters) and what to tell when it changes. */
+  layout?: { initial: Record<string, unknown>; changed(layout: RegencyLayout): void }
 }
 
 /** What is up while the link is: the house's data, the pane over it and the reading card. */
@@ -250,7 +253,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   const watch = el('span', 'rr-watch')
   watch.title = TEXT.watchingTip
   watch.append(glyph('eye'), el('span', '', TEXT.watching))
-  top.append(brand, house, el('span', 'rr-sp'), clock, watch)
+  top.append(brand, house, el('span', 'rr-sp'), keysStrip(), clock, watch)
 
   // ---- the stage (the pane) and the notice of "offline"
   const stage = el('div', 'rr-stage')
@@ -299,6 +302,12 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   let frame = 0
   let opened = false
   let disposed = false
+  // The arrows of the TV's remote (and of a keyboard anywhere): src/focus.ts.
+  const focus = mountSpatialFocus(shell, {
+    tier: () => tier,
+    cardShown: () => session?.card.shown() !== undefined,
+    closeCard: () => session?.card.close(true),
+  })
 
   const paintTop = (): void => {
     shell.dataset.link = link
@@ -375,6 +384,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     s.pane.paint()
     s.card.refresh()
     paintSnap()
+    focus.afterPaint()
   }
   const schedule = (): void => { if (!frame && !disposed) frame = requestAnimationFrame(paint) }
 
@@ -415,7 +425,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     }))
     const p = pane
     // The layout is the page's while it lives: a new session starts from where the last one was.
-    p.init({ api: { id: 'regency:main', updateParameters: () => {} }, params: lastLayout ? layoutParams(lastLayout) : {} })
+    p.init({ api: { id: 'regency:main', updateParameters: () => o.layout?.changed(p.state) }, params: lastLayout ? layoutParams(lastLayout) : (o.layout?.initial ?? {}) })
     stage.replaceChildren(p.element)
     p.setShown(true)
     const subs = [house.onDidChange(schedule), ...views.disposables]
@@ -454,6 +464,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     paintTop()
     // The card changes form with the tier (a sheet on the phone): it closes, the row is one tap away.
     session?.card.close()
+    focus.tierChanged()
   })
   ro.observe(shell)
   // The clock of the strip and the ages ("há 6 min") move with the minute.
@@ -478,6 +489,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       clearInterval(minute)
       ro.disconnect()
       shell.removeEventListener('keydown', onKey)
+      focus.dispose()
       endSession()
       shell.remove()
     },
