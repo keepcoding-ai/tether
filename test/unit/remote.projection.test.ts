@@ -14,9 +14,13 @@ import {
   issueKeyCert, OP_CODES, PAIR_STATE, PRESENCE, RES_STATUS, ROUTE_KIND, type Bytes, type Session, type SessionEffect,
 } from '../../src/remote/index.ts'
 import {
-  ATTENTION_MAX, attentionItem, attentionList, emptyBody, errorBody, eventBody, remoteProc, remoteProfile, resultBody,
-  RESULTS, sessionInfo, type ProcSource, type ProfileSource, type SlotSource,
+  ATTENTION_MAX, attentionItem, attentionList, CHANGED_IDS_MAX, channelsChanged, channelsMarks, channelsPage, emptyBody, errorBody,
+  eventBody, LINE_BODY_MAX, MARKS_MAX, PAGE_BYTES_MAX, PAGE_LINES_MAX, regencyChanged, regencyTree, remoteProc, remoteProfile, resultBody,
+  RESULTS, sessionInfo, type MarkRowSource, type ProcSource, type ProfileSource, type RegencyTree, type SlotSource,
 } from '../../src/remote/projection.ts'
+import { utf8 } from '../../src/remote/bytes.ts'
+import type { RemoteMarks } from '../../extensions/channels/daemon/marks.ts'
+import type { Line } from '../../extensions/channels/rules.ts'
 import { AttentionView } from '../../src/remoted/attention.ts'
 import { House } from '../../src/remoted/house.ts'
 import { toEmbedProc, type EmbedProc } from '../../extensions/processes/embed.ts'
@@ -192,7 +196,7 @@ describe('projections by allow list', () => {
 
   test('an op without a handler has no result to build; house.ts builds no body of its own', () => {
     const unbuilt = Object.entries(RESULTS).filter(([, f]) => f.name === 'unbuilt').map(([k]) => k).sort()
-    assert.deepEqual(unbuilt, ['channels.marks', 'device.list', 'house.key-rotate.ack', 'regency.tree'])
+    assert.deepEqual(unbuilt, ['device.list', 'house.key-rotate.ack'])
     const compileOnly = (): void => {
       // @ts-expect-error the result of an op without a handler cannot be built
       resultBody('device.list', {})
@@ -203,6 +207,126 @@ describe('projections by allow list', () => {
     assert.equal(house.match(/encodeRes\(/g)?.length, 1, 'one place encodes a RES (#send)')
     assert.equal(house.match(/encodeEvt\(/g)?.length, 1, 'one place encodes an EVT')
     assert.match(house, /encodeEvt\(\{ evt: line\.code, body: eventBody\(/)
+  })
+})
+
+// ---- the reads of step 3.4a ----------------------------------------------------------------------------------------
+
+// What tetherd answers fits the sources, and what a device gets of the tree fits the model's entry (compile time).
+const readsFit = (m: RemoteMarks, t: RegencyTree): [MarkRowSource, RegencyInput] => [m, t.input]
+void readsFit
+
+function hostileLine(seq: number, o: Partial<Line> = {}): Line {
+  const l: Line = {
+    seq, at: ISO, kind: 'message', from: { id: 'a1b2c3d4', name: 'conferente', role: 'member' }, body: `fala ${seq}`,
+    files: [{ name: 'foto.png', path: `C:/Users/${MARKER}/.tether/channels/c_1/files/foto.png`, size: 10, type: 'image/png' }],
+    ...o,
+  }
+  Object.assign(l, later())
+  return l
+}
+
+describe('the reads of an extension, by allow list', () => {
+  test('channels.marks: field by field, capped, the first call one line; an odd row is left out', () => {
+    const row: RemoteMarks = { channel: 'c_1', name: 'obra', unread: 3, toMe: 1, firstToMe: 7, seen: 4, asks: 1, owed: 0, firstCall: { why: 'to-you', text: 'conferente: oi\nde novo' } }
+    const out = channelsMarks({ channels: [{ ...row, ...later() } as RemoteMarks, { ...row, channel: 'bad id' }] })
+    assert.deepEqual(out, { channels: [{ channel: 'c_1', name: 'obra', unread: 3, toMe: 1, seen: 4, asks: 1, owed: 0, firstToMe: 7, firstCall: { why: 'to-you', text: 'conferente: oi de novo' } }], more: 1 })
+    const many = channelsMarks({ channels: Array.from({ length: MARKS_MAX + 3 }, (_, i) => ({ ...row, channel: `c_${i}` })) })
+    assert.deepEqual([many.channels.length, many.more], [MARKS_MAX, 3])
+    assert.deepEqual(channelsMarks({ channels: 'x' } as never), { channels: [], more: 0 }, 'an odd answer says nothing')
+  })
+
+  test('channels.page: lines field by field; attachments by name, size and type, never the path; a long body is cut and says so', () => {
+    const answer = {
+      channel: { id: 'c_1', name: 'obra', title: 'Obra', members: 2, seenByUser: 0, createdAt: ISO, closed: { at: ISO, by: 'user' }, ...later() },
+      lines: [
+        hostileLine(1),
+        hostileLine(2, { body: 'x'.repeat(LINE_BODY_MAX + 10), files: undefined }),
+        hostileLine(3, { kind: 'notice', from: { id: 'tether', name: 'tether', role: 'system' }, body: 'entrou', event: { type: 'join', who: 'a1b2c3d4', by: 'user' }, files: undefined }),
+        hostileLine(4, { kind: 'reaction' as Line['kind'], body: '' }),
+      ],
+      reactions: [{ seq: 1, tallies: [{ emoji: '👍', name: 'agree', by: [{ id: 'user', name: 'Guga' }], ...later() }] }],
+      polls: [], more: false, last: 4,
+    }
+    const page = channelsPage({ answer, limit: PAGE_LINES_MAX })
+    assert.equal(has(page), false, JSON.stringify(page))
+    assert.deepEqual(page.channel, { id: 'c_1', name: 'obra', title: 'Obra', closed: true })
+    assert.deepEqual(page.lines.map(l => l.seq), [1, 2, 3], 'a reaction is no line of the page')
+    assert.deepEqual(page.lines[0]!.files, [{ name: 'foto.png', size: 10, type: 'image/png' }])
+    assert.equal(page.lines[1]!.body.length, LINE_BODY_MAX)
+    assert.equal(page.lines[1]!.cut, true)
+    assert.deepEqual(page.lines[2]!.event, { type: 'join', who: 'a1b2c3d4', by: 'user' })
+    assert.deepEqual(page.reactions, [{ seq: 1, tallies: [{ emoji: '👍', name: 'agree', by: [{ id: 'user', name: 'Guga' }] }] }])
+    assert.equal(page.before, undefined, 'the start of the channel: no cursor')
+  })
+
+  test("channels.page: the cursor is the store's arithmetic, even for a page with no line of conversation", () => {
+    const at = (last: number, before: number | undefined, limit: number, lines: Line[] = []): number | undefined =>
+      channelsPage({ answer: { channel: { id: 'c_1' }, lines, reactions: [], polls: [], last }, limit, ...(before !== undefined ? { before } : {}) }).before
+    assert.equal(at(120, undefined, 50), 71, 'the latest page of 120 lines starts at 71')
+    assert.equal(at(120, 71, 50), 21)
+    assert.equal(at(120, 21, 50), undefined, 'the first page: nothing before it')
+    assert.equal(at(120, 500, 50), 71, 'a cursor past the end is the latest page')
+    assert.equal(at(30, undefined, 50), undefined)
+    assert.equal(at(0, undefined, 50), undefined, 'an empty channel')
+  })
+
+  test('channels.page: over PAGE_BYTES_MAX the oldest lines go, with their reactions and polls, and the cursor follows', () => {
+    const lines = Array.from({ length: PAGE_LINES_MAX }, (_, i) => hostileLine(51 + i, { body: 'é'.repeat(LINE_BODY_MAX), files: undefined }))
+    const answer = { channel: { id: 'c_1' }, lines, reactions: [{ seq: 51, tallies: [{ emoji: '👀', by: [] }] }], polls: [{ seq: 51 }], last: 100 }
+    const page = channelsPage({ answer, limit: PAGE_LINES_MAX })
+    assert.ok(utf8(JSON.stringify(page)).length <= PAGE_BYTES_MAX, 'the page fits its ceiling')
+    assert.ok(page.lines.length < PAGE_LINES_MAX && page.lines.length > 0)
+    assert.equal(page.lines.at(-1)!.seq, 100, 'the newest line stays')
+    assert.equal(page.before, page.lines[0]!.seq, 'the cursor is the oldest line kept: asked again, nothing is lost')
+    assert.deepEqual([page.reactions, page.polls], [[], []], 'what belonged to the lines that went, went with them')
+  })
+
+  test('channels.page: an open poll and a result, field by field; the receipts of the deliveries stay home', () => {
+    const open = {
+      seq: 9, type: 'choice', question: 'Qual?', options: ['a', 'b'], to: [{ id: 'a1b2c3d4', name: 'conferente' }], closesAt: ISO,
+      author: { id: 'user', name: 'Guga' }, votes: { a1b2c3d4: { option: 2, reason: 'porque', at: ISO, name: 'conferente', ...later() } },
+      asked: { a1b2c3d4: MARKER }, changes: { a1b2c3d4: 1 }, ...later(),
+    }
+    const result = { poll: 8, by: 'timeout', tally: [{ option: 1, text: 'ok', voters: [{ id: 'a1b2c3d4', name: 'conferente', ...later() }] }], missing: [{ id: 'b2c3d4e5', name: 'revisor', why: 'stopped' }, { id: 'x', name: 'y', why: MARKER }] }
+    const page = channelsPage({ answer: { channel: { id: 'c_1' }, lines: [], reactions: [], polls: [{ seq: 9, open }, { seq: 8, result, closedAt: ISO }], last: 9 }, limit: 10 })
+    assert.equal(has(page), false, JSON.stringify(page))
+    assert.deepEqual(page.polls[0], {
+      seq: 9, open: { type: 'choice', question: 'Qual?', options: ['a', 'b'], to: [{ id: 'a1b2c3d4', name: 'conferente' }], closesAt: ISO, author: { id: 'user', name: 'Guga' }, votes: [{ id: 'a1b2c3d4', name: 'conferente', option: 2, reason: 'porque' }] },
+    })
+    assert.deepEqual(page.polls[1], { seq: 8, result: { poll: 8, by: 'timeout', tally: [{ option: 1, text: 'ok', voters: [{ id: 'a1b2c3d4', name: 'conferente' }] }], missing: [{ id: 'b2c3d4e5', name: 'revisor', why: 'stopped' }] }, closedAt: ISO })
+  })
+
+  test("regency.tree: the model's entry field by field; the first call's text only to a device that holds `channels`", () => {
+    const entry = {
+      desks: { desks: [{ id: 'desk-1', name: 'Mesa', color: 'blue', kind: 'queue', asleep: false, panes: [{ id: 'a1', type: 'agent', icon: 'claude', title: 'Agente', lines: [MARKER], ...later() }], ...later() }] },
+      owners: { desk: { 'desk-1': { id: 'a1', name: 'Agente', ...later() } }, pane: {} },
+      channels: [{ id: 'c1', name: 'geral', title: 'Geral', owner: { kind: 'user' }, members: 2, seenByUser: 0, createdAt: ISO, ...later() }],
+      channelMarks: { c1: { unread: 1, toMe: 1, asks: 0, owed: 0, first: { why: 'to-you', text: 'conferente: oi' } } },
+      agents: [{ id: 'a1', kind: 'claude', name: 'Agente', ...later() }],
+      since: { 'agent:a1': 5 }, collapsed: [MARKER], query: MARKER, filter: 'busy', selfDeskId: 'regency.main', ...later(),
+    }
+    const view = { input: entry, live: false, asOf: 1234, sig: '0123456789abcdef', ...later() }
+    const withCh = regencyTree({ view, channels: true })
+    const without = regencyTree({ view, channels: false })
+    assert.equal(has(withCh) || has(without), false)
+    assert.deepEqual(withCh.input.channelMarks.c1, { unread: 1, toMe: 1, asks: 0, owed: 0, first: { why: 'to-you', text: 'conferente: oi' } })
+    assert.deepEqual(without.input.channelMarks.c1, { unread: 1, toMe: 1, asks: 0, owed: 0 })
+    assert.deepEqual([withCh.live, withCh.asOf, withCh.sig], [false, 1234, '0123456789abcdef'])
+    assert.deepEqual(withCh.input.collapsed, [], "the device's folds are its own")
+    assert.equal('query' in withCh.input || 'filter' in withCh.input, false)
+    assert.deepEqual(withCh.input.desks.desks[0]!.panes[0], { id: 'a1', type: 'agent', icon: 'claude', title: 'Agente' }, 'no seal lines')
+    assert.equal(regencyTree({ view: { ...view, live: true }, channels: true }).asOf, undefined, 'live: no "como estavam às"')
+    assert.equal(regencyTree({ view: { ...view, sig: MARKER }, channels: true }).sig, undefined)
+    assert.deepEqual(regencyTree({ view: 7, channels: true }).input.desks, { desks: [] }, 'an odd answer is an empty tree')
+  })
+
+  test('the thin notices: ids only, capped, and the tree by signature, time and liveness', () => {
+    assert.deepEqual(channelsChanged({ channels: ['c_1', 'bad id', 'c_1', 'c_2', 7 as never] }), { channels: ['c_1', 'c_2'] })
+    assert.deepEqual(channelsChanged({ channels: Array.from({ length: CHANGED_IDS_MAX + 1 }, (_, i) => `c_${i}`) }), { channels: [], all: true })
+    assert.deepEqual(channelsChanged({ channels: [], all: true }), { channels: [], all: true })
+    assert.deepEqual(regencyChanged({ live: false, sig: '0123456789abcdef', asOf: 9 }), { live: false, sig: '0123456789abcdef', asOf: 9 })
+    assert.deepEqual(regencyChanged({ live: true, sig: MARKER, asOf: 9 }), { live: true })
   })
 })
 

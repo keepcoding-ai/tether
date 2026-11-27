@@ -34,6 +34,7 @@ describe('remote operations registry', () => {
       [0x0100, 'attention.list', 'attention', 'unlocked', false, false],
       [0x0101, 'attention.watch', 'attention', 'unlocked', false, false],
       [0x0200, 'channels.marks', 'channels', 'unlocked', false, false],
+      [0x0201, 'channels.page', 'channels', 'unlocked', false, false],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
@@ -42,7 +43,7 @@ describe('remote operations registry', () => {
 
   test('39: an op without a line has no entry; codes and names are unique; every line is 16 bits and inside its range', () => {
     assert.equal(opByCode(0x0009), undefined)
-    assert.equal(opByCode(0x0201), undefined)
+    assert.equal(opByCode(0x02ff), undefined)
     assert.equal(opByCode(0x0601)?.name, 'device.revoke')
     assert.equal(opByName('attention.watch')?.code, 0x0101)
     assert.equal(opByName('ext-request'), undefined, 'there is no tunnel operation')

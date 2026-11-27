@@ -84,8 +84,8 @@ export interface RemoteProfile {
   default?: boolean
 }
 
-/** The error codes a body may carry; nothing else of a failure goes out. */
-export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused'] as const
+/** The error codes a body may carry; nothing else of a failure goes out. `too-large`: a read whose body passes READ_BODY_MAX. */
+export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large'] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
 // ---- sources (what the portal holds; structural, so the pipe's types fit without being imported) -----------------
@@ -260,6 +260,402 @@ export function remoteProfile(p: ProfileSource): RemoteProfile {
   )
 }
 
+// ---- the reads of an extension (step 3.4a): channels.marks, channels.page, regency.tree ---------------------------
+// Their sources are the answers of tetherd's own requests (src/remoted/gate.ts EXT_READS), unknown JSON as far as the
+// portal can tell: every projector below reads them defensively and copies field by field. A field the daemon adds later
+// does not go. Hostile text: one-line fields are sanitized like a declared name, a line's body keeps its line breaks and
+// loses the other controls, everything is capped.
+
+/** The most bytes of any read's body (the record carries MAX_RECORD_CONTENT, 255 KiB; this leaves room). Over it: `too-large`. */
+export const READ_BODY_MAX = 224 * 1024
+/** Rows of channels.marks; the rest is counted in `more`. */
+export const MARKS_MAX = 256
+/** Lines of one channels.page (the default and the ceiling of `limit`). */
+export const PAGE_LINES_MAX = 50
+/** Bytes of one channels.page's JSON: over it, the oldest lines go and the cursor follows the oldest one kept. */
+export const PAGE_BYTES_MAX = 128 * 1024
+/** Characters of a line's body; longer, it is cut and says so (`cut`). */
+export const LINE_BODY_MAX = 4000
+/** Channel ids in one channels.changed; more, and the notice says `all`. */
+export const CHANGED_IDS_MAX = 32
+
+const SIG_RE = /^[0-9a-f]{16}$/
+const MIME_RE = /^[\w.+-]{1,64}\/[\w.+-]{1,64}$/
+const CTRL_RE = /[\p{Cc}\p{Cf}\s]/u
+const BODY_CTRL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+const ROLES = ['owner', 'member', 'moderator', 'system'] as const
+const LINE_EVENTS = ['create', 'join', 'leave', 'remove', 'mute', 'unmute', 'close', 'reopen', 'owner-ended', 'owner-changed', 'poll-close'] as const
+const FIRST_WHY = ['to-you', 'reaction-asks', 'poll-owed'] as const
+const POLL_BY = ['all-voted', 'timeout', 'author', 'channel-closed'] as const
+const MISSING_WHY = ['no-answer', 'stopped', 'asleep', 'with-user', 'left'] as const
+
+const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
+const arr = (v: unknown, max: number): unknown[] => (Array.isArray(v) ? v.slice(0, max) : [])
+const oneOf = <T extends string>(v: unknown, set: readonly T[]): T | undefined => ((set as readonly unknown[]).includes(v) ? (v as T) : undefined)
+/** One line of hostile text (a name, a title): controls and format characters out, whitespace folded, capped. */
+const line = (v: unknown, max: number): string => (typeof v === 'string' ? sanitizeDeclaredName(v).slice(0, max) : '')
+/** An id of the tree or of a channel: as given, when it is a short string without controls or spaces; else ''. */
+const idOf = (v: unknown, max = 128): string => (typeof v === 'string' && v.length <= max && !CTRL_RE.test(v) ? v : '')
+/** Who spoke or voted: the person, the tether, or an agent's id. */
+const whoOf = (v: unknown): string => (v === 'user' || v === 'tether' ? v : typeof v === 'string' && ID_RE.test(v) ? v : '')
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+const byteLength = (v: unknown): number => utf8(JSON.stringify(v)).length
+
+// ---- channels.marks
+
+export interface MarkRow {
+  channel: string
+  name: string
+  unread: number
+  toMe: number
+  seen: number
+  asks: number
+  owed: number
+  firstToMe?: number
+  firstCall?: { why: (typeof FIRST_WHY)[number]; text: string }
+}
+export interface ChannelsMarks { channels: MarkRow[]; more: number }
+
+/** The `marks` answer of tetherd (extensions/channels/daemon/marks.ts RemoteMarks); a RemoteMarks fits. */
+export interface MarkRowSource {
+  channel: string; name: string; unread: number; toMe: number; seen: number; asks: number; owed: number
+  firstToMe?: number; firstCall?: { why: string; text: string }
+}
+export interface MarksSource { channels: readonly MarkRowSource[] }
+
+export function channelsMarks(s: MarksSource): ChannelsMarks {
+  const rows: MarkRow[] = []
+  const all = Array.isArray(rec(s).channels) ? (s.channels as readonly unknown[]) : []
+  for (const r0 of all) {
+    if (rows.length >= MARKS_MAX) break
+    const r = rec(r0)
+    const channel = typeof r.channel === 'string' && ID_RE.test(r.channel) ? r.channel : ''
+    if (!channel) continue
+    const f = rec(r.firstCall)
+    const why = oneOf(f.why, FIRST_WHY)
+    rows.push(opt<MarkRow>(
+      { channel, name: name64(r.name), unread: int(r.unread) ?? 0, toMe: int(r.toMe) ?? 0, seen: int(r.seen) ?? 0, asks: int(r.asks) ?? 0, owed: int(r.owed) ?? 0 },
+      { firstToMe: int(r.firstToMe, 1), firstCall: why ? { why, text: line(f.text, 240) } : undefined },
+    ))
+  }
+  return { channels: rows, more: Math.max(0, all.length - rows.length) }
+}
+
+// ---- channels.page
+
+export interface Person { id: string; name: string }
+export interface PageFile { name: string; size: number; type: string }
+export interface PagePoll { type: 'ok' | 'choice'; question: string; options: string[]; to: Person[]; closesAt: string }
+export interface PageLine {
+  seq: number
+  at: string
+  kind: 'message' | 'notice' | 'poll'
+  from: { id: string; name: string; role: (typeof ROLES)[number] }
+  body: string
+  cut?: true
+  to?: string[]
+  replyTo?: number
+  event?: { type: (typeof LINE_EVENTS)[number]; who?: string; by?: string }
+  poll?: PagePoll
+  files?: PageFile[]
+}
+export interface PageReactions { seq: number; tallies: { emoji: string; name?: string; by: Person[] }[] }
+export interface PollOpen extends PagePoll { author: Person; votes: (Person & { option: number; reason?: string })[] }
+export interface PollOutcome {
+  poll: number
+  by: (typeof POLL_BY)[number]
+  closer?: Person
+  away?: true
+  tally: { option: number; text: string; voters: (Person & { reason?: string })[] }[]
+  missing: (Person & { why: (typeof MISSING_WHY)[number] })[]
+}
+export interface PagePollState { seq: number; open?: PollOpen; result?: PollOutcome; closedAt?: string }
+export interface ChannelPage {
+  channel: { id: string; name: string; title: string; closed?: true }
+  lines: PageLine[]
+  reactions: PageReactions[]
+  polls: PagePollState[]
+  last: number
+  /** The cursor of the page before this one (`{ channel, before }`); absent at the start of the channel. */
+  before?: number
+}
+
+/** The `history` answer of tetherd (extensions/channels/daemon/requests.ts), with what the portal asked: unknown JSON. */
+export interface PageSource { answer: unknown; before?: number; limit: number }
+
+const person = (v: unknown): Person => { const p = rec(v); return { id: whoOf(p.id), name: name64(p.name) } }
+const persons = (v: unknown, max = 64): Person[] => arr(v, max).map(person)
+const reason = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? line(v, 140) : undefined)
+
+function pagePoll(v: unknown): PagePoll | undefined {
+  const p = rec(v)
+  const type = oneOf(p.type, ['ok', 'choice'] as const)
+  if (!type) return undefined
+  return { type, question: line(p.question, 300), options: arr(p.options, 6).map(o => line(o, 60)), to: persons(p.to), closesAt: iso(p.closesAt) ?? '' }
+}
+
+function pageLine(v: unknown): PageLine | undefined {
+  const l = rec(v)
+  const kind = oneOf(l.kind, ['message', 'notice', 'poll'] as const)
+  const seq = int(l.seq, 1)
+  if (!kind || seq === undefined) return undefined
+  const from = rec(l.from)
+  const raw = typeof l.body === 'string' ? l.body.replace(BODY_CTRL_RE, '') : ''
+  const ev = rec(l.event)
+  const evType = kind === 'notice' ? oneOf(ev.type, LINE_EVENTS) : undefined
+  const event = evType ? opt<NonNullable<PageLine['event']>>({ type: evType }, { who: whoOf(ev.who) || undefined, by: whoOf(ev.by) || undefined }) : undefined
+  const to = Array.isArray(l.to) ? arr(l.to, 32).map(n => name64(n)).filter(n => n !== '') : undefined
+  // Attachments: the name shown, the size and the type. The path in the channel's folder never leaves the machine.
+  const files = kind === 'message' && Array.isArray(l.files)
+    ? arr(l.files, 32).map((f0): PageFile => { const f = rec(f0); return { name: line(f.name, 128), size: int(f.size) ?? 0, type: typeof f.type === 'string' && MIME_RE.test(f.type) ? f.type : '' } })
+    : undefined
+  return opt<PageLine>(
+    { seq, at: iso(l.at) ?? '', kind, from: { id: whoOf(from.id), name: name64(from.name), role: oneOf(from.role, ROLES) ?? 'member' }, body: raw.slice(0, LINE_BODY_MAX) },
+    {
+      cut: raw.length > LINE_BODY_MAX ? true : undefined, to: to?.length ? to : undefined, replyTo: int(l.replyTo, 1), event,
+      poll: kind === 'poll' ? pagePoll(l.poll) : undefined, files: files?.length ? files : undefined,
+    },
+  )
+}
+
+function pageReactions(v: unknown): PageReactions | undefined {
+  const r = rec(v)
+  const seq = int(r.seq, 1)
+  if (seq === undefined) return undefined
+  const tallies = arr(r.tallies, 32).map((t0) => {
+    const t = rec(t0)
+    const emoji = typeof t.emoji === 'string' ? t.emoji.replace(BODY_CTRL_RE, '').slice(0, 32) : ''
+    return opt<PageReactions['tallies'][number]>({ emoji, by: persons(t.by) }, { name: typeof t.name === 'string' && KIND_RE.test(t.name) ? t.name : undefined })
+  }).filter(t => t.emoji !== '')
+  return { seq, tallies }
+}
+
+function pollOpen(v: unknown): PollOpen | undefined {
+  const spec = pagePoll(v)
+  if (!spec) return undefined
+  const p = rec(v)
+  const votes = Object.entries(rec(p.votes)).slice(0, 64).map(([id, v0]) => {
+    const x = rec(v0)
+    return opt<PollOpen['votes'][number]>({ id: whoOf(id), name: name64(x.name), option: int(x.option, 1, 6) ?? 0 }, { reason: reason(x.reason) })
+  })
+  return { ...spec, author: person(p.author), votes }
+}
+
+function pollOutcome(v: unknown): PollOutcome | undefined {
+  const r = rec(v)
+  const poll = int(r.poll, 1)
+  const by = oneOf(r.by, POLL_BY)
+  if (poll === undefined || !by) return undefined
+  const tally = arr(r.tally, 6).map((t0) => {
+    const t = rec(t0)
+    return { option: int(t.option, 1, 6) ?? 0, text: line(t.text, 60), voters: arr(t.voters, 64).map(x => opt<Person & { reason?: string }>(person(x), { reason: reason(rec(x).reason) })) }
+  })
+  const missing = arr(r.missing, 64).flatMap((m0) => { const why = oneOf(rec(m0).why, MISSING_WHY); return why ? [{ ...person(m0), why }] : [] })
+  return opt<PollOutcome>({ poll, by, tally, missing }, { closer: r.closer ? person(r.closer) : undefined, away: r.away === true ? true : undefined })
+}
+
+function pagePollState(v: unknown): PagePollState | undefined {
+  const p = rec(v)
+  const seq = int(p.seq, 1)
+  if (seq === undefined) return undefined
+  return opt<PagePollState>({ seq }, { open: p.open ? pollOpen(p.open) : undefined, result: p.result ? pollOutcome(p.result) : undefined, closedAt: iso(p.closedAt) })
+}
+
+/**
+ * One page of a channel. The cursor is the store's arithmetic (seqs are contiguous: the page asked with `before` and
+ * `limit` starts at max(1, min(before − 1, last) − limit + 1)), so it holds even when every line of the page is a reaction
+ * or a vote. Over PAGE_BYTES_MAX the oldest lines go, with their reactions and polls, and the cursor is the oldest kept.
+ */
+export function channelsPage(s: PageSource): ChannelPage {
+  const a = rec(s.answer)
+  const ch = rec(a.channel)
+  const channel = opt<ChannelPage['channel']>(
+    { id: typeof ch.id === 'string' && ID_RE.test(ch.id) ? ch.id : '', name: name64(ch.name), title: line(ch.title, 256) },
+    { closed: ch.closed ? true : undefined },
+  )
+  const limit = int(s.limit, 1, PAGE_LINES_MAX) ?? PAGE_LINES_MAX
+  const lines = arr(a.lines, limit).map(pageLine).filter((l): l is PageLine => l !== undefined).sort((x, y) => x.seq - y.seq)
+  const reactions = arr(a.reactions, limit).map(pageReactions).filter((r): r is PageReactions => r !== undefined)
+  const polls = arr(a.polls, limit).map(pagePollState).filter((p): p is PagePollState => p !== undefined)
+  const last = int(a.last) ?? 0
+  const before = int(s.before, 1)
+  const hi = before === undefined ? last : Math.min(before - 1, last)
+  let from = Math.max(1, hi - limit + 1)
+
+  const sizeOf = new Map<number, number>()
+  for (const x of [...lines, ...reactions, ...polls]) sizeOf.set(x.seq, (sizeOf.get(x.seq) ?? 0) + byteLength(x) + 1)
+  let total = byteLength({ channel, lines: [], reactions: [], polls: [], last, before: 0 }) + [...sizeOf.values()].reduce((n, b) => n + b, 0)
+  let cut = 0
+  while (total > PAGE_BYTES_MAX && cut < lines.length - 1) total -= sizeOf.get(lines[cut++]!.seq) ?? 0
+  const kept = lines.slice(cut)
+  if (cut > 0) from = kept[0]!.seq
+  const keep = new Set(kept.map(l => l.seq))
+  return opt<ChannelPage>(
+    { channel, lines: kept, reactions: reactions.filter(r => cut === 0 || keep.has(r.seq)), polls: polls.filter(p => cut === 0 || keep.has(p.seq)), last },
+    { before: from > 1 ? from : undefined },
+  )
+}
+
+// ---- regency.tree
+
+export interface RemotePane { id: string; type: string; icon: string; title: string; attention?: 'done' | 'waiting'; busy?: true; asleep?: true; exited?: true }
+export interface RemoteDesk { id: string; name: string; color: string; kind: 'queue' | 'system' | 'drawer'; asleep: boolean; icon?: string; panes: RemotePane[] }
+export interface RemoteOwner { id: string; name: string }
+export interface RemoteChannel {
+  id: string
+  name: string
+  title: string
+  desk?: string
+  owner: { kind: 'user' } | { kind: 'agent'; id: string; name: string }
+  ownerEnded?: { at: string; name: string; why: 'forgotten' | 'left' | 'removed' }
+  closed?: { at: string; by: string }
+  members: number
+  seenByUser: number
+  createdAt: string
+}
+export interface RemoteChannelMarks { unread: number; toMe: number; asks: number; owed: number; first?: { why: (typeof FIRST_WHY)[number]; text: string } }
+export interface RemoteAgent { id: string; kind: string; name: string; emblem?: { name: string; color: string; icon: string } }
+export interface RemoteClosed { slotId: string; kind: string; name: string; title?: string; endedAt?: string }
+/** The entry of the Regency's model as a device gets it: the shape of RegencyInput (extensions/regency/model.ts), field by field. */
+export interface RemoteRegencyInput {
+  desks: { desks: RemoteDesk[] }
+  owners: { desk: Record<string, RemoteOwner>; pane: Record<string, RemoteOwner> }
+  channels: RemoteChannel[]
+  channelMarks: Record<string, RemoteChannelMarks>
+  agents: RemoteAgent[]
+  since: Record<string, number>
+  collapsed: string[]
+  selfDeskId?: string
+  closed?: RemoteClosed[]
+}
+export interface RegencyTree { input: RemoteRegencyInput; live: boolean; asOf?: number; sig?: string }
+
+/** The `tree.read` answer of tetherd (publish-rules.ts RegencyView), and whether the device holds `channels`. */
+export interface RegencyTreeSource { view: unknown; channels: boolean }
+
+const TREE_DESKS_MAX = 256
+const TREE_PANES_MAX = 512
+const TREE_CHANNELS_MAX = 512
+const TREE_AGENTS_MAX = 1024
+const TREE_KEYS_MAX = 2048
+const TREE_CLOSED_MAX = 50
+
+const short = (v: unknown, max = 32): string => idOf(v, max)
+
+function remotePane(v: unknown): RemotePane {
+  const p = rec(v)
+  return opt<RemotePane>(
+    { id: idOf(p.id), type: short(p.type), icon: short(p.icon), title: line(p.title, 256) },
+    { attention: oneOf(p.attention, ['done', 'waiting'] as const), busy: p.busy === true ? true : undefined, asleep: p.asleep === true ? true : undefined, exited: p.exited === true ? true : undefined },
+  )
+}
+
+function remoteDesk(v: unknown): RemoteDesk {
+  const d = rec(v)
+  return opt<RemoteDesk>(
+    { id: idOf(d.id), name: line(d.name, 128), color: short(d.color), kind: oneOf(d.kind, ['queue', 'system', 'drawer'] as const) ?? 'queue', asleep: d.asleep === true, panes: arr(d.panes, TREE_PANES_MAX).map(remotePane) },
+    { icon: typeof d.icon === 'string' ? short(d.icon) : undefined },
+  )
+}
+
+/** A record by id, its keys sorted and capped, each value through `f`. */
+function byId<T>(v: unknown, f: (x: unknown) => T): Record<string, T> {
+  const src = rec(v)
+  const out: Record<string, T> = {}
+  for (const k of Object.keys(src).filter(k => idOf(k, 160) !== '').sort().slice(0, TREE_KEYS_MAX)) out[k] = f(src[k])
+  return out
+}
+
+function remoteChannel(v: unknown): RemoteChannel {
+  const c = rec(v)
+  const o = rec(c.owner)
+  const ended = rec(c.ownerEnded)
+  const closed = rec(c.closed)
+  return opt<RemoteChannel>(
+    {
+      id: idOf(c.id), name: name64(c.name), title: line(c.title, 256),
+      owner: o.kind === 'agent' ? { kind: 'agent', id: idOf(o.id), name: name64(o.name) } : { kind: 'user' },
+      members: int(c.members) ?? 0, seenByUser: int(c.seenByUser) ?? 0, createdAt: iso(c.createdAt) ?? '',
+    },
+    {
+      desk: typeof c.desk === 'string' ? idOf(c.desk) : undefined,
+      ownerEnded: c.ownerEnded ? { at: iso(ended.at) ?? '', name: name64(ended.name), why: oneOf(ended.why, ['forgotten', 'left', 'removed'] as const) ?? 'removed' } : undefined,
+      closed: c.closed ? { at: iso(closed.at) ?? '', by: whoOf(closed.by) } : undefined,
+    },
+  )
+}
+
+function remoteMarks(v: unknown, withText: boolean): RemoteChannelMarks {
+  const m = rec(v)
+  const f = rec(m.first)
+  const why = oneOf(f.why, FIRST_WHY)
+  return opt<RemoteChannelMarks>(
+    { unread: int(m.unread) ?? 0, toMe: int(m.toMe) ?? 0, asks: int(m.asks) ?? 0, owed: int(m.owed) ?? 0 },
+    // The first call's text is a line of a channel: it goes only to a device that holds `channels`.
+    { first: why && withText ? { why, text: line(f.text, 512) } : undefined },
+  )
+}
+
+function remoteAgent(v: unknown): RemoteAgent {
+  const a = rec(v)
+  const e = rec(a.emblem)
+  return opt<RemoteAgent>(
+    { id: idOf(a.id), kind: short(a.kind), name: name64(a.name) },
+    { emblem: a.emblem ? { name: line(e.name, 128), color: short(e.color), icon: short(e.icon) } : undefined },
+  )
+}
+
+function remoteClosed(v: unknown): RemoteClosed {
+  const c = rec(v)
+  return opt<RemoteClosed>(
+    { slotId: idOf(c.slotId), kind: short(c.kind), name: name64(c.name) },
+    { title: typeof c.title === 'string' ? line(c.title, 256) : undefined, endedAt: typeof c.endedAt === 'string' ? (iso(c.endedAt) ?? '') : undefined },
+  )
+}
+
+export function regencyTree(s: RegencyTreeSource): RegencyTree {
+  const view = rec(s.view)
+  const i = rec(view.input)
+  const owners = rec(i.owners)
+  const since: Record<string, number> = {}
+  for (const [k, at] of Object.entries(byId(i.since, num))) if (at !== undefined) since[k] = at
+  const owner = (x: unknown): RemoteOwner => ({ id: idOf(rec(x).id), name: name64(rec(x).name) })
+  const input = opt<RemoteRegencyInput>(
+    {
+      desks: { desks: arr(rec(i.desks).desks, TREE_DESKS_MAX).map(remoteDesk) },
+      owners: { desk: byId(owners.desk, owner), pane: byId(owners.pane, owner) },
+      channels: arr(i.channels, TREE_CHANNELS_MAX).map(remoteChannel),
+      channelMarks: byId(i.channelMarks, x => remoteMarks(x, s.channels === true)),
+      agents: arr(i.agents, TREE_AGENTS_MAX).map(remoteAgent),
+      since,
+      collapsed: [],
+    },
+    { selfDeskId: typeof i.selfDeskId === 'string' ? idOf(i.selfDeskId) : undefined, closed: Array.isArray(i.closed) ? arr(i.closed, TREE_CLOSED_MAX).map(remoteClosed) : undefined },
+  )
+  const live = view.live === true
+  return opt<RegencyTree>(
+    { input, live },
+    { asOf: live ? undefined : int(view.asOf), sig: typeof view.sig === 'string' && SIG_RE.test(view.sig) ? view.sig : undefined },
+  )
+}
+
+// ---- the thin notices
+
+export interface ChannelsChanged { channels: string[]; all?: true }
+export interface ChannelsChangedSource { channels: readonly string[]; all?: boolean }
+
+export function channelsChanged(s: ChannelsChangedSource): ChannelsChanged {
+  const ids = (Array.isArray(s.channels) ? s.channels : []).filter((id): id is string => typeof id === 'string' && ID_RE.test(id))
+  return s.all === true || ids.length > CHANGED_IDS_MAX ? { channels: [], all: true } : { channels: [...new Set(ids)] }
+}
+
+export interface RegencyChanged { live: boolean; sig?: string; asOf?: number }
+
+export function regencyChanged(s: RegencyChanged): RegencyChanged {
+  const live = s.live === true
+  return opt<RegencyChanged>({ live }, { sig: typeof s.sig === 'string' && SIG_RE.test(s.sig) ? s.sig : undefined, asOf: live ? undefined : int(s.asOf) })
+}
+
 const empty = (_: Record<string, never>): Record<string, never> => ({})
 /** The projector of an op that has no handler yet: its source is `never`, so no result of it can be built. */
 const unbuilt = (src: never): never => src
@@ -276,8 +672,9 @@ export const RESULTS = {
   'house.key-rotate.ack': unbuilt,
   'attention.list': attentionList,
   'attention.watch': attentionList,
-  'channels.marks': unbuilt,
-  'regency.tree': unbuilt,
+  'channels.marks': channelsMarks,
+  'channels.page': channelsPage,
+  'regency.tree': regencyTree,
   'device.list': unbuilt,
   'device.revoke': empty,
 } as const satisfies { readonly [K in OpName]: (src: never) => unknown }
@@ -285,6 +682,8 @@ export const RESULTS = {
 /** The body of each event. Total over the events. */
 export const EVENTS = {
   'attention.changed': attentionList,
+  'channels.changed': channelsChanged,
+  'regency.changed': regencyChanged,
 } as const satisfies { readonly [K in EvtName]: (src: never) => unknown }
 
 export type ResultSource<K extends OpName> = Parameters<(typeof RESULTS)[K]>[0]

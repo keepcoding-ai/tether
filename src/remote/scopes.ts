@@ -46,6 +46,7 @@ export const OP_CODES = {
   'attention.list': 0x0100,
   'attention.watch': 0x0101,
   'channels.marks': 0x0200,
+  'channels.page': 0x0201,
   'regency.tree': 0x0300,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
@@ -80,10 +81,14 @@ export const OP_TABLE = {
   'house.key-rotate.ack': { scope: 'session', presence: 'unlocked', mutates: true, gesture: false, allowedWithoutCredential: true, pipe: [] },
   'attention.list': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'attention.watch': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
-  // The channels' marks as tetherd computes them (ext `channels`, `marks`). No body yet: its handler and its way through the pipe are step 3.4.
-  'channels.marks': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
-  // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`). No body yet: its handler and its way through the pipe are step 3.4.
-  'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
+  // The three reads of an extension (step 3.4a): each reaches the pipe as the ONE `ext-request` its pair names in
+  // src/remoted/gate.ts EXT_READS (a closed list by op), never as a request the device spells.
+  // The channels' marks as tetherd computes them (ext `channels`, `marks`).
+  'channels.marks': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
+  // One page of a channel, the latest or the one before a cursor (ext `channels`, `history`).
+  'channels.page': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, body: ['channel', 'before', 'limit'], pipe: ['ext-request'] },
+  // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`).
+  'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }
@@ -115,6 +120,9 @@ export interface EvtLine {
 /** Events fixed in this version. The portal emits one only to a session whose device has its scope and presence. */
 export const EVT = {
   attentionChanged: { code: 0x0100, name: 'attention.changed', scope: 'attention', presence: 'unlocked' },
+  // Thin notices (step 3.4a): which channels changed, and that the Regency's tree changed. No content: the device reads again.
+  channelsChanged: { code: 0x0200, name: 'channels.changed', scope: 'channels', presence: 'unlocked' },
+  regencyChanged: { code: 0x0300, name: 'regency.changed', scope: 'regency:read', presence: 'unlocked' },
 } as const satisfies Record<string, EvtLine>
 export type EvtName = (typeof EVT)[keyof typeof EVT]['name']
 

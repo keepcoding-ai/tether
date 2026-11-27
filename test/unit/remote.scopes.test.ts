@@ -12,7 +12,10 @@ import {
   type EvtLine, type OpName, type OpRule, type Req,
 } from '../../src/remote/index.ts'
 import { EVENTS, RESULTS } from '../../src/remote/projection.ts'
-import { gate, gateEvent, PIPE_REACH, type GateContext, type PipeReach, type PipeType } from '../../src/remoted/gate.ts'
+import {
+  EXT_READS, extReadOf, gate, gateEvent, PIPE_REACH,
+  type ExtReadLinesOf, type ExtReadOp, type ExtReadPair, type ExtRequestLinesOf, type GateContext, type PipeReach, type PipeType,
+} from '../../src/remoted/gate.ts'
 import { DEFAULT_SCOPES } from '../../src/remoted/house.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -37,6 +40,23 @@ const typeChecks = (): void => {
   void [newOp, lostLine, noScope, noProjector, newPipe, _dropped]
 }
 void typeChecks
+
+// The class `ext-read` is total both ways by type.
+const { 'channels.page': _pagePair, ...pairsWithoutOne } = EXT_READS
+/** A table with one more line that emits `ext-request` and writes (a channel's speech, say). */
+type WithWrite = typeof OP_TABLE & { 'channels.say': { readonly mutates: true; readonly gesture: true; readonly pipe: readonly ['ext-request'] } }
+const extReadChecks = (): void => {
+  // @ts-expect-error a line that emits ext-request without a pair does not compile
+  const lostPair: { readonly [K in ExtReadOp]: ExtReadPair } = pairsWithoutOne
+  // @ts-expect-error a pair without a line that emits ext-request (here a line that writes) does not compile
+  const strayPair: { readonly [K in ExtReadOp]: ExtReadPair } = { ...EXT_READS, 'device.revoke': { ext: 'remote', name: 'device.revoke' } }
+  // @ts-expect-error a pair on a name that is no line does not compile
+  const noLine: { readonly [K in ExtReadOp]: ExtReadPair } = { ...EXT_READS, 'channels.say': { ext: 'channels', name: 'say' } }
+  // @ts-expect-error a line that emits ext-request and writes is not a read line: the table would not compile (gate.ts extRequestOnlyReads)
+  const writeLine: [ExtRequestLinesOf<WithWrite>] extends [ExtReadLinesOf<WithWrite>] ? true : false = true
+  void [lostPair, strayPair, noLine, writeLine, _pagePair]
+}
+void extReadChecks
 
 // ---- run-time totality ---------------------------------------------------------------------------------------------
 
@@ -74,7 +94,10 @@ describe('the table of remote operations is total', () => {
       assert.ok(['none', 'unlocked', 'window', 'per-act', 'fresh-pair'].includes(l.presence), `${l.name}: a presence class`)
       assert.ok(RANGE_SCOPES[l.code >>> 8]?.includes(l.scope), `${l.name}: scope ${l.scope} belongs to the range 0x${(l.code >>> 8).toString(16)}`)
       if (l.gesture) assert.equal(l.mutates, true, `${l.name}: a gesture changes state`)
-      for (const t of l.pipe) assert.equal((PIPE_REACH as Record<string, PipeReach>)[t], 'op', `${l.name} emits ${t}, which must be classified 'op'`)
+      for (const t of l.pipe) {
+        const reach = (PIPE_REACH as Record<string, PipeReach>)[t]
+        assert.ok(reach === 'op' || reach === 'ext-read', `${l.name} emits ${t}, which must be classified 'op' (or 'ext-read' for ext-request)`)
+      }
     }
   })
 
@@ -97,13 +120,51 @@ describe('the table of remote operations is total', () => {
     }
   })
 
-  test('every message type of the pipe is classified; nothing a device asks reaches the pipe in this version', () => {
+  test('every message type of the pipe is classified; a device reaches the pipe only through the reads of EXT_READS', () => {
     const inProtocol = pipeTypesInProtocol()
     assert.deepEqual(Object.keys(PIPE_REACH).sort(), [...new Set(inProtocol)].sort(), 'PIPE_REACH has one key per type of the pipe')
     const viaOps = Object.entries(PIPE_REACH as Record<string, PipeReach>).filter(([, r]) => r === 'op').map(([t]) => t).sort()
-    assert.deepEqual([...new Set(OPS.flatMap(l => l.pipe))].sort(), viaOps, "a type is 'op' exactly when some line emits it")
-    for (const tunnel of ['ext-request', 'verb', 'object-set', 'object-get', 'verb-list', 'input', 'typed', 'shutdown'])
+    assert.deepEqual([...new Set(OPS.flatMap(l => l.pipe))].filter(t => t !== 'ext-request').sort(), viaOps, "a type is 'op' exactly when some line emits it")
+    assert.deepEqual(Object.entries(PIPE_REACH).filter(([, r]) => r === 'ext-read').map(([t]) => t), ['ext-request'], "only ext-request is of the class 'ext-read'")
+    for (const tunnel of ['verb', 'object-set', 'object-get', 'verb-list', 'input', 'typed', 'shutdown'])
       assert.equal(PIPE_REACH[tunnel as PipeType], 'never', `${tunnel}: no remote path`)
+  })
+})
+
+describe("the class 'ext-read': a read of an extension, listed by name", () => {
+  const RESULT_OF = RESULTS as Record<string, { name: string }>
+
+  test('the pairs are exactly the lines that emit ext-request; each line reads, has a strict body and a projector that builds', () => {
+    const emitters = OPS.filter(l => l.pipe.includes('ext-request' as never)).map(l => l.name).sort()
+    assert.deepEqual(Object.keys(EXT_READS).sort(), emitters, 'one pair per line that emits ext-request, and no pair without one')
+    assert.deepEqual(emitters, ['channels.marks', 'channels.page', 'regency.tree'])
+    for (const name of emitters) {
+      const l = OPS.find(x => x.name === name)!
+      assert.equal(l.mutates, false, `${name}: a pair is a read`)
+      assert.equal(l.gesture, false, `${name}: a read is no gesture`)
+      assert.equal(l.presence, 'unlocked', `${name}: reads need the session unlocked`)
+      assert.deepEqual(l.pipe, ['ext-request'], `${name}: a read emits nothing but its pair`)
+      assert.ok(Array.isArray(l.body), `${name}: a strict body`)
+      assert.notEqual(RESULT_OF[name]!.name, 'unbuilt', `${name}: a projector that can be called`)
+    }
+  })
+
+  test('the pairs name the read requests of the daemon halves, and no write of theirs', () => {
+    assert.deepEqual(EXT_READS, {
+      'channels.marks': { ext: 'channels', name: 'marks' },
+      'channels.page': { ext: 'channels', name: 'history' },
+      'regency.tree': { ext: 'regency', name: 'tree.read' },
+    })
+    // The writes of the same extensions (the person's speech and gestures, the app's publish): none is a pair.
+    const writes = ['say', 'seen', 'react', 'vote', 'poll', 'poll-close', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'tree.publish']
+    const named = new Set<string>(Object.values(EXT_READS).map(p => p.name))
+    for (const w of writes) assert.equal(named.has(w), false, `${w} writes: never a pair`)
+  })
+
+  test('a request outside the list has no pair, whatever its name', () => {
+    for (const name of ['say', 'channels.say', 'device.revoke', 'session.info', 'ext-request', '__proto__', 'constructor', 'toString', 'hasOwnProperty', ''])
+      assert.equal(extReadOf(name), undefined, name)
+    for (const [op, pair] of Object.entries(EXT_READS)) assert.equal(extReadOf(op), pair)
   })
 })
 
@@ -145,6 +206,15 @@ describe('the gate decides by the table alone', () => {
       const v = status(gate(req(l.code), ctx({ presence: PRESENCE.noCredential })))
       const refused = l.presence === 'window' || l.presence === 'per-act' || (l.scope !== 'session' && l.mutates && !l.allowedWithoutCredential)
       assert.equal(v, refused ? RES_STATUS.presenceRequired : RES_STATUS.ok, l.name)
+    }
+  })
+
+  test('the thin notices of the reads go by the scope of their family, never to a locked session', () => {
+    assert.deepEqual([EVT.channelsChanged.code, EVT.channelsChanged.scope, EVT.regencyChanged.code, EVT.regencyChanged.scope], [0x0200, 'channels', 0x0300, 'regency:read'])
+    for (const line of [EVT.channelsChanged, EVT.regencyChanged]) {
+      assert.equal(gateEvent(line, { scopes: ALL, presence: PRESENCE.noCredential }), true, `${line.name}: a device without credential reads`)
+      assert.equal(gateEvent(line, { scopes: new Set([...ALL].filter(s => s !== line.scope)), presence: PRESENCE.unlocked }), false, `${line.name}: without its scope`)
+      assert.equal(gateEvent(line, { scopes: ALL, presence: PRESENCE.locked }), false, `${line.name}: locked`)
     }
   })
 
