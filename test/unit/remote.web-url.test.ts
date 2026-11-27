@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { readLayout } from '../../extensions/regency/renderer/layout-rules.ts'
-import { formatUrlState, paramsOfUrlState, parseUrlState, urlStateOf, writeUrlState, type UrlState } from '../../remote/web/src/url-state.ts'
+import { channelOnOpen, formatUrlState, paramsOfUrlState, parseUrlState, urlStateOf, writeUrlState, type UrlState } from '../../remote/web/src/url-state.ts'
 
 describe('the Regency\'s state in the address', () => {
   test('goes and comes back: parse(format(state)) is the state', () => {
@@ -54,6 +54,21 @@ describe('the Regency\'s state in the address', () => {
     assert.equal(formatUrlState({ channelId: '<x>' }), '')
     assert.equal(formatUrlState({ channelId: 'secret text with spaces' }), '')
     assert.equal(formatUrlState({ narrowTab: 'nope' as never, view: 'x' as never, filter: 'y' as never }), '')
+  })
+
+  test('the channel of the address stands while the house has it; else the default, never an empty centre', () => {
+    const channels = [{ id: 'obra' }, { id: 'extra' }, { id: 'velho', closed: { at: '', by: '' } }]
+    const none = (): number => 0
+    const extraCalls = (id: string): number => (id === 'extra' ? 1 : 0)
+    assert.equal(channelOnOpen('obra', channels, extraCalls), 'obra', 'the address wins over who calls')
+    assert.equal(channelOnOpen('velho', channels, none), 'velho', 'a closed channel still reads')
+    assert.equal(channelOnOpen('sumiu', channels, extraCalls), 'extra', 'gone: the one that calls the person')
+    assert.equal(channelOnOpen('sumiu', channels, none), 'obra', 'gone: else the first open one')
+    assert.equal(channelOnOpen(undefined, channels, none), 'obra')
+    // No scope for channels (the house shows none), or no channel open: nothing, and the address loses its `c`.
+    assert.equal(channelOnOpen('obra', [], none), undefined)
+    assert.equal(channelOnOpen('sumiu', [{ id: 'velho', closed: true }], none), undefined)
+    assert.equal(formatUrlState(urlStateOf(readLayout({ channelId: channelOnOpen('obra', [], none) }))), '')
   })
 
   test('writing the address keeps the path and the fragment, and writes only what changed', () => {

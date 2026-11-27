@@ -59,6 +59,21 @@ export function paramsOfUrlState(s: UrlState): Record<string, unknown> {
 }
 
 /**
+ * The channel in the centre when the house's channels are first known. The one the address names stands while the house
+ * still has it (a closed one included: it reads); one it no longer has, or any when the device cannot read channels, gives
+ * way to the default: the open channel that calls the person first, else the first open one (none: no channel).
+ */
+export function channelOnOpen(
+  asked: string | undefined,
+  channels: readonly { id: string; closed?: unknown }[],
+  calls: (channelId: string) => number,
+): string | undefined {
+  if (asked !== undefined && channels.some(c => c.id === asked)) return asked
+  const open = channels.filter(c => !c.closed)
+  return (open.find(c => calls(c.id) > 0) ?? open[0])?.id
+}
+
+/**
  * Writes the state in the address of the page, keeping the path and the fragment, with `replaceState` (the Back button does
  * not walk through filters). Nothing is written when the address already says it.
  */

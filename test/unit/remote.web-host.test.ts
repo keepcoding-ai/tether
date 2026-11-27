@@ -5,7 +5,7 @@ import { describe, test } from 'node:test'
 import type { HistoryPage, MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import { fakeHouse } from '../../remote/web/bench/page/fake.ts'
 import {
-  RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource,
+  RemoteHouse, SourceRefused, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource,
 } from '../../remote/web/src/host.ts'
 
 const tick = (): Promise<void> => new Promise(done => setTimeout(done, 0))
@@ -81,6 +81,33 @@ describe('the house as the device holds it', () => {
     src.notify({ what: 'regency' })
     await settle()
     assert.equal(asked.tree, 2, 'a disposed house hears nothing')
+  })
+
+  test('the channels are known once the tree or the marks came, or once the device cannot read them', async () => {
+    const src = fakeHouse()
+    let marksDone: () => void = () => {}
+    const marksWait = new Promise<void>(done => { marksDone = done })
+    const noTree: RemoteSource = {
+      ...src,
+      tree: () => Promise.reject(new SourceRefused('no-scope')),
+      marks: async () => { await marksWait; return src.marks() },
+    }
+    const house = new RemoteHouse(noTree)
+    assert.equal(house.channelsKnown, false)
+    house.start()
+    await settle()
+    assert.equal(house.loaded, true)
+    assert.equal(house.channelsKnown, false, 'no tree: the marks are the list, and they have not come')
+    marksDone()
+    await settle()
+    assert.equal(house.channelsKnown, true)
+    assert.deepEqual(house.input().channels.map(c => [c.id, c.members]), [['obra', 2], ['extra', 1], ['migra', 2]])
+
+    const noChannels = new RemoteHouse({ ...src, marks: () => Promise.reject(new SourceRefused('no-scope')), tree: () => new Promise(() => {}) })
+    noChannels.start()
+    await settle()
+    assert.equal(noChannels.channelsKnown, true)
+    assert.deepEqual(noChannels.input().channels, [])
   })
 
   test('a reading that fails keeps what was read', async () => {

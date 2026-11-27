@@ -18,6 +18,7 @@ import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { keysStrip, mountSpatialFocus } from './focus.ts'
 import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type RemoteSource } from './host.ts'
 import { el, registerEngines } from './ui-lite.ts'
+import { channelOnOpen } from './url-state.ts'
 
 /** The words of the casing (the vocabulary is the product's: Mesas, Canais, guia, hibernando). */
 export const TEXT = {
@@ -306,6 +307,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   let lastLayout: RegencyLayout | undefined
   let frame = 0
   let opened = false
+  let channelChosen = false
   let disposed = false
   // The arrows of the TV's remote (and of a keyboard anywhere): src/focus.ts.
   const focus = mountSpatialFocus(shell, {
@@ -372,16 +374,16 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     // Without a tree (no scope for it, or too big) the session is up but whether the app is open is not known: "ao vivo".
     link = !s.house.loaded ? 'loading' : !s.house.hasTree || s.house.live ? 'live' : 'closed'
     paintTop()
-    // The first tree: the phone opens on "Mesas" when the app is closed (that is where the news is), and a channel that
-    // calls the person (else the first open one) takes the centre.
+    // Once the house's channels are known: the channel the address names, while the house has it; else (gone, or no
+    // channel can be read) the one that calls the person, else the first open one. The pane writes the address back.
+    if (!channelChosen && s.house.loaded && s.house.channelsKnown) {
+      channelChosen = true
+      const calls = (id: string): number => { const m = s.house.markOf(id); return m ? m.toMe + m.asks + m.owed : 0 }
+      s.pane.select(channelOnOpen(s.pane.state.channelId, s.house.input().channels, calls))
+    }
+    // The first tree: the phone opens on "Mesas" when the app is closed (that is where the news is).
     if (!opened && s.house.loaded) {
       opened = true
-      if (s.pane.state.channelId === undefined) {
-        const open = s.house.input().channels.filter(c => !c.closed)
-        const calls = (id: string): number => { const m = s.house.markOf(id); return m ? m.toMe + m.asks + m.owed : 0 }
-        const first = open.find(c => calls(c.id) > 0) ?? open[0]
-        if (first) s.pane.select(first.id)
-      }
       s.pane.paint()
       // (The casing's own tier: the pane learns its width a frame later.)
       if (link === 'closed' && tier === 'mobile') s.pane.setTab('tether')
@@ -405,6 +407,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     if (disposed) return
     endSession()
     opened = false
+    channelChosen = false
     offlineState = {}
     off.hidden = true
     stage.hidden = false
