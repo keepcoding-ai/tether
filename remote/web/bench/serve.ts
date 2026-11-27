@@ -1,8 +1,9 @@
 // Bench server of the remote web client: serves a built bundle (remote/web/build.mjs) as static files, for the E2E and
 // to look at the page by hand. Serve mode only (no watch, no rebuild). `node remote/web/bench/serve.ts --dir <dist>
 // [--port N]` (port 0 picks a free one); prints one JSON line `{"event":"web.listening","port":N}` on stdout.
-// It knows a closed set of files (index.html, app.js, app.css), sends them with `no-store`, and answers 404 to
-// anything else: no directory listing, no path outside the folder.
+// It knows a closed set of files (index.html, app.js, app.css, and the bench page of a `--bench` build: bench.html,
+// bench.js), sends them with `no-store`, and answers 404 to anything else (a file of the set that the folder does not
+// have included): no directory listing, no path outside the folder.
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
@@ -18,6 +19,8 @@ const FILES: Record<string, { file: string; type: string }> = {
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
   '/app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
+  '/bench.html': { file: 'bench.html', type: 'text/html; charset=utf-8' },
+  '/bench.js': { file: 'bench.js', type: 'text/javascript; charset=utf-8' },
 }
 
 const server = createServer((req, res) => {

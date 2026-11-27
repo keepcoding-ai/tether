@@ -1,4 +1,6 @@
 {
   "extends": "../../../tsconfig.json",
-  "include": ["."]
+  "include": ["."],
+  // The bench page's own scripts run in the browser: they are checked with the web client (remote/web/tsconfig.json).
+  "exclude": ["page"]
 }
