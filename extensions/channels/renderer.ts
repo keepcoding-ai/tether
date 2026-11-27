@@ -2,7 +2,7 @@
 // the commands, the picker and the menus are U2 (renderer/commands.ts, renderer/menus.ts); the marks (unread, "to you") and the
 // top bar icon are U3 (renderer/marks.ts, renderer/status.ts).
 import type { Disposable, TetherUi } from '../../app/renderer/ext-api.ts'
-import { createChannelPanes } from './renderer/channel-pane.ts'
+import { createChannelPanes } from './renderer/local-panes.ts'
 import { createChannel, createCommands, createDirectory, joinAgent } from './renderer/commands.ts'
 import { holds } from './renderer/holds.ts'
 import { channelEmbeds } from './renderer/embed.ts'

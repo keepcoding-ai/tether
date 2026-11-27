@@ -6,9 +6,11 @@
 //   - Moving the pane to another desk rebuilds it; the place (lines held, scroll, "reading the end") is kept per channel in memory,
 //     up to KEPT_MAX channels, and the newest page is asked again to fill the end.
 //   - The speaking box (composer.ts, U1b) sits in `.ch-composer-slot`; a closed channel has none. Orange is the U3's.
-import type { GroupPanelPartInitParameters, IContentRenderer, ITabRenderer } from 'dockview-core'
-import type { ContextMenuEntry, ContextMenuRow, Disposable, TetherUi } from '../../../app/renderer/ext-api.ts'
+//   - The view asks everything of a `ChannelHost` (host.ts) and of nothing else: the app's host and its tab are
+//     local-panes.ts, the remote web client has its own.
+import type { ContextMenuEntry, ContextMenuRow } from '../../../app/renderer/ext-api.ts'
 import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
+import type { ChannelFrame, ChannelHost, ChannelTabApi, HostDisposable } from './host.ts'
 import { detectUrlLinks, linkTargetOfUrl } from '../../../app/shared/links.ts'
 import { linkDisguise, linkTip, markdownNodes, markdownPlain } from './speech-markdown.ts'
 import { channelUrl } from '../../../app/shared/tether-url.ts'
@@ -23,12 +25,11 @@ import {
   announceText, applyReaction, emojiKeyHint, FIVE, minesOf, msgAria, otherEmoji, pillAria, pillsOf, pillsSummary, pillTitle, pushRecent, readRecents, refusalText, seesNextText, splitPills, whoText,
   type Pending, type Pill, type Tallies,
 } from './reactions.ts'
-import { CHANNEL_COMPONENT, CHANNEL_PANE_PREFIX, CHANNEL_TAB, CMD, channelIdOfPane, channelPaneId, manifest } from '../manifest.ts'
+import { CMD, channelIdOfPane, channelPaneId } from '../manifest.ts'
 import { createComposer, type ComposerSnapshot } from './composer.ts'
 import { createFileViews } from './files.ts'
 import type { AttachDeps } from './attach-box.ts'
 import type { FileSource } from '../attachments.ts'
-import type { ChannelsIpc } from '../ipc.ts'
 import { createViewer, type ViewerSnapshot } from './viewer.ts'
 import { DROP_CLOSED, DROP_NO_FILE, DROP_SUB, DROP_TITLE, dragHasFiles } from './viewer-rules.ts'
 import { bareMark } from '../../../app/renderer/agent-identity.ts'
@@ -40,7 +41,6 @@ import { agentHue } from '../../../app/shared/agent-color.ts'
 import type { ChannelSummary } from '../daemon/requests.ts'
 import { channelSpans, HASH_TEXT, mentionSpans } from './mentions.ts'
 import { MENTION_TEXT, PANE_TEXT, agentNameMenu, channelMenu, memberMenu, type ChannelMenuEntry, type ChannelMenuId, type MemberMenuEntry } from './texts.ts'
-import type { Marks } from './marks.ts'
 import type { EmbeddedChannel, EmbedOptions } from './embed.ts'
 import {
   agentLinkOf, applyLine, applyPage, DEFAULT_MODERATOR_NAME, emptyTimeline, foldAria, foldOf, forYouLabel, headerOf, idByName, isNearBottom, memberAria, memberRows, mergeNewest,
@@ -72,6 +72,8 @@ export const REACT_COMMAND = 'channels.react'
 /** The palette's command that opens the poll form of the active channel pane. */
 export const POLL_COMMAND_ID = 'channels.poll'
 const REACT_DEFAULT_KEY = 'r'
+/** What a view that only reads says where the speaking box would be. */
+export const FOLLOW_ONLY_TEXT = 'Daqui você acompanha. Para responder, use o tether na máquina.'
 
 interface Kept { timeline: Timeline; tallies: Tallies; polls: Map<number, PollState>; scrollTop: number; stick: boolean; floor: number | undefined }
 
@@ -171,40 +173,22 @@ export interface PaneSnapshot {
   }
 }
 
-export interface ChannelPanes {
-  disposables: Disposable[]
-  /** Opens the channel's pane, or brings the one that exists forward (P3). */
-  open(channelId: string, name?: string): void
-  /** Opens the channel as a tab on a desk out of view, without switching desks or taking the keyboard; false when refused (desk unknown, or the channel already has a tab). */
-  openOn(channelId: string, deskId: string, name?: string): boolean
-  snapshot(channelId: string): PaneSnapshot | undefined
-  /** The channel's view outside the dockview (the Regency's centre): the same view as the tab, with no tab of its own. */
-  mountEmbed(host: HTMLElement, channelId: string, opts?: EmbedOptions): EmbeddedChannel
-}
-
-/**
- * Where a channel's view lives: a tab of the dockview (`pane`, the `api` wrapped as it always was) or embedded in another
- * extension's surface (`embed`: no tab title to set, its menu has no "Fechar painel", "Mover" nor the pane's link).
- */
-interface ChannelHost {
-  readonly kind: 'pane' | 'embed'
-  /** The pane id the core knows the channel by (`channel:<id>`), for both kinds. */
-  readonly id: string
-  title(): string | undefined
-  setTitle(title: string): void
-  showMenu(x: number, y: number, opener?: HTMLElement): void
-}
-
 /** The menu rows an embedded view leaves out: they act on a tab it does not have. */
 const EMBED_OMITS: ReadonlySet<ChannelMenuId> = new Set<ChannelMenuId>(['link', 'move', 'closePane'])
 const OPEN_AS_TAB = 'Abrir como guia'
 
-export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () => readonly ChannelSummary[] = () => []): ChannelPanes {
+/** The channel views of one host: the view's class (a tab's content, or embedded), the live ones and the place kept of each channel. */
+export type ChannelViews = ReturnType<typeof createChannelViews>
+export type ChannelView = InstanceType<ChannelViews['View']>
+
+export function createChannelViews(host: ChannelHost) {
+  const readOnly = host.readOnly === true
+  const marks = host.marks
+  const channelList = (): readonly ChannelSummary[] => host.channels()
   /** The channels a "#" can name: the open ones (a closed channel is plain text). */
   const openChannels = (): ChannelSummary[] => channelList().filter(c => c.closed === undefined)
   const live = new Set<ChannelPane>()
   const kept = new Map<string, Kept>()
-  const type = manifest.contributes!.paneTypes![0]!
 
   const keep = (channelId: string, k: Kept): void => {
     kept.delete(channelId)
@@ -217,9 +201,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
   const tabOf = (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId && p.kind === 'pane')
   const paneHolding = (node: Node): ChannelPane | undefined => [...live].find(p => p.element.contains(node))
   /** A live agent no pane shows (`placed: false`): its name peeks instead of going to a tab. */
-  const noDesk = (id: string): boolean => ui.agents.get(id)?.placed === false
+  const noDesk = (id: string): boolean => host.agent(id)?.placed === false
   /** Who an agent is as the lists draw it: its engine and, in the emblem's place, the emblem its tab wears or its letter (agent-identity.ts). */
-  const identityOfAgent = (id: string, name: string): Identity => identityOf({ kind: ui.agents.get(id)?.kind ?? '', name, seed: id, emblem: ui.panes.personEmblem(id) })
+  const identityOfAgent = (id: string, name: string): Identity => identityOf({ kind: host.agent(id)?.kind ?? '', name, seed: id, emblem: host.personEmblem(id) })
   /** The engine's cell (`.ch-em`): the agent's engine icon, the generic robot when the app does not know the agent. `crown` rings the owner's. */
   const engineCell = (ident: Identity, crown: boolean): HTMLElement => {
     const cell = el('span', `ch-em${crown ? ' crown' : ''}`)
@@ -238,33 +222,26 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     if (ident.mark.type === 'emblem') { m.classList.add('ch-emblem'); m.title = ident.mark.emblem.name }
     return m
   }
-  const moderatorName = (): string => ui.settings.get<string>('moderatorName') ?? DEFAULT_MODERATOR_NAME
-  // Attaching files (A1): main looks at the files and stages a pasted print; the daemon copies them on `say`.
-  const filesIpc = ui.ipc<ChannelsIpc>()
-  const attach: AttachDeps = {
-    inspect: paths => filesIpc.invoke('inspect', paths),
-    pick: () => filesIpc.invoke('pick'),
-    stageImage: name => filesIpc.invoke('stageImage', name),
-    discard: paths => { void filesIpc.invoke('discard', paths).catch(() => undefined) },
-    pathOf: file => window.tether.pathForFile(file),
-  }
+  const moderatorName = (): string => host.moderatorName() ?? DEFAULT_MODERATOR_NAME
+  // Attaching files (A1): the host looks at the files and stages a pasted print; the daemon copies them on `say`.
+  const attach: AttachDeps = host.files
   // The files of the speeches in the conversation (A2): a click opens like any file link, the right button is the file link's menu.
   const fileViews = createFileViews({
-    look: paths => filesIpc.invoke('look', paths),
-    open: path => ui.links.follow({ kind: 'file', path }),
+    look: paths => host.files.look(paths),
+    open: path => host.follow({ kind: 'file', path }),
     // An image opens in the viewer of the pane that holds the thumbnail (A3); its menu has "Ver imagem" first.
     view: (path, from) => { paneHolding(from)?.showImage(path) },
     menu: (x, y, path, image, from) => {
       const pane = paneHolding(from)
       if (image && pane) pane.imageMenu(x, y, path)
-      else ui.links.showMenu(x, y, { kind: 'file', path })
+      else host.linkMenu(x, y, { kind: 'file', path })
     },
   })
 
-  class ChannelPane implements IContentRenderer {
+  class ChannelPane {
     readonly element = el('div', 'ch-pane')
     channelId = ''
-    private host: ChannelHost | undefined
+    private frame: ChannelFrame | undefined
     /** The members' column lives here instead of beside the conversation (an embedded view's option). */
     private membersHost: HTMLElement | undefined
     private readonly memberListeners = new Set<() => void>()
@@ -369,9 +346,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       host: this.element,
       items: () => [...this.msgs.querySelectorAll<HTMLElement>('.ch-shot')]
         .map(b => ({ path: b.dataset.path ?? '', name: b.dataset.name ?? '', label: b.dataset.label ?? '' })).filter(i => i.path !== ''),
-      load: path => filesIpc.invoke('view', path),
-      open: path => ui.links.follow({ kind: 'file', path }),
-      menu: (x, y, path) => { ui.links.showMenu(x, y, { kind: 'file', path }) },
+      load: path => host.files.view(path),
+      open: path => host.follow({ kind: 'file', path }),
+      menu: (x, y, path) => { host.linkMenu(x, y, { kind: 'file', path }) },
       restore: path => { [...this.msgs.querySelectorAll<HTMLElement>('.ch-shot')].find(b => b.dataset.path === path)?.focus() },
     })
     /** The zone to drop files on (A3), over the whole pane: it takes no pointer, the drag events reach the pane under it. */
@@ -383,20 +360,20 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     /** The menu of an image of the conversation: "Ver imagem" first, then what a file link has that the app can do from here. */
     imageMenu(x: number, y: number, path: string): void {
       const target = { kind: 'file' as const, path }
-      ui.menus.context(x, y, [
+      host.menu(x, y, [
         { icon: 'file-image', label: 'Ver imagem', hint: 'Enter', run: () => this.viewer.open(path) },
-        { icon: 'arrow-square-out', label: 'Abrir', run: () => ui.links.follow(target) },
-        { icon: 'arrow-square-out', label: 'Abrir ao lado', run: () => ui.links.follow(target, { side: true }) },
+        { icon: 'arrow-square-out', label: 'Abrir', run: () => host.follow(target) },
+        { icon: 'arrow-square-out', label: 'Abrir ao lado', run: () => host.follow(target, { side: true }) },
         { icon: 'clipboard-text', label: 'Copiar caminho', run: () => this.copy(path) },
         'sep',
-        { icon: 'dots-three', label: 'Mais opções do arquivo…', run: () => { ui.links.showMenu(x, y, target) } },
+        { icon: 'dots-three', label: 'Mais opções do arquivo…', run: () => { host.linkMenu(x, y, target) } },
       ])
     }
 
     // Files of the system dragged over the pane (A3): only a drag that carries `Files` counts, so a tab or a panel of the app that
     // is being moved (dockview's own drag) goes on as it was. The zone stays while dragover keeps coming, and goes when it stops.
     private onDrag(ev: DragEvent): void {
-      if (!dragHasFiles(ev.dataTransfer?.types)) return
+      if (readOnly || !dragHasFiles(ev.dataTransfer?.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       const refuse = this.isClosed()
@@ -414,7 +391,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     private onDrop(ev: DragEvent): void {
       const dt = ev.dataTransfer
-      if (!dt || !dragHasFiles(dt.types)) return
+      if (readOnly || !dt || !dragHasFiles(dt.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       this.paintDrop(false)
@@ -436,21 +413,22 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.dropZone.hidden = false
     }
 
-    get kind(): ChannelHost['kind'] { return this.host?.kind ?? 'pane' }
+    get kind(): ChannelFrame['kind'] { return this.frame?.kind ?? 'pane' }
 
-    init(p: GroupPanelPartInitParameters): void {
+    /** The view as a tab's content (the shape of dockview's `init`: the tab's api and its parameters). */
+    init(p: { api: ChannelTabApi; params?: unknown }): void {
       const api = p.api
       this.attach({
         kind: 'pane', id: api.id,
         title: () => api.title,
         setTitle: t => api.setTitle(t),
-        showMenu: (x, y, opener) => ui.panes.showTabMenu(api.id, x, y, opener),
-      }, String((p.params as { channelId?: string }).channelId ?? channelIdOfPane(api.id)))
+        showMenu: (x, y, opener) => host.tabMenu(api.id, x, y, opener),
+      }, String((p.params as { channelId?: string } | undefined)?.channelId ?? channelIdOfPane(api.id)))
     }
 
-    /** Builds the view for `channelId` on `host`, a tab (`init`) or an embedded place (`mountEmbed`). */
-    attach(host: ChannelHost, channelId: string, opts: EmbedOptions = {}): void {
-      this.host = host
+    /** Builds the view for `channelId` on `frame`, a tab (`init`) or an embedded place (`mountEmbed`). */
+    attach(frame: ChannelFrame, channelId: string, opts: EmbedOptions = {}): void {
+      this.frame = frame
       this.membersHost = opts.membersHost
       this.channelId = channelId
       this.element.dataset.channel = this.channelId
@@ -481,6 +459,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       this.msgs.addEventListener('mouseleave', () => { if (!this.hb.contains(document.activeElement)) this.hb.remove() })
       // A right click on a speech: the same reactions as the bar, and copy (the pills and the links have their own menus).
       this.msgs.addEventListener('contextmenu', ev => {
+        // A view that only reads has no menu of its own: the browser's stays (copy).
+        if (readOnly) return
         // A poll's card: its own menu (vote, close, copy). The reason's field keeps the browser's menu (paste).
         const pr = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.ch-prow') : null
         if (pr) {
@@ -580,7 +560,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         if (first !== this.separatorAt) this.paintMsgs()
       }))
       // The emblem the person put on a member's tab shows at the right of its row: redraw the list when one changes.
-      this.subs.push(ui.panes.onDidChangeMarks(paneId => {
+      this.subs.push(host.onDidChangeEmblems(paneId => {
         if (this.disposed || !this.answer) return
         if (paneId === undefined || this.answer.members.some(m => m.id === paneId)) { this.paintMembers(); this.membersChanged() }
       }))
@@ -653,7 +633,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     // ---------- data ----------
 
     private ask<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
-      return ui.daemon.request<T>(name, { channel: this.channelId, ...args })
+      return host.request<T>(name, { channel: this.channelId, ...args })
     }
 
     private async load(): Promise<void> {
@@ -718,7 +698,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     /** The members as the column draws them, for an embedded view's host. */
-    memberList(): MemberRow[] { return this.answer ? memberRows(this.answer, id => ui.panes.personEmblem(id), noDesk) : [] }
+    memberList(): MemberRow[] { return this.answer ? memberRows(this.answer, id => host.personEmblem(id), noDesk) : [] }
 
     onDidChangeMembers(listener: () => void): { dispose(): void } {
       this.memberListeners.add(listener)
@@ -795,6 +775,12 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     onChannel(): void { if (this.loaded) void this.refreshMembers() }
+
+    /**
+     * A host whose notices are thin (the remote says only "this channel changed", with no line): the newest page and the
+     * members are read again, and what is held is merged with them as after a gap.
+     */
+    onStale(): void { if (this.loaded) { void this.catchUp(); void this.refreshMembers() } }
 
     /** A reaction heard live: it only changes the pills of its message (never a repaint of the conversation, never an unread). */
     onReaction(ev: ReactionEvent): void {
@@ -893,7 +879,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (!line) return undefined
       const pending = this.pollInput.get(seq)?.pending
       return cardOf(line, this.pollStates.get(seq), {
-        now: Date.now(), readOnly: this.isClosed(),
+        now: Date.now(), readOnly: this.inert(),
         ...(this.answer ? { members: new Set(this.answer.members.map(m => m.id)) } : {}),
         ...(pending !== undefined ? { pending } : {}),
         whyOf: id => this.deafWhy(id),
@@ -1001,7 +987,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     private async votePoll(seq: number, option: number, reason?: string): Promise<void> {
-      if (this.isClosed() || this.disposed) return
+      if (this.inert() || this.disposed) return
       const input = this.inputOf(seq)
       input.pending = option
       this.paintPoll(seq)
@@ -1044,7 +1030,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private async closePoll(seq: number): Promise<void> {
       const c = this.cardFor(seq)
       if (!c?.canClose) return
-      const a = await ui.dialogs.ask(closePollDialog(c)).catch(() => undefined)
+      const a = await host.ask(closePollDialog(c)).catch(() => undefined)
       // The dialog gave the focus back to nothing (or to the page): the card takes it, unless the person went somewhere else.
       const back = (): void => {
         setTimeout(() => {
@@ -1089,7 +1075,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       rows.push('sep')
       rows.push({ icon: 'clipboard-text', label: 'Copiar pergunta', run: () => this.copy(c.question) })
       rows.push({ icon: 'clipboard-text', label: 'Copiar referência', hint: ref, run: () => this.copy(ref) })
-      ui.menus.context(x, y, rows as ContextMenuEntry[])
+      host.menu(x, y, rows as ContextMenuEntry[])
     }
 
     /** The card: question, options with bar and count, who voted for what, who is missing, the clock; read only when it cannot be voted. */
@@ -1334,16 +1320,22 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private syncTitle(): void {
       if (!this.answer) return
       const title = `#${this.answer.channel.name}`
-      if (this.host && this.host.title() !== title) this.host.setTitle(title)
+      if (this.frame && this.frame.title() !== title) this.frame.setTitle(title)
     }
 
     /** Asks the commands to join an agent to this channel: they open straight on the agent picker. */
-    private joinAgent(): void { void ui.commands.run(CMD.join, { channel: this.channelId }) }
+    private joinAgent(): void { void host.run(CMD.join, { channel: this.channelId }) }
 
     private isClosed(): boolean { return this.answer?.channel.closed !== undefined }
 
-    /** An open channel that is known to have nobody in it. */
-    private noMembers(): boolean { return this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
+    /** Nothing can be done in the conversation: the channel is closed, or the view only reads (the host's `readOnly`). */
+    private inert(): boolean { return readOnly || this.isClosed() }
+
+    /**
+     * An open channel that is known to have nobody in it. A view that only reads never says so: its empty state is the way to
+     * bring someone in, a gesture it does not have.
+     */
+    private noMembers(): boolean { return !readOnly && this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
 
     private actionBtn(className: string, label: string, icon: Parameters<typeof glyph>[0], run: () => void): HTMLButtonElement {
       const b = el('button', className)
@@ -1364,7 +1356,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     private buildBar(): void {
       this.joinBtn = this.primaryBtn('ch-join', PANE_TEXT.joinMenu, 'user-plus', () => this.joinAgent())
-      this.reopenBtn = this.primaryBtn('ch-reopen', PANE_TEXT.reopen, 'arrow-counter-clockwise', () => { void ui.commands.run(CMD.reopen, { channel: this.channelId }) })
+      this.reopenBtn = this.primaryBtn('ch-reopen', PANE_TEXT.reopen, 'arrow-counter-clockwise', () => { void host.run(CMD.reopen, { channel: this.channelId }) })
       const members = el('button', 'ch-act on')
       members.type = 'button'
       members.title = PANE_TEXT.members
@@ -1379,6 +1371,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // The same menu as the tab's (right click): the bar shows what is frequent, the "⋯" opens the whole list.
       const more = this.actionBtn('ch-act ch-more', PANE_TEXT.more, 'dots-three', () => this.openMenu(more))
       more.setAttribute('aria-haspopup', 'menu')
+      // A view that only reads has no menu of the channel (its rows are all gestures).
+      more.hidden = readOnly
       this.bar.setAttribute('role', 'toolbar')
       this.bar.setAttribute('aria-label', 'Ações do canal')
       this.bar.append(this.joinBtn, this.reopenBtn, members, end, more)
@@ -1386,9 +1380,9 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     private openMenu(opener: HTMLElement): void {
-      if (!this.host) return
+      if (!this.frame) return
       const r = opener.getBoundingClientRect()
-      this.host.showMenu(r.left, r.bottom, opener)
+      this.frame.showMenu(r.left, r.bottom, opener)
     }
 
     /** After "Tirar" emptied the list the row that held the focus is gone: the focus goes to the accent "Juntar agente…". */
@@ -1407,7 +1401,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     /** What the bar shows now: the accent gesture and whether it carries text (not in the narrow composition, not in the empty state). */
     private barState(): PaneSnapshot['actions'] {
       const known = this.answer !== undefined
-      const primary: PaneSnapshot['actions']['primary'] = !known ? 'none'
+      const primary: PaneSnapshot['actions']['primary'] = !known || readOnly ? 'none'
         : !this.isClosed() ? 'join'
         : this.answer!.channel.desk === undefined ? 'reopen' : 'none'
       const labeled = primary === 'reopen' || (primary === 'join' && !this.isNarrow() && !this.noMembers())
@@ -1428,7 +1422,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     private paintHead(): void {
       this.paintBar()
       this.titleBox.replaceChildren()
-      if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.host?.title() ?? '')); return }
+      if (!this.answer) { this.titleBox.append(glyph('chats-circle'), el('span', 'ch-name-title', this.frame?.title() ?? '')); return }
       const h = headerOf(this.answer)
       const sub = el('span', 'ch-sub')
       sub.append(`${this.answer.members.length === 1 ? '1 membro' : `${this.answer.members.length} membros`} · dono: `)
@@ -1566,6 +1560,15 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.composerSlot.replaceChildren()
         return
       }
+      if (readOnly) {
+        // Not a box turned off (it would look broken): a calm line where the box would be, saying where to answer.
+        if (!this.composerSlot.querySelector('.ch-follow')) {
+          const note = el('div', 'ch-follow')
+          note.append(glyph('eye'), el('span', '', FOLLOW_ONLY_TEXT))
+          this.composerSlot.replaceChildren(note)
+        }
+        return
+      }
       if (!this.answer) return
       this.composer.setMembers(this.answer.members.map(m => m.name))
       this.composer.setMarks(new Map(memberRows(this.answer, undefined, noDesk).flatMap((m): Array<[string, string]> =>
@@ -1597,17 +1600,17 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       // Not loaded yet: the core's floor (link, close) is all the menu has.
       if (!answer) return []
       const channel = this.channelId
-      const ask = (id: string) => (): void => { void ui.commands.run(id, { channel }) }
+      const ask = (id: string) => (): void => { void host.run(id, { channel }) }
       const run: Record<ChannelMenuId, () => void> = {
         join: () => this.joinAgent(),
         members: () => this.toggleMembers(),
         toEnd: () => this.toEnd(),
         poll: () => this.openPollForm(),
         mute: ask(CMD.mute), unmute: ask(CMD.unmute), remove: ask(CMD.remove), close: ask(CMD.close), reopen: ask(CMD.reopen),
-        link: () => ui.panes.copyLink(paneId),
-        channelLink: () => ui.shell.writeClipboard(channelUrl(channel)),
-        move: () => ui.panes.move(paneId),
-        closePane: () => ui.panes.close(paneId),
+        link: () => host.copyLink(paneId),
+        channelLink: () => host.writeClipboard(channelUrl(channel)),
+        move: () => host.movePane(paneId),
+        closePane: () => host.closePane(paneId),
       }
       const rowOf = (e: ChannelMenuEntry): ContextMenuRow =>
         e === 'sep' || 'heading' in e ? e
@@ -1801,7 +1804,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       box.setAttribute('aria-label', 'Reações')
       // A change of the pills is told by the pane's own live region (one short sentence), not by the log re-reading the whole group.
       box.setAttribute('aria-live', 'off')
-      const readOnly = this.isClosed()
+      const readOnly = this.inert()
       const { shown, hidden } = splitPills(pills, this.isNarrow())
       for (const p of shown) {
         const b = readOnly ? el('span', 'ch-pill ro') : el('button', 'ch-pill')
@@ -1877,7 +1880,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     /** The gesture shows at once (pending) and is undone with a short notice if the daemon refuses. */
     private async react(seq: number, emoji: string, remove: boolean): Promise<void> {
-      if (this.isClosed() || this.disposed) return
+      if (this.inert() || this.disposed) return
       const key = reactionKey(emoji)
       const held = this.tallies.get(seq) ?? []
       const limit = { mine: held.filter(t => t.by.some(b => b.id === USER)).length, kinds: held.length }
@@ -1940,7 +1943,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     }
 
     private showBar(msg: HTMLElement): void {
-      if (this.isClosed()) { this.hb.remove(); return }
+      if (this.inert()) { this.hb.remove(); return }
       if (this.hb.parentElement !== msg) msg.append(this.hb)
       this.hb.dataset.seq = msg.dataset.seq ?? ''
       this.syncBar()
@@ -1966,7 +1969,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (!line) return
       const rows: ContextMenuRow[] = []
       this.menuReturn = { seq, until: Date.now() + JOIN_FOCUS_MS }
-      if (!this.isClosed()) {
+      if (!this.inert()) {
         const mine = minesOf(this.tallies.get(seq), this.pendingOf(seq))
         const who = line.from.id === USER || line.from.role === 'moderator' ? 'você' : line.from.name
         rows.push({ heading: `Reagir à fala de ${who}` })
@@ -1977,7 +1980,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       }
       rows.push({ icon: 'clipboard-text', label: 'Copiar texto', run: () => this.copy(line.body) })
       rows.push({ icon: 'clipboard-text', label: 'Copiar referência', hint: `${this.answer?.channel.name ?? this.channelId}#${seq}`, run: () => this.copy(`${this.answer?.channel.name ?? this.channelId}#${seq}`) })
-      ui.menus.context(x, y, rows as ContextMenuEntry[])
+      host.menu(x, y, rows as ContextMenuEntry[])
     }
 
     /** The menu of a pill: put or take back the person's own, and who reacted. */
@@ -1991,13 +1994,13 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         { heading: 'Quem reagiu' },
         ...p.by.map((b): ContextMenuRow => ({ heading: b.id === USER ? 'Você' : b.name })),
       ]
-      ui.menus.context(x, y, rows as ContextMenuEntry[])
+      host.menu(x, y, rows as ContextMenuEntry[])
     }
 
     /** The list behind "+N": every pill that did not fit, each a row that puts or takes the person's reaction, with who gave it. */
     private openHiddenMenu(seq: number, hidden: readonly Pill[], x: number, y: number): void {
       this.menuReturn = { seq, key: '+n', until: Date.now() + JOIN_FOCUS_MS }
-      const readOnly = this.isClosed()
+      const readOnly = this.inert()
       const rows: ContextMenuRow[] = [{ heading: 'Outras reações' }]
       for (const p of hidden) {
         const sense = p.name ? FIVE.find(f => f.name === p.name)?.sense : undefined
@@ -2006,7 +2009,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           ...(readOnly ? { disabled: true } : { checked: p.mine }), run: () => this.reactTo(seq, p.emoji),
         })
       }
-      ui.menus.context(x, y, rows as ContextMenuEntry[])
+      host.menu(x, y, rows as ContextMenuEntry[])
     }
 
     /** After a menu closes the focus returns to the speech (or the pill) it was opened from, unless the person went somewhere else. */
@@ -2033,7 +2036,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     /** The labels of the keys the person bound to the picker's command (empty = she did not: the pane's own `R` holds). */
     private boundKeys(): string[] {
       try {
-        const table = ui.keybindings.table()
+        const table = host.keyTable()
         return table.bindingsOf(REACT_COMMAND).length > 0 ? [table.hint(REACT_COMMAND)] : []
       } catch { return [] }
     }
@@ -2068,6 +2071,8 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (ev.defaultPrevented || this.picker) return
       const t = ev.target instanceof HTMLElement ? ev.target : null
       if (!t) return
+      // A view that only reads has no menu of its own.
+      if (readOnly && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) return
       const prow = t.closest<HTMLElement>('.ch-prow')
       if (prow && !(t instanceof HTMLInputElement) && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
         ev.preventDefault()
@@ -2087,7 +2092,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         const pill = t.classList.contains('ch-pill') && t.dataset.emoji !== undefined ? pillsOf(this.tallies.get(seq), this.pendingOf(seq)).find(p => reactionKey(p.emoji) === t.dataset.key) : undefined
         const r = (pill ? t : msg).getBoundingClientRect()
         const x = Math.max(0, r.left + 16), y = Math.min(r.bottom, r.top + 28)
-        if (pill && !this.isClosed()) this.openPillMenu(seq, pill, x, r.bottom)
+        if (pill && !this.inert()) this.openPillMenu(seq, pill, x, r.bottom)
         else this.openMsgMenu(seq, x, y)
         return
       }
@@ -2099,7 +2104,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         this.walk(onMsg ? msg : null, ev.key === 'ArrowDown' ? 1 : -1)
         return
       }
-      if (!onMsg || !msg || this.isClosed()) return
+      if (!onMsg || !msg || this.inert()) return
       const seq = Number(msg.dataset.seq)
       const n = Number(ev.key)
       if (ev.key.length === 1 && n >= 1 && n <= FIVE.length) { ev.preventDefault(); this.reactTo(seq, FIVE[n - 1]!.emoji); return }
@@ -2135,7 +2140,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     /** A palette command: react to the focused speech with `emoji`, or open the picker on it (`undefined`). `last`: the newest speech. */
     reactFocused(emoji: string | undefined, last = false): void {
-      if (this.isClosed()) return
+      if (this.inert()) return
       const all = this.sayLines()
       const msg = last ? all[all.length - 1] : this.focusedMsg()
       if (!msg) return
@@ -2153,7 +2158,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     /** Opens the reaction picker on a speech: the five with their meaning, the recent ones and the field for any other emoji. */
     openPicker(seq: number): void {
-      if (this.isClosed() || this.disposed) return
+      if (this.inert() || this.disposed) return
       this.closePicker(false)
       try { this.recents = readRecents(localStorage.getItem(RECENTS_KEY)) } catch { /* keep the held ones */ }
       this.menuReturn = undefined
@@ -2311,10 +2316,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       a.addEventListener('click', ev => {
         ev.preventDefault()
         const opts = ev.altKey && !ev.ctrlKey && !ev.metaKey ? { peek: true } : {}
-        if (!disguise) { ui.links.follow(target, opts); return }
-        void ui.dialogs.ask(disguisedLinkDialog(disguise)).catch(() => undefined).then(r => { if (r?.choice === 'follow') ui.links.follow(target, opts) })
+        if (!disguise) { host.follow(target, opts); return }
+        void host.ask(disguisedLinkDialog(disguise)).catch(() => undefined).then(r => { if (r?.choice === 'follow') host.follow(target, opts) })
       })
-      a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.links.showMenu(ev.clientX, ev.clientY, target) })
+      a.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); host.linkMenu(ev.clientX, ev.clientY, target) })
       return a
     }
 
@@ -2363,19 +2368,20 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       if (id === undefined || url === undefined) return el('span', cls, text)
       const b = el('button', `${cls} ch-agent`, text)
       b.type = 'button'
-      b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
+      // A view that only reads has no tab to go to and no menu: the click is the host's quick look at the agent.
+      if (!readOnly) b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
       b.dataset.agent = id
       const target = linkTargetOfUrl(url)
       // An agent with no pane has no tab to go to (the link would ask to reopen a closed tab): the click opens the peek card.
-      b.addEventListener('click', ev => { if (isPeekModifier(ev) || noDesk(id)) ui.panes.peek(id); else ui.links.follow(target) })
-      if (!rowMenu) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
+      b.addEventListener('click', ev => { if (readOnly || isPeekModifier(ev) || noDesk(id)) host.peek(id); else host.follow(target) })
+      if (!rowMenu && !readOnly) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
       return b
     }
 
     /** A gesture on a member (the commands ask the consequence in their dialog). Taking someone out may leave the list empty: the focus then goes to the accent. */
     private memberAct(act: 'mute' | 'unmute' | 'remove', agent: string): void {
       if (act === 'remove') this.joinFocusUntil = Date.now() + JOIN_FOCUS_MS
-      void ui.commands.run(CMD[act], { channel: this.channelId, agent })
+      void host.run(CMD[act], { channel: this.channelId, agent })
     }
 
     // ---------- the focus around a member's gestures (G9) ----------
@@ -2443,10 +2449,10 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
 
     private showAgentMenu(id: string, entries: MemberMenuEntry[], x: number, y: number, m?: MemberRow): void {
       const run: Record<string, () => void> = {
-        go: () => (noDesk(id) ? ui.panes.peek(id) : ui.links.follow(linkTargetOfUrl(agentLinkOf(id) ?? ''))),
-        peek: () => ui.panes.peek(id),
-        copy: () => ui.panes.copyLink(id),
-        emblem: () => ui.panes.emblemMenu(id, x, y),
+        go: () => (noDesk(id) ? host.peek(id) : host.follow(linkTargetOfUrl(agentLinkOf(id) ?? ''))),
+        peek: () => host.peek(id),
+        copy: () => host.copyLink(id),
+        emblem: () => host.emblemMenu(id, x, y),
         ...(m ? {
           mute: () => this.memberAct('mute', id),
           unmute: () => this.memberAct('unmute', id),
@@ -2458,7 +2464,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
         e === 'sep' || 'heading' in e ? e
           : { icon: e.icon, label: e.label, run: run[e.id]!, ...(e.hint ? { hint: e.hint } : {}), ...(e.danger ? { danger: true } : {}) })
       // The menu takes headings (the core's `fromExtMenu`); only its declared parameter type leaves them out.
-      ui.menus.context(x, y, rows as ContextMenuEntry[])
+      host.menu(x, y, rows as ContextMenuEntry[])
     }
 
     private paintMembers(): void {
@@ -2470,7 +2476,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       side.replaceChildren()
       if (!this.answer) return
       // The emblems are read at each redraw (no observer): a change shows when the list is drawn again.
-      const rows = memberRows(this.answer, id => ui.panes.personEmblem(id), noDesk)
+      const rows = memberRows(this.answer, id => host.personEmblem(id), noDesk)
       const sec = el('div', 'ch-sec')
       sec.append(el('span', '', `Membros · ${rows.length}`))
       // The list proper: the heading above it is not one of its items.
@@ -2512,7 +2518,7 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
           warn.setAttribute('aria-hidden', 'true')
           l1.append(warn)
         }
-        if (!this.isClosed()) {
+        if (!this.inert()) {
           // The owner's row has only the "⋯"; the others show Calar and Tirar on hover and focus, and the "⋯" always.
           // The command asks the consequence in its dialog (calar, tirar) before it acts.
           if (!m.crown) {
@@ -2653,76 +2659,16 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
     olderNow(): Promise<void> { return this.loadOlder() }
   }
 
-  class ChannelTab implements ITabRenderer {
-    readonly element = el('div', 'ch-tab')
-    private readonly title = el('span', 'ch-tab-title')
-    private readonly ring = el('span', 'ch-ring')
-    private readonly dot = el('span', 'ch-att')
-    private sub: IDisposable | undefined
-    /**
-     * The marks on the tab: the quiet ring for lines nobody has seen (a count in its tooltip, no colour, no number) and the orange
-     * counter only for lines addressed to the person. Drawn here because the core's emblems and seals fill its own tab headers, not an extension's.
-     */
-    private paintMarks(channelId: string): void {
-      const m = marks.of(channelId)
-      const plain = Math.max(0, m.unread - m.toMe)
-      // The orange counter: how many lines are for her and how many reactions ask her (the plain lines stay the quiet ring, no number).
-      const asks = marks.asksOf(channelId).length
-      const owed = marks.owedOf(channelId).length
-      const n = m.toMe + asks + owed
-      this.ring.hidden = plain === 0
-      this.ring.title = plain > 0 ? unreadLabel(plain) : ''
-      this.dot.hidden = n === 0
-      this.dot.textContent = n > 0 ? String(n > 99 ? '99+' : n) : ''
-      this.dot.title = m.toMe > 0 ? forYouLabel(m.toMe) : waitsLabel(asks, owed)
-      this.element.dataset.mark = n > 0 ? 'me' : plain > 0 ? 'plain' : ''
-    }
-    init(p: GroupPanelPartInitParameters): void {
-      const paneId = p.api.id
-      const channelId = channelIdOfPane(paneId)
-      const close = el('button', 'close')
-      close.title = 'Fechar painel'; close.setAttribute('aria-label', 'Fechar painel')
-      close.append(glyph('x'))
-      close.addEventListener('pointerdown', ev => ev.stopPropagation())
-      close.addEventListener('click', ev => { ev.stopPropagation(); ui.panes.close(paneId) })
-      this.title.textContent = p.api.title ?? `#${channelIdOfPane(paneId)}`
-      p.api.onDidTitleChange(() => { this.title.textContent = p.api.title ?? '' })
-      this.element.dataset.channel = channelId
-      this.element.append(glyph('chats-circle'), this.title, this.ring, this.dot, close)
-      this.element.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); ui.panes.showTabMenu(paneId, ev.clientX, ev.clientY) })
-      this.paintMarks(channelId)
-      this.sub = marks.onDidChange(() => this.paintMarks(channelId))
-    }
-    dispose(): void { this.sub?.dispose() }
-  }
-
-  const paneOptions = (channelId: string, name?: string) =>
-    ({ id: channelPaneId(channelId), component: CHANNEL_COMPONENT, tabComponent: CHANNEL_TAB, title: `#${name ?? channelId}`, params: { channelId } })
-  const open = (channelId: string, name?: string): void => {
-    const id = channelPaneId(channelId)
-    if (ui.panes.find(id)) { ui.panes.reveal(id); return }
-    ui.panes.open(paneOptions(channelId, name))
-  }
-  const openOn = (channelId: string, deskId: string, name?: string): boolean => {
-    if (ui.panes.find(channelPaneId(channelId))) return false
-    return ui.panes.openOnDesk(paneOptions(channelId, name), deskId) !== undefined
-  }
-
-  // The palette's rows to react to the focused speech (what has a key has a menu): they act on the channel pane that is active.
-  const activeChannelPane = (): ChannelPane | undefined => {
-    const id = ui.panes.activeId()
-    return id !== undefined && id.startsWith(CHANNEL_PANE_PREFIX) ? tabOf(channelIdOfPane(id)) : undefined
-  }
-
-  const mountEmbed = (host: HTMLElement, channelId: string, opts: EmbedOptions = {}): EmbeddedChannel => {
+  /** The channel's view outside a tab (the Regency's centre): the same view, with no tab of its own. */
+  const mountEmbed = (place: HTMLElement, channelId: string, opts: EmbedOptions = {}): EmbeddedChannel => {
     const view = new ChannelPane()
     const name = (): string | undefined => { const c = channelList().find(x => x.id === channelId); return c ? `#${c.name}` : undefined }
-    host.append(view.element)
+    place.append(view.element)
     view.attach({
       kind: 'embed', id: channelPaneId(channelId),
       title: name,
       setTitle: () => {},
-      showMenu: (x, y) => ui.menus.context(x, y, view.menuRows(channelPaneId(channelId)) as ContextMenuEntry[]),
+      showMenu: (x, y) => host.menu(x, y, view.menuRows(channelPaneId(channelId)) as ContextMenuEntry[]),
     }, channelId, opts)
     let gone = false
     return {
@@ -2740,50 +2686,28 @@ export function createChannelPanes(ui: TetherUi, marks: Marks, channelList: () =
       },
     }
   }
-  const inChannel = (ctx: { paneType?: string }): boolean => ctx.paneType === type.id
-  const reactRows = [
-    { id: REACT_COMMAND, title: 'Reagir à fala focada…', run: (p: ChannelPane) => p.reactFocused(undefined) },
-    { id: `${REACT_COMMAND}.last`, title: 'Reagir à última fala…', run: (p: ChannelPane) => p.reactFocused(undefined, true) },
-    ...FIVE.map(f => ({
-      id: `${REACT_COMMAND}.${f.name}`, title: `Reagir à fala focada: ${f.emoji} ${f.label}`, run: (p: ChannelPane) => p.reactFocused(f.emoji),
-    })),
+  // The daemon half's events go to the views of their channel.
+  const disposables: HostDisposable[] = [
+    host.onEvent<LineEvent>('line', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onLine(ev) }),
+    host.onEvent<ChannelEvent>('channel', ev => { for (const p of live) if (p.channelId === ev.channel.id) p.onChannel() }),
+    host.onEvent<ReactionEvent>('reaction', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onReaction(ev) }),
+    host.onEvent<PollEvent>('poll', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onPoll(ev) }),
+    // Only a host with thin notices sends this one (the app's daemon half never does: it sends the four above).
+    host.onEvent<{ channelId: string }>('stale', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onStale() }),
   ]
 
-  const disposables: Disposable[] = [
-    // The palette's row to open a poll (what has a key has a menu): it acts on the channel pane that is active.
-    ui.commands.register({
-      id: POLL_COMMAND_ID, title: 'Abrir enquete…', group: 'Canais', icon: 'chats-circle', when: inChannel,
-      run: (): void => { activeChannelPane()?.openPollForm() },
-    }),
-    ui.commands.register(...reactRows.map(r => ({
-      id: r.id, title: r.title, group: 'Canais', icon: 'chats-circle', when: inChannel, ignoreRepeat: true,
-      run: (): void => { const p = activeChannelPane(); if (p) r.run(p) },
-    }))),
-    ui.panes.register({
-      ...type, hasSlot: false, icon: 'chats-circle',
-      create: () => new ChannelPane(),
-      createTab: () => new ChannelTab() as unknown as ITabRenderer,
-      has: id => id.startsWith(CHANNEL_PANE_PREFIX) && tabOf(channelIdOfPane(id)) !== undefined,
-      // The channel's one menu, from `channelMenu` (texts.ts): the tab's right click and the bar's "⋯" both land here.
-      // The menu takes headings (the core's `fromExtMenu`); only the declared parameter type of `context` leaves them out.
-      tabMenu: (id, x, y) => ui.menus.context(x, y, (tabOf(channelIdOfPane(id))?.menuRows(id) ?? []) as ContextMenuEntry[]),
-    }),
-    ui.daemon.onEvent<LineEvent>('line', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onLine(ev) }),
-    ui.daemon.onEvent<ChannelEvent>('channel', ev => { for (const p of live) if (p.channelId === ev.channel.id) p.onChannel() }),
-    ui.daemon.onEvent<ReactionEvent>('reaction', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onReaction(ev) }),
-    ui.daemon.onEvent<PollEvent>('poll', ev => { for (const p of live) if (p.channelId === ev.channelId) p.onPoll(ev) }),
-  ]
-
-  // Test hooks: text and flags of a pane, plus the minimum to drive it (open, scroll, ask the daemon as the app does).
-  // Read at window.__tether.ext.channels.<name>.
-  ui.test.expose('open', open)
-  ui.test.expose('view', (channelId: string): PaneSnapshot | undefined => paneOf(channelId)?.snapshot())
-  // The embedded view of a channel (the Regency's centre), apart from its tab.
-  ui.test.expose('embedView', (channelId: string): PaneSnapshot | undefined => [...live].find(p => p.channelId === channelId && p.kind === 'embed')?.snapshot())
-  ui.test.expose('wearEmblem', (paneId: string, emblemId: string | undefined): void => { ui.panes.find(paneId)?.api.updateParameters({ emblem: emblemId }) })
-  ui.test.expose('kept',(channelId: string): boolean => kept.has(channelId))
-  ui.test.expose('scrollTo', (channelId: string, top: number): void => paneOf(channelId)?.scrollTo(top))
-  ui.test.expose('loadOlder', (channelId: string): Promise<void> => paneOf(channelId)?.olderNow() ?? Promise.resolve())
-
-  return { disposables, open, openOn, snapshot: channelId => paneOf(channelId)?.snapshot(), mountEmbed }
+  return {
+    disposables,
+    /** The view's class: `new View()` then `init` (a tab's content) or `attach`; `mountEmbed` does both for an embedded one. */
+    View: ChannelPane,
+    /** The view of a channel, the tab before an embedded one. */
+    paneOf,
+    /** Only the tab's view. */
+    tabOf,
+    /** Only the embedded view. */
+    embedOf: (channelId: string): ChannelPane | undefined => [...live].find(p => p.channelId === channelId && p.kind === 'embed'),
+    /** Whether the channel's place is kept in memory (its view went). */
+    isKept: (channelId: string): boolean => kept.has(channelId),
+    mountEmbed,
+  }
 }
