@@ -47,6 +47,11 @@ export const OP_CODES = {
   'attention.watch': 0x0101,
   'channels.marks': 0x0200,
   'channels.page': 0x0201,
+  'channels.say': 0x0202,
+  'channels.react': 0x0203,
+  'channels.vote': 0x0204,
+  'channels.poll': 0x0205,
+  'channels.seen': 0x0206,
   'regency.tree': 0x0300,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
@@ -82,11 +87,27 @@ export const OP_TABLE = {
   'attention.list': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'attention.watch': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   // The three reads of an extension (step 3.4a): each reaches the pipe as the ONE `ext-request` its pair names in
-  // src/remoted/gate.ts EXT_READS (a closed list by op), never as a request the device spells.
+  // src/remoted/reach.ts EXT_READS (a closed list by op), never as a request the device spells.
   // The channels' marks as tetherd computes them (ext `channels`, `marks`).
   'channels.marks': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
   // One page of a channel, the latest or the one before a cursor (ext `channels`, `history`).
   'channels.page': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, body: ['channel', 'before', 'limit'], pipe: ['ext-request'] },
+  // The person talks from afar (step 4.2a): each line reaches the pipe as the ONE `ext-request` its pair names in
+  // src/remoted/reach.ts EXT_WRITES, the person as moderator (extensions/channels/daemon/requests.ts gate `person`). Class
+  // `unlocked` (fio-spec 7.3: "ler, conversar, reagir, votar"), so a device without a presence credential gets 0x05 (E-8).
+  // The bodies are checked field by field by src/remote/talk.ts before the pipe; no attachment on `say` (step 4.3).
+  // A speech, to every member of the channel (`to`: the names it is addressed to, an address, not a filter).
+  'channels.say': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'text', 'to'], pipe: ['ext-request'] },
+  // A reaction on one message, added or (`remove: true`) taken back: explicit, so a repeat changes nothing.
+  'channels.react': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'seq', 'reaction', 'remove'], pipe: ['ext-request'] },
+  // The person's vote on a poll that calls her, by the option's number.
+  'channels.vote': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'poll', 'vote', 'reason'], pipe: ['ext-request'] },
+  // A poll the person opens.
+  'channels.poll': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'question', 'options', 'to', 'timeoutMs'], pipe: ['ext-request'] },
+  // The person saw a channel up to `seq`. It changes state (her marks, on every screen), so it needs an actId and a
+  // credential; it is NO gesture: the screen sends it on its own when lines come into view, and a phone left open on a
+  // channel that keeps talking must still lock when idle (E-11).
+  'channels.seen': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: false, body: ['channel', 'seq'], pipe: ['ext-request'] },
   // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`).
   'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },

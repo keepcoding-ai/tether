@@ -42,6 +42,12 @@ export interface Limits {
    */
   gesturesPerDevicePerMin: number
   /**
+   * Speeches (channels.say) per minute per device (RR4 4.2a). The channels' rules pace a reaction, a vote change and a poll,
+   * never a speech, and a speech reaches every agent of the channel: its own ceiling, which stays when the gestures' grows
+   * (typing in a terminal will be a gesture too). Refused with `limit` and `slow-down`; it counts as a strike like the others.
+   */
+  speechPerDevicePerMin: number
+  /**
    * Requests refused by the two rates above, within one minute, before the session is closed (CLOSE 0x07). Five is the
    * number of attempts a pairing ticket tolerates (plano §2): enough for a bug or a retry, not for insisting.
    */
@@ -86,6 +92,7 @@ export const LIMITS: Readonly<Limits> = Object.freeze({
   houseQueueBytesMax: 8 * 1024 * 1024,
   reqPerDevicePerMin: 120,
   gesturesPerDevicePerMin: 30,
+  speechPerDevicePerMin: 30,
   strikesMax: 5,
   renewMinGapS: 20 * 3600,
   renewMinAgeS: ADMIT_TTL_S / 2,
@@ -106,19 +113,25 @@ export type LimitVerdict = 'ok' | 'limit' | 'close'
  * instants per list), so a device cannot grow it. A refused request does not count against the window (the device
  * recovers when it stops) but is a strike; the strikes also slide over a minute.
  */
+type LimiterLimits = Pick<Limits, 'reqPerDevicePerMin' | 'gesturesPerDevicePerMin' | 'strikesMax'> & Partial<Pick<Limits, 'speechPerDevicePerMin'>>
+
 export class DeviceLimiter {
-  readonly #lim: Pick<Limits, 'reqPerDevicePerMin' | 'gesturesPerDevicePerMin' | 'strikesMax'>
+  readonly #lim: LimiterLimits
   readonly #reqs: number[] = []
   readonly #gestures: number[] = []
+  readonly #speech: number[] = []
   readonly #strikes: number[] = []
 
-  constructor(lim: Pick<Limits, 'reqPerDevicePerMin' | 'gesturesPerDevicePerMin' | 'strikesMax'> = LIMITS) { this.#lim = lim }
+  constructor(lim: LimiterLimits = LIMITS) { this.#lim = lim }
 
   /** Every request, before it is looked at. */
   request(nowMs: number): LimitVerdict { return this.#take(this.#reqs, this.#lim.reqPerDevicePerMin, nowMs) }
 
   /** A request the gate let through whose line is a gesture. */
   gesture(nowMs: number): LimitVerdict { return this.#take(this.#gestures, this.#lim.gesturesPerDevicePerMin, nowMs) }
+
+  /** A new speech (not a repeat of an act already done), once the body is checked. */
+  speech(nowMs: number): LimitVerdict { return this.#take(this.#speech, this.#lim.speechPerDevicePerMin ?? LIMITS.speechPerDevicePerMin, nowMs) }
 
   #take(list: number[], max: number, nowMs: number): LimitVerdict {
     prune(list, nowMs)

@@ -14,8 +14,9 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import { setPortalCredential } from '../../src/daemon/handshake.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { EXT_READS, EXT_WRITES, PIPE_REACH, REMOTE_EXT_PAIRS, type ExtReadOp, type PipeType } from '../../src/remoted/gate.ts'
+import { EXT_READS, EXT_WRITES, PIPE_REACH, REMOTE_EXT_PAIRS, type ExtReadOp, type ExtWriteOp, type PipeType } from '../../src/remoted/gate.ts'
 import { pipeReads, type ExtRequestFn } from '../../src/remoted/reads.ts'
+import { pipeWrites } from '../../src/remoted/writes.ts'
 import { removeHome, uniquePipe } from './daemon.helpers.ts'
 import { benchHome, until } from './remoted.helpers.ts'
 
@@ -24,7 +25,8 @@ const denied = (e: unknown): boolean => e instanceof DaemonError && e.code === '
 
 /** The handlers of two bench extensions: the reads of the reach and writes beside them, each recording who called. */
 const HANDLERS: Record<string, readonly string[]> = {
-  channels: ['marks', 'history', 'say', 'react', 'seen'],
+  // The reads and the person's speech of the reach, and beside them what manages a channel (outside it).
+  channels: ['marks', 'history', 'say', 'react', 'vote', 'poll', 'seen', 'create', 'mute', 'poll-close'],
   regency: ['tree.read', 'tree.publish'],
 }
 const NEVER = Object.entries(PIPE_REACH).filter(([, r]) => r === 'never').map(([t]) => t as PipeType)
@@ -69,13 +71,13 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
   test('a pair outside the reach is refused, its handler never runs, and the pipe stays up', async () => {
     calls.length = 0
     const from = logs.length
-    for (const [ext, name] of [['channels', 'say'], ['channels', 'react'], ['channels', 'seen'], ['regency', 'tree.publish'], ['remote', 'device.revoke'], [MARKER, MARKER], ['channels', 7], [undefined, 'marks'], ['channels', '__proto__']] as const)
+    for (const [ext, name] of [['channels', 'create'], ['channels', 'mute'], ['channels', 'poll-close'], ['regency', 'tree.publish'], ['remote', 'device.revoke'], [MARKER, MARKER], ['channels', 7], [undefined, 'marks'], ['channels', '__proto__']] as const)
       await assert.rejects(remote.request({ t: 'ext-request', ext, name, args: { text: MARKER } } as never), denied, `${String(ext)} ${String(name)}`)
     assert.deepEqual(calls, [], 'no handler ran')
     assert.ok(Array.isArray((await remote.request({ t: 'list' })).slots), 'the same connection still answers')
     const lines = logs.slice(from)
     assert.equal(lines.filter((l) => l === 'remote client: an ext-request outside its reach refused').length, 9, lines.join('\n'))
-    assert.equal(lines.some((l) => l.includes(MARKER) || /say|tree\.publish|device\.revoke/.test(l)), false, 'the log names no extension, request nor argument')
+    assert.equal(lines.some((l) => l.includes(MARKER) || /create|mute|poll-close|tree\.publish|device\.revoke/.test(l)), false, 'the log names no extension, request nor argument')
   })
 
   test('every pair of the reach passes and reaches its handler as remote', async () => {
@@ -120,6 +122,11 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
     calls.length = 0
     for (const op of Object.keys(EXT_READS) as ExtReadOp[]) assert.deepEqual(await reads.read(op, {}), { ext: EXT_READS[op].ext, name: EXT_READS[op].name }, op)
     assert.deepEqual(calls.map((c) => c.client), Object.keys(EXT_READS).map(() => 'remote'))
+    // The same for the portal's write path: every pair of EXT_WRITES reaches its handler as remote.
+    const writes = pipeWrites(request)
+    calls.length = 0
+    for (const op of Object.keys(EXT_WRITES) as ExtWriteOp[]) assert.deepEqual(await writes.write(op, {}).answer, { ext: EXT_WRITES[op].ext, name: EXT_WRITES[op].name }, op)
+    assert.deepEqual(calls.map((c) => [c.name, c.client]), Object.values(EXT_WRITES).map((p) => [p.name, 'remote']))
     // And the reach tetherd enforces is exactly what the portal's tables list: the reads, then the writes.
     assert.deepEqual(REMOTE_EXT_PAIRS, [...Object.values(EXT_READS), ...Object.values(EXT_WRITES)])
   })

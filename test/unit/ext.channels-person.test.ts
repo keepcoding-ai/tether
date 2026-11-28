@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
 import { USER } from '../../extensions/channels/rules.ts'
+import { EXT_WRITES, REMOTE_EXT_PAIRS } from '../../src/remoted/reach.ts'
 
 type Handler = (args: unknown, ctx: unknown) => Promise<unknown>
 const PERSON = ['say', 'react', 'vote', 'poll', 'seen'] as const
@@ -76,6 +77,13 @@ describe('channels requests: the person talks from afar', () => {
       for (const name of PERSON) await assert.rejects(b.ask(name, client), code('not-moderator'), `${client} ${name}`)
     assert.deepEqual(b.calls, [])
     b.done()
+  })
+
+  test("the talking requests are exactly the channels' pairs of EXT_WRITES (what the portal may send and tetherd lets through)", () => {
+    const pairs = Object.values(EXT_WRITES).filter((p) => p.ext === 'channels').map((p) => p.name).sort()
+    assert.deepEqual(pairs, [...PERSON].sort())
+    assert.equal(Object.values(EXT_WRITES).every((p) => p.ext === 'channels'), true)
+    for (const name of MANAGE) assert.equal(REMOTE_EXT_PAIRS.some((p) => p.ext === 'channels' && p.name === name), false, `${name}: never in the reach`)
   })
 
   test('every request the file registers is either talking or managing or a read: none escapes the lists', () => {

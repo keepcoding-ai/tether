@@ -84,8 +84,17 @@ export interface RemoteProfile {
   default?: boolean
 }
 
+/**
+ * The refusals of a channel's write (step 4.2a), by the codes tetherd's rules use (src/remote/talk.ts TALK_REFUSALS gives
+ * each its status), and the portal's own: `timeout` (tetherd did not answer in time: the act may or may not have happened;
+ * the same actId later gets the real answer), `busy` (the writes in flight are at their ceiling: nothing was sent).
+ */
+export const TALK_ERROR_CODES = [
+  'unknown-channel', 'unknown-line', 'unknown-poll', 'slow-down', 'bad-reaction', 'bad-option', 'too-long', 'closed', 'too-old',
+  'not-a-message', 'poll-closed', 'not-called', 'vote-first', 'limit', 'nobody-called', 'timeout', 'busy',
+] as const
 /** The error codes a body may carry; nothing else of a failure goes out. `too-large`: a read whose body passes READ_BODY_MAX. */
-export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large'] as const
+export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large', ...TALK_ERROR_CODES] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
 // ---- sources (what the portal holds; structural, so the pipe's types fit without being imported) -----------------
@@ -299,7 +308,7 @@ const FORMAT_RE = /[؜​‌‎‏‪-‮⁠-⁤⁦-⁩﻿]/g
 /** A zero-width joiner that does not join two emoji: an emoji sequence (👩‍💻) keeps its joiner, a word loses it. */
 const LONE_ZWJ_RE = /(?<![\p{Extended_Pictographic}\p{Emoji_Modifier}️])‍|‍(?!\p{Extended_Pictographic})/gu
 /** Text of many lines (a line's body, an emoji): no controls but the line breaks, no bidi, no zero-width but an emoji's joiner. */
-const multiline = (s: string): string => s.replace(BODY_CTRL_RE, '').replace(FORMAT_RE, '').replace(LONE_ZWJ_RE, '')
+export const multiline = (s: string): string => s.replace(BODY_CTRL_RE, '').replace(FORMAT_RE, '').replace(LONE_ZWJ_RE, '')
 const ROLES = ['owner', 'member', 'moderator', 'system'] as const
 const LINE_EVENTS = ['create', 'join', 'leave', 'remove', 'mute', 'unmute', 'close', 'reopen', 'owner-ended', 'owner-changed', 'poll-close'] as const
 const FIRST_WHY = ['to-you', 'reaction-asks', 'poll-owed'] as const
@@ -609,6 +618,61 @@ export function channelsPage(s: PageSource): ChannelPage {
   )
 }
 
+// ---- the person's writes (step 4.2a): channels.say, react, vote, poll, seen
+// Their sources are tetherd's answers to the person's requests (extensions/channels/daemon/requests.ts), unknown JSON:
+// each projector keeps what the screen needs and nothing of the line written (its body, the receipts of the delivery).
+
+/** A speech: where it landed. */
+export interface Said { seq: number }
+/** A reaction: whether it changed anything (a repeat does not), and the emoji as the channel keeps it. */
+export interface Reacted { changed: boolean; emoji: string; name?: string }
+/**
+ * A vote: whether it changed anything, the option counted, and the poll's card as channels.page draws it (`open` with the
+ * votes now, or `result` when this vote was the last one and closed it).
+ */
+export interface Voted { changed: boolean; option: number; state: PagePollState }
+/** Why a called agent does not hear the poll now (it gets it when it is back, if the poll is still open). */
+export const DEAF_WHY = ['asleep', 'stopped', 'with-user'] as const
+/** A poll opened: its line, its card (`open`), and the called agents that do not hear it now. */
+export interface PollOpened { seq: number; state: PagePollState; deaf: (Person & { why: (typeof DEAF_WHY)[number] })[] }
+/** The person's mark of the channel after a "seen" (it only goes up). */
+export interface SeenMark { seenByUser: number }
+/** What tetherd answered to the write. */
+export interface WriteSource { answer: unknown }
+
+function said(s: WriteSource): Said {
+  return { seq: int(rec(rec(s.answer).line).seq, 1) ?? 0 }
+}
+
+function reacted(s: WriteSource): Reacted {
+  const a = rec(s.answer)
+  return opt<Reacted>(
+    { changed: a.changed === true, emoji: typeof a.emoji === 'string' ? multiline(a.emoji).slice(0, 32) : '' },
+    { name: typeof a.name === 'string' && KIND_RE.test(a.name) ? a.name : undefined },
+  )
+}
+
+function voted(s: WriteSource): Voted {
+  const a = rec(s.answer)
+  const result = a.result ? pollOutcome(a.result) : undefined
+  const seq = int(rec(a.poll).seq, 1) ?? result?.poll ?? 0
+  const state = result
+    ? opt<PagePollState>({ seq, result }, { closedAt: iso(a.closedAt) })
+    : opt<PagePollState>({ seq }, { open: pollOpen(a.poll) })
+  return { changed: a.changed === true, option: int(a.option, 1, 6) ?? 0, state }
+}
+
+function pollOpened(s: WriteSource): PollOpened {
+  const a = rec(s.answer)
+  const seq = int(a.seq, 1) ?? 0
+  const deaf = arr(a.deaf, 64).flatMap((d0) => { const why = oneOf(rec(d0).why, DEAF_WHY); return why ? [{ ...person(d0), why }] : [] })
+  return { seq, state: opt<PagePollState>({ seq }, { open: pollOpen(a.poll) }), deaf }
+}
+
+function seenMark(s: WriteSource): SeenMark {
+  return { seenByUser: int(rec(s.answer).seenByUser) ?? 0 }
+}
+
 // ---- regency.tree
 
 /**
@@ -804,6 +868,11 @@ export const RESULTS = {
   'attention.watch': attentionList,
   'channels.marks': channelsMarks,
   'channels.page': channelsPage,
+  'channels.say': said,
+  'channels.react': reacted,
+  'channels.vote': voted,
+  'channels.poll': pollOpened,
+  'channels.seen': seenMark,
   'regency.tree': regencyTree,
   'device.list': unbuilt,
   'device.revoke': empty,

@@ -54,6 +54,8 @@ export const ROUTES_PER_HOUSE = 32
 export const SESSIONS_PER_DEVICE = 3
 export const ACT_CACHE_MAX = 1024
 export const ACT_CACHE_TTL_MS = 15 * 60 * 1000
+/** Bytes of the answers one device's act cache keeps (RR4 4.2a: a write's answer carries a poll's card); past it, the oldest go. */
+export const ACT_CACHE_BYTES_MAX = 512 * 1024
 
 export const AUD_MAX = 253
 export const WS_SUBPROTOCOL = 'tether-remote.v1'

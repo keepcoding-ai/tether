@@ -25,6 +25,7 @@ import { PORTAL_EXIT, webRelyingParty, type FromPortal, type PortalAsk, type ToP
 import { KEY_FILES, loadKeys } from './keyfiles.ts'
 import { makeNotice } from './notice.ts'
 import { pipeReads } from './reads.ts'
+import { pipeWrites } from './writes.ts'
 import { audOf, RelayLink } from './relay.ts'
 
 const home = tetherHome()
@@ -142,8 +143,10 @@ async function main(): Promise<void> {
   const regencyGap = knob('TETHER_TEST_REMOTE_REGENCY_GAP_MS')
   const house = new House({
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
-    // The class `ext-read` of PIPE_REACH: the only path from a device to tetherd's extensions (./reads.ts).
+    // The class `ext-read` of PIPE_REACH: the only paths from a device to tetherd's extensions, the reads (./reads.ts) and,
+    // apart, with slots of their own, the person's speech (./writes.ts).
     reads: pipeReads((body) => client.request(body)),
+    writes: pipeWrites((body) => client.request(body), { log }),
     userHome: homedir(),
     ...(channelsGap !== undefined || regencyGap !== undefined
       ? { noticeGapsMs: { ...(channelsGap !== undefined ? { channels: channelsGap } : {}), ...(regencyGap !== undefined ? { regency: regencyGap } : {}) } }

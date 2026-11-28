@@ -126,10 +126,10 @@ describe('pipeReads: the one place of the portal that sends ext-request', () => 
     assert.equal(await flaky.get(), 'ok', 'a failure is not kept')
   })
 
-  test("no other file of the portal names ext-request: the class has one door", async () => {
+  test("no other file of the portal names ext-request: the class has two doors, the reads and the writes", async () => {
     for (const f of await readdir(join(ROOT, 'src', 'remoted'))) {
       // reach.ts classifies ext-request (the table tetherd enforces too); it sends nothing.
-      if (!f.endsWith('.ts') || f === 'reads.ts' || f === 'gate.ts' || f === 'reach.ts') continue
+      if (!f.endsWith('.ts') || f === 'reads.ts' || f === 'writes.ts' || f === 'gate.ts' || f === 'reach.ts') continue
       const src = (await readFile(join(ROOT, 'src', 'remoted', f), 'utf8')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
       assert.equal(/ext-request/.test(src), false, `${f} names ext-request`)
     }

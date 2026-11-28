@@ -25,10 +25,12 @@ import {
   emptyBody, errorBody, eventBody, PAGE_LINES_MAX, READ_BODY_MAX, regencyChanged, resultBody, type EventSource, type MarksSource, type RegencyChanged,
 } from '../remote/projection.ts'
 import type { AttentionView } from './attention.ts'
-import { EXT_READS, FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp } from './gate.ts'
+import { isTalkRefusal, TALK_REFUSALS, talkArgs, type TalkOp } from '../remote/talk.ts'
+import { EXT_READS, FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp, type ExtWriteOp } from './gate.ts'
 import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import { ReadError, SharedRead, type PipeReads } from './reads.ts'
+import { PIPE_WRITE_TIMEOUT_MS, WriteError, type PipeWrites, type WriteOutcome } from './writes.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
 import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
 
@@ -39,8 +41,14 @@ const HEX32 = /^[0-9a-f]{32}$/
 /** A channel's id as the store makes them (`c_…`, `desk_…`): the only argument a page sends tetherd besides two numbers. */
 const CHANNEL_ID = /^[\w.:-]{1,64}$/
 
-/** What one handler answers: the status, the body, and the audit's result when it says more than the status. */
-interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean }
+/**
+ * What one handler answers: the status, the body, and the audit's result when it says more than the status. `final: false`:
+ * an answer the act cache must not keep for its actId (nothing was sent, or the outcome is not known yet; a write keeps
+ * its real outcome itself, #extWrite).
+ */
+interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean; final?: false; closeSession?: true }
+/** An act done, as the act cache keeps it: its op too, so its actId never answers for another op. */
+interface DoneAct { op: number; status: ResStatus; body: Bytes }
 type ProofVerdict = { ok: true; purpose: UvPurposeName } | { ok: false; status: ResStatus; audit: string; lockout?: boolean }
 
 /** Old ticket denied this long after a renewal (spec 5.5). The limits are all in ./limits.ts. */
@@ -81,6 +89,10 @@ export interface HouseDeps {
   presenceClock?: Partial<PresenceClock>
   /** The reads of tetherd's extensions (./reads.ts). Absent: the three read lines answer `not-implemented`. */
   reads?: PipeReads
+  /** The writes to tetherd's extensions (./writes.ts): the person's speech. Absent: the five write lines answer `not-implemented`. */
+  writes?: PipeWrites
+  /** How long a repeat of a write still in flight waits for its outcome (the write path's deadline; a bench lowers both). */
+  writeTimeoutMs?: number
   /** Bench: shorter gaps between the thin notices (./feeds.ts). */
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
   /** The person's home folder (os.homedir()): it becomes `~` in the titles and names the reads carry (projection.ts pathsOut). */
@@ -88,7 +100,12 @@ export interface HouseDeps {
 }
 
 interface DeviceMem {
-  acts: ActCache<{ status: ResStatus; body: Bytes }>
+  acts: ActCache<DoneAct>
+  /**
+   * The writes of this device still waiting for tetherd, by actId (hex): a repeat of one waits for its outcome instead of
+   * speaking again. At most the writes the pipe holds (PIPE_WRITES_MAX + PIPE_WRITES_LATE_MAX, every device together).
+   */
+  pending: Map<string, Promise<DoneAct>>
   limiter: DeviceLimiter
   sessions: Set<SessionRoute>
   /** A revocation started: nothing more is issued to this device. */
@@ -477,7 +494,7 @@ export class House {
   #memOf(deviceId: string): DeviceMem {
     let m = this.#mem.get(deviceId)
     if (!m) {
-      m = { acts: new ActCache(), limiter: new DeviceLimiter(this.#lim), sessions: new Set(), revoking: false, presence: new DevicePresence(this.#clock) }
+      m = { acts: new ActCache<DoneAct>({ sizeOf: (d) => d.body.length }), pending: new Map(), limiter: new DeviceLimiter(this.#lim), sessions: new Set(), revoking: false, presence: new DevicePresence(this.#clock) }
       this.#mem.set(deviceId, m)
     }
     return m
@@ -579,10 +596,12 @@ export class House {
       if (gestureRate !== 'ok') return this.#overRate(s, req, 'gesture', gestureRate)
     }
     if (req.actId) {
-      const done = mem.acts.get(req.actId, nowMs)
+      // An actId names one act of one op: the same id on another op is a malformed request, never that act's answer.
+      const done = mem.acts.get(req.actId, nowMs) ?? (await this.#pendingAct(mem, req.actId, req.op))
       if (done) {
-        if (audited(line)) this.#audit(line.name, 'replay', s.deviceId)
-        return this.#send(s, req.reqId, done.status, done.body)
+        const same = done.op === req.op
+        if (audited(line)) this.#audit(line.name, same ? 'replay' : statusName(RES_STATUS.badRequest), s.deviceId)
+        return same ? this.#send(s, req.reqId, done.status, done.body) : this.#send(s, req.reqId, RES_STATUS.badRequest, errorBody('bad-request'))
       }
     }
     let body: Record<string, unknown>
@@ -606,11 +625,13 @@ export class House {
     const { status, bytes } = served
     // Only an accepted gesture of the person resets the idle clock (E-11), never a refused one nor a read.
     if (status === RES_STATUS.ok && line.gesture) mem.presence.gesture(this.#d.now())
-    if (line.mutates && req.actId) mem.acts.put(req.actId, { status, body: bytes }, this.#d.now())
+    if (line.mutates && req.actId && served.final !== false) mem.acts.put(req.actId, { op: req.op, status, body: bytes }, this.#d.now())
     if (audited(line)) this.#audit(line.name, served.audit ?? statusName(status), s.deviceId, served.target)
     await this.#send(s, req.reqId, status, bytes)
     // The fifth invalid proof (spec 7.4 point 6): the answer goes, then every session of the device.
     if (served.lockout) await this.#closeDevice(s.deviceId, CLOSE.limit)
+    // A device that insists over its speech ceiling (limits.ts strikes): the answer goes, then this session, as #overRate.
+    else if (served.closeSession) this.#sessionEffects(s, await s.session.close(CLOSE.limit, this.#d.now()))
   }
 
   /** The handler of one request that passed the gate. Every body is built by the projector of its op (src/remote/projection.ts). */
@@ -634,6 +655,12 @@ export class House {
       case 'channels.page':
       case 'regency.tree':
         return this.#extRead(s, line.name, body, dv?.scopes ?? [])
+      case 'channels.say':
+      case 'channels.react':
+      case 'channels.vote':
+      case 'channels.poll':
+      case 'channels.seen':
+        return this.#extWrite(s, line.name, req, body)
       case 'admit.renew': return this.#renew(s, body)
       case 'device.revoke-self':
         // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
@@ -708,6 +735,75 @@ export class House {
     if (op === 'regency.tree') s.follows.regency = true
     else s.follows.channels = true
     return { status: RES_STATUS.ok, bytes }
+  }
+
+  /**
+   * One write of a daemon extension (the pairs of EXT_WRITES: the person's speech in a channel, step 4.2a). Order: the body
+   * checked field by field and the arguments rebuilt (src/remote/talk.ts), the speech's own ceiling, then the ONE pair of
+   * the line through the write path (./writes.ts), never the read path's slots. The device is answered by the deadline;
+   * the real outcome is kept for the actId whenever it comes (a repeat waits for it meanwhile, #pendingAct), so a resend
+   * after reconnecting never speaks twice. Nothing here keeps an answer that was not tetherd's: a refusal before the pipe
+   * or a `timeout` is `final: false`. The audit's target is the channel; the text never goes to it (M-10).
+   */
+  async #extWrite(s: SessionRoute, op: ExtWriteOp & TalkOp, req: Req, body: Record<string, unknown>): Promise<Served> {
+    const writes = this.#d.writes
+    if (!writes) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const checked = talkArgs(op, body)
+    if (typeof checked === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody(checked), final: false }
+    const target = checked.channel
+    const mem = this.#memOf(s.deviceId)
+    if (op === 'channels.say') {
+      const rate = mem.limiter.speech(this.#d.now())
+      if (rate !== 'ok') return { status: RES_STATUS.limit, bytes: errorBody('slow-down'), audit: `limit:speech`, target, final: false, ...(rate === 'close' ? { closeSession: true as const } : {}) }
+    }
+    const flight = writes.write(op, checked.args)
+    const id = req.actId ? toHex(req.actId) : undefined
+    const outcome = (o: WriteOutcome): Served => this.#written(op, o, target)
+    if (id && req.actId) {
+      const actId = req.actId
+      const kept = flight.settled.then((o): DoneAct => {
+        const sv = outcome(o)
+        // `limit`: never sent, so nothing to keep; any other outcome is the act's, whatever the device was told.
+        if (!(o.ok === false && o.error.why === 'limit')) mem.acts.put(actId, { op: req.op, status: sv.status, body: sv.bytes }, this.#d.now())
+        return { op: req.op, status: sv.status, body: sv.bytes }
+      })
+      mem.pending.set(id, kept)
+      void kept.finally(() => { if (mem.pending.get(id) === kept) mem.pending.delete(id) })
+    }
+    try {
+      return { ...outcome({ ok: true, result: await flight.answer }), final: false }
+    } catch (e) {
+      return { ...outcome({ ok: false, error: e instanceof WriteError ? e : new WriteError('failed') }), final: false }
+    }
+  }
+
+  /** The answer of a write's outcome: the line's projector on success, tetherd's code mapped by TALK_REFUSALS otherwise. */
+  #written(op: ExtWriteOp & TalkOp, o: WriteOutcome, target: string): Served {
+    if (o.ok) {
+      const bytes = resultBody(op, { answer: o.result })
+      return bytes.length > READ_BODY_MAX ? { status: RES_STATUS.failed, bytes: errorBody('too-large'), target } : { status: RES_STATUS.ok, bytes, target }
+    }
+    const e = o.error
+    if (e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', target }
+    if (e.why === 'timeout') return { status: RES_STATUS.failed, bytes: errorBody('timeout'), audit: 'timeout', target }
+    if (e.why === 'refused' && isTalkRefusal(e.code)) return { status: TALK_REFUSALS[e.code], bytes: errorBody(e.code), audit: `refused:${e.code}`, target }
+    this.#d.log(`write ${op}: ${e.message}`)
+    return { status: RES_STATUS.failed, bytes: errorBody('failed'), target }
+  }
+
+  /**
+   * The outcome of a write of this device still waiting for tetherd under the same actId, within one write's deadline; past
+   * it, `timeout` again (the act is NOT run a second time). Undefined when no write of that actId is waiting.
+   */
+  async #pendingAct(mem: DeviceMem, actId: Bytes, op: number): Promise<DoneAct | undefined> {
+    const waiting = mem.pending.get(toHex(actId))
+    if (!waiting) return undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<undefined>((r) => { timer = setTimeout(() => r(undefined), this.#d.writeTimeoutMs ?? PIPE_WRITE_TIMEOUT_MS) })
+    try {
+      const done = await Promise.race([waiting, late])
+      return done ?? { op, status: RES_STATUS.failed, body: errorBody('timeout') }
+    } finally { clearTimeout(timer) }
   }
 
   #presenceBody(s: SessionRoute): { presence: Presence; elevUntil: number } {

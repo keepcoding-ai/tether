@@ -70,6 +70,6 @@ export function gateEvent(line: EvtLine, c: Pick<GateContext, 'scopes' | 'presen
 
 // The reach of the pipe lives in ./reach.ts, the one source tetherd also enforces (src/daemon/server.ts).
 export {
-  EXT_READS, EXT_WRITES, extReadOf, PIPE_REACH, REMOTE_EXT_PAIRS, remoteMayRequest, remoteMaySend,
-  type ExtPair, type ExtReadLinesOf, type ExtReadOp, type ExtReadPair, type ExtRequestLinesOf, type ExtWriteOp, type PipeReach, type PipeType,
+  EXT_READS, EXT_WRITES, extReadOf, extWriteOf, PIPE_REACH, REMOTE_EXT_PAIRS, remoteMayRequest, remoteMaySend,
+  type ExtPair, type ExtReadLinesOf, type ExtReadOp, type ExtReadPair, type ExtRequestLinesOf, type ExtWriteLinesOf, type ExtWriteOp, type PipeReach, type PipeType,
 } from './reach.ts'
