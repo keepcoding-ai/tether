@@ -140,8 +140,8 @@ export function appCommands(host: CommandHost): Command[] {
     ...pane,
     run: () => host.duplicateActive({ level, placement: direction }),
   })))
-  // The empty pane: "Dividir à direita (vazio)" beside the pane (the chord), "Dividir na borda do quadro, à direita (vazio)"
-  // (no chord: the frame level's +Shift is taken), "Novo quadro vazio à direita" (a frame at the desk's edge).
+  // The empty pane: "Dividir à direita (vazio)" beside the pane (no default chord), "Dividir na borda do quadro, à direita (vazio)"
+  // (no chord either), "Novo quadro vazio à direita" (a frame at the desk's edge).
   const splits = (['pane', 'frame'] as const).flatMap(level => DIRECTIONS.map((direction: Direction): Command => ({
     id: `pane.split-empty.${level}.${direction}`,
     title: `${SPLIT_EMPTY_LABEL} ${LEVEL_WORDING[level]}${PLACEMENT_LABEL[direction]} ${EMPTY_SUFFIX}`,

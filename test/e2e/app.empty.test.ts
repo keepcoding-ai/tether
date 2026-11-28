@@ -147,7 +147,7 @@ test('app empty: chooser offers Vazio/Nota, empty panes by chord/command/dialog,
     // 2b. The palette command, with the shell as reference: an empty pane below it.
     await focusShell(page, shell!)
     const cmds = await page.evaluate(() => window.__tether.commands())
-    assert.equal(cmds.find(c => c.id === 'pane.split-empty.pane.right')?.hint, 'Ctrl+Shift+→')
+    assert.equal(cmds.find(c => c.id === 'pane.split-empty.pane.right')?.hint, '')
     assert.equal(cmds.find(c => c.id === 'pane.split-empty.pane.below')?.title, 'Dividir abaixo (vazio)')
     assert.ok(cmds.find(c => c.id === 'frame.new-empty.right')?.available && cmds.find(c => c.id === 'desk.new-empty')?.available)
     assert.equal(await page.evaluate(() => window.__tether.runCommand('pane.split-empty.pane.below')), 'ran')

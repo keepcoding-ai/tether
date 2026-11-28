@@ -151,13 +151,11 @@ describe('the commands and the chord of the empty pane', () => {
     assert.equal(byId.get('desk.new-empty')!.title, 'Nova mesa vazia')
   })
 
-  test('Ctrl+Shift+Arrow splits empty beside the pane (the frame and desk levels have no chord; Ctrl+Alt+N stays the desk\'s)', () => {
+  test('the empty splits have no default chord (Ctrl+Shift+Arrow is free; the existing chords stay)', () => {
     const r = new CommandRegistry(() => CTX)
     r.register(...list)
-    assert.equal(shortcutOf(key('ArrowRight', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.right')
-    assert.equal(shortcutOf(key('ArrowUp', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.above')
-    assert.equal(shortcutOf(key('ArrowDown', { ctrl: true, shift: true }), false), 'pane.split-empty.pane.below')
-    assert.equal(r.hint(byId.get('pane.split-empty.pane.right')!, false), 'Ctrl+Shift+→')
+    for (const k of ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown']) assert.equal(shortcutOf(key(k, { ctrl: true, shift: true }), false), undefined)
+    assert.equal(r.hint(byId.get('pane.split-empty.pane.right')!, false), '')
     assert.equal(r.hint(byId.get('pane.split-empty.frame.right')!, false), '')
     assert.equal(r.hint(byId.get('frame.new-empty.right')!, false), '')
     assert.equal(r.hint(byId.get('desk.new-empty')!, false), '')
@@ -180,8 +178,8 @@ describe('the commands and the chord of the empty pane', () => {
     assert.deepEqual(calls, ['splitEmpty {"level":"pane","placement":"left"} "add"', 'splitEmpty {"level":"frame","placement":"below"} "layout"', 'splitEmpty {"level":"desk","placement":"above"} "layout"', 'newEmptyDesk'])
   })
 
-  test('from a terminal the chord is the app\'s; inside a note every arrow chord is the editor\'s (Ctrl+Shift+→ selects by word)', () => {
-    assert.equal(terminalKeyOwner(key('ArrowRight', { ctrl: true, shift: true }), false).owner, 'app')
+  test('Ctrl+Shift+Arrow is no longer the app chord (the terminal keeps it); inside a note every arrow chord is the editor chord', () => {
+    assert.equal(terminalKeyOwner(key('ArrowRight', { ctrl: true, shift: true }), false).owner, 'terminal')
     assert.deepEqual(editorKeyOwner(key('ArrowRight', { ctrl: true, shift: true }), false), { owner: 'editor' })
     assert.deepEqual(editorKeyOwner(key('ArrowDown', { ctrl: true, shift: true }), false), { owner: 'editor' })
     assert.equal(editorKeyOwner(key('KeyT', { ctrl: true, shift: true }), false).owner, 'app')
