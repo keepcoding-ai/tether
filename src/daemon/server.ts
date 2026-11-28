@@ -14,7 +14,7 @@ import '../agents/load.ts'
 import { agentChoices, agentRegistry, isAgentName } from '../agents/registry.ts'
 import { shellAdapter } from '../agents/shell.ts'
 import type { AgentAdapter, LaunchPlan } from '../agents/types.ts'
-import type { AgentName, Binding, RunInfo, SlotMeta, TetherEvent } from '../core/event.ts'
+import type { AgentName, Binding, RunInfo, SlotMeta, SlotWant, TetherEvent } from '../core/event.ts'
 import { isSameProcess, pidExists, processStartTime } from '../core/liveness.ts'
 import { canonicalDir, pausePath, slotAnswerPath, slotAttentionPath, slotEventsPath, slotMetaPath, slotPauseReportPath, slotPauseRequestPath, slotRondaPath, slotRunPath, slotsDir } from '../core/paths.ts'
 import { cliScript } from '../core/tab-env.ts'
@@ -44,6 +44,7 @@ import {
   type SlotKind,
   type SlotState,
   type SlotStatus,
+  type StopWhy,
 } from './protocol.ts'
 import { killTree, spawnPty, type PtyExit, type PtyHandle } from './pty.ts'
 import { Scrollback } from './scrollback.ts'
@@ -63,7 +64,7 @@ import { DoorHost } from './door/host.ts'
 import { typingOf } from './door/typing.ts'
 import { DoorError, type DoorSeams, type InputMark, type InputOrigin, type SlotCreateInput, type SlotPort } from './door/port.ts'
 
-export const DAEMON_VERSION = '0.3.7'
+export const DAEMON_VERSION = '0.3.8'
 
 /** How long a claude/soul slot may stay 'starting' without its start event before it counts as running anyway. */
 const READY_FALLBACK_MS = 15_000
@@ -72,6 +73,10 @@ export const MEMORY_INTERVAL_MS = 60_000
 export { KILL_WAIT_CAP_MS, MIN_AGENT_AGE_MS }
 /** Agent processes allowed in 'starting' at the same time (PRD RA8); the rest wait as 'queued'. */
 export const MAX_STARTING = 3
+/** Boot relaunches of a `want: 'run'` slot in a row that did not prove healthy before the boot stops relaunching it. */
+export const MAX_BOOT_TRIES = 3
+/** A run that lived this long proved healthy (its slot's crash-loop count is cleared); checked at its exit, no timer. */
+export const BOOT_HEALTHY_MS = 60_000
 /** Keys held for a slot whose pty is not up yet (bytes); the excess is dropped and counted. */
 export const INPUT_QUEUE_MAX_BYTES = 64 * 1024
 
@@ -224,6 +229,13 @@ function guardOf(req: { waitMs?: unknown; force?: unknown }): GuardOptions {
   }
   if (g.force !== undefined && g.waitMs !== undefined) throw new RequestError('bad-request', 'escolha esperar (--wait) ou forçar (--force), não os dois')
   return g
+}
+
+/** A stop's `why`: absent is 'end' (the CLI, the door, clients from before it existed); anything else is refused. */
+function stopWhyOf(v: unknown): StopWhy {
+  if (v === undefined || v === 'end') return 'end'
+  if (v === 'hibernate' || v === 'suspend') return v
+  throw new RequestError('bad-request', 'why inválido: end, hibernate ou suspend')
 }
 
 class RequestError extends Error {
@@ -532,7 +544,7 @@ class DaemonImpl implements Daemon {
       create: async ({ meta, ...input }) => this.stateOf(await this.createSlot(input, meta)),
       start: async (slotId, choice) => {
         const slot = this.slot(slotId)
-        await this.startSlot(slot, choice)
+        await this.manualStart(slot, choice)
         return this.stateOf(slot)
       },
       stop: (slotId) => this.stopById(slotId),
@@ -672,9 +684,14 @@ class DaemonImpl implements Daemon {
     }
     this.server.on('error', (e) => this.log(`server error: ${e.message}`))
     // Hydration starts once the pipe is served, so the clients that connect first hear the loaded bindings.
-    this.booting = this.hydrateAll(adoptions.map((a) => a.slot), metas)
+    const hydration = this.hydrateAll(adoptions.map((a) => a.slot), metas)
+    this.booting = hydration
     await perf.timedAsync('boot:adopt', () => Promise.all(adoptions.map((a) => this.adoptSlot(a))))
     if (adoptions.length > 0) this.pump()
+    // Slots meant to run that nothing brought back (no adoption, no other tetherd): relaunched through the queue, off the
+    // boot's path. `hydrated()` settles once each of them is launched, queued or left alone.
+    const relaunch = this.relaunchAtBoot(metas, ownedElsewhere)
+    this.booting = Promise.all([hydration, relaunch]).then(() => undefined)
     // Only the owner of the pipe serves the channel (a loser of the race never gets here).
     try { this.log(`ronda channel served on 127.0.0.1:${await this.rondaChannel.listen()}`) }
     catch (e) { this.log(`ronda channel not served (${(e as Error).message}); the ronda is unavailable this run`) }
@@ -761,6 +778,7 @@ class DaemonImpl implements Daemon {
     if (slot.meta.createdBy) s.createdBy = slot.meta.createdBy
     if (slot.meta.paneRequest) s.paneRequest = slot.meta.paneRequest
     if (slot.meta.held) s.held = slot.meta.held
+    if (slot.meta.want) s.want = slot.meta.want
     this.door.decorate(slot.meta, s)
     return s
   }
@@ -1098,8 +1116,9 @@ class DaemonImpl implements Daemon {
       slot.spawnedAt = adopted.spawnedAt
       slot.status = 'running'
       slot.error = undefined
-      if (meta.endedAt) {
+      if (meta.endedAt || meta.want !== 'run') {
         delete meta.endedAt
+        meta.want = 'run'
         this.saveMeta(meta)
       }
       this.log(`slot ${meta.slotId}: adopted pid ${mine.pid} from the terminal-pane host (spawned ${adopted.spawnedAt})`)
@@ -1251,6 +1270,77 @@ class DaemonImpl implements Daemon {
     }))
   }
 
+  /**
+   * Boot: every slot whose intent is 'run' and that is not up (not adopted, not owned by another live tetherd) is started
+   * again, one after another in a stable order (creation time, then id), through the start queue (MAX_STARTING). An agent
+   * resumes only a CONFIRMED binding; without one it is left 'unconfirmed' for the user to choose (a guess can lose the
+   * conversation). A shell starts anew. A slot relaunched MAX_BOOT_TRIES times in a row without a healthy run is left
+   * exited. Legacy slots (no `want`) are never relaunched. A failing launch fails only its slot.
+   */
+  private async relaunchAtBoot(metas: SlotMeta[], ownedElsewhere: ReadonlySet<string>): Promise<void> {
+    const order = metas
+      .filter((m) => m.want === 'run' && !ownedElsewhere.has(m.slotId))
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.slotId < b.slotId ? -1 : a.slotId > b.slotId ? 1 : 0))
+    for (const m of order) {
+      if (this.closing) return
+      const slot = this.slotMap.get(m.slotId)
+      if (!slot || slot.meta.want !== 'run' || this.unavailableError(slot.meta)) continue
+      try {
+        await this.hydrate(slot) // the binding to resume comes from the events file
+        if (this.closing || this.slotMap.get(m.slotId) !== slot || slot.meta.want !== 'run') continue
+        if (isAlive(slot) || slot.preLaunch || slot.launching || slot.startPending || slot.status !== 'exited') continue // up, or a client started it first
+        const { meta } = slot
+        let choice: 'resume' | undefined
+        if (meta.agent !== 'shell') {
+          if (!slot.binding?.confirmed) {
+            slot.status = 'unconfirmed'
+            this.log(`slot ${meta.slotId}: meant to run, but its binding is not confirmed; not relaunched (the user chooses)`)
+            this.broadcastState(slot)
+            continue
+          }
+          choice = 'resume'
+        }
+        const tries = meta.bootTries ?? 0
+        if (tries >= MAX_BOOT_TRIES) {
+          this.log(`slot ${meta.slotId}: relaunched ${tries} boots in a row without a healthy run; not relaunched (a manual start resets it)`)
+          continue
+        }
+        meta.bootTries = tries + 1
+        this.saveMeta(meta)
+        await this.store.flush(slotMetaPath(this.home, meta.slotId)) // the try is on disk before the launch (a crash in it counts)
+        if (this.closing || this.slotMap.get(m.slotId) !== slot) continue
+        this.log(`slot ${meta.slotId}: relaunching at boot (${choice ? 'resume ' + slot.binding!.sessionId : 'new shell'}, try ${meta.bootTries})`)
+        this.startSlot(slot, choice).catch((e: Error) => this.log(`slot ${meta.slotId}: boot relaunch failed: ${e.message}`))
+      } catch (e) {
+        this.log(`slot ${m.slotId}: boot relaunch failed: ${(e as Error).message}`)
+      }
+    }
+  }
+
+  /** A start asked by a client or the door: an exited slot started by hand clears its crash-loop count first. */
+  private async manualStart(slot: Slot, choice: 'resume' | 'new' | undefined): Promise<void> {
+    if (slot.meta.bootTries !== undefined && !isAlive(slot) && !slot.preLaunch && !slot.launching && !slot.startPending && slot.status !== 'queued' && slot.status !== 'starting') {
+      delete slot.meta.bootTries
+      this.saveMeta(slot.meta)
+    }
+    await this.startSlot(slot, choice)
+  }
+
+  /** Records the slot's intent (meta.want); true when it changed (the meta is queued for the disk). */
+  private setWant(slot: Slot, want: SlotWant): boolean {
+    if (slot.meta.want === want) return false
+    slot.meta.want = want
+    this.saveMeta(slot.meta)
+    return true
+  }
+
+  /** The run proved healthy (it reported its session, or lived BOOT_HEALTHY_MS): the crash-loop count starts over. */
+  private clearBootTries(slot: Slot): void {
+    if (slot.meta.bootTries === undefined) return
+    delete slot.meta.bootTries
+    this.saveMeta(slot.meta)
+  }
+
   private slot(slotId: unknown): Slot {
     const s = typeof slotId === 'string' ? this.slotMap.get(slotId) : undefined
     if (!s) throw new RequestError('unknown-slot', `slot desconhecido: ${String(slotId)}`)
@@ -1317,6 +1407,7 @@ class DaemonImpl implements Daemon {
     if (!changed) return
     slot.binding = binding
     slot.title = binding?.title
+    if (slot.meta.bootTries !== undefined && isAlive(slot) && this.reportedThisRun(slot)) this.clearBootTries(slot) // a healthy run
     if (slot.status === 'starting' && binding && slot.spawnedAt && binding.since >= slot.spawnedAt) this.setRunning(slot) // broadcasts
     else if (broadcast) this.broadcastState(slot)
     this.unwatchTitle(slot) // the watch follows one binding; this one changed
@@ -1580,8 +1671,10 @@ class DaemonImpl implements Daemon {
     this.clearBackground(meta.slotId)
     slot.error = undefined
     slot.memoryMB = undefined
-    if (meta.endedAt) {
+    // A launch that happens means the slot is meant to run (whoever asked: a client, the door, the boot).
+    if (meta.endedAt || meta.want !== 'run') {
       delete meta.endedAt
+      meta.want = 'run'
       this.saveMeta(meta)
     }
     slot.spawnedAt = new Date().toISOString()
@@ -1706,6 +1799,8 @@ class DaemonImpl implements Daemon {
       slot.status = 'unconfirmed'
       this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
     }
+    // Crash-loop guard: a run that reported its session or lived long enough was healthy (measured at its exit, no timer).
+    if (meta.bootTries !== undefined && (this.reportedThisRun(slot) || (slot.spawnedAt !== undefined && Date.now() - Date.parse(slot.spawnedAt) >= BOOT_HEALTHY_MS))) this.clearBootTries(slot)
     this.broadcastState(slot)
     this.emitSlot('exited', slot)
     // The panel's agent left: its process uses end. A restart in place (restartSlot, set-profile) and tetherd
@@ -2109,7 +2204,7 @@ class DaemonImpl implements Daemon {
       }
       case 'start': {
         const slot = this.slot(req.slotId)
-        await this.startSlot(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
+        await this.manualStart(slot, req.choice === 'new' || req.choice === 'resume' ? req.choice : undefined)
         return { t: 'ok', id, slot: this.stateOf(slot) }
       }
       case 'attach': {
@@ -2146,7 +2241,16 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id }
       }
       case 'stop':
-        return { t: 'ok', id, slot: await this.stopById(req.slotId) }
+        return { t: 'ok', id, slot: await this.stopById(req.slotId, stopWhyOf(req.why)) }
+      case 'set-want': {
+        const slot = this.slot(req.slotId)
+        if (req.want !== 'asleep' && req.want !== 'suspended') throw new RequestError('bad-request', 'want inválido: asleep ou suspended')
+        if (this.setWant(slot, req.want)) {
+          await this.store.flush(slotMetaPath(this.home, slot.meta.slotId))
+          this.broadcastState(slot)
+        }
+        return { t: 'ok', id, slot: this.stateOf(slot) }
+      }
       case 'forget':
         await this.forgetById(req.slotId)
         return { t: 'ok', id }
@@ -2362,9 +2466,17 @@ class DaemonImpl implements Daemon {
     return slot
   }
 
-  private async stopById(slotId: unknown): Promise<SlotState> {
+  /** A stop asked by a client or the door: the intent `why` leaves is on disk before the kill (a crash meanwhile keeps it). */
+  private async stopById(slotId: unknown, why: StopWhy = 'end'): Promise<SlotState> {
     const slot = this.slot(slotId)
+    const want: SlotWant = why === 'hibernate' ? 'asleep' : why === 'suspend' ? 'suspended' : 'ended'
+    if (this.setWant(slot, want)) {
+      await this.store.flush(slotMetaPath(this.home, slot.meta.slotId))
+      if (!isAlive(slot)) this.broadcastState(slot) // a live one is broadcast by its exit
+    }
     await this.stopSlot(slot)
+    // A launch that reached its spawn during the flush wrote 'run'; this stop killed it, so the stop's intent stands.
+    if (!isAlive(slot) && this.setWant(slot, want)) this.broadcastState(slot)
     return this.stateOf(slot)
   }
 

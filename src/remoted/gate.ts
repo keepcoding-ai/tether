@@ -82,7 +82,7 @@ export const PIPE_REACH = {
   'auth': 'portal', 'hello': 'portal', 'list': 'portal',
   'perf': 'never', 'debug-block': 'never',
   'create': 'never', 'start': 'never', 'attach': 'never', 'detach': 'never', 'read-screen': 'never', 'resize': 'never',
-  'stop': 'never', 'forget': 'never', 'rename-slot': 'never', 'shutdown': 'never',
+  'stop': 'never', 'set-want': 'never', 'forget': 'never', 'rename-slot': 'never', 'shutdown': 'never',
   'profiles-list': 'never', 'profile-save': 'never', 'profile-delete': 'never', 'set-profile': 'never', 'restart': 'never',
   'seen': 'never', 'unseen': 'never', 'desk-map': 'never',
   // Tunnels (rule 4): a remote op never carries another type inside its body. An extension request that is exposed gets its
