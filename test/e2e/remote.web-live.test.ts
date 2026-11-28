@@ -24,6 +24,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
+import { crc32, deflateSync } from 'node:zlib'
 import { after, before, describe, test } from 'node:test'
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright-core'
 import { DaemonClient } from '../../src/daemon/client.ts'
@@ -53,6 +54,21 @@ const ext = async (c: DaemonClient, name: string, args?: Record<string, unknown>
   (await c.request({ t: 'ext-request', ext: extName, name, ...(args ? { args } : {}) })).result as Record<string, unknown>
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** A real PNG of one colour (a picture the browser decodes), made here: signature, IHDR, one IDAT, IEND. */
+function pngOf(w: number, h: number, rgb: readonly [number, number, number]): Buffer {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const td = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length)
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td) >>> 0)
+    return Buffer.concat([len, td, crc])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: w }, () => rgb).flat())])
+  const raw = Buffer.concat(Array.from({ length: h }, () => row))
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
 
 /** Spawns `node <args>` from the repository root and resolves with the first stdout JSON line that has `event`. */
 function spawnNode(args: string[], event: string, lines: string[]): Promise<{ proc: ChildProcess; line: Record<string, unknown> }> {
@@ -581,6 +597,59 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const state = ((await historyOf(channelId)).polls as { seq: number; open?: { to: { id: string }[] } }[]).find((p) => p.seq === line.seq)
     assert.deepEqual(state?.open?.to.map((t) => t.id).sort(), [memberId, auditorId].sort())
     await page.locator('.ch-poll[data-state="open"]', { hasText: 'Subimos hoje à noite?' }).waitFor({ timeout: 15_000 })
+  })
+
+  test('17. anexos a 390 px: o clipe anexa uma imagem, a miniatura aparece, abre grande; e a imagem que um agente pôs no canal também', async () => {
+    const errors = pageErrors.length
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForSelector('.rr[data-tier="mobile"]', { timeout: 10_000 })
+    await tap('.rg-tab[data-tab="conversation"]')
+    await page.waitForSelector('.ch-say .ch-clip', { timeout: 15_000 })
+    // The clip sits beside "Enquete" (the remote's box).
+    assert.equal(await page.evaluate(() => document.querySelector('.ch-say .ch-clip')?.nextElementSibling?.classList.contains('ch-pollbtn')), true)
+    const png = pngOf(96, 64, [40, 140, 220])
+    const before = Number((await historyOf(channelId)).last)
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 10_000 }), page.click('.ch-say .ch-clip')])
+    await chooser.setFiles({ name: 'obra-celular.png', mimeType: 'image/png', buffer: png })
+    await page.waitForSelector('.ch-fchip .ch-fchip-th img[src^="blob:"]', { timeout: 10_000 })
+    assert.match(await text('.ch-roomnote'), /Todos os membros do canal poderão ler/)
+    await page.fill('.ch-field', 'Foto da obra, do celular.')
+    await page.screenshot({ path: join(shots, 'rr4-17-anexo-390.png') })
+    await page.click('.ch-send')
+    const line = await eventually(async () => ((await historyOf(channelId)).lines as { seq: number; body: string; files?: { name: string; path: string }[] }[])
+      .find((l) => l.seq > before && l.body.includes('Foto da obra, do celular.') && l.files?.length), 30_000, 'the speech with its file in the channel')
+    assert.equal(line.files![0]!.name, 'obra-celular.png')
+    assert.deepEqual(readFileSync(line.files![0]!.path), png, 'the same bytes in the channel folder')
+    const thumb = `.ch-msgs > .ch-msg[data-seq="${line.seq}"] .ch-shot`
+    await page.waitForSelector(`${thumb} img[src^="blob:"]`, { timeout: 20_000 })
+    assert.match((await page.getAttribute(thumb, 'aria-label')) ?? '', /^obra-celular\.png, Imagem · /, 'named by the file')
+    await page.locator(thumb).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: join(shots, 'rr4-17-miniatura-390.png') })
+    await page.click(thumb)
+    await page.waitForSelector('.ch-viewer .ch-vimg[src^="blob:"]', { timeout: 10_000 })
+    assert.equal(await page.getAttribute('.ch-viewer .ch-vimg', 'alt'), 'obra-celular.png')
+    const box = (await page.locator('.ch-viewer').boundingBox())!
+    assert.deepEqual([Math.round(box.width), Math.round(box.height)], [390, 844], 'the whole screen on a phone')
+    const close = (await page.locator('.ch-viewer .ch-vclose').boundingBox())!
+    assert.ok(close.width >= 44 && close.height >= 44, `close ${close.width}x${close.height}`)
+    assert.equal(await page.isVisible('.ch-viewer .ch-vmenu'), false, 'no file menu from afar')
+    await page.screenshot({ path: join(shots, 'rr4-17-grande-390.png') })
+    await page.click('.ch-viewer .ch-vclose')
+    await page.waitForSelector('.ch-viewer', { state: 'detached', timeout: 5_000 })
+    // An image an agent put in the channel: it comes the same way, by its line.
+    const agentPng = join(home, 'planta-do-agente.png')
+    writeFileSync(agentPng, pngOf(80, 120, [220, 120, 40]))
+    const put = await agent('say', { canal: channelId, text: 'A planta, do agente.', files: [agentPng] })
+    const agentSeq = (put.data as { seq: number }).seq
+    const theirs = `.ch-msgs > .ch-msg[data-seq="${agentSeq}"] .ch-shot`
+    await page.waitForSelector(`${theirs} img[src^="blob:"]`, { timeout: 20_000 })
+    await page.click(theirs)
+    await page.waitForSelector('.ch-viewer .ch-vimg[src^="blob:"]', { timeout: 10_000 })
+    assert.equal(await page.getAttribute('.ch-viewer .ch-vimg', 'alt'), 'planta-do-agente.png')
+    await page.screenshot({ path: join(shots, 'rr4-17-agente-grande-390.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.ch-viewer', { state: 'detached', timeout: 5_000 })
+    assert.deepEqual(pageErrors.slice(errors), [], 'no error on the page')
   })
 
   test('capturas: a caixa de fala e um cartão de enquete nos quatro tamanhos', async () => {
