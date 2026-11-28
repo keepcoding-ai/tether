@@ -280,6 +280,12 @@ describe('the reads of an extension, by allow list', () => {
     assert.deepEqual(channelsMarks({ channels: rows }), out, 'the cut is deterministic')
   })
 
+  test('channels.page: a line the person said from afar keeps its mark (`afar: true`), and only as true', () => {
+    const at = (afar: unknown) => ({ seq: 1, at: ISO, kind: 'message', from: { id: 'user', name: 'Guga', role: 'moderator' }, body: 'oi', afar })
+    const page = channelsPage({ answer: { channel: { id: 'c_1' }, lines: [at(true), { ...at('yes'), seq: 2 }, { ...at(undefined), seq: 3 }], last: 3 }, limit: 10 })
+    assert.deepEqual(page.lines.map((l) => l.afar), [true, undefined, undefined])
+  })
+
   test('channels.page: the members now (by name without paths, muted marked, capped) and the person\'s name', () => {
     const members = [
       { id: 'a1b2c3d4', name: `conf‮erente em C:\\Users\\${MARKER}\\obra`, muted: true, since: ISO, path: 'inside', ...later() },

@@ -490,6 +490,8 @@ export interface PageLine {
   event?: { type: (typeof LINE_EVENTS)[number]; who?: string; by?: string }
   poll?: PagePoll
   files?: PageFile[]
+  /** The person said it from afar (a device of the remote): the screens label it "de longe". */
+  afar?: true
 }
 export interface PageReactions { seq: number; tallies: { emoji: string; name?: string; by: Person[] }[] }
 export interface PollOpen extends PagePoll { author: Person; votes: (Person & { option: number; reason?: string })[] }
@@ -559,6 +561,7 @@ function pageLine(v: unknown): PageLine | undefined {
     {
       cut: raw.length > LINE_BODY_MAX ? true : undefined, to: to?.length ? to : undefined, replyTo: int(l.replyTo, 1), event,
       poll: kind === 'poll' ? pagePoll(l.poll) : undefined, files: files?.length ? files : undefined,
+      afar: l.afar === true ? true : undefined,
     },
   )
 }
