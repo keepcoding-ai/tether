@@ -94,6 +94,8 @@ export class PortalFiles {
    * exists) is a link: a link there would carry every file of the channel somewhere else.
    */
   async #channelFolder(channel: string, make: boolean): Promise<string | undefined> {
+    // One segment that begins with a word character: never `.`, `..` nor a path (the bodies already say so; this is the disk's own guard).
+    if (!/^\w[\w.:-]{0,63}$/.test(channel)) return undefined
     try {
       const root = await realpath(this.#channelsRoot())
       const dir = join(this.#channelsRoot(), channel)

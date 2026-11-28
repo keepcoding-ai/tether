@@ -689,7 +689,7 @@ export interface FileChunkSource { size: number; type: string; offset: number; d
 const FILE_TYPE_RE = /^(image\/(png|jpeg|webp|gif)|application\/octet-stream)$/
 const B64URL_BODY_RE = /^[A-Za-z0-9_-]*$/
 
-function fileChunk(s: FileChunkSource): FileChunk {
+export function fileChunk(s: FileChunkSource): FileChunk {
   return {
     size: int(s.size) ?? 0,
     type: typeof s.type === 'string' && FILE_TYPE_RE.test(s.type) ? s.type : 'application/octet-stream',

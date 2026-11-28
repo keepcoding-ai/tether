@@ -150,6 +150,13 @@ describe('an upload: in the channel folder only, renamed when whole', () => {
     assert.equal(await b.files.upload('d1', args({ act: id, name: '.env', data: randomBytes(3) })), 'secret-file')
     assert.equal(await b.files.upload('d1', args({ act: act(), channel: 'c_9', data: randomBytes(3) })), 'not-found', 'no such channel: nothing made')
     assert.equal(existsSync(join(b.home, 'channels', 'c_9')), false)
+    // A dots-only id would name the folder above the channels: refused by the body, and by the disk's own guard.
+    for (const channel of ['..', '.']) {
+      assert.equal(uploadArgs({ channel, act: 'ab'.repeat(16), file: 0, name: 'a.png', size: 3, offset: 0, data: b64url(randomBytes(3)) }), 'bad-request', channel)
+      assert.equal(await b.files.upload('d1', { ...args({ act: act(), data: randomBytes(3) }), channel }), 'not-found', channel)
+      assert.equal(await b.files.chunk(channel, join(b.home, 'outside', 'secret.txt'), 0), 'not-found', channel)
+    }
+    assert.equal(existsSync(join(b.home, 'files')), false, 'nothing made above the channels')
   })
 
   test('cancel, abandon and a new portal leave nothing; the ceilings of uploads at once hold', async () => {

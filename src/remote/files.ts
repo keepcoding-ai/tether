@@ -98,7 +98,11 @@ export interface UploadArgs { channel: string; act: string; file: number; name: 
 /** `channels.upload-cancel {act, file?}`: one file of the speech, or all of them. */
 export interface CancelArgs { act: string; file?: number }
 
-const CHANNEL_RE = /^[\w.:-]{1,64}$/
+/**
+ * A channel's id as the store makes them (`c_…`, `desk_…`): it begins with a word character, so it is never `.` nor `..`
+ * (the portal joins it to the channels' folder: a dots-only id would name the folder above).
+ */
+const CHANNEL_RE = /^\w[\w.:-]{0,63}$/
 const ACT_RE = /^[0-9a-f]{32}$/
 const B64URL_RE = /^[A-Za-z0-9_-]*$/
 /** The longest name a device may declare before it is made safe (a path pasted whole is still a name of one segment here). */
