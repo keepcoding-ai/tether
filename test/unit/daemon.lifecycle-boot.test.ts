@@ -207,6 +207,24 @@ describe('lifecycle intent: the boot relaunches what is meant to run', () => {
     await noLaunch(b, id, 1)
   })
 
+  test('3c. a stop why quit (the app quitting everything) stops the process and keeps the intent: the reboot brings it back', async () => {
+    const b = bench()
+    await b.boot()
+    const rec = await Recorder.connect(b.daemon!.pipe)
+    const id = await b.running(rec, 'sess-3q')
+    const pid = b.state(id).pid!
+    const stopped = await rec.client.request({ t: 'stop', slotId: id, why: 'quit' })
+    assert.equal(stopped.slot!.want, 'run', 'quit leaves the intent')
+    assert.equal(stopped.slot!.pid, undefined, 'the process is gone')
+    await waitUntil(() => !pidAlive(pid), 10_000, 'the agent is gone')
+    assert.equal(b.meta(id).want, 'run')
+    rec.close()
+    await b.close()
+    await b.boot()
+    await waitUntil(() => b.launches(id).length === 2, 10_000, 'the relaunch after quit')
+    assert.equal(b.launches(id)[1]!.resume, 'sess-3q')
+  })
+
   test('4. a legacy slot (meta without want) is never relaunched', async () => {
     const b = bench()
     await b.boot()

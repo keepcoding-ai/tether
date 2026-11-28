@@ -13,8 +13,11 @@ import type { PortRow } from './ports.ts'
 
 export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow, SlotWant }
 
-/** Why a `stop` stops the slot: the lifecycle intent it leaves (end -> 'ended', hibernate -> 'asleep', suspend -> 'suspended'). */
-export type StopWhy = 'end' | 'hibernate' | 'suspend'
+/**
+ * Why a `stop` stops the slot: the lifecycle intent it leaves (end -> 'ended', hibernate -> 'asleep', suspend -> 'suspended').
+ * 'quit' (the app quitting everything) only stops the process and leaves the intent as it is: what ran comes back at boot.
+ */
+export type StopWhy = 'end' | 'hibernate' | 'suspend' | 'quit'
 
 /**
  * 2: the client proves it is the user who runs tetherd (`auth`, then `hello` with `proof`; see pipe-key.ts), and tetherd
@@ -256,7 +259,7 @@ export type Request =
   /**
    * Kill the slot's process (the slot and its binding stay). `why` (absent = 'end') is the intent left in the slot's meta,
    * written before the kill: 'end' -> want 'ended', 'hibernate' -> 'asleep', 'suspend' -> 'suspended'. None of them is
-   * relaunched at boot.
+   * relaunched at boot. 'quit' leaves the intent untouched (a slot that wanted to run is relaunched at the next boot).
    */
   | { t: 'stop'; id: number; slotId: string; why?: StopWhy }
   /** Records the slot's intent without touching its process (migration of the app's hibernated/suspended panes). Reply: `slot`. */

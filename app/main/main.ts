@@ -540,7 +540,8 @@ async function quitAll(): Promise<void> {
   leaveWithin(20_000)
   if (daemon) {
     const list = await request({ t: 'list' })
-    if (list.t === 'ok') for (const s of list.slots ?? []) await request({ t: 'stop', slotId: s.slotId })
+    // 'quit': the processes go and every slot keeps its intent, so what ran comes back when the tether starts again.
+    if (list.t === 'ok') for (const s of list.slots ?? []) await request({ t: 'stop', slotId: s.slotId, why: 'quit' })
     await request({ t: 'shutdown' })
     daemon.close()
     daemon = undefined

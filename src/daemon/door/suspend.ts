@@ -42,9 +42,9 @@ export class SuspendWaker {
     this.opts = opts
   }
 
-  /** The pane is suspended in the app (desk map). */
+  /** The pane is suspended in the app (desk map), or the slot itself wants to stay suspended (an agent without a pane). */
   isSuspended(slotId: string): boolean {
-    return this.opts.panes()?.isSuspended(slotId) === true
+    return this.opts.panes()?.isSuspended(slotId) === true || this.opts.port()?.stateOf(slotId)?.want === 'suspended'
   }
 
   /**

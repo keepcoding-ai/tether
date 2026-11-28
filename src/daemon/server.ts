@@ -234,8 +234,8 @@ function guardOf(req: { waitMs?: unknown; force?: unknown }): GuardOptions {
 /** A stop's `why`: absent is 'end' (the CLI, the door, clients from before it existed); anything else is refused. */
 function stopWhyOf(v: unknown): StopWhy {
   if (v === undefined || v === 'end') return 'end'
-  if (v === 'hibernate' || v === 'suspend') return v
-  throw new RequestError('bad-request', 'why inválido: end, hibernate ou suspend')
+  if (v === 'hibernate' || v === 'suspend' || v === 'quit') return v
+  throw new RequestError('bad-request', 'why inválido: end, hibernate, suspend ou quit')
 }
 
 class RequestError extends Error {
@@ -2469,6 +2469,10 @@ class DaemonImpl implements Daemon {
   /** A stop asked by a client or the door: the intent `why` leaves is on disk before the kill (a crash meanwhile keeps it). */
   private async stopById(slotId: unknown, why: StopWhy = 'end'): Promise<SlotState> {
     const slot = this.slot(slotId)
+    if (why === 'quit') { // the app quitting: the process goes, the intent stays (the boot relaunches what ran)
+      await this.stopSlot(slot)
+      return this.stateOf(slot)
+    }
     const want: SlotWant = why === 'hibernate' ? 'asleep' : why === 'suspend' ? 'suspended' : 'ended'
     if (this.setWant(slot, want)) {
       await this.store.flush(slotMetaPath(this.home, slot.meta.slotId))
