@@ -273,9 +273,16 @@ export class PortalFiles {
     }
   }
 
-  /** Every upload of a device goes (it was revoked or forgotten). */
+  /**
+   * Every upload of a device goes (it was revoked or forgotten). A chunk being written finishes first (its lane), so it
+   * never makes the `.part` again after the delete (RR4 B-4).
+   */
   async forgetDevice(device: string): Promise<void> {
-    for (const [key, u] of [...this.#uploads]) if (u.device === device) await this.#drop(key)
+    for (const [key, u] of [...this.#uploads]) {
+      if (u.device !== device) continue
+      for (let lane = u.lane; ; lane = u.lane) { await lane; if (u.lane === lane) break }
+      await this.#drop(key)
+    }
   }
 
   /** Uploads no chunk reached for UPLOAD_IDLE_MS go, with their files (a speech's are kept while it waits for tetherd). */

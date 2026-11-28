@@ -706,6 +706,24 @@ export class House {
     }))
   }
 
+  /** Whether nothing more may be served on `s`: its device is not active (revoked, forgotten), a revocation runs, or `s` ended. */
+  #closedTo(s: SessionRoute): boolean {
+    return this.#deviceShut(s.deviceId) || !this.#mem.get(s.deviceId)?.sessions.has(s)
+  }
+
+  /** Whether the device is not active (revoked, forgotten) or its revocation runs. */
+  #deviceShut(deviceId: string): boolean {
+    const dv = this.#devices.get(deviceId)
+    return !dv || dv.state !== 'active' || this.#mem.get(deviceId)?.revoking === true
+  }
+
+  /** Closes `s` as revoked without serving it (closing twice is nothing: the revocation may be closing it too). */
+  async #shut(s: SessionRoute): Promise<void> {
+    const fx = await s.session.close(CLOSE.revoked, this.#d.now())
+    this.#flush(s.route, fx)
+    this.#endSession(s, 'closed by the house')
+  }
+
   // ---- requests ----------------------------------------------------------------------------------------------
 
   async #request(s: SessionRoute, content: Bytes): Promise<void> {
@@ -714,6 +732,9 @@ export class House {
       const fx = await s.session.close(CLOSE.protocol, this.#d.now())
       return this.#sessionEffects(s, fx)
     }
+    // A device being revoked or forgotten, or a session already ended, is served nothing (RR4 B-4): the door shuts before
+    // its sessions are down. Checked before the device's memory is looked up, so a revoked device's memory never comes back.
+    if (this.#closedTo(s)) return this.#shut(s)
     const nowMs = this.#d.now()
     s.lastReqMs = nowMs
     const mem = this.#memOf(s.deviceId)
@@ -921,6 +942,9 @@ export class House {
     const checked = talkArgs(op, body)
     if (typeof checked === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody(checked), final: false }
     const target = checked.channel
+    // Checked again as the write is dispatched (RR4 B-4): a revocation that began while this request waited sends nothing.
+    // From here to writes.write nothing awaits, so no revocation slips in between (nor are a speech's files marked said).
+    if (this.#closedTo(s)) return { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'refused:revoked', target, final: false }
     const mem = this.#memOf(s.deviceId)
     if (op === 'channels.say') {
       const rate = mem.limiter.speech(this.#d.now())
@@ -1013,7 +1037,11 @@ export class House {
     if (a === 'too-large') return { status: RES_STATUS.badRequest, bytes: errorBody('too-large') }
     if (typeof a === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
     const target = a.channel
+    const shut: Served = { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'refused:revoked', target, final: false }
+    if (this.#closedTo(s)) return shut
     const r = await files.upload(s.deviceId, a)
+    // Revoked while the chunk was written: what it left goes now, the forgetting of the device having run before it (RR4 B-4).
+    if (this.#deviceShut(s.deviceId)) { await files.forgetDevice(s.deviceId); return shut }
     switch (r) {
       case 'busy': return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', target, final: false }
       case 'not-found': return { status: RES_STATUS.notFound, bytes: errorBody('unknown-channel'), target }

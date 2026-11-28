@@ -22,7 +22,7 @@ import { pipeReads, type ExtRequestFn } from '../../src/remoted/reads.ts'
 import { pipeWrites } from '../../src/remoted/writes.ts'
 import { actId, ORIGIN, registerAndUnlock } from './remoted.authenticator.ts'
 import { startHouseBench, type HouseBench } from './remoted.house-bench.ts'
-import { benchHome, type DeviceSession } from './remoted.helpers.ts'
+import { benchHome, until, type DeviceSession } from './remoted.helpers.ts'
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), randomBytes(40)])
 const homes: string[] = []
@@ -272,5 +272,71 @@ describe('the three file lines through a real House', () => {
     }
     assert.ok(refused >= 2, `refused ${refused}`)
     assert.equal((await s.request(0x0001)).status, RES_STATUS.ok, 'session.info still goes')
+  })
+})
+
+describe('RR4 B-4: a revocation shuts the door before the sessions are down', () => {
+  let hb: HouseBench
+  let home = ''
+  let staging = ''
+  const said: Array<Record<string, unknown>> = []
+  const OP = { upload: OP_CODES['channels.upload'], say: OP_CODES['channels.say'] }
+  const idOf = (d: { result?: { deviceId: Bytes } }): string => toHex(d.result!.deviceId)
+  const mine = (dev: string): string[] => (existsSync(staging) ? readdirSync(staging) : []).filter((f) => f.endsWith(`-${dev.slice(0, 8)}.part`) || f.endsWith(`-${dev.slice(0, 8)}.ready`))
+
+  before(async () => {
+    home = benchHome('remoted-files-revoke-')
+    homes.push(home)
+    await mkdir(join(home, 'channels', 'c_1', 'files'), { recursive: true })
+    staging = join(home, 'channels', 'c_1', 'files', UPLOAD_DIR)
+    const writes: ExtRequestFn = async (b) => { said.push(structuredClone(b.args)); return { result: { line: { seq: 40 } } } }
+    hb = await startHouseBench({
+      origin: ORIGIN, reads: pipeReads(async () => ({ result: { lines: [] } })), writes: pipeWrites(writes), files: new PortalFiles({ home, now: Date.now, log: () => {} }),
+      limits: { reqPerDevicePerMin: 10_000, gesturesPerDevicePerMin: 10_000, fileChunksPerDevicePerMin: 1_000, strikesMax: 50 },
+    })
+    await registerAndUnlock(hb.fresh, hb.device.kD.pub)
+  })
+  after(async () => { await hb?.stop() })
+
+  test('a speech that arrives once the revocation began (the registry says revoked, its session still up) never reaches tetherd', async () => {
+    const s = hb.fresh
+    const dev = idOf(hb.device)
+    assert.equal((await s.request(OP.say, { channel: 'c_1', text: 'antes' }, { actId: actId() })).status, RES_STATUS.ok)
+    const before = said.length
+    // Step (1) of spec 6.1 is done and (2) has not come yet: the window B-4 is about.
+    const d = hb.registry.get(dev)!
+    d.state = 'revoked'
+    hb.house.upsertDevice(structuredClone(d))
+    const r = s.request(OP.say, { channel: 'c_1', text: 'depois' }, { actId: actId() }).catch(() => undefined)
+    await until(() => s.closed, 5_000, 'the session closed by the house')
+    assert.equal(s.closed?.code, 0x04, 'closed as revoked')
+    assert.equal(said.length, before, 'tetherd got nothing')
+    void r
+  })
+
+  test('an upload of a revoked device, also with a chunk in flight, leaves no .part nor .ready behind', async () => {
+    for (let round = 0; round < 3; round++) {
+      const p = await hb.pair(`aparelho ${round}`)
+      await registerAndUnlock(p.fresh, p.device.kD.pub)
+      const dev = idOf(p.device)
+      const big = Buffer.concat([PNG, randomBytes(2 * FILE_CHUNK_BYTES)])
+      const act = toHex(actId())
+      const chunk = (i: number) => p.fresh.request(OP.upload, {
+        channel: 'c_1', act, file: 0, name: 'grande.png', size: big.length, offset: i * FILE_CHUNK_BYTES, data: b64url(big.subarray(i * FILE_CHUNK_BYTES, (i + 1) * FILE_CHUNK_BYTES)),
+      }, { actId: actId() })
+      assert.equal((await chunk(0)).status, RES_STATUS.ok)
+      assert.equal(mine(dev).length, 1, 'the part is on disk')
+      // A chunk on its way while the device is revoked (round 0: before, 1: with, 2: just after the chunk is sent).
+      const flying = round === 0 ? undefined : chunk(1).catch(() => undefined)
+      if (round === 2) await new Promise((r) => setImmediate(r))
+      const d = hb.registry.get(dev)!
+      d.state = 'revoked'
+      await hb.house.revoke(dev, [])
+      await flying
+      await until(() => mine(dev).length === 0 || undefined, 5_000, `round ${round}: nothing of the revoked device in the staging folder`)
+      await new Promise((r) => setTimeout(r, 50))
+      assert.deepEqual(mine(dev), [], `round ${round}: still nothing after the dust settles`)
+      p.fresh.leg.close()
+    }
   })
 })
