@@ -39,6 +39,10 @@ const TV_PLACES: readonly (readonly [Place, string])[] = [
   ['form', '.ch-pf :is(input, button)'],
   ['out', '.rr-out .rr-out-b[data-act]'],
   ['lock', '.rr-top .rr-lock'],
+  // Managing from afar (RR5): "+ Novo" in the heading of "Mesas", and the channel's own gestures ("Chamar agente…",
+  // "Reabrir canal", its "⋯"), so the remote reaches what a finger or a pointer does.
+  ['new', '.rg-hd .rg-new'],
+  ['bar', '.ch-bar > button.ch-act:is(.ch-join, .ch-reopen, .ch-more)'],
 ]
 
 const ITEM_SELECTOR = PLACES.map(p => p[1]).join(', ')
@@ -56,7 +60,8 @@ function channelId(place: Place, e: HTMLElement): string | undefined {
     case 'msg': case 'card': return d.seq
     case 'opt': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.n ?? ''}`
     case 'file': return d.path
-    case 'older': case 'lock': return place
+    case 'older': case 'lock': case 'new': return place
+    case 'bar': return e.classList.contains('ch-join') ? 'join' : e.classList.contains('ch-reopen') ? 'reopen' : 'more'
     case 'reason': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.key ?? e.tagName}`
     case 'say': return e.classList.contains('ch-field') ? 'field' : e.classList.contains('ch-dsel') ? 'to' : e.classList.contains('ch-send') ? 'send' : 'poll'
     case 'out': return `${e.closest<HTMLElement>('.rr-out-i')?.dataset.id ?? ''}:${d.act ?? ''}`

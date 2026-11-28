@@ -394,7 +394,7 @@
 }
 
 /* TV: the box and the speeches are on the walk of the arrows; their ring is the walk's own. */
-.rr[data-keys] :is(.ch-msgs > .ch-msg, .ch-msgs > .ch-prow, button.ch-opt, .ch-say :is(.ch-field, .ch-dsel, .ch-send, .ch-pollbtn), .rr-out-b, .rr-lock, .ch-pf :is(input, button), .ch-reason :is(input, button), .ch-shot, .ch-fcard, .ch-viewer .ch-act):focus {
+.rr[data-keys] :is(.rg-hd .rg-new, .ch-bar > button.ch-act, .ch-msgs > .ch-msg, .ch-msgs > .ch-prow, button.ch-opt, .ch-say :is(.ch-field, .ch-dsel, .ch-send, .ch-pollbtn), .rr-out-b, .rr-lock, .ch-pf :is(input, button), .ch-reason :is(input, button), .ch-shot, .ch-fcard, .ch-viewer .ch-act):focus {
   outline: 3px solid var(--accent); outline-offset: -3px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
