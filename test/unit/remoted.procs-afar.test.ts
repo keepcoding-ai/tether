@@ -3,6 +3,8 @@
 // - M-2: a `remote` client's `proc-start` with a recipe counts against the ceilings of src/daemon/afar-caps.ts: six new
 //   processes an hour per device, twelve for the house, refused `too-many` past them; its card is marked `fromAfar`; what
 //   the person starts on the machine (`cli`) is not counted.
+// - B-3: a `remote` `proc-start` with a recipe for a name that has a process (stopped or running) is `proc-exists`, refused
+//   in the name's lock: the card stays, the history gets no `recipe-changed`, and no env value of the act reaches either.
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -72,5 +74,27 @@ describe('tetherd: processes created from afar', () => {
     const mine = await cli.request({ t: 'proc-start', name: 'meu', recipe: { command: 'node', args: ['-e', ''], cwd: home } })
     assert.equal(mine.proc!.name, 'meu')
     assert.equal((JSON.parse(readFileSync(procCardPath(home, 'meu'), 'utf8')) as { fromAfar?: unknown }).fromAfar, undefined)
+  })
+
+  test('B-3: a recipe from afar never replaces an existing process\'s, stopped or running: proc-exists, the card and history untouched', async () => {
+    const CANARY = 'canario-da-bancada'
+    // The agent's (or the person's) process, stopped: its recipe on the card.
+    await cli.request({ t: 'proc-start', name: 'web', recipe: { command: 'node', args: ['-e', ''], cwd: home } })
+    for (let i = 0; i < 100 && (await cli.request({ t: 'proc-info', name: 'web' })).proc!.status === 'running'; i++) await new Promise((res) => setTimeout(res, 50))
+    const card = readFileSync(procCardPath(home, 'web'), 'utf8')
+    await assert.rejects(remote.request({ t: 'proc-start', name: 'web', recipe: recipe({ env: { BENCH_MODE: CANARY } }), device: dev('d') } as never), refused('proc-exists'))
+    assert.equal(readFileSync(procCardPath(home, 'web'), 'utf8'), card, 'the card is the same')
+    const info = await cli.request({ t: 'proc-info', name: 'web' })
+    assert.equal(info.events!.some((e) => e.kind === 'recipe-changed'), false, 'no recipe-changed in the history')
+    assert.equal(JSON.stringify(info).includes(CANARY), false, 'no value of the env from afar reaches the history nor the card')
+    // Running: the same refusal (never `proc-running`, which would tell less).
+    await cli.request({ t: 'proc-start', name: 'vivo', recipe: { command: 'node', args: ['-e', 'setInterval(() => {}, 1000)'], cwd: home } })
+    try {
+      await assert.rejects(remote.request({ t: 'proc-start', name: 'vivo', recipe: recipe({ env: { BENCH_MODE: CANARY } }) } as never), refused('proc-exists'))
+    } finally { await cli.request({ t: 'proc-stop', name: 'vivo' }) }
+    // From afar, starting the stored recipe (no recipe in the act) is still what `procs.start` does.
+    const started = await remote.request({ t: 'proc-start', name: 'web' } as never)
+    assert.equal(started.proc!.name, 'web')
+    assert.equal(JSON.stringify(await cli.request({ t: 'proc-info', name: 'web' })).includes(CANARY), false)
   })
 })

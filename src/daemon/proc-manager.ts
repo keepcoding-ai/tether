@@ -312,6 +312,9 @@ export class ProcManager {
     return this.locked(name, async () => {
       const author = this.author(by, client)
       let e = this.entries.get(name)
+      // RR5 B-3: from afar a recipe only registers a new name; it never replaces another's (whose `recipe-changed` would keep
+      // both recipes, env values included, in a history every pipe client reads). Here, in the name's lock: no race.
+      if (e && recipe && client === 'remote') throw new ProcError('proc-exists', `já existe um processo ${name}`)
       if (e && isLive(e)) throw new ProcError('proc-running', this.runningMessage(e))
       if (!e && !recipe) throw new ProcError('unknown-proc', `não há processo ${name}; para registrar, passe o comando: tether proc start ${name} -- <comando…>`)
       const fields = recipe ? normalizeRecipe(recipe) : undefined

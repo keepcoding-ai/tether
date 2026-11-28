@@ -17,7 +17,7 @@ export const SECRET_MASK = '•••'
 export const INFO_EVENTS = 20
 
 export type ProcErrorCode = 'bad-adopt' | 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'proc-in-use' | 'port-busy' | 'bad-request'
-  | 'too-many'
+  | 'too-many' | 'proc-exists'
 
 export class ProcError extends Error {
   readonly code: ProcErrorCode

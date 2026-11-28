@@ -202,6 +202,7 @@ export type ErrorCode =
   | 'bad-adopt'        // proc-adopt refused: nothing was touched (message: why and what to do)
   | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
   | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
+  | 'proc-exists'       // proc-start with a recipe from the remote portal for a name that has a process already (RR5 B-3)
   | 'too-many'          // a creation from afar over its ceiling (RR5 M-2, afar-caps.ts): per device or house, hourly or live
   | 'door-unavailable'  // the agent door is not live in this process (a satellite), or the owning extension left
   | 'door-no-pty'       // a door write to a slot with no process
