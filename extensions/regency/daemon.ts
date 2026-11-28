@@ -22,6 +22,11 @@ import {
   ACT_TAKE, APP_ACT_BRIDGE_MS, APP_ACT_DONE, APP_ACT_EVENT, APP_ACT_REQUEST, APP_ACTS_PENDING_MAX, APP_ANSWER_CODES, appActAnswer, appActTarget, parseAppAct,
   type AppAct, type AppActAnswer, type AppActCode, type AppActEvent,
 } from '../../src/remote/app-acts.ts'
+import {
+  CREATE_DESKS_MAX, CREATE_OPTIONS_REQUEST, CREATE_PROFILES_MAX, CREATE_REQUEST, createSlotAnswer, knownFolders, parseCreateSlot,
+  type CreateCode, type CreateOptionsAnswer, type CreateSlotAnswer, type KnownFolder,
+} from '../../src/remote/create.ts'
+import { join } from 'node:path'
 import type { RegencyInput } from './model.ts'
 import {
   isLive, publishedTreeOf, regencyViewOf, signatureOf, STALE_MS, TREE_CHANGED as EVT_CHANGED, TREE_MAX_BYTES, TREE_REQ as REQ,
@@ -155,6 +160,8 @@ export interface ActBridgeDeps {
   /** The map changed (api.desks.onDidChange): an act's answer waits for the map to show what it made. */
   mapChanged?: (listener: () => void) => IDisposable
   mapWaitMs?: number
+  /** Whether a folder id is of the list tetherd knows now ("+ Novo", a note): absent, none is. */
+  folderKnown?: (id: string) => Promise<boolean>
 }
 
 /** How long an answer waits for tetherd's map to show what the act made. */
@@ -189,6 +196,8 @@ export class ActBridge {
     }
     if (!this.#d.app().live || !map) refuseAct('no-app', 'o app não está aberto; nada foi feito')
     this.#confer(a, map!)
+    // A note's folder: an id of the list tetherd knows now (the app looks it up again in its own).
+    if (a.act === 'create.note' && !(await this.#d.folderKnown?.(a.folder))) refuseAct('unknown-folder', 'essa pasta não está entre as conhecidas')
     const target = appActTarget(a)
     if (this.#waiting.size >= APP_ACTS_PENDING_MAX || (target !== '' && this.#targets.has(target))) refuseAct('busy', 'outro ato espera o app')
     const answer = await this.#ask(a, target)
@@ -330,8 +339,133 @@ export class ActBridge {
         } else this.#desk(map, a.deskId)
         if (a.act === 'owners.give' && !this.#d.slots.get(a.to)) refuseAct('unknown-agent', 'esse agente não existe')
         return
+      // "+ Novo" from afar (RR5 5.3): the desk is of the queue (the folder of a note was conferred before, in `act`).
+      case 'create.note': case 'create.browser':
+        this.#desk(map, a.deskId)
+        return
     }
   }
+}
+
+// ---- "+ Novo" from afar (RR5 5.3, fio-spec 18) ---------------------------------------------------------------------
+//
+// The choices a device gets (`create.options`) and the creation tetherd does alone (`create`: an agent or a terminal born in
+// a desk). The device never names a path: a folder is one of the list tetherd knows, read fresh at each request from the
+// same home the app writes (layout.json's pinned projects, recent-folders.json) and from its agents' folders, and named by
+// its id (src/remote/create.ts folderId). A profile is named, within its engine; its env, args and folder never leave.
+// Memory: nothing kept between requests.
+
+const refuseCreate = (code: CreateCode | 'bad-request' | 'door-denied', message: string): never => { throw new DoorError(code as ErrorCode, message) }
+
+export interface CreateDeps {
+  map: () => DeskMap | undefined
+  slots: Pick<DoorSlots, 'list' | 'create'>
+  /** The engines registered now (`claude`, `codex`…), without `shell`. */
+  engines: () => Promise<readonly string[]>
+  /** The profiles the person keeps (profiles.json) and the one each engine opens with. */
+  profiles: () => Promise<readonly { id: string; name: string; agent: string }[]>
+  defaultFor: (engine: string) => { id: string; name: string; agent: string } | undefined
+  /** The app's pinned projects and recent folders, from the home they share. */
+  appFolders: () => Promise<{ pinned: readonly string[]; recent: readonly string[] }>
+  exists: (path: string) => Promise<boolean>
+  caseInsensitive: boolean
+  /** The bench: a `test` connection may create too. */
+  bench?: boolean
+}
+
+export class Creator {
+  readonly #d: CreateDeps
+  constructor(deps: CreateDeps) { this.#d = deps }
+
+  async folders(): Promise<KnownFolder[]> {
+    const app = await this.#d.appFolders()
+    const agents = this.#d.slots.list().filter((s) => s.kind !== 'shell').map((s) => (s as { folder?: string }).folder ?? s.cwd)
+    return knownFolders({ pinned: app.pinned, agents, recent: app.recent }, this.#d.caseInsensitive)
+  }
+
+  async #profiles(): Promise<{ id: string; name: string; engine: string; default?: true }[]> {
+    const engines = new Set([...await this.#d.engines(), 'shell'])
+    const out: { id: string; name: string; engine: string; default?: true }[] = []
+    for (const p of await this.#d.profiles()) {
+      if (!engines.has(p.agent) || out.length >= CREATE_PROFILES_MAX) continue
+      out.push({ id: p.id, name: p.name, engine: p.agent, ...(this.#d.defaultFor(p.agent)?.id === p.id ? { default: true as const } : {}) })
+    }
+    // An engine the file has no profile of opens with the default tetherd merges in (core/profile.ts mergeMissingMotors).
+    for (const e of engines) {
+      const d = this.#d.defaultFor(e)
+      if (d && !out.some((p) => p.id === d.id) && out.length < CREATE_PROFILES_MAX) out.push({ id: d.id, name: d.name, engine: e, default: true })
+    }
+    return out
+  }
+
+  /** `create.options`: the choices. The paths go to the portal, which keeps them (the projector drops them for the device). */
+  async options(): Promise<CreateOptionsAnswer> {
+    const desks = (this.#d.map()?.desks ?? []).filter((d) => d.kind === 'queue').slice(0, CREATE_DESKS_MAX)
+    return {
+      engines: [...await this.#d.engines(), 'shell'],
+      profiles: (await this.#profiles()).map(({ id: _id, ...p }) => p),
+      desks: desks.map((d) => ({ deskId: d.id, name: d.name, ...(d.asleep ? { asleep: true as const } : {}) })),
+      folders: await this.folders(),
+    }
+  }
+
+  /** The path of a folder id of the list now, or `unknown-folder`. */
+  async folderPath(id: string): Promise<string> {
+    return (await this.folders()).find((f) => f.id === id)?.path ?? refuseCreate('unknown-folder', 'essa pasta não está entre as conhecidas')
+  }
+
+  /** A queue desk of the map, awake. */
+  desk(id: string): DeskMapDesk {
+    const d = this.#d.map()?.desks.find((x) => x.id === id)
+    if (!d || d.kind !== 'queue') return refuseCreate('unknown-desk', 'essa mesa não existe')
+    if (d.asleep) refuseCreate('desk-asleep', 'essa mesa está hibernando')
+    return d
+  }
+
+  /** `create`: from the portal (`remote`) only; the act exactly as it builds it, every choice resolved here, then the slot. */
+  async create(args: unknown, ctx: ExtRequestContext): Promise<CreateSlotAnswer> {
+    if (!(ctx.client === 'remote' || (this.#d.bench && ctx.client === 'test'))) refuseCreate('door-denied', 'só o portal pede uma criação de longe')
+    const a = parseCreateSlot(args) ?? refuseCreate('bad-request', 'criação fora da forma')
+    if (a.what === 'agent' && !(await this.#d.engines()).includes(a.engine)) refuseCreate('unknown-engine', 'esse motor não existe')
+    this.desk(a.deskId)
+    const cwd = await this.folderPath(a.folder)
+    let profileId: string | undefined
+    if (a.profile !== undefined) {
+      profileId = (await this.#profiles()).find((p) => p.engine === a.engine && p.name === a.profile)?.id
+      if (profileId === undefined) refuseCreate('unknown-profile', 'esse perfil não existe nesse motor')
+    } else profileId = this.#d.defaultFor(a.engine)?.id
+    if (!(await this.#d.exists(cwd))) refuseCreate('cwd-missing', 'a pasta não existe mais')
+    let slot
+    try {
+      slot = await this.#d.slots.create({ kind: a.engine, cwd, ...(profileId ? { profileId } : {}), ...(a.name ? { name: a.name } : {}), desk: a.deskId, start: true })
+    } catch (e) {
+      // The desk vanished between the check and the create (`bad-request` of the map) or the launch failed: by code alone.
+      const code = (e as { code?: unknown }).code
+      refuseCreate(code === 'bad-request' ? 'unknown-desk' : 'spawn-failed', 'o tether não criou')
+    }
+    return createSlotAnswer({ slotId: slot!.slotId })
+  }
+}
+
+/** The app's pinned projects (layout.json `workspace.pinned`) and recent folders (recent-folders.json), from the shared home. */
+async function appFoldersOf(io: TetherDaemon['io'], home: string): Promise<{ pinned: string[]; recent: string[] }> {
+  const json = async (name: string): Promise<unknown> => {
+    try { const t = await io.tryReadText(join(home, name)); return t === undefined ? undefined : JSON.parse(t) } catch { return undefined }
+  }
+  const layout = await json('layout.json') as { workspace?: { pinned?: unknown } } | undefined
+  const pinned = Array.isArray(layout?.workspace?.pinned) ? (layout.workspace.pinned as unknown[]).map((p) => (p as { path?: unknown })?.path).filter((p): p is string => typeof p === 'string') : []
+  const recent = await json('recent-folders.json')
+  return { pinned, recent: Array.isArray(recent) ? recent.filter((p): p is string => typeof p === 'string') : [] }
+}
+
+/** The profiles of profiles.json (names, engines, ids): only what the choices show. */
+async function profilesOf(io: TetherDaemon['io'], home: string): Promise<{ id: string; name: string; agent: string }[]> {
+  // Loaded when asked: core/profile.ts loads the agents, which load the extensions, this one among them (a cycle at import).
+  const { parseProfilesFile, profilesPath } = await import('../../src/core/profile.ts')
+  const text = await io.tryReadText(profilesPath(home)).catch(() => undefined)
+  if (text === undefined) return []
+  const parsed = parseProfilesFile(text)
+  return parsed.ok ? parsed.profiles.map((p) => ({ id: p.id, name: p.name, agent: p.agent })) : []
 }
 
 /**
@@ -343,7 +477,9 @@ export function regencyBenchOn(env: NodeJS.ProcessEnv, home: string | undefined)
   return remoteBenchOn(env, home) && env.TETHER_TEST_REMOTE_REGENCY === '1'
 }
 
-export function activateWith(api: TetherDaemon, extra: TreeKeeperDeps = {}, actsExtra: Partial<ActBridgeDeps> = {}): { keeper: TreeKeeper; acts: ActBridge; disposables: IDisposable[] } {
+export function activateWith(
+  api: TetherDaemon, extra: TreeKeeperDeps = {}, actsExtra: Partial<ActBridgeDeps> = {}, createExtra: Partial<CreateDeps> = {},
+): { keeper: TreeKeeper; acts: ActBridge; creator: Creator; disposables: IDisposable[] } {
   const bench = regencyBenchOn(process.env, api.home)
   const keeper = new TreeKeeper({
     live: () => ({ slots: api.slots.list(), deskMap: api.desks.map() }),
@@ -351,12 +487,26 @@ export function activateWith(api: TetherDaemon, extra: TreeKeeperDeps = {}, acts
     bench,
     ...extra,
   })
+  const creator = new Creator({
+    map: () => api.desks.map(),
+    slots: api.slots,
+    // Loaded when asked, as profilesOf: the registry loads the agents, which load the extensions (a cycle at import).
+    engines: async () => (await import('../../src/agents/registry.ts')).agentRegistry.names(),
+    profiles: () => profilesOf(api.io, api.home),
+    defaultFor: (engine) => api.profiles.defaultFor(engine),
+    appFolders: () => appFoldersOf(api.io, api.home),
+    exists: (path) => api.io.exists(path),
+    caseInsensitive: process.platform === 'win32' || process.platform === 'darwin',
+    bench,
+    ...createExtra,
+  })
   const acts = new ActBridge({
     map: () => api.desks.map(),
     slots: api.slots,
     app: () => keeper.liveApp(),
     emit: (name, payload) => api.events.emit(name, payload),
     mapChanged: (listener) => api.desks.onDidChange(() => listener()),
+    folderKnown: async (id) => (await creator.folders()).some((f) => f.id === id),
     bench,
     ...actsExtra,
   })
@@ -366,10 +516,12 @@ export function activateWith(api: TetherDaemon, extra: TreeKeeperDeps = {}, acts
     api.requests.handle(APP_ACT_REQUEST, (args, ctx) => acts.act(args, ctx)),
     api.requests.handle(ACT_TAKE, (args, ctx) => acts.take(args, ctx)),
     api.requests.handle(APP_ACT_DONE, (args, ctx) => acts.done(args, ctx)),
+    api.requests.handle(CREATE_OPTIONS_REQUEST, () => creator.options()),
+    api.requests.handle(CREATE_REQUEST, (args, ctx) => creator.create(args, ctx)),
     toDisposable(() => keeper.dispose()),
     toDisposable(() => acts.dispose()),
   ]
-  return { keeper, acts, disposables }
+  return { keeper, acts, creator, disposables }
 }
 
 export function activate(api: TetherDaemon): IDisposable[] {

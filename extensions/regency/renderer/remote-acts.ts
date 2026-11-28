@@ -15,6 +15,7 @@ import type { Ownership } from '../../for-agents/rules.ts'
 import {
   ACT_TAKE, APP_ACT_DONE, APP_ACT_EVENT, parseAppAct, type AppAct, type AppActCode, type AppActDoneArgs, type AppActEvent,
 } from '../../../src/remote/app-acts.ts'
+import { folderId } from '../../../src/remote/create.ts'
 
 /** The seams of the app this half uses (a subset of TetherUi, so a test can hand a fake one). */
 export interface RemoteActsUi {
@@ -35,9 +36,20 @@ export interface RemoteActsDeps {
   /** How long a give or a take-back waits for the board to show it (the command writes to tetherd and returns). */
   ownerWaitMs?: number
   log?: (m: string) => void
+  /**
+   * "+ Novo" from afar (RR5 5.3): what only the app makes, by the seams of its own card (CreateSeams), never bringing
+   * anything forward. `folders`: the app's known folders (its projects, then the recent ones), where a folder id of the
+   * act is looked up (src/remote/create.ts folderId); one not there is `unknown-folder`.
+   */
+  create?: {
+    note(spec: { deskId: string; cwd: string }): Promise<{ paneId: string } | { error: string } | undefined>
+    tab(deskId: string): Promise<{ paneId: string } | { error: string }>
+    folders(): Promise<readonly string[]>
+    caseInsensitive: boolean
+  }
 }
 
-type Done = { ok: true; state?: 'done' | 'already'; deskId?: string; said?: string }
+type Done = { ok: true; state?: 'done' | 'already'; deskId?: string; paneId?: string; said?: string }
 type Outcome = Done | { ok: false; code: AppActCode }
 const done = (said: string, state: 'done' | 'already' = 'done'): Done => ({ ok: true, state, said })
 const no = (code: AppActCode): Outcome => ({ ok: false, code })
@@ -170,6 +182,22 @@ export function remoteActRunner(ui: RemoteActsUi, deps: RemoteActsDeps): (a: App
         if (a.act === 'owners.take') return (await run('for-agents.take')) ? done(`comando de ${what} assumido`) : no('owners-off')
         return (await run('for-agents.return')) ? done(`comando de ${what} devolvido a ${agentName(commander)}`) : no('owners-off')
       }
+      // "+ Novo" from afar (RR5 5.3): born in that desk, behind (never brought forward), as the card's seams make them.
+      case 'create.note':
+      case 'create.browser': {
+        const make = deps.create
+        if (!make) return no('cannot')
+        if (!queueDesk(a.deskId)) return no('unknown-desk')
+        if (ui.desks.list().find(d => d.id === a.deskId)?.asleep) return no('cannot')
+        if (a.act === 'create.browser') {
+          const r = await make.tab(a.deskId)
+          return 'paneId' in r ? { ...done(`aba aberta na mesa ${deskName(a.deskId)}`), paneId: r.paneId } : no('refused')
+        }
+        const cwd = (await make.folders()).find(p => folderId(p, make.caseInsensitive) === a.folder)
+        if (cwd === undefined) return no('unknown-folder')
+        const r = await make.note({ deskId: a.deskId, cwd })
+        return r && 'paneId' in r ? { ...done(`nota criada na mesa ${deskName(a.deskId)}`), paneId: r.paneId } : no('refused')
+      }
     }
   }
 }
@@ -192,7 +220,7 @@ export function remoteActs(ui: RemoteActsUi, deps: RemoteActsDeps): IDisposable 
         out = no('refused')
       }
       const answer: AppActDoneArgs = out.ok
-        ? { ask, ok: true, ...(out.state ? { state: out.state } : {}), ...(out.deskId ? { deskId: out.deskId } : {}) }
+        ? { ask, ok: true, ...(out.state ? { state: out.state } : {}), ...(out.deskId ? { deskId: out.deskId } : {}), ...(out.paneId ? { paneId: out.paneId } : {}) }
         : { ask, ok: false, code: out.code }
       if (out.ok && out.state === 'done' && out.said) deps.notice(`Feito de longe: ${out.said}.`)
       await ui.daemon.request(APP_ACT_DONE, answer).catch((e: unknown) => log(`regência: responder o ato de longe falhou: ${(e as Error).message}`))

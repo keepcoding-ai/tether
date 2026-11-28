@@ -108,6 +108,12 @@ export const OP_CODES = {
   'owners.revoke': 0x0451,
   'owners.take': 0x0452,
   'owners.return': 0x0453,
+  // "+ Novo" from afar (RR5 5.3, fio-spec 18): the choices, then an agent or a terminal (tetherd alone), a note or a tab (the app).
+  'create.options': 0x0460,
+  'create.agent': 0x0461,
+  'create.terminal': 0x0462,
+  'create.note': 0x0463,
+  'create.browser': 0x0464,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
 } as const
@@ -260,6 +266,16 @@ export const OP_TABLE = {
   'owners.revoke': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'owners.take': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'owners.return': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  // "+ Novo" from afar (RR5 5.3; src/remote/create.ts). The choices: engines, profiles by name (never their env), queue desks
+  // and the known folders by id and label (ext `regency`, `create.options`). An agent or a terminal born in a desk, which
+  // tetherd creates alone (ext `regency`, `create`: it resolves the folder id, the profile's name and the desk itself); a note
+  // in a known folder and a browser tab of the person's, which only the app makes (the bridge of acts, `regency/act`, with
+  // `no-app`). The agent is of `manage:agents`, the rest of `manage:desks`.
+  'create.options': { scope: 'manage:desks', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
+  'create.agent': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['engine', 'profile', 'deskId', 'folder', 'name'], pipe: ['ext-request'] },
+  'create.terminal': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['profile', 'deskId', 'folder', 'name'], pipe: ['ext-request'] },
+  'create.note': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'folder'], pipe: ['ext-request'] },
+  'create.browser': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId'], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }

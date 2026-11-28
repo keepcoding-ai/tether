@@ -80,6 +80,8 @@ void readsAreNotWrites
 export interface ExtPair { readonly ext: string; readonly name: string }
 /** The Regency's bridge of acts to the app (extensions/regency/daemon.ts; the name is src/remote/app-acts.ts APP_ACT_REQUEST). */
 const REGENCY_ACT = { ext: 'regency', name: 'act' } as const
+/** The Regency's creation of a slot in a desk (extensions/regency/daemon.ts; the name is src/remote/create.ts CREATE_REQUEST). */
+const REGENCY_CREATE = { ext: 'regency', name: 'create' } as const
 /** A pair on a line that only reads. */
 export type ExtReadPair = ExtPair
 
@@ -95,6 +97,8 @@ export const EXT_READS = {
   // A file of a line (step 4.3): the line itself, one line of history, read to find the path the device never names.
   'channels.file': { ext: 'channels', name: 'history' },
   'regency.tree': { ext: 'regency', name: 'tree.read' },
+  // "+ Novo" from afar (RR5 5.3): the choices (src/remote/create.ts CREATE_OPTIONS_REQUEST).
+  'create.options': { ext: 'regency', name: 'create.options' },
 } as const satisfies { readonly [K in ExtReadOp]: ExtReadPair }
 
 /**
@@ -125,6 +129,10 @@ export const EXT_WRITES = {
   'panes.hibernate': REGENCY_ACT, 'panes.wake': REGENCY_ACT, 'panes.suspend': REGENCY_ACT, 'panes.move': REGENCY_ACT, 'panes.close': REGENCY_ACT,
   'closed.reopen': REGENCY_ACT, 'closed.forget': REGENCY_ACT,
   'owners.give': REGENCY_ACT, 'owners.revoke': REGENCY_ACT, 'owners.take': REGENCY_ACT, 'owners.return': REGENCY_ACT,
+  // "+ Novo" from afar (RR5 5.3): an agent or a terminal tetherd creates alone (src/remote/create.ts CREATE_REQUEST, the act
+  // taken field by field by parseCreateSlot); a note or a tab the app makes, through the bridge of acts.
+  'create.agent': REGENCY_CREATE, 'create.terminal': REGENCY_CREATE,
+  'create.note': REGENCY_ACT, 'create.browser': REGENCY_ACT,
 } as const satisfies { readonly [K in ExtWriteOp]: ExtPair }
 
 /** The pair of a read line, or undefined for a name that has none (every request outside the list stays `never`). */

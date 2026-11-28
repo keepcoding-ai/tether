@@ -36,6 +36,7 @@ import { PIPE_WRITE_TIMEOUT_MS, WriteError, type PipeWrites, type WriteOutcome }
 import { ActError, PIPE_ACT_TIMEOUT_MS, type ActOutcome, type PipeActs } from './acts.ts'
 import { ACT_REFUSALS, isActRefusal, isManageOp, manageArgs, type ManageOp } from '../remote/manage.ts'
 import { APP_ACT_PORTAL_MS, APP_ACT_REFUSALS, appActArgs, isAppActOp, isAppActRefusal, type AppActOp } from '../remote/app-acts.ts'
+import { CREATE_REFUSALS, createSlotArgs, isCreateRefusal, isCreateSlotOp, type CreateSlotOp } from '../remote/create.ts'
 import { inUseBody } from '../remote/projection.ts'
 import { linePathOf, type PortalFiles } from './files.ts'
 import { cancelArgs, fileReadArgs, uploadArgs } from '../remote/files.ts'
@@ -782,7 +783,7 @@ export class House {
     }
     if (req.actId) {
       // An actId names one act of one op: the same id on another op is a malformed request, never that act's answer.
-      const waitMs = isManageOp(line.name) ? (this.#d.actTimeoutMs ?? PIPE_ACT_TIMEOUT_MS) : isAppActOp(line.name) ? (this.#d.appActTimeoutMs ?? APP_ACT_PORTAL_MS) : undefined
+      const waitMs = isManageOp(line.name) ? (this.#d.actTimeoutMs ?? PIPE_ACT_TIMEOUT_MS) : isAppActOp(line.name) || isCreateSlotOp(line.name) ? (this.#d.appActTimeoutMs ?? APP_ACT_PORTAL_MS) : undefined
       const done = mem.acts.get(req.actId, nowMs) ?? (await this.#pendingAct(mem, req.actId, req.op, waitMs))
       if (done) {
         const same = done.op === req.op
@@ -833,7 +834,7 @@ export class House {
       if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, final: false, ...(v.lockout ? { lockout: true } : {}) }
     }
     if (isManageOp(line.name)) return this.#manage(s, line.name, req, body)
-    if (isAppActOp(line.name)) return this.#appAct(s, line.name, req, body)
+    if (isAppActOp(line.name) || isCreateSlotOp(line.name)) return this.#appAct(s, line.name, req, body)
     switch (line.name) {
       case 'session.info':
         return ok(resultBody('session.info', { house: this.#fingerprint, name: this.#d.houseName, deviceId: s.deviceId, ver: s.session.ver, presence, scopes: dv?.scopes ?? [] }))
@@ -856,6 +857,7 @@ export class House {
       case 'channels.marks':
       case 'channels.page':
       case 'regency.tree':
+      case 'create.options':
         return this.#extRead(s, line.name, body, dv?.scopes ?? [])
       case 'channels.say':
       case 'channels.react':
@@ -941,6 +943,10 @@ export class House {
           this.#feeds.sawTree(regencyChanged(v as RegencyChanged))
           break
         }
+        // "+ Novo" (RR5 5.3): the choices; the projector drops every path (the folders go by id and label).
+        case 'create.options':
+          bytes = resultBody(op, { answer: await reads.read(op, {}) })
+          break
       }
     } catch (e) {
       if (!(e instanceof ReadError)) throw e
@@ -951,7 +957,7 @@ export class House {
     }
     if (bytes.length > READ_BODY_MAX) return { status: RES_STATUS.failed, bytes: errorBody('too-large') }
     if (op === 'regency.tree') s.follows.regency = true
-    else s.follows.channels = true
+    else if (op !== 'create.options') s.follows.channels = true
     return { status: RES_STATUS.ok, bytes }
   }
 
@@ -1180,10 +1186,11 @@ export class House {
    * the actId whenever it comes (a repeat waits for it meanwhile) and, past the deadline, gets its own `late:` audit line.
    * The audit's target is the pane, the slot or the desk by its id; never a desk's name.
    */
-  async #appAct(s: SessionRoute, op: AppActOp, req: Req, body: Record<string, unknown>): Promise<Served> {
+  async #appAct(s: SessionRoute, op: AppActOp | CreateSlotOp, req: Req, body: Record<string, unknown>): Promise<Served> {
     const acts = this.#d.appActs
     if (!acts) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
-    const checked = appActArgs(op, body)
+    // An agent or a terminal of "+ Novo" (RR5 5.3) goes the same path to the ONE pair `regency/create`: tetherd creates it alone.
+    const checked = isCreateSlotOp(op) ? createSlotArgs(op, body) : appActArgs(op, body)
     if (typeof checked === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody(checked), final: false }
     const aim = checked.target === '' ? {} : { target: checked.target }
     // From here to acts.write nothing awaits, so no revocation slips in between.
@@ -1215,12 +1222,13 @@ export class House {
   }
 
   /** The answer of an app's act: the line's projector on success, tetherd's or the app's code mapped by APP_ACT_REFUSALS otherwise. */
-  #appActed(op: AppActOp, o: WriteOutcome, target: string): Served {
+  #appActed(op: AppActOp | CreateSlotOp, o: WriteOutcome, target: string): Served {
     const aim = target === '' ? {} : { target }
     if (o.ok) return { status: RES_STATUS.ok, bytes: resultBody(op, { answer: o.result }), ...aim }
     const e = o.error
     if (e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', ...aim }
     if (e.why === 'timeout') return { status: RES_STATUS.failed, bytes: errorBody('timeout'), audit: 'timeout', ...aim }
+    if (e.why === 'refused' && isCreateRefusal(e.code)) return { status: CREATE_REFUSALS[e.code], bytes: errorBody(e.code), audit: `refused:${e.code}`, ...aim }
     if (e.why === 'refused' && isAppActRefusal(e.code)) return { status: APP_ACT_REFUSALS[e.code], bytes: errorBody(e.code), audit: `refused:${e.code}`, ...aim }
     this.#d.log(`app act ${op}: ${e.message}`)
     return { status: RES_STATUS.failed, bytes: errorBody('failed'), ...aim }

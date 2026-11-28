@@ -28,10 +28,10 @@ const denied = (e: unknown): boolean => e instanceof DaemonError && e.code === '
 
 /** The handlers of two bench extensions: the reads of the reach and writes beside them, each recording who called. */
 const HANDLERS: Record<string, readonly string[]> = {
-  // The reads and the person's speech of the reach, and beside them what manages a channel (outside it).
-  channels: ['marks', 'history', 'say', 'react', 'vote', 'poll', 'seen', 'create', 'mute', 'poll-close'],
-  // RR5 5.1: `act` is the bridge of the app's gestures (a write pair of the reach).
-  regency: ['tree.read', 'tree.publish', 'act'],
+  // The reads, the person's speech and her managing a channel (RR5) of the reach, and beside them what stays outside it.
+  channels: ['marks', 'history', 'say', 'react', 'vote', 'poll', 'seen', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'poll-close', 'leave', 'members', 'asks'],
+  // RR5 5.1: `act` is the bridge of the app's gestures; RR5 5.3: the choices and the creation of "+ Novo".
+  regency: ['tree.read', 'tree.publish', 'act', 'act.take', 'create.options', 'create'],
 }
 const NEVER = Object.entries(PIPE_REACH).filter(([, r]) => r === 'never').map(([t]) => t as PipeType)
 const KEYSTROKES: readonly PipeType[] = ['input', 'typed']
@@ -75,13 +75,13 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
   test('a pair outside the reach is refused, its handler never runs, and the pipe stays up', async () => {
     calls.length = 0
     const from = logs.length
-    for (const [ext, name] of [['channels', 'create'], ['channels', 'mute'], ['channels', 'poll-close'], ['regency', 'tree.publish'], ['remote', 'device.revoke'], [MARKER, MARKER], ['channels', 7], [undefined, 'marks'], ['channels', '__proto__']] as const)
+    for (const [ext, name] of [['channels', 'leave'], ['channels', 'members'], ['regency', 'act.take'], ['regency', 'tree.publish'], ['remote', 'device.revoke'], [MARKER, MARKER], ['channels', 7], [undefined, 'marks'], ['channels', '__proto__']] as const)
       await assert.rejects(remote.request({ t: 'ext-request', ext, name, args: { text: MARKER } } as never), denied, `${String(ext)} ${String(name)}`)
     assert.deepEqual(calls, [], 'no handler ran')
     assert.ok(Array.isArray((await remote.request({ t: 'list' })).slots), 'the same connection still answers')
     const lines = logs.slice(from)
     assert.equal(lines.filter((l) => l === 'remote client: an ext-request outside its reach refused').length, 9, lines.join('\n'))
-    assert.equal(lines.some((l) => l.includes(MARKER) || /create|mute|poll-close|tree\.publish|device\.revoke/.test(l)), false, 'the log names no extension, request nor argument')
+    assert.equal(lines.some((l) => l.includes(MARKER) || /leave|members|act\.take|tree\.publish|device\.revoke/.test(l)), false, 'the log names no extension, request nor argument')
   })
 
   test('RR4 B-1: a second hello never relabels the portal; it is refused and logged, and the reach still holds', async () => {
@@ -89,7 +89,7 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
     calls.length = 0
     for (const client of ['app', 'cli', 'remote'] as const)
       await assert.rejects(remote.request({ t: 'hello', v: 3, client } as never), (e: unknown) => e instanceof DaemonError && e.code === 'bad-request', client)
-    await assert.rejects(remote.request({ t: 'ext-request', ext: 'channels', name: 'create', args: { name: MARKER } }), denied, 'still remote after the hellos')
+    await assert.rejects(remote.request({ t: 'ext-request', ext: 'channels', name: 'leave', args: { name: MARKER } }), denied, 'still remote after the hellos')
     await assert.rejects(remote.request({ t: 'shutdown' } as never), denied, 'a never type is still refused')
     assert.deepEqual(calls, [], 'no handler ran')
     await remote.request({ t: 'ext-request', ext: 'regency', name: 'tree.read' })

@@ -160,13 +160,15 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     const emitters = OPS.filter(l => l.pipe.includes('ext-request' as never)).map(l => l.name).sort()
     assert.deepEqual([...Object.keys(EXT_READS), ...Object.keys(EXT_WRITES)].sort(), emitters, 'one pair per line that emits ext-request, and no pair without one')
     assert.deepEqual(Object.keys(EXT_READS).filter(k => Object.hasOwn(EXT_WRITES, k)), [])
-    assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.file', 'channels.marks', 'channels.page', 'regency.tree'])
+    assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.file', 'channels.marks', 'channels.page', 'create.options', 'regency.tree'])
     assert.deepEqual(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).sort(), [
       'channels.close', 'channels.create', 'channels.join', 'channels.mute', 'channels.poll', 'channels.poll-close', 'channels.react',
       'channels.remove', 'channels.reopen', 'channels.say', 'channels.seen', 'channels.unmute', 'channels.vote',
     ])
-    // RR5 5.1: the rest are the gestures the app does, all of them the one pair `regency/act`.
-    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), Object.keys(APP_ACT_FIELDS).sort())
+    // RR5 5.1: the rest are the gestures the app does, all of them the one pair `regency/act`, and (RR5 5.3) the agent and the
+    // terminal tetherd creates alone, the pair `regency/create`.
+    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), [...Object.keys(APP_ACT_FIELDS), 'create.agent', 'create.terminal'].sort())
+    assert.deepEqual([EXT_WRITES['create.agent'], EXT_WRITES['create.terminal']], [{ ext: 'regency', name: 'create' }, { ext: 'regency', name: 'create' }])
   })
 
   test('each act of the app changes state, is a gesture, needs an actId, a scope of management, a strict body; what destroys a proof per act', () => {
@@ -230,6 +232,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
       'channels.page': { ext: 'channels', name: 'history' },
       'channels.file': { ext: 'channels', name: 'history' },
       'regency.tree': { ext: 'regency', name: 'tree.read' },
+      'create.options': { ext: 'regency', name: 'create.options' },
     })
     // The writes of the same extensions (the person's speech and gestures, the app's publish): none is a read pair.
     const writes = ['say', 'seen', 'react', 'vote', 'poll', 'poll-close', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'tree.publish']
@@ -244,7 +247,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     const named = new Set<string>(Object.values(EXT_WRITES).map(p => `${p.ext} ${p.name}`))
     // `leave` is an agent's own (the person removes), never a pair.
     assert.equal(named.has('channels leave'), false)
-    assert.deepEqual([...named].filter(n => n.startsWith('regency ') || n.startsWith('remote ')), ['regency act'], 'the bridge alone, never tree.publish nor a remote request')
+    assert.deepEqual([...named].filter(n => n.startsWith('regency ') || n.startsWith('remote ')).sort(), ['regency act', 'regency create'], 'the bridge and the creation, never tree.publish nor a remote request')
   })
 
   test('a request outside the lists has no pair, whatever its name', () => {

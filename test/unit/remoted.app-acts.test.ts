@@ -49,7 +49,7 @@ describe('appActArgs and parseAppAct: one closed list for the portal, tetherd an
   test('tetherd and the app take only the act as the portal builds it: no other field, no other act, no raw name', () => {
     for (const op of Object.keys(APP_ACT_FIELDS) as AppActOp[]) {
       const rule = APP_ACT_FIELDS[op] as { need: Record<string, unknown>; may?: Record<string, unknown> }
-      const body = Object.fromEntries(Object.entries({ ...rule.need, ...(rule.may ?? {}) }).map(([k, f]) => [k, f === 'id' ? 'x_1' : f === 'name' ? 'Mesa' : f === 'color' ? 'red' : (f as string[])[0]]))
+      const body = Object.fromEntries(Object.entries({ ...rule.need, ...(rule.may ?? {}) }).map(([k, f]) => [k, f === 'id' ? 'x_1' : f === 'name' ? 'Mesa' : f === 'color' ? 'red' : f === 'folder' ? '0123456789abcdef' : (f as string[])[0]]))
       const built = appActArgs(op, body)
       assert.ok(typeof built !== 'string', op)
       assert.deepEqual(parseAppAct(built.args), built.args, `${op}: what the portal builds passes`)
@@ -121,6 +121,38 @@ describe('the app acts through a real House', () => {
     assert.deepEqual(lines.map((l) => [l.act, l.result, l.target]), [['desks.create', 'ok', undefined], ['desks.hibernate', 'ok', 'desk-2'], ['panes.move', 'ok', 's_1']])
     assert.ok(lines.every((l) => l.deviceId === deviceId()))
     assert.equal(JSON.stringify(lines).includes(MARKER), false, 'never the desk\'s name')
+  })
+
+  test('"+ Novo" (RR5 5.3): an agent or a terminal is the pair regency/create, a note or a tab regency/act; answers by id alone', async () => {
+    sent.length = 0
+    const folder = '0123456789abcdef'
+    answer = async (m) => {
+      if (m.name === 'create') {
+        if (m.args.profile === 'nao-ha') throw new DaemonError('unknown-profile' as never, `recusado ${MARKER}`)
+        return { result: { slotId: 's_new', cwd: `C:\\${MARKER}`, env: { K: MARKER } } }
+      }
+      return { result: { state: 'done', paneId: 'note-3', path: MARKER } }
+    }
+    const from = bench.audits().length
+    assert.deepEqual(await send(OP['create.agent'], { engine: 'claude', deskId: 'desk-1', folder, name: 'revisor' }), { status: RES_STATUS.ok, body: { slotId: 's_new' } })
+    assert.deepEqual(await send(OP['create.terminal'], { deskId: 'desk-1', folder }), { status: RES_STATUS.ok, body: { slotId: 's_new' } })
+    assert.deepEqual(await send(OP['create.note'], { deskId: 'desk-1', folder }), { status: RES_STATUS.ok, body: { state: 'done', paneId: 'note-3' } })
+    assert.deepEqual(await send(OP['create.browser'], { deskId: 'desk-1' }), { status: RES_STATUS.ok, body: { state: 'done', paneId: 'note-3' } })
+    assert.deepEqual(await send(OP['create.agent'], { engine: 'claude', profile: 'nao-ha', deskId: 'desk-1', folder }), { status: RES_STATUS.notFound, body: { error: 'unknown-profile' } })
+    assert.equal((await send(OP['create.agent'], { engine: 'claude', deskId: 'desk-1', folder: 'C:\\Windows' })).status, RES_STATUS.badRequest, 'never a path')
+    assert.deepEqual(sent.map((m) => [m.name, m.args]), [
+      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, name: 'revisor' }],
+      ['create', { what: 'terminal', engine: 'shell', deskId: 'desk-1', folder }],
+      ['act', { act: 'create.note', deskId: 'desk-1', folder }],
+      ['act', { act: 'create.browser', deskId: 'desk-1' }],
+      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, profile: 'nao-ha' }],
+    ])
+    const lines = bench.audits().slice(from)
+    assert.deepEqual(lines.map((l) => [l.act, l.result, l.target]), [
+      ['create.agent', 'ok', 'desk-1'], ['create.terminal', 'ok', 'desk-1'], ['create.note', 'ok', 'desk-1'], ['create.browser', 'ok', 'desk-1'],
+      ['create.agent', 'refused:unknown-profile', 'desk-1'], ['create.agent', 'badRequest', undefined],
+    ])
+    assert.equal(JSON.stringify(lines).includes('revisor') || JSON.stringify(lines).includes(MARKER), false, 'never the name nor anything of the answer')
   })
 
   test("tetherd's and the app's refusals come back by their code, never the message: no-app 0x08, a stale id 0x06, busy 0x07", async () => {

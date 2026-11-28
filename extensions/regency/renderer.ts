@@ -709,6 +709,16 @@ export function activate(ui: TetherUi): Disposable[] {
     // desk in view unchanged; the Regency's brief notice says it was done from afar when the Regency is in view.
     remoteActs(ui, {
       owners: ownerBoard,
+      // "+ Novo" from afar (RR5 5.3): the card's own seams, behind, in the folders the card offers (projects, then recent).
+      create: {
+        note: spec => seams.item({ deskId: spec.deskId, itemId: 'note-new', cwd: spec.cwd, front: false }),
+        tab: async deskId => {
+          const r = await seams.tab({ deskId })
+          return r.ok ? { paneId: seams.tabPane(r.tabId) } : { error: r.why }
+        },
+        folders: async () => [...cardHost.projects().map(p => p.path), ...await cardHost.recentFolders()],
+        caseInsensitive: /^(win|mac)/i.test(navigator.platform),
+      },
       notice: text => {
         remoteSaid.push(text)
         if (remoteSaid.length > 20) remoteSaid.shift()

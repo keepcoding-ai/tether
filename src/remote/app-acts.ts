@@ -12,6 +12,7 @@
 // node:*, no DOM.
 import { RES_STATUS, sanitizeDeclaredName, type ResStatus } from './content.ts'
 import type { OpName } from './scopes.ts'
+import { FOLDER_ID_RE } from './create.ts'
 
 /** The extension request tetherd answers (ext `regency`), the event it emits to the app and the app's answer. */
 export const APP_ACT_REQUEST = 'act'
@@ -33,9 +34,9 @@ export const DESK_NAME_MAX = 64
 export const DESK_COLORS = ['red', 'orange', 'yellow', 'lime', 'green', 'teal', 'cyan', 'sky', 'blue', 'purple', 'magenta', 'pink'] as const
 export type DeskColor = (typeof DESK_COLORS)[number]
 
-/** The ops of this module: the management lines the app does. */
-export type AppActOp = Extract<OpName, `desks.${string}` | `panes.${string}` | `closed.${string}` | `owners.${string}`>
-export const isAppActOp = (name: string): name is AppActOp => /^(desks|panes|closed|owners)\./.test(name)
+/** The ops of this module: the management lines the app does (and, of "+ Novo", what only the app makes: a note, a tab). */
+export type AppActOp = Extract<OpName, `desks.${string}` | `panes.${string}` | `closed.${string}` | `owners.${string}` | 'create.note' | 'create.browser'>
+export const isAppActOp = (name: string): name is AppActOp => /^(desks|panes|closed|owners)\./.test(name) || name === 'create.note' || name === 'create.browser'
 
 /** One act as it crosses the pipe and reaches the app: its op's name and the ids, a desk's name or colour, nothing else. */
 export type AppAct =
@@ -51,9 +52,12 @@ export type AppAct =
   | { act: 'closed.forget'; slotId: string }
   | { act: 'owners.give'; deskId: string; paneId?: string; to: string }
   | { act: 'owners.revoke' | 'owners.take' | 'owners.return'; deskId: string; paneId?: string }
+  // "+ Novo" from afar (RR5 5.3): a note in a folder of the known list (src/remote/create.ts, by its id), a browser tab of the person's.
+  | { act: 'create.note'; deskId: string; folder: string }
+  | { act: 'create.browser'; deskId: string }
 
-/** What a field may hold: an id, a desk's name, a colour, or one of a closed list of values. */
-type Field = 'id' | 'name' | 'color' | readonly string[]
+/** What a field may hold: an id, a desk's name, a colour, a folder's id, or one of a closed list of values. */
+type Field = 'id' | 'name' | 'color' | 'folder' | readonly string[]
 interface ActRule { readonly need: Readonly<Record<string, Field>>; readonly may?: Readonly<Record<string, Field>> }
 
 /**
@@ -78,6 +82,8 @@ export const APP_ACT_FIELDS = {
   'owners.revoke': { need: { deskId: 'id' }, may: { paneId: 'id' } },
   'owners.take': { need: { deskId: 'id' }, may: { paneId: 'id' } },
   'owners.return': { need: { deskId: 'id' }, may: { paneId: 'id' } },
+  'create.note': { need: { deskId: 'id', folder: 'folder' } },
+  'create.browser': { need: { deskId: 'id' } },
 } as const satisfies { readonly [K in AppActOp]: ActRule }
 
 /** Defaults the portal fills (the safe answer of the app's own dialog), so the act tetherd and the app get is whole. */
@@ -94,7 +100,8 @@ const isColor = (v: unknown): v is DeskColor => typeof v === 'string' && (DESK_C
 const isCleanName = (v: unknown): v is string => typeof v === 'string' && v !== '' && v.length <= DESK_NAME_MAX && sanitizeDeclaredName(v) === v
 
 const fieldOk = (f: Field, v: unknown): boolean =>
-  f === 'id' ? isId(v) : f === 'name' ? isCleanName(v) : f === 'color' ? isColor(v) : typeof v === 'string' && f.includes(v)
+  f === 'id' ? isId(v) : f === 'name' ? isCleanName(v) : f === 'color' ? isColor(v) : f === 'folder' ? typeof v === 'string' && FOLDER_ID_RE.test(v)
+    : typeof v === 'string' && f.includes(v)
 
 const ruleOf = (op: string): ActRule | undefined => (Object.hasOwn(APP_ACT_FIELDS, op) ? APP_ACT_FIELDS[op as AppActOp] : undefined)
 
@@ -161,13 +168,13 @@ export function appActArgs(op: AppActOp, body: Record<string, unknown>): { args:
   return { args, target: appActTarget(args) }
 }
 
-/** What an act answers: done, or nothing to do (`already`); a new desk says its id. Nothing else of the app goes out. */
-export interface AppActAnswer { state: 'done' | 'already'; deskId?: string }
+/** What an act answers: done, or nothing to do (`already`); a new desk says its id, a new note or tab its pane's. Nothing else of the app goes out. */
+export interface AppActAnswer { state: 'done' | 'already'; deskId?: string; paneId?: string }
 
 /** The answer by the allow list, from what the app or tetherd said. */
 export function appActAnswer(v: unknown): AppActAnswer {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
-  return { state: o.state === 'already' ? 'already' : 'done', ...(isId(o.deskId) ? { deskId: o.deskId } : {}) }
+  return { state: o.state === 'already' ? 'already' : 'done', ...(isId(o.deskId) ? { deskId: o.deskId } : {}), ...(isId(o.paneId) ? { paneId: o.paneId } : {}) }
 }
 
 /**
@@ -184,6 +191,8 @@ export const APP_ACT_REFUSALS = {
   'unknown-pane': RES_STATUS.notFound,
   'unknown-slot': RES_STATUS.notFound,
   'unknown-agent': RES_STATUS.notFound,
+  // A folder id that is not of the known list now (src/remote/create.ts), at tetherd or at the app.
+  'unknown-folder': RES_STATUS.notFound,
   'busy': RES_STATUS.limit,
   'with-user': RES_STATUS.failed,
   'in-view': RES_STATUS.failed,
@@ -202,17 +211,17 @@ export const isAppActRefusal = (code: unknown): code is AppActCode => typeof cod
 
 /** The codes the app may answer with (tetherd's own, `no-app`, `busy`, `no-answer`, are not the app's to say). Any other: `refused`. */
 export const APP_ANSWER_CODES: readonly AppActCode[] = [
-  'unknown-desk', 'unknown-pane', 'unknown-slot', 'unknown-agent', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
+  'unknown-desk', 'unknown-pane', 'unknown-slot', 'unknown-agent', 'unknown-folder', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
   'not-given', 'cannot', 'owners-off', 'unconfirmed', 'refused',
 ]
 
 /** The codes this module adds to what a body may carry (the others are in the lists of src/remote/projection.ts already). */
 export const APP_ACT_ERROR_CODES = [
-  'no-app', 'unknown-desk', 'unknown-pane', 'unknown-agent', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
+  'no-app', 'unknown-desk', 'unknown-pane', 'unknown-agent', 'unknown-folder', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
   'not-given', 'cannot', 'owners-off', 'no-answer',
 ] as const
 
 /** The event tetherd emits to the app: one ask, its act, and until when it may be claimed (epoch ms; past it, not done). */
 export interface AppActEvent { ask: string; act: AppAct; until: number }
 /** The app's answer: done (`state`, a new desk's id) or refused by a code. */
-export type AppActDoneArgs = { ask: string; ok: true; state?: 'done' | 'already'; deskId?: string } | { ask: string; ok: false; code: string }
+export type AppActDoneArgs = { ask: string; ok: true; state?: 'done' | 'already'; deskId?: string; paneId?: string } | { ask: string; ok: false; code: string }

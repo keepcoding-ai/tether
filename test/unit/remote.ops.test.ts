@@ -92,6 +92,11 @@ describe('remote operations registry', () => {
       [0x0451, 'owners.revoke', 'manage:agents', 'unlocked', true, true],
       [0x0452, 'owners.take', 'manage:agents', 'unlocked', true, true],
       [0x0453, 'owners.return', 'manage:agents', 'window', true, true],
+      [0x0460, 'create.options', 'manage:desks', 'unlocked', false, false],
+      [0x0461, 'create.agent', 'manage:agents', 'unlocked', true, true],
+      [0x0462, 'create.terminal', 'manage:desks', 'unlocked', true, true],
+      [0x0463, 'create.note', 'manage:desks', 'unlocked', true, true],
+      [0x0464, 'create.browser', 'manage:desks', 'unlocked', true, true],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
     ])
@@ -127,6 +132,7 @@ describe('remote operations registry', () => {
       'desks.hibernate', 'desks.wake', 'desks.create', 'desks.rename', 'desks.color', 'desks.close',
       'panes.hibernate', 'panes.wake', 'panes.suspend', 'panes.move', 'panes.close', 'closed.reopen', 'closed.forget',
       'owners.give', 'owners.revoke', 'owners.take', 'owners.return',
+      'create.agent', 'create.terminal', 'create.note', 'create.browser',
       'device.revoke',
     ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])

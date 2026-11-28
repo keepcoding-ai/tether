@@ -258,6 +258,14 @@ const ANSWERS: Record<ExtReadOp, unknown> = {
     },
     live: true, sig: '0123456789abcdef', ...later(),
   },
+  // "+ Novo" (RR5 5.3): every folder with its path and a profile with its env, which never leave.
+  'create.options': {
+    engines: ['claude', 'codex', MARKER.toUpperCase(), 'shell'],
+    profiles: [{ name: 'Claude', engine: 'claude', default: true, env: { KEY: MARKER }, args: [MARKER], cwd: `C:/Users/${MARKER}` }, { name: 'Git Bash', engine: 'shell', ...later() }],
+    desks: [{ deskId: 'desk-1', name: 'Mesa', ...later() }, { deskId: '../x', name: 'fora' }],
+    folders: [{ id: '0123456789abcdef', label: 'obra', kind: 'project', path: `C:/Users/${MARKER}/obra`, ...later() }, { id: 'nothex', label: 'x', kind: 'recent', path: '/x' }],
+    ...later(),
+  },
 }
 
 describe('the three reads through a real House', () => {
@@ -311,6 +319,22 @@ describe('the three reads through a real House', () => {
       { op: 'regency.tree', args: {} },
     ])
     for (const r of [marks, page, tree]) assert.equal(has(r), false, JSON.stringify(r))
+  })
+
+  test('"+ Novo" (RR5 5.3): the choices by the allow list, the folders by id and label, never a path nor a profile\'s env', async () => {
+    calls.length = 0
+    const r = await s.request(OP_CODES['create.options'])
+    assert.deepEqual(r, {
+      status: RES_STATUS.ok,
+      body: {
+        engines: ['claude', 'codex', 'shell'],
+        profiles: [{ name: 'Claude', engine: 'claude', default: true }, { name: 'Git Bash', engine: 'shell' }],
+        desks: [{ deskId: 'desk-1', name: 'Mesa' }],
+        folders: [{ id: '0123456789abcdef', label: 'obra', kind: 'project' }],
+      },
+    })
+    assert.equal(has(r), false)
+    assert.deepEqual(calls, [{ op: 'create.options', args: {} }])
   })
 
   test('the strict body: an unknown key, an odd channel id, a cursor below 1 or a limit past the ceiling is 0x01, before the pipe', async () => {
