@@ -92,7 +92,8 @@ describe('channels requests: the person talks from afar', () => {
   test("the talking requests are exactly the channels' pairs of EXT_WRITES (what the portal may send and tetherd lets through)", () => {
     const pairs = Object.values(EXT_WRITES).filter((p) => p.ext === 'channels').map((p) => p.name).sort()
     assert.deepEqual(pairs, [...PERSON].sort())
-    assert.equal(Object.values(EXT_WRITES).every((p) => p.ext === 'channels'), true)
+    // Besides the channels' speech, only the Regency's bridge of acts (RR5 5.1) is a write pair.
+    assert.equal(Object.values(EXT_WRITES).every((p) => p.ext === 'channels' || (p.ext === 'regency' && p.name === 'act')), true)
     for (const name of MANAGE) assert.equal(REMOTE_EXT_PAIRS.some((p) => p.ext === 'channels' && p.name === name), false, `${name}: never in the reach`)
   })
 

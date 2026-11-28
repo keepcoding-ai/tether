@@ -39,6 +39,9 @@ export interface HouseBenchOptions {
   acts?: PipeActs
   /** How long a repeat of an act in flight waits for it (the act path's deadline). */
   actTimeoutMs?: number
+  /** The gestures the app does (RR5 5.1): the write path to `regency/act`; absent, those lines answer not-implemented. */
+  appActs?: PipeWrites
+  appActTimeoutMs?: number
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
   /** The files of a speech from afar (src/remoted/files.ts); absent, the file lines answer not-implemented. */
   files?: PortalFiles
@@ -167,6 +170,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
       ...(o.reads ? { reads: o.reads } : {}), ...(o.noticeGapsMs ? { noticeGapsMs: o.noticeGapsMs } : {}),
       ...(o.writes ? { writes: o.writes } : {}), ...(o.writeTimeoutMs ? { writeTimeoutMs: o.writeTimeoutMs } : {}),
       ...(o.acts ? { acts: o.acts } : {}), ...(o.actTimeoutMs ? { actTimeoutMs: o.actTimeoutMs } : {}),
+      ...(o.appActs ? { appActs: o.appActs } : {}), ...(o.appActTimeoutMs ? { appActTimeoutMs: o.appActTimeoutMs } : {}),
       ...(o.files ? { files: o.files } : {}),
     })
     await house.init(devices, [])

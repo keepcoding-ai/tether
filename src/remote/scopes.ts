@@ -80,6 +80,24 @@ export const OP_CODES = {
   'procs.release': 0x0428,
   'procs.forget': 0x0429,
   'procs.forget-force': 0x042a,
+  // The gestures only the app knows (RR5 5.1, fio-spec 17): through tetherd to the app's bridge, `regency/act`.
+  'desks.hibernate': 0x0430,
+  'desks.wake': 0x0431,
+  'desks.create': 0x0432,
+  'desks.rename': 0x0433,
+  'desks.color': 0x0434,
+  'desks.close': 0x0435,
+  'panes.hibernate': 0x0440,
+  'panes.wake': 0x0441,
+  'panes.suspend': 0x0442,
+  'panes.move': 0x0443,
+  'panes.close': 0x0444,
+  'closed.reopen': 0x0448,
+  'closed.forget': 0x0449,
+  'owners.give': 0x0450,
+  'owners.revoke': 0x0451,
+  'owners.take': 0x0452,
+  'owners.return': 0x0453,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
 } as const
@@ -189,6 +207,36 @@ export const OP_TABLE = {
   'procs.release': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name'], pipe: ['proc-release'] },
   'procs.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name'], pipe: ['proc-forget', 'proc-info'] },
   'procs.forget-force': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-forget'] },
+  // The gestures only the app knows how to do (RR5 5.1, fio-spec 17). Each reaches tetherd as the ONE `ext-request` of
+  // EXT_WRITES (`regency/act`) with its act's name and fields (src/remote/app-acts.ts, the closed list tetherd takes field by
+  // field); tetherd confers what it can alone (the desk, the pane in that desk, the slot, the person typing there), refuses
+  // `no-app` at once when no app holds the tree's lease, and hands the act to the app, which does it as its own gesture with
+  // no dialog and without changing the desk in view. Targets by their real ids; the pane with the desk the device saw it in.
+  // A desk: hibernate and wake, create (a name, a colour), rename, recolour; closing it is destructive (its panes go to the
+  // neighbour, or stop and close).
+  'desks.hibernate': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId'], pipe: ['ext-request'] },
+  'desks.wake': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId'], pipe: ['ext-request'] },
+  'desks.create': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'color'], pipe: ['ext-request'] },
+  'desks.rename': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'name'], pipe: ['ext-request'] },
+  'desks.color': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'color'], pipe: ['ext-request'] },
+  'desks.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'panes'], pipe: ['ext-request'] },
+  // A pane: hibernate, wake (the slot's start, which tetherd does alone), suspend, move to another desk; closing it is
+  // destructive (the agent keeps running without a pane, or stops).
+  'panes.hibernate': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'panes.wake': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'panes.suspend': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'panes.move': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId', 'to'], pipe: ['ext-request'] },
+  'panes.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'paneId', 'process'], pipe: ['ext-request'] },
+  // "Fechadas": a closed session reopened on a desk; forgetting it is destructive.
+  'closed.reopen': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId', 'deskId'], pipe: ['ext-request'] },
+  'closed.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['slotId'], pipe: ['ext-request'] },
+  // The agents' ownership, the app's own writes (for-agents' gestures, never `object-set` from the portal). Giving a desk or a
+  // pane to an agent, and giving the command back, widen an agent's power: the elevation window (7.3). Taking it away
+  // ("Tirar a mesa de <nome>") and "Assumir o comando" only lower it: unlocked.
+  'owners.give': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'paneId', 'to'], pipe: ['ext-request'] },
+  'owners.revoke': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'owners.take': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'owners.return': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }

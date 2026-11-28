@@ -78,6 +78,8 @@ void readsAreNotWrites
 
 /** One request of a daemon extension: the extension and the request's name, exactly as tetherd registers them. */
 export interface ExtPair { readonly ext: string; readonly name: string }
+/** The Regency's bridge of acts to the app (extensions/regency/daemon.ts; the name is src/remote/app-acts.ts APP_ACT_REQUEST). */
+const REGENCY_ACT = { ext: 'regency', name: 'act' } as const
 /** A pair on a line that only reads. */
 export type ExtReadPair = ExtPair
 
@@ -107,6 +109,14 @@ export const EXT_WRITES = {
   'channels.vote': { ext: 'channels', name: 'vote' },
   'channels.poll': { ext: 'channels', name: 'poll' },
   'channels.seen': { ext: 'channels', name: 'seen' },
+  // The gestures only the app knows (RR5 5.1): ONE request of the Regency, `act`, whose args are the act of the op, built
+  // and taken by the closed list of src/remote/app-acts.ts (APP_ACT_FIELDS, field by field; tetherd refuses anything else
+  // from `remote` in extensions/regency/daemon.ts). The op decides the act, never the device.
+  'desks.hibernate': REGENCY_ACT, 'desks.wake': REGENCY_ACT, 'desks.create': REGENCY_ACT, 'desks.rename': REGENCY_ACT,
+  'desks.color': REGENCY_ACT, 'desks.close': REGENCY_ACT,
+  'panes.hibernate': REGENCY_ACT, 'panes.wake': REGENCY_ACT, 'panes.suspend': REGENCY_ACT, 'panes.move': REGENCY_ACT, 'panes.close': REGENCY_ACT,
+  'closed.reopen': REGENCY_ACT, 'closed.forget': REGENCY_ACT,
+  'owners.give': REGENCY_ACT, 'owners.revoke': REGENCY_ACT, 'owners.take': REGENCY_ACT, 'owners.return': REGENCY_ACT,
 } as const satisfies { readonly [K in ExtWriteOp]: ExtPair }
 
 /** The pair of a read line, or undefined for a name that has none (every request outside the list stays `never`). */

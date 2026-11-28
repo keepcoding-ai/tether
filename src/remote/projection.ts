@@ -9,6 +9,7 @@
 // the env by the NAMES of its variables only. The args of either do not go out at all: their mask (src/core/redact-args.ts)
 // lives outside this pure module, and a device has no use for them yet. Text is hostile: names are sanitized and capped.
 // Pure: no node:*, no DOM; the PWA imports the types of what it receives from here.
+import { appActAnswer, APP_ACT_ERROR_CODES, type AppActAnswer } from './app-acts.ts'
 import { b64url, utf8, type Bytes } from './bytes.ts'
 import { PRESENCE, type Presence } from './constants.ts'
 import { sanitizeDeclaredName } from './content.ts'
@@ -118,6 +119,8 @@ export const ERROR_CODES = [
   // Web Push (step 4.4): the subscription's endpoint is not of a push service the portal posts to (M-11).
   'push-service',
   ...MANAGE_ERROR_CODES_LIST,
+  // The gestures the app does (RR5 5.1, src/remote/app-acts.ts APP_ACT_REFUSALS gives each its status).
+  ...APP_ACT_ERROR_CODES,
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
@@ -1041,6 +1044,8 @@ function procInfo(s: WriteSource): ProcInfo {
 function procActed(s: WriteSource): ProcActed { return { proc: procOf(rec(s.answer).proc) } }
 function procReleased(s: WriteSource): ProcReleased { return { proc: procOf(rec(s.answer).proc), released: rec(s.answer).released === true } }
 const forgot = (_: WriteSource): Record<string, never> => ({})
+/** An act the app did (RR5 5.1): done or already so, and a new desk's id; nothing else of the app's answer. */
+const appActed = (s: WriteSource): AppActAnswer => appActAnswer(s.answer)
 
 /** The body of a refusal "in use by another": the uses of others the board shows (the person's own never refuses her). */
 export function inUseBody(uses: readonly unknown[]): Bytes {
@@ -1098,6 +1103,23 @@ export const RESULTS = {
   'procs.release': procReleased,
   'procs.forget': forgot,
   'procs.forget-force': forgot,
+  'desks.hibernate': appActed,
+  'desks.wake': appActed,
+  'desks.create': appActed,
+  'desks.rename': appActed,
+  'desks.color': appActed,
+  'desks.close': appActed,
+  'panes.hibernate': appActed,
+  'panes.wake': appActed,
+  'panes.suspend': appActed,
+  'panes.move': appActed,
+  'panes.close': appActed,
+  'closed.reopen': appActed,
+  'closed.forget': appActed,
+  'owners.give': appActed,
+  'owners.revoke': appActed,
+  'owners.take': appActed,
+  'owners.return': appActed,
   'device.list': unbuilt,
   'device.revoke': empty,
 } as const satisfies { readonly [K in OpName]: (src: never) => unknown }

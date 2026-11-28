@@ -29,6 +29,7 @@ import { benchPushOrigin } from '../remote/webpush.ts'
 import { pipeReads } from './reads.ts'
 import { pipeWrites } from './writes.ts'
 import { pipeActs } from './acts.ts'
+import { APP_ACT_PORTAL_MS } from '../remote/app-acts.ts'
 import { PortalFiles } from './files.ts'
 import { audOf, RelayLink } from './relay.ts'
 
@@ -168,6 +169,9 @@ async function main(): Promise<void> {
     writes: pipeWrites((body) => client.request(body), { log, onStuck: () => leave(PORTAL_EXIT.pipe, 'tetherd does not answer the writes') }),
     // The class `op`: the management acts (RR5 5.2), one pipe message each, by tetherd's own rule (./acts.ts).
     acts: pipeActs((msg) => client.request(msg as never) as Promise<Record<string, unknown>>, { log }),
+    // The gestures the app does (RR5 5.1): the one pair `regency/act`, on a write path of its own. No `onStuck`: tetherd
+    // answers every act by its own wait for the app (APP_ACT_BRIDGE_MS), so a late one always settles.
+    appActs: pipeWrites((body) => client.request(body), { log, timeoutMs: APP_ACT_PORTAL_MS }),
     userHome: homedir(),
     // The files of a speech from afar: read from and written to the channels' folders under tetherd's home, nowhere else.
     files: new PortalFiles({ home, now: Date.now, log }),

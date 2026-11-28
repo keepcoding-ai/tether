@@ -30,7 +30,8 @@ const denied = (e: unknown): boolean => e instanceof DaemonError && e.code === '
 const HANDLERS: Record<string, readonly string[]> = {
   // The reads and the person's speech of the reach, and beside them what manages a channel (outside it).
   channels: ['marks', 'history', 'say', 'react', 'vote', 'poll', 'seen', 'create', 'mute', 'poll-close'],
-  regency: ['tree.read', 'tree.publish'],
+  // RR5 5.1: `act` is the bridge of the app's gestures (a write pair of the reach).
+  regency: ['tree.read', 'tree.publish', 'act'],
 }
 const NEVER = Object.entries(PIPE_REACH).filter(([, r]) => r === 'never').map(([t]) => t as PipeType)
 const KEYSTROKES: readonly PipeType[] = ['input', 'typed']

@@ -46,7 +46,8 @@ export function gate(req: Req, c: GateContext): GateVerdict {
       if (noCredential && line.mutates && !line.allowedWithoutCredential) return { ok: false, status: RES_STATUS.presenceRequired, line }
       break
     case 'window':
-      if (noCredential || c.elevUntilS * 1000 <= c.nowMs) return { ok: false, status: RES_STATUS.presenceRequired, line }
+      // A locked session holds no window, whatever its end said (RR5 5.1 brought the first line of this class).
+      if (noCredential || c.presence === PRESENCE.locked || c.elevUntilS * 1000 <= c.nowMs) return { ok: false, status: RES_STATUS.presenceRequired, line }
       break
     case 'per-act':
       // The proof travels in the request itself; the gate only demands it is there, from a device that holds a credential

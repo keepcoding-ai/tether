@@ -20,6 +20,7 @@ import {
 import { DEFAULT_SCOPES } from '../../src/remoted/house.ts'
 import { REMOTE_ACT_ARGS, remoteMayAct } from '../../src/remoted/reach.ts'
 import { isManageOp } from '../../src/remote/manage.ts'
+import { APP_ACT_FIELDS } from '../../src/remote/app-acts.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -160,11 +161,33 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     assert.deepEqual([...Object.keys(EXT_READS), ...Object.keys(EXT_WRITES)].sort(), emitters, 'one pair per line that emits ext-request, and no pair without one')
     assert.deepEqual(Object.keys(EXT_READS).filter(k => Object.hasOwn(EXT_WRITES, k)), [])
     assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.file', 'channels.marks', 'channels.page', 'regency.tree'])
-    assert.deepEqual(Object.keys(EXT_WRITES).sort(), ['channels.poll', 'channels.react', 'channels.say', 'channels.seen', 'channels.vote'])
+    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).sort(), ['channels.poll', 'channels.react', 'channels.say', 'channels.seen', 'channels.vote'])
+    // RR5 5.1: the rest are the gestures the app does, all of them the one pair `regency/act`.
+    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), Object.keys(APP_ACT_FIELDS).sort())
+  })
+
+  test('each act of the app changes state, is a gesture, needs an actId, a scope of management, a strict body; what destroys a proof per act', () => {
+    for (const name of Object.keys(APP_ACT_FIELDS)) {
+      const l = OPS.find(x => x.name === name)!
+      assert.deepEqual(EXT_WRITES[name as keyof typeof EXT_WRITES], { ext: 'regency', name: 'act' }, name)
+      assert.equal(l.mutates && l.gesture, true, name)
+      assert.equal(l.code >>> 8, 0x04, `${name}: in the range of management`)
+      assert.deepEqual(l.pipe, ['ext-request'], name)
+      const fields = APP_ACT_FIELDS[name as keyof typeof APP_ACT_FIELDS] as { need: object; may?: object }
+      assert.deepEqual([...l.body!].sort(), [...Object.keys(fields.need), ...Object.keys(fields.may ?? {})].sort(), `${name}: the body is the act's fields`)
+      const destroys = ['desks.close', 'panes.close', 'closed.forget'].includes(name)
+      assert.equal(l.scope === 'manage:destructive' && l.presence === 'per-act', destroys, `${name}: destructive only where it destroys`)
+      if (name.startsWith('owners.')) assert.equal(l.scope, 'manage:agents', name)
+      else if (!destroys) assert.equal(l.scope, 'manage:desks', name)
+      // Giving power to an agent is the window (7.3); taking it away only lowers it.
+      if (name === 'owners.give' || name === 'owners.return') assert.equal(l.presence, 'window', name)
+      else if (!destroys) assert.equal(l.presence, 'unlocked', name)
+      assert.notEqual(RESULT_OF[name]!.name, 'unbuilt', `${name}: a projector that can be called`)
+    }
   })
 
   test('each write line changes state, needs an actId, the channels scope unlocked, has a strict body and a projector that builds', () => {
-    for (const name of Object.keys(EXT_WRITES)) {
+    for (const name of Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.'))) {
       const l = OPS.find(x => x.name === name)!
       assert.equal(l.mutates, true, `${name}: a write`)
       assert.equal(l.scope, 'channels', name)
@@ -177,7 +200,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
       assert.notEqual(RESULT_OF[name]!.name, 'unbuilt', `${name}: a projector that can be called`)
       assert.equal(l.gesture, name !== 'channels.seen', `${name}: a gesture of the person, except the seen the screen sends by itself`)
     }
-    assert.deepEqual(Object.fromEntries(Object.keys(EXT_WRITES).map(n => [n, OP_CODES[n as OpName]])), {
+    assert.deepEqual(Object.fromEntries(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).map(n => [n, OP_CODES[n as OpName]])), {
       'channels.say': 0x0202, 'channels.react': 0x0203, 'channels.vote': 0x0204, 'channels.poll': 0x0205, 'channels.seen': 0x0206,
     })
   })
@@ -207,8 +230,8 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     for (const w of writes) assert.equal(named.has(w), false, `${w} writes: never a read pair`)
   })
 
-  test("the write pairs are the person's speech, and nothing that manages a channel or publishes", () => {
-    assert.deepEqual(EXT_WRITES, {
+  test("the write pairs are the person's speech and the Regency's one bridge of acts; nothing that manages a channel or publishes", () => {
+    assert.deepEqual(Object.fromEntries(Object.entries(EXT_WRITES).filter(([n]) => n.startsWith('channels.'))), {
       'channels.say': { ext: 'channels', name: 'say' },
       'channels.react': { ext: 'channels', name: 'react' },
       'channels.vote': { ext: 'channels', name: 'vote' },
@@ -218,7 +241,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     const named = new Set<string>(Object.values(EXT_WRITES).map(p => `${p.ext} ${p.name}`))
     for (const w of ['poll-close', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'leave'])
       assert.equal(named.has(`channels ${w}`), false, `${w} manages: never a pair`)
-    assert.equal([...named].some(n => n.startsWith('regency ') || n.startsWith('remote ')), false)
+    assert.deepEqual([...named].filter(n => n.startsWith('regency ') || n.startsWith('remote ')), ['regency act'], 'the bridge alone, never tree.publish nor a remote request')
   })
 
   test('a request outside the lists has no pair, whatever its name', () => {
