@@ -1292,7 +1292,12 @@ class DaemonImpl implements Daemon {
         const { meta } = slot
         let choice: 'resume' | undefined
         if (meta.agent !== 'shell') {
-          if (!slot.binding?.confirmed) {
+          if (!slot.binding) {
+            // No session to resume: not relaunched, and the status stays as is (a plain start opens a new session).
+            this.log(`slot ${meta.slotId}: meant to run, but it has no session to resume; not relaunched`)
+            continue
+          }
+          if (!slot.binding.confirmed) {
             slot.status = 'unconfirmed'
             this.log(`slot ${meta.slotId}: meant to run, but its binding is not confirmed; not relaunched (the user chooses)`)
             this.broadcastState(slot)

@@ -240,7 +240,7 @@ describe('lifecycle intent: the boot relaunches what is meant to run', () => {
     await noLaunch(b, id, 1)
   })
 
-  test('5. a slot meant to run without a confirmed binding is not relaunched: it stays unconfirmed', async () => {
+  test('5. a slot meant to run with no session at all is not relaunched: it stays exited and a plain start opens a new session', async () => {
     const b = bench()
     await b.boot()
     const rec = await Recorder.connect(b.daemon!.pipe)
@@ -250,8 +250,13 @@ describe('lifecycle intent: the boot relaunches what is meant to run', () => {
     assert.equal(b.meta(id).want, 'run')
     await b.boot()
     await noLaunch(b, id, 1)
-    assert.equal(b.state(id).status, 'unconfirmed')
+    assert.equal(b.state(id).status, 'exited')
     assert.equal(b.state(id).want, 'run')
+    const rec2 = await Recorder.connect(b.daemon!.pipe)
+    await rec2.client.request({ t: 'start', slotId: id })
+    await waitUntil(() => b.launches(id).length === 2, 10_000, 'a plain start launches it')
+    assert.equal(b.launches(id)[1]!.resume, 'new')
+    rec2.close()
   })
 
   test(`6. crash loop: after ${MAX_BOOT_TRIES} boots without a healthy run the next boot does not relaunch; a manual start resets it`, async () => {
