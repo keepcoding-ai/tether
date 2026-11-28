@@ -17,6 +17,9 @@ import { layoutParams, tierOf, type RegencyLayout, type Tier } from '../../../ex
 import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { keysStrip, mountSpatialFocus } from './focus.ts'
 import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type RemoteSource } from './host.ts'
+import { createMenu } from './menu.ts'
+import type { Talker } from './talk.ts'
+import { mountTalkView } from './talk-view.ts'
 import { el, registerEngines } from './ui-lite.ts'
 import { channelOnOpen } from './url-state.ts'
 
@@ -24,6 +27,10 @@ import { channelOnOpen } from './url-state.ts'
 export const TEXT = {
   watching: 'Vendo de longe',
   watchingTip: 'Este aparelho acompanha de longe: vê, não fala nem gere',
+  talking: 'Conversa de longe',
+  talkingTip: 'Este aparelho conversa nos canais de longe; gerir as mesas e os canais fica na máquina',
+  lock: 'Trancar',
+  lockTip: 'Trancar este aparelho: para voltar, a biometria',
   live: 'ao vivo',
   appClosed: 'app fechado na máquina',
   offline: 'offline',
@@ -100,7 +107,18 @@ export interface RegencyOptions {
      */
     tabAsked?(): boolean
   }
+  /** The device may converse (a presence credential is registered): the channels' gestures go through it. Absent: reading only. */
+  talk?: Talker
+  /** "Trancar": the device asks the session to lock (only a device that can unlock again gets the gesture). */
+  onLock?(): void
 }
+
+/** How long a finger rests on a speech before it opens the speech's menu (a touch screen's right click). */
+const LONG_PRESS_MS = 480
+/** How far it may wander and still be resting. */
+const LONG_PRESS_SLACK_PX = 10
+/** The visual viewport this much shorter than the window: the virtual keyboard is up. */
+const KEYBOARD_PX = 120
 
 /** What is up while the link is: the house's data, the pane over it and the reading card. */
 interface Session {
@@ -257,7 +275,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   houseName.title = o.houseName
   const dot = el('i', 'rr-dot')
   const where = el('span', 'rr-where-t')
-  const far = el('span', 'rr-far', `· ${TEXT.watching.toLowerCase()}`)
+  const far = el('span', 'rr-far', `· ${(o.talk ? TEXT.talking : TEXT.watching).toLowerCase()}`)
   const whereBox = el('span', 'rr-where')
   whereBox.setAttribute('role', 'status')
   whereBox.append(dot, where, far)
@@ -265,9 +283,19 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
   house.append(houseName, whereBox)
   const clock = el('span', 'rr-clock')
   const watch = el('span', 'rr-watch')
-  watch.title = TEXT.watchingTip
-  watch.append(glyph('eye'), el('span', '', TEXT.watching))
+  watch.title = o.talk ? TEXT.talkingTip : TEXT.watchingTip
+  watch.append(glyph(o.talk ? 'chats-circle' : 'eye'), el('span', '', o.talk ? TEXT.talking : TEXT.watching))
   top.append(brand, house, el('span', 'rr-sp'), keysStrip(), clock, watch)
+  // "Trancar": the session's own gesture, in the strip of the house (the device that can unlock again has it).
+  const lockBtn = o.onLock ? el('button', 'rr-lock') : undefined
+  if (lockBtn) {
+    lockBtn.type = 'button'
+    lockBtn.title = TEXT.lockTip
+    lockBtn.setAttribute('aria-label', TEXT.lock)
+    lockBtn.append(glyph('lock'), el('span', 'rr-lock-t', TEXT.lock))
+    lockBtn.addEventListener('click', () => o.onLock?.())
+    top.append(lockBtn)
+  }
 
   // ---- the stage (the pane) and the notice of "offline"
   const stage = el('div', 'rr-stage')
@@ -326,6 +354,54 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     closeCard: () => session?.card.close(true),
   })
 
+  // The menu of a speech or a poll (the app's context menu): at the point, or a sheet on the phone.
+  const menu = createMenu({ sheet: () => tier === 'mobile', tier: () => tier })
+
+  // A finger resting on a speech opens its menu, as a right click does (a touch screen has none; Android's own
+  // `contextmenu` after a long press counts the same, and the second one is not opened).
+  let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number; target: HTMLElement } | undefined
+  let pressFired = 0
+  const endPress = (): void => { if (press) { clearTimeout(press.timer); press = undefined } }
+  const onPressDown = (ev: PointerEvent): void => {
+    endPress()
+    if (ev.pointerType !== 'touch' || !o.talk) return
+    const t = ev.target instanceof Element ? ev.target : null
+    const msg = t?.closest<HTMLElement>('.ch-msgs > .ch-msg, .ch-msgs > .ch-prow')
+    // A button, a link or a field of the speech keeps its own tap.
+    if (!t || !msg || t.closest('button, a, input, textarea, select')) return
+    const { clientX: x, clientY: y } = ev
+    press = {
+      x, y, target: msg,
+      timer: setTimeout(() => {
+        press = undefined
+        if (menu.isOpen()) return
+        pressFired = performance.now()
+        msg.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }))
+      }, LONG_PRESS_MS),
+    }
+  }
+  const onPressMove = (ev: PointerEvent): void => {
+    if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > LONG_PRESS_SLACK_PX) endPress()
+  }
+  // The browser's own long press (Android) came first: the timer is not needed. The tap that ends a long press clicks nothing.
+  const onNativeMenu = (ev: MouseEvent): void => { if (ev.isTrusted) endPress() }
+  const onPressClick = (ev: MouseEvent): void => { if (performance.now() - pressFired < 600) { ev.preventDefault(); ev.stopPropagation() } }
+  stage.addEventListener('pointerdown', onPressDown)
+  stage.addEventListener('pointermove', onPressMove)
+  for (const n of ['pointerup', 'pointercancel', 'scroll'] as const) stage.addEventListener(n, endPress, true)
+  stage.addEventListener('contextmenu', onNativeMenu, true)
+  stage.addEventListener('click', onPressClick, true)
+
+  // The phone's virtual keyboard: the casing takes the height that is left, so the speaking box stays right above the keys
+  // (and the bar of the three places steps aside while it is up).
+  const vv = window.visualViewport
+  const onViewport = (): void => {
+    if (!vv) return
+    const up = window.innerHeight - vv.height > KEYBOARD_PX
+    if (up) { shell.style.setProperty('--rr-vvh', `${Math.round(vv.height)}px`); shell.dataset.kb = 'up' } else { shell.style.removeProperty('--rr-vvh'); delete shell.dataset.kb }
+  }
+  vv?.addEventListener('resize', onViewport)
+
   const paintTop = (): void => {
     shell.dataset.link = link
     shell.dataset.tier = tier
@@ -334,6 +410,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     dot.className = `rr-dot ${link === 'live' ? 'ok' : link === 'closed' ? 'warn' : link === 'offline' ? 'err' : ''}`
     far.hidden = link === 'offline' || link === 'loading'
     watch.hidden = link === 'offline'
+    if (lockBtn) lockBtn.hidden = link === 'offline'
     const t = clockOf(now())
     if (clock.textContent !== t) clock.textContent = t
   }
@@ -430,12 +507,18 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       changed: () => pane?.markQuick(),
       now,
     })
-    const views = createChannelViews(remoteChannelHost(house, { quick: id => card.open({ kind: 'pane', id }) }))
+    const talk = o.talk
+    const views = createChannelViews(remoteChannelHost(house, {
+      quick: id => card.open({ kind: 'pane', id }),
+      menu: (x, y, entries) => menu.open(x, y, entries),
+    }, talk))
     pane = new RegencyPane(remoteRegencyHost(house, {
       mount: (place, channelId, opts) => {
         const view = views.mountEmbed(place, channelId, opts)
         house.openViews.add(channelId)
-        return { ...view, dispose: () => { house.openViews.delete(channelId); view.dispose() } }
+        // The speeches on their way, the draft and the counter of the box, around the app's own box.
+        const extra = talk ? mountTalkView({ element: view.element, channelId, talker: talk, phone: () => tier === 'mobile' }) : undefined
+        return { ...view, dispose: () => { extra?.dispose(); menu.close(); house.openViews.delete(channelId); view.dispose() } }
       },
       quick: { open: t => card.open(t), toggle: t => card.toggle(t), shown: () => card.shown(), close: () => card.close() },
       visible: () => !stage.hidden,
@@ -512,6 +595,9 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       clearInterval(minute)
       ro.disconnect()
       shell.removeEventListener('keydown', onKey)
+      vv?.removeEventListener('resize', onViewport)
+      endPress()
+      menu.close()
       focus.dispose()
       endSession()
       shell.remove()

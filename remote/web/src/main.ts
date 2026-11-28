@@ -14,6 +14,7 @@ import { pair, type PairInput } from './pair.ts'
 import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
 import { mountRegency, type RemoteRegency } from './regency.ts'
 import { sessionSource, type SessionSource } from './source.ts'
+import { createTalker, type Talker } from './talk.ts'
 import {
   connectingScreen, elsewhereScreen, hardScreen, idleScreen, isPairNotice, listScreen, offlineScreen, pairFailedScreen, pairScreen,
   pairWaitScreen, retryText, unsupportedScreen, type Guard, type Lock, type PairNotice,
@@ -77,6 +78,36 @@ const TITLE: Record<View['s'], string> = {
 function dropSource(): void {
   source?.src.dispose()
   source = undefined
+  talker?.detach()
+}
+
+/**
+ * The person's acts in the channels (talk.ts), for the house this device knows: one per record, kept across sessions (the
+ * outbox waits for the next one). Only a device with a presence credential converses; one that only reads has none.
+ */
+let talker: Talker | undefined
+let talkerOf = ''
+
+function talkerFor(rec: HouseRecord | undefined): Talker | undefined {
+  if (!rec?.credentialId) return undefined
+  if (talker && talkerOf === rec.id) return talker
+  talker?.dispose()
+  talkerOf = rec.id
+  talker = createTalker({ houseId: rec.id })
+  talker.onLocked = () => { if (live) locked(live) }
+  return talker
+}
+
+const LOCK = opByName('session.lock')!.code
+
+/** "Trancar": the session locks at the device's asking, and the screen is the one of a locked session. */
+async function lockHere(): Promise<void> {
+  const l = live
+  if (!l || lock) return
+  talker?.detach()
+  const r = await l.request(LOCK, {}, { mutates: true })
+  if (live !== l) return
+  if (r.status === RES_STATUS.ok) { lock = { busy: false }; show({ s: 'list' }) } else if (!l.ended) talker?.attach(l)
 }
 
 function show(v: View): void {
@@ -122,6 +153,8 @@ function render(): void {
         const src = sessionSource(l, { onLocked: () => locked(l), onContact: () => { lastContactMs = Date.now() } })
         source = { live: l, src }
         r.online(src)
+        // Unlocked and on screen: what waited to be said goes now, with its own actId.
+        talkerFor(record)?.attach(l)
       }
       return
     }
@@ -200,8 +233,10 @@ function offerOver(): void {
 // ---- the Regency ------------------------------------------------------------------------------------------------------
 
 function casing(): RemoteRegency {
+  const talk = talkerFor(record)
   regency ??= mountRegency(root, {
     houseName: record?.houseName ?? '', onRetry: retryNow,
+    ...(talk ? { talk, onLock: () => void lockHere() } : {}),
     layout: {
       initial: paramsOfUrlState(parseUrlState(location.search)),
       changed: l => writeUrlState(location, history, urlStateOf(l)),
@@ -322,6 +357,8 @@ function claimHouse(o: { afterPair?: boolean } = {}): Promise<void> {
 function yieldHouse(): void {
   holdsHouse = false
   clearRetry()
+  // The other window goes on with what waited to be said (the outbox is the origin's): this one sends nothing more.
+  talker?.detach()
   const l = live
   live = undefined
   lock = undefined
@@ -377,8 +414,12 @@ async function reconnect(o: { afterPair?: boolean } = {}): Promise<void> {
 async function ended(e: Ended): Promise<void> {
   const code = e.by === 'route' ? undefined : e.code
   if (e.by === 'peer' && code === CLOSE.revoked) {
-    // Spec 4.7: CLOSE(0x04) erases this house from the device, keys included.
+    // Spec 4.7: CLOSE(0x04) erases this house from the device, keys included, and the person's text kept for it.
     if (record) await deleteHouse(record.id).catch(() => undefined)
+    talker?.forget()
+    talker?.dispose()
+    talker = undefined
+    talkerOf = ''
     record = undefined
     dropHouseLock()
     list = { items: [], more: 0 }

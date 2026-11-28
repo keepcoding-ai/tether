@@ -49,6 +49,12 @@ export interface ChannelHost {
    * reaction, vote, menu or gesture on a member, and nothing is told as seen.
    */
   readonly readOnly?: boolean
+  /**
+   * The view converses and manages nothing (the remote of a device that may speak): the speaking box (no files), reactions,
+   * votes, opening a poll and "seen" are on; joining, muting, taking out, closing or reopening the channel, closing a poll
+   * early, the channel's menu and the menus of a member are away, and an agent's name only peeks. Ignored with `readOnly`.
+   */
+  readonly talkOnly?: boolean
   /** A request to the channels' daemon half (`history`, `members`, `say`...). */
   request<T>(name: string, args?: Record<string, unknown>): Promise<T>
   /** The daemon half's events (`line`, `channel`, `reaction`, `poll`). */

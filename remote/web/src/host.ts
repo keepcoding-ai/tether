@@ -7,10 +7,12 @@
 // wire: the session gives a source that asks the relay, the bench gives a made-up one. What a source returns is already
 // checked data; every text of it reaches the page as a text node, because the shared screen never writes HTML.
 //
-// Nothing here acts on the house: every gesture of the shared screen that would (speak, react, vote, create, rename, a
-// menu) is off in the screen itself (`readOnly`) and answers nothing here.
+// A device that only reads acts on nothing: every gesture of the shared screen that would (speak, react, vote, create,
+// rename, a menu) is off in the screen itself (`readOnly`) and answers nothing here. A device that may converse (RR4 4.2b)
+// gives the channel's host its talker (`RemoteTalk`): the view speaks, reacts, votes, opens a poll and tells "seen"
+// (`talkOnly`), and managing the channel (calling, muting, taking out, closing, reopening, closing a poll) stays absent.
 import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
-import type { PaneEmblem } from '../../../app/renderer/ext-api.ts'
+import type { ContextMenuEntry, PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import { HUE_NAMES } from '../../../app/shared/palette.ts'
 import type { ChannelSummary, MemberInfo, MessageReactions, PollState } from '../../../extensions/channels/daemon/requests.ts'
 import type { ChannelMarks } from '../../../extensions/channels/mark-board.ts'
@@ -355,10 +357,30 @@ function lineOf(l: PageLine): Line {
 export interface RemoteActs {
   /** The reading card of a pane or an agent, by its pane id. */
   quick(paneId: string): void
+  /** A floating menu at page coordinates (a speech's reactions, a poll's votes): the web's own, while the device converses. */
+  menu?(x: number, y: number, entries: ContextMenuEntry[]): void
 }
 
-/** The channel's view over the house, reading only. */
-export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): ChannelHost {
+/**
+ * What the channel's view asks of a device that may converse (talk.ts `Talker`): the four gestures, "seen", and the pages
+ * that confirm the speeches on their way. Absent: the view only reads.
+ */
+export interface RemoteTalk {
+  say(channel: string, text: string, to: readonly string[]): Promise<void>
+  react(channel: string, seq: number, reaction: string, remove: boolean): Promise<{ changed: boolean }>
+  vote(channel: string, poll: number, vote: number, reason?: string): Promise<unknown>
+  poll(channel: string, args: { question: string; options?: readonly string[]; to?: readonly string[]; timeoutMs?: number }): Promise<unknown>
+  seen(channel: string, seq: number): void
+  confirmed(channel: string, last: number): void
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+
+/**
+ * The channel's view over the house: reading only, or, with `talk`, conversing (`talkOnly`: speaking, reacting, voting,
+ * opening a poll and "seen"; managing the channel stays at the machine).
+ */
+export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: RemoteTalk): ChannelHost {
   const summaryOf = (channelId: string, from?: PageAnswer['channel']): ChannelSummary => {
     const known = house.input().channels.find(c => c.id === channelId)
     if (known) return known
@@ -384,6 +406,8 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
       reactions.unshift(...answer.reactions)
       polls.unshift(...answer.polls)
     }
+    // The newest page holds what landed up to its last line: the speeches on their way that are there now leave the outbox.
+    if (before === undefined) talk?.confirmed(channelId, answer.last)
     return { channel: summaryOf(channelId, answer.channel), lines: lines.map(lineOf), reactions, polls, more: answer.before !== undefined, last: answer.last }
   }
 
@@ -399,12 +423,31 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
     return m ? { unread: m.unread, toMe: m.toMe, seen: m.seen, ...(m.firstToMe !== undefined ? { firstToMe: m.firstToMe } : {}) } : { unread: 0, toMe: 0, seen: 0 }
   }
 
+  /** The gestures of a device that converses, in the arguments the view gives (channel-pane.ts `ask`). */
+  const write = async (t: RemoteTalk, name: string, channel: string, a: Record<string, unknown>): Promise<unknown> => {
+    const int = (v: unknown): number => (typeof v === 'number' && Number.isSafeInteger(v) ? v : 0)
+    switch (name) {
+      case 'say': await t.say(channel, typeof a.text === 'string' ? a.text : '', strings(a.to)); return {}
+      case 'react': return t.react(channel, int(a.seq), typeof a.reaction === 'string' ? a.reaction : '', a.remove === true)
+      case 'vote': return t.vote(channel, int(a.poll), int(a.vote), typeof a.reason === 'string' ? a.reason : undefined)
+      case 'poll': return t.poll(channel, {
+        question: typeof a.question === 'string' ? a.question : '',
+        ...(Array.isArray(a.options) ? { options: strings(a.options) } : {}),
+        ...(Array.isArray(a.to) ? { to: strings(a.to) } : {}),
+        ...(typeof a.timeoutMs === 'number' ? { timeoutMs: a.timeoutMs } : {}),
+      })
+      default: throw readOnlyError()
+    }
+  }
+
   return {
-    readOnly: true,
+    readOnly: talk === undefined,
+    talkOnly: talk !== undefined,
     request: async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
       const channel = String(args.channel ?? '')
       if (name === 'history') return await history(channel, typeof args.before === 'number' ? args.before : undefined) as T
       if (name === 'members') return await members(channel) as T
+      if (talk) return await write(talk, name, channel, args) as T
       throw readOnlyError()
     },
     onEvent: <T>(name: string, listener: (ev: T) => void) => {
@@ -417,8 +460,8 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
       // The house counts the asks and the polls owed; which speech each is on is not told to a reading device.
       asksOf: () => [],
       owedOf: () => [],
-      // Seeing a line from afar marks nothing as seen in the house.
-      viewed: () => {},
+      // A device that converses tells the house what the person saw, as the app does; one that only reads marks nothing.
+      viewed: (channelId, seq) => { talk?.seen(channelId, seq) },
       attended: () => {},
       paneChanged: () => {},
       onDidChange: listener => house.onDidChange(listener),
@@ -442,7 +485,7 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs): Channel
     // Only an address of the web opens, in another tab, with no way back to this page; a place of the app has no door here.
     follow: target => { if (target.kind === 'external' && /^https?:\/\//i.test(target.url)) window.open(target.url, '_blank', 'noopener,noreferrer') },
     linkMenu: () => {},
-    menu: () => {},
+    menu: (x, y, entries) => { if (talk) acts.menu?.(x, y, entries) },
     ask: () => Promise.reject(readOnlyError()),
     run: async () => undefined,
     peek: paneId => acts.quick(paneId),

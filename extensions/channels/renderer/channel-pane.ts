@@ -183,6 +183,8 @@ export type ChannelView = InstanceType<ChannelViews['View']>
 
 export function createChannelViews(host: ChannelHost) {
   const readOnly = host.readOnly === true
+  /** The view may manage the channel and its members, and attach files (the app's; a host that only converses may not). */
+  const manages = !readOnly && host.talkOnly !== true
   const marks = host.marks
   const channelList = (): readonly ChannelSummary[] => host.channels()
   /** The channels a "#" can name: the open ones (a closed channel is plain text). */
@@ -334,7 +336,7 @@ export function createChannelViews(host: ChannelHost) {
     private keyMenuAt = 0
     private readonly composer = createComposer({
       send: (text, to, files) => this.say(text, to, files),
-      attach,
+      ...(manages ? { attach } : {}),
       poll: {
         members: () => (this.answer?.members ?? []).map(m => ({ id: m.id, name: m.name, muted: m.muted, path: m.path })),
         open: async args => { await this.ask('poll', { ...args }) },
@@ -373,7 +375,7 @@ export function createChannelViews(host: ChannelHost) {
     // Files of the system dragged over the pane (A3): only a drag that carries `Files` counts, so a tab or a panel of the app that
     // is being moved (dockview's own drag) goes on as it was. The zone stays while dragover keeps coming, and goes when it stops.
     private onDrag(ev: DragEvent): void {
-      if (readOnly || !dragHasFiles(ev.dataTransfer?.types)) return
+      if (!manages || !dragHasFiles(ev.dataTransfer?.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       const refuse = this.isClosed()
@@ -391,7 +393,7 @@ export function createChannelViews(host: ChannelHost) {
 
     private onDrop(ev: DragEvent): void {
       const dt = ev.dataTransfer
-      if (readOnly || !dt || !dragHasFiles(dt.types)) return
+      if (!manages || !dt || !dragHasFiles(dt.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       this.paintDrop(false)
@@ -878,12 +880,14 @@ export function createChannelViews(host: ChannelHost) {
       const line = this.timeline.lines.find(l => l.seq === seq)
       if (!line) return undefined
       const pending = this.pollInput.get(seq)?.pending
-      return cardOf(line, this.pollStates.get(seq), {
+      const card = cardOf(line, this.pollStates.get(seq), {
         now: Date.now(), readOnly: this.inert(),
         ...(this.answer ? { members: new Set(this.answer.members.map(m => m.id)) } : {}),
         ...(pending !== undefined ? { pending } : {}),
         whyOf: id => this.deafWhy(id),
       })
+      // Closing a poll early is managing the channel: a view that only converses votes, and nothing more.
+      return manages || !card?.canClose ? card : { ...card, canClose: false }
     }
 
     /** Why a member does not hear now, as far as `members` says (a sleeping desk, a stopped process, the guia with the person). */
@@ -1335,7 +1339,7 @@ export function createChannelViews(host: ChannelHost) {
      * An open channel that is known to have nobody in it. A view that only reads never says so: its empty state is the way to
      * bring someone in, a gesture it does not have.
      */
-    private noMembers(): boolean { return !readOnly && this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
+    private noMembers(): boolean { return manages && this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
 
     private actionBtn(className: string, label: string, icon: Parameters<typeof glyph>[0], run: () => void): HTMLButtonElement {
       const b = el('button', className)
@@ -1371,8 +1375,8 @@ export function createChannelViews(host: ChannelHost) {
       // The same menu as the tab's (right click): the bar shows what is frequent, the "⋯" opens the whole list.
       const more = this.actionBtn('ch-act ch-more', PANE_TEXT.more, 'dots-three', () => this.openMenu(more))
       more.setAttribute('aria-haspopup', 'menu')
-      // A view that only reads has no menu of the channel (its rows are all gestures).
-      more.hidden = readOnly
+      // A view that only reads, or only converses, has no menu of the channel (its rows are gestures of managing it).
+      more.hidden = !manages
       this.bar.setAttribute('role', 'toolbar')
       this.bar.setAttribute('aria-label', 'Ações do canal')
       this.bar.append(this.joinBtn, this.reopenBtn, members, end, more)
@@ -1401,7 +1405,7 @@ export function createChannelViews(host: ChannelHost) {
     /** What the bar shows now: the accent gesture and whether it carries text (not in the narrow composition, not in the empty state). */
     private barState(): PaneSnapshot['actions'] {
       const known = this.answer !== undefined
-      const primary: PaneSnapshot['actions']['primary'] = !known || readOnly ? 'none'
+      const primary: PaneSnapshot['actions']['primary'] = !known || !manages ? 'none'
         : !this.isClosed() ? 'join'
         : this.answer!.channel.desk === undefined ? 'reopen' : 'none'
       const labeled = primary === 'reopen' || (primary === 'join' && !this.isNarrow() && !this.noMembers())
@@ -2368,13 +2372,13 @@ export function createChannelViews(host: ChannelHost) {
       if (id === undefined || url === undefined) return el('span', cls, text)
       const b = el('button', `${cls} ch-agent`, text)
       b.type = 'button'
-      // A view that only reads has no tab to go to and no menu: the click is the host's quick look at the agent.
-      if (!readOnly) b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
+      // A view that only reads (or only converses) has no tab to go to and no menu: the click is the host's quick look at the agent.
+      if (manages) b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
       b.dataset.agent = id
       const target = linkTargetOfUrl(url)
       // An agent with no pane has no tab to go to (the link would ask to reopen a closed tab): the click opens the peek card.
-      b.addEventListener('click', ev => { if (readOnly || isPeekModifier(ev) || noDesk(id)) host.peek(id); else host.follow(target) })
-      if (!rowMenu && !readOnly) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
+      b.addEventListener('click', ev => { if (!manages || isPeekModifier(ev) || noDesk(id)) host.peek(id); else host.follow(target) })
+      if (!rowMenu && manages) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
       return b
     }
 
@@ -2518,7 +2522,7 @@ export function createChannelViews(host: ChannelHost) {
           warn.setAttribute('aria-hidden', 'true')
           l1.append(warn)
         }
-        if (!this.inert()) {
+        if (!this.inert() && manages) {
           // The owner's row has only the "⋯"; the others show Calar and Tirar on hover and focus, and the "⋯" always.
           // The command asks the consequence in its dialog (calar, tirar) before it acts.
           if (!m.crown) {

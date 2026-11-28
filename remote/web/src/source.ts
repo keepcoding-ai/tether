@@ -117,6 +117,15 @@ export function pageOf(b: Record<string, unknown>, channel: string, before: numb
   }
 }
 
+/**
+ * A poll's card as a write answers it (`state` of channels.vote and channels.poll, the page's own shape), through the same
+ * checks as a page's poll: undefined when it does not have the shape.
+ */
+export function pollStateOf(channel: string, state: unknown): PollState | undefined {
+  if (!isRec(state)) return undefined
+  try { return pageOf({ channel: { id: channel }, lines: [], reactions: [], polls: [state], last: 0 }, channel, undefined).polls[0] } catch { return undefined }
+}
+
 // ---- one family in flight
 
 /** One call in flight; the calls made meanwhile share the one that follows it. */
