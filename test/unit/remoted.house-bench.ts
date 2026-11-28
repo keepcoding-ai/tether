@@ -10,6 +10,7 @@ import { loadKeys } from '../../src/remoted/keyfiles.ts'
 import type { Limits } from '../../src/remoted/limits.ts'
 import { audOf, RelayLink } from '../../src/remoted/relay.ts'
 import type { PipeReads } from '../../src/remoted/reads.ts'
+import type { PipeWrites } from '../../src/remoted/writes.ts'
 import type { PresenceClock } from '../../src/remoted/uv.ts'
 import { ensureKeys } from '../../extensions/remote/daemon/keys.ts'
 import { FakeRelay, TestDevice, until, type DeviceSession } from './remoted.helpers.ts'
@@ -27,6 +28,10 @@ export interface HouseBenchOptions {
   now?: () => number
   /** The reads of tetherd's extensions (src/remoted/reads.ts); absent, the read lines answer not-implemented. */
   reads?: PipeReads
+  /** The writes to tetherd's extensions (src/remoted/writes.ts); absent, the write lines answer not-implemented. */
+  writes?: PipeWrites
+  /** How long a repeat of a write in flight waits for it (the write path's deadline). */
+  writeTimeoutMs?: number
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
 }
 
@@ -123,6 +128,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
       send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
       ...(o.reads ? { reads: o.reads } : {}), ...(o.noticeGapsMs ? { noticeGapsMs: o.noticeGapsMs } : {}),
+      ...(o.writes ? { writes: o.writes } : {}), ...(o.writeTimeoutMs ? { writeTimeoutMs: o.writeTimeoutMs } : {}),
     })
     await house.init(devices, [])
     current = house

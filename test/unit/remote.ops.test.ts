@@ -35,6 +35,11 @@ describe('remote operations registry', () => {
       [0x0101, 'attention.watch', 'attention', 'unlocked', false, false],
       [0x0200, 'channels.marks', 'channels', 'unlocked', false, false],
       [0x0201, 'channels.page', 'channels', 'unlocked', false, false],
+      [0x0202, 'channels.say', 'channels', 'unlocked', true, true],
+      [0x0203, 'channels.react', 'channels', 'unlocked', true, true],
+      [0x0204, 'channels.vote', 'channels', 'unlocked', true, true],
+      [0x0205, 'channels.poll', 'channels', 'unlocked', true, true],
+      [0x0206, 'channels.seen', 'channels', 'unlocked', false, true],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
@@ -58,7 +63,9 @@ describe('remote operations registry', () => {
   })
 
   test('only lines triggered by the person are gestures; the one exception to E-8 is declared on its line', () => {
-    assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), ['uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'device.revoke'])
+    assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), [
+      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'device.revoke',
+    ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])
     for (const l of OPS) if (l.gesture) assert.equal(l.mutates, true, `${l.name}: a gesture changes state`)
   })
@@ -100,6 +107,20 @@ describe('remote act deduplication', () => {
     assert.equal(cache.get(ids[0]!, 3000), undefined, 'the oldest gave way')
     assert.equal(cache.get(ids[10]!, 3000), 10)
     assert.equal(cache.get(ids[ids.length - 1]!, 3000), ACT_CACHE_MAX + 9)
+  })
+
+  test('with sizeOf, the answers kept stay under their byte ceiling: the oldest go first, the newest always stays', () => {
+    const cache = new ActCache<string>({ sizeOf: (s) => s.length, maxBytes: 100 })
+    const ids = Array.from({ length: 10 }, () => randomBytes(16))
+    ids.forEach((id, i) => cache.put(id, 'x'.repeat(30), i))
+    assert.equal(cache.size, 3)
+    assert.equal(cache.bytes, 90)
+    assert.equal(cache.get(ids[6]!, 10), undefined)
+    assert.equal(cache.get(ids[9]!, 10), 'x'.repeat(30))
+    cache.put(randomBytes(16), 'y'.repeat(500), 11)
+    assert.deepEqual([cache.size, cache.bytes], [1, 500], 'one answer over the ceiling is kept alone')
+    assert.equal(cache.get(ids[9]!, ACT_CACHE_TTL_MS + 20), undefined)
+    assert.deepEqual([cache.size, cache.bytes], [0, 0], 'expiry gives the bytes back')
   })
 })
 
