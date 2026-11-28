@@ -10,7 +10,7 @@
 // refused before anything is done.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
@@ -243,6 +243,7 @@ describe('remote manage end to end (RR5.2): slots, ronda and processes from afar
   after(async () => {
     s?.leg.close()
     try { await cli.request({ t: 'proc-stop', name: PROC, force: 'fim da bancada' }) } catch { /* gone */ }
+    try { await cli.request({ t: 'proc-stop', name: 'bench-new', force: 'fim da bancada' }) } catch { /* gone */ }
     await down()
     await procHost?.close()
     killTree(relay)
@@ -324,6 +325,104 @@ describe('remote manage end to end (RR5.2): slots, ronda and processes from afar
     replies.push(done)
     assert.deepEqual(done, { status: RES_STATUS.ok, body: {} })
     assert.equal(((await cli.request({ t: 'proc-list' })).procs ?? []).some((p) => p.name === PROC), false)
+  })
+
+  // ---- RR5 (fio-spec 18): a channel managed from afar, "+ Novo" and "Novo processo" ----------------------------------
+
+  let room = ''
+  const history = async (): Promise<{ kind: string; body: string; afar?: true; event?: { type: string } }[]> =>
+    (await ext(app, 'history', { channel: room }, 'channels')).lines
+
+  test('a fresh minute of gestures: the device has 30 a minute (limits.ts), and the acts above spent them', async () => {
+    await new Promise((r) => setTimeout(r, 61_000))
+  })
+
+  test('a channel from afar: created, the agent called, muted, a poll closed; each system line says "(de longe)"', async () => {
+    const made = await ok(OP['channels.create'], { name: '#Longe' })
+    assert.equal(made.name, 'longe')
+    room = made.channel
+    assert.deepEqual(await ok(OP['channels.join'], { channel: room, agent: slotId }), { already: false })
+    assert.deepEqual(await ok(OP['channels.mute'], { channel: room, agent: slotId }), { already: false })
+    assert.deepEqual(await ok(OP['channels.unmute'], { channel: room, agent: slotId }), { already: false })
+    const poll = await ok(OP['channels.poll'], { channel: room, question: 'Seguimos?', to: [slotId] })
+    const closed = await ok(OP['channels.poll-close'], { channel: room, poll: poll.seq })
+    assert.equal(closed.state.seq, poll.seq)
+    assert.equal(closed.state.result.by, 'author')
+    const notices = (await history()).filter((l) => l.kind === 'notice')
+    assert.deepEqual(notices.map((l) => [l.event?.type, l.afar, l.body.includes('(de longe)')]), [
+      ['create', true, true], ['join', true, true], ['mute', true, true], ['unmute', true, true],
+    ], JSON.stringify(notices))
+    assert.equal((await call(OP['channels.join'], { channel: room, agent: 'nao_existe' })).status, RES_STATUS.notFound, 'an agent that names nothing')
+  })
+
+  test('closing a channel needs a proof of the act: without it refused, with it done', async () => {
+    assert.equal((await call(OP['channels.close'], { channel: room })).status, RES_STATUS.presenceRequired)
+    assert.equal(((await ext(app, 'list', {}, 'channels')).channels as { id: string }[]).some((c) => c.id === room), true, 'still open')
+    const done = await act(s, auth, OP['channels.close'], { channel: room })
+    replies.push(done)
+    assert.deepEqual(done, { status: RES_STATUS.ok, body: {} })
+    assert.equal(((await ext(app, 'list', {}, 'channels')).channels as { id: string }[]).some((c) => c.id === room), false, 'closed')
+    const last = (await history()).at(-1)!
+    assert.deepEqual([last.event?.type, last.afar], ['close', true])
+  })
+
+  let folder = ''
+  test('"+ Novo": the choices without a path; a terminal born in a desk, in a folder the tether knows, by its id', async () => {
+    await app.request({ t: 'desk-map', map: { desks: [{ id: 'desk-1', name: 'Obra', kind: 'queue', panes: [] }], drawer: [] } } as never)
+    const o = await ok(OP['create.options'], {})
+    assert.ok(o.engines.includes('claude') && o.engines.includes('shell'), JSON.stringify(o.engines))
+    assert.deepEqual(o.desks, [{ deskId: 'desk-1', name: 'Obra' }])
+    const f = (o.folders as { id: string; label: string; kind: string }[]).find((x) => x.label === 'conferente')
+    assert.ok(f, JSON.stringify(o.folders))
+    folder = f.id
+    assert.equal(JSON.stringify(o).includes(home), false, 'no path reaches the device')
+    assert.equal(JSON.stringify(o).toLowerCase().includes('c:\\'), false)
+    const before = ((await cli.request({ t: 'list' })).slots ?? []).length
+    const made = await ok(OP['create.terminal'], { deskId: 'desk-1', folder, name: 'de longe' })
+    const born = ((await cli.request({ t: 'list' })).slots ?? []).find((x) => x.slotId === made.slotId)
+    assert.ok(born, 'the slot exists at tetherd')
+    assert.deepEqual([born.kind, born.name, ((await cli.request({ t: 'list' })).slots ?? []).length], ['shell', 'de longe', before + 1])
+    assert.equal((await call(OP['create.terminal'], { deskId: 'desk-1', folder: '0123456789abcdef' })).status, RES_STATUS.notFound, 'a folder outside the list')
+    assert.equal((await call(OP['create.terminal'], { deskId: 'desk-9', folder })).status, RES_STATUS.notFound, 'a desk that is not there')
+    assert.equal((await call(OP['create.note'], { deskId: 'desk-1', folder })).status, RES_STATUS.noApp, 'a note only the app makes: no app on the bench')
+    await cli.request({ t: 'stop', slotId: made.slotId }).catch(() => undefined)
+  })
+
+  const NEW = 'bench-new'
+  const NEW_MARKER = `canary${randomBytes(10).toString('hex')}`
+  test('"Novo processo": with a common variable it runs, and its value is in no frame, log or audit line', async () => {
+    const body = { name: NEW, command: 'node -e "setInterval(() => {}, 1000)"', folder, description: 'de longe', env: [{ name: 'BENCH_MODE', value: NEW_MARKER }] }
+    assert.equal((await call(OP['procs.new'], body)).status, RES_STATUS.presenceRequired, 'a command on the machine needs a proof')
+    const r = await act(s, auth, OP['procs.new'], body)
+    replies.push(r)
+    assert.equal(r.status, RES_STATUS.ok, JSON.stringify(r.body))
+    assert.deepEqual((r.body.proc as { envNames: string[] }).envNames, ['BENCH_MODE'])
+    await eventually(async () => (await cli.request({ t: 'proc-info', name: NEW })).proc?.status === 'running', 20_000, 'the new process running')
+    const again = await act(s, auth, OP['procs.new'], { ...body, env: [] })
+    assert.deepEqual(again.body, { error: 'proc-exists' }, 'from afar a recipe never replaces another')
+  })
+
+  test('a variable that looks like a secret is refused by its name, with no "anyway"; nothing starts', async () => {
+    const r = await act(s, auth, OP['procs.new'], { name: 'bench-secret', command: 'node -e "1"', folder, env: [{ name: 'API_TOKEN', value: NEW_MARKER }] })
+    replies.push(r)
+    assert.deepEqual(r, { status: RES_STATUS.failed, body: { error: 'secret-env', names: ['API_TOKEN'] } })
+    assert.equal(((await cli.request({ t: 'proc-list' })).procs ?? []).some((p) => p.name === 'bench-secret'), false)
+  })
+
+  test('THE CANARY of the new recipe: no reply, no audit line, no log of tetherd and no file of the portal carries the value', () => {
+    assert.equal(JSON.stringify(replies).includes(NEW_MARKER), false, 'frames')
+    assert.equal(JSON.stringify(audits()).includes(NEW_MARKER), false, 'audit')
+    assert.equal(logs.some((l) => l.includes(NEW_MARKER)), false, 'tetherd log')
+    const dir = join(home, 'remote')
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f)
+      if (statSync(p).isFile()) assert.equal(readFileSync(p, 'latin1').includes(NEW_MARKER), false, `remote/${f}`)
+    }
+    const lines = audits()
+    assert.ok(lines.some((l) => l.act === 'procs.new' && l.result === 'ok' && l.target === NEW))
+    assert.ok(lines.some((l) => l.act === 'procs.new' && l.result === 'refused:secret-env'))
+    assert.ok(lines.some((l) => l.act === 'channels.close' && l.result === 'ok' && l.target === room))
+    assert.ok(lines.some((l) => l.act === 'create.terminal' && l.result === 'ok' && l.target === 'desk-1'))
   })
 
   test('the audit says device, op, target and result of every act; no reply and no line carries the env or the text', () => {
