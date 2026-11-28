@@ -20,6 +20,8 @@ import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, 
 import { remoteFiles } from './files.ts'
 import type { Manager } from './manage.ts'
 import { ManageUi } from './manage-view.ts'
+import { ChannelAfar } from './channel-afar.ts'
+import { channelAfarOf } from './channel-afar-rules.ts'
 import { createMenu } from './menu.ts'
 import type { Talker } from './talk.ts'
 import type { DevicePush } from './push.ts'
@@ -551,7 +553,11 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     const caps = o.manage?.caps
     const flags = !on || !caps ? '' : [caps.desks ? 'desks' : '', caps.agents ? 'agents' : '', caps.procs ? 'procs' : '', caps.destructive ? 'destructive' : ''].filter(Boolean).join(' ')
     if ((shell.dataset.manage ?? '') !== flags) { if (flags) shell.dataset.manage = flags; else delete shell.dataset.manage }
+    // What the channel's view may manage came (or changed): its open views read again and paint their gestures.
+    const afar = caps ? JSON.stringify(channelAfarOf(caps) ?? null) : 'null'
+    if (afar !== lastAfar) { lastAfar = afar; s.house.touchViews() }
   }
+  let lastAfar = 'null'
   const schedule = (): void => { if (!frame && !disposed) frame = requestAnimationFrame(paint) }
   // The caps came, a process or a ronda was read again: paint.
   if (o.manage) o.manage.onChange = schedule
@@ -589,10 +595,12 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     }) : undefined
     // The files of the speeches of this session (step 4.3): what they brought is let go of with the session.
     const files = remoteFiles(house)
+    // Managing the channel from afar (RR5): a device that converses and manages, by its scopes (channel-afar.ts).
+    const afar = manage && talk && o.manage ? new ChannelAfar({ house, manager: o.manage, tier: () => tier, say: t => manage.say(t) }) : undefined
     const views = createChannelViews(remoteChannelHost(house, {
       quick: id => card.open({ kind: 'pane', id }),
       menu: (x, y, entries) => menu.open(x, y, entries),
-    }, talk, files))
+    }, talk, files, afar))
     pane = new RegencyPane(remoteRegencyHost(house, {
       mount: (place, channelId, opts) => {
         const view = views.mountEmbed(place, channelId, opts)

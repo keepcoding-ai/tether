@@ -17,7 +17,7 @@ import {
 } from '../../remote/web/src/manage-rules.ts'
 import { okDoes } from '../../remote/web/src/focus-rules.ts'
 
-const ALL: Caps = { desks: true, agents: true, procs: true, destructive: true }
+const ALL: Caps = { desks: true, agents: true, procs: true, destructive: true, channels: true }
 const labels = (lines: readonly MenuLine[]): string[] => lines.map(l => (l === 'sep' ? '—' : 'heading' in l ? `# ${l.heading}` : l.label))
 const desk = (o: Partial<DeskFacts> = {}): DeskFacts => ({ id: 'd1', name: 'Obra', kind: 'queue', asleep: false, queue: 2, awake: 2, ...o })
 const pane = (o: Partial<PaneFacts> = {}): PaneFacts => ({
@@ -26,7 +26,7 @@ const pane = (o: Partial<PaneFacts> = {}): PaneFacts => ({
 
 describe('what the device may do', () => {
   test('the scopes of manage, and nothing at all without a presence credential', () => {
-    assert.deepEqual(capsOf(['manage:desks', 'channels'], true), { desks: true, agents: false, procs: false, destructive: false })
+    assert.deepEqual(capsOf(['manage:desks', 'channels'], true), { desks: true, agents: false, procs: false, destructive: false, channels: true })
     assert.deepEqual(capsOf(['manage:desks', 'manage:agents', 'manage:procs', 'manage:destructive'], false), NO_CAPS, 'a device that only reads acts on nothing (E-8)')
     assert.equal(managesAny(NO_CAPS), false)
     assert.equal(managesAny(capsOf(['manage:procs'], true)), true)
@@ -229,7 +229,7 @@ describe('an act on its way (manage.ts)', () => {
   test('the caps come from session.info', async () => {
     const b = bench(() => ({ status: RES_STATUS.ok, body: {} }))
     await flush()
-    assert.deepEqual(b.m.caps, { desks: true, agents: true, procs: true, destructive: true })
+    assert.deepEqual(b.m.caps, { desks: true, agents: true, procs: true, destructive: true, channels: false })
   })
 
   test('a timeout and a cut send the SAME actId again; the real answer ends it', async () => {

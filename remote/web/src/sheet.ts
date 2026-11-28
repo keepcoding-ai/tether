@@ -4,6 +4,7 @@
 // Back closes it as a cancel, a press on the veil too, and the keyboard goes back to where it was when it closes. Every text
 // goes in as a text node. Three forms: a question with its choices (and a reason, when one is asked), a list to pick from
 // (a desk), and a desk's name and colour.
+import type { PickItem as ListItem, PickManySpec, PickSpec } from '../../../app/renderer/ext-api.ts'
 import { HUE_NAMES, type HueName } from '../../../app/shared/palette.ts'
 import { HUE_LABELS } from '../../../app/renderer/emblem-rules.ts'
 import type { Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
@@ -164,13 +165,152 @@ export function ask(tier: Tier, q: Question): Promise<Answer | undefined> {
       if (!first && c.tone !== 'destructive') first = b
     }
     arrowsWalk(list)
-    const cancel = button('rr-ask-x', q.cancel)
-    cancel.dataset.choice = 'cancel'
-    cancel.addEventListener('click', () => done(undefined))
-    body.append(list, cancel)
+    body.append(list)
+    // A notice with one answer ("Entendi") has no cancel of its own: Esc and the veil close it the same.
+    let cancel: HTMLButtonElement | undefined
+    if (q.cancel !== '') {
+      cancel = button('rr-ask-x', q.cancel)
+      cancel.dataset.choice = 'cancel'
+      cancel.addEventListener('click', () => done(undefined))
+      body.append(cancel)
+    }
     reason?.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); list.querySelector<HTMLElement>('button')?.click() } })
-    return reason ?? first ?? cancel
+    return reason ?? first ?? cancel ?? list.querySelector<HTMLElement>('button') ?? undefined
   })
+}
+
+/** A list longer than this gets a field that filters it (the app's pickers always have one; a short list reads at a glance). */
+const FILTER_FROM = 8
+
+const matches = (it: ListItem<unknown>, q: string): boolean => {
+  const t = q.trim().toLowerCase()
+  return t === '' || it.label.toLowerCase().includes(t) || (it.detail ?? '').toLowerCase().includes(t) || (it.group ?? '').toLowerCase().includes(t)
+}
+
+/** The rows of a picker, in their groups (the order in which each group first appears), each row a button. */
+function pickRows<T>(list: HTMLElement, items: readonly ListItem<T>[], row: (it: ListItem<T>, i: number) => HTMLElement): void {
+  const groups: string[] = []
+  for (const it of items) if (!groups.includes(it.group ?? '')) groups.push(it.group ?? '')
+  const out: HTMLElement[] = []
+  for (const g of groups) {
+    if (g !== '') out.push(el('div', 'rr-ask-g', g))
+    items.forEach((it, i) => { if ((it.group ?? '') === g) out.push(row(it, i)) })
+  }
+  list.replaceChildren(...out)
+}
+
+/** An agent's initial in the row's icon place, as the app's picker draws it (its hue is the app's palette, not a token: plain here). */
+function rowMark(it: ListItem<unknown>): HTMLElement | undefined {
+  if (!it.letter) return undefined
+  const m = el('span', 'rr-ask-mk', it.letter.charAt(0))
+  m.setAttribute('aria-hidden', 'true')
+  return m
+}
+
+/** The items of a spec, as they are or as its reader gives them. */
+async function itemsOf<T>(spec: PickSpec<T>): Promise<ListItem<T>[]> {
+  const raw = typeof spec.items === 'function' ? await spec.items().catch(() => [] as readonly ListItem<T>[]) : spec.items
+  return [...(spec.featured ? [spec.featured] : []), ...raw]
+}
+
+/** The app's list picker (`pick.list`), on the web's box: its groups, its rows and, for a long list, its filter. */
+export async function pickList<T>(tier: Tier, spec: PickSpec<T>): Promise<T | undefined> {
+  const items = await itemsOf(spec)
+  return openSheet<T>(tier, spec.title, (body, done) => {
+    const list = el('div', 'rr-ask-pick')
+    list.setAttribute('role', 'group')
+    list.setAttribute('aria-label', spec.title)
+    const paint = (q: string): void => {
+      const shown = items.filter(it => matches(it, q))
+      pickRows(list, shown, it => {
+        const b = button('rr-ask-o', '')
+        const mk = rowMark(it)
+        if (mk) b.append(mk)
+        b.append(el('span', 'rr-ask-ol', it.label))
+        if (it.detail) b.append(el('span', 'rr-ask-od', it.detail))
+        b.addEventListener('click', () => done(it.value))
+        return b
+      })
+      if (shown.length === 0) list.append(el('p', 'rr-ask-p', spec.emptyText ?? 'Nada aqui.'))
+    }
+    const filter = items.length > FILTER_FROM ? filterField(spec.placeholder ?? 'Buscar', paint) : undefined
+    paint('')
+    arrowsWalk(list)
+    const cancel = button('rr-ask-x', 'Cancelar')
+    cancel.addEventListener('click', () => done(undefined))
+    body.append(...(filter ? [filter] : []), list, cancel)
+    return filter?.querySelector('input') ?? list.querySelector<HTMLElement>('button') ?? cancel
+  })
+}
+
+/**
+ * The app's picker of several (`pick.many`): each row marks and unmarks (a checkbox to the screen reader), the confirm
+ * button counts the marks ("Chamar 2") and answers with the marked ones in the list's order.
+ */
+export async function pickMany<T>(tier: Tier, spec: PickManySpec<T>): Promise<T[] | undefined> {
+  const items = await itemsOf(spec)
+  const marked = new Set<number>()
+  return openSheet<T[]>(tier, spec.title, (body, done) => {
+    const verb = spec.confirmLabel ?? 'Confirmar'
+    const go = button('rr-ask-c', verb, 'safe')
+    go.dataset.choice = 'confirm'
+    const count = (): void => {
+      go.textContent = marked.size > 0 ? `${verb} ${marked.size}` : verb
+      go.disabled = marked.size === 0
+    }
+    const list = el('div', 'rr-ask-pick')
+    list.setAttribute('role', 'group')
+    list.setAttribute('aria-label', spec.title)
+    const paint = (q: string): void => {
+      const shown = items.map((it, i) => ({ it, i })).filter(x => matches(x.it, q))
+      pickRows(list, shown.map(x => x.it), (it, j) => {
+        const i = shown[j]!.i
+        const b = button('rr-ask-o rr-ask-ck', '')
+        b.setAttribute('role', 'checkbox')
+        b.setAttribute('aria-checked', String(marked.has(i)))
+        b.dataset.value = String(i)
+        const box = el('span', 'rr-ask-box')
+        box.setAttribute('aria-hidden', 'true')
+        b.append(box)
+        const mk = rowMark(it)
+        if (mk) b.append(mk)
+        b.append(el('span', 'rr-ask-ol', it.label))
+        if (it.detail) b.append(el('span', 'rr-ask-od', it.detail))
+        b.addEventListener('click', () => {
+          if (marked.has(i)) marked.delete(i); else marked.add(i)
+          b.setAttribute('aria-checked', String(marked.has(i)))
+          count()
+        })
+        return b
+      })
+      if (shown.length === 0) list.append(el('p', 'rr-ask-p', spec.emptyText ?? 'Nada aqui.'))
+    }
+    const filter = items.length > FILTER_FROM ? filterField(spec.placeholder ?? 'Buscar', paint) : undefined
+    paint('')
+    arrowsWalk(list)
+    count()
+    go.addEventListener('click', () => { if (marked.size > 0) done(items.filter((_, i) => marked.has(i)).map(it => it.value)) })
+    const row = el('div', 'rr-ask-cs')
+    row.append(go)
+    const cancel = button('rr-ask-x', 'Cancelar')
+    cancel.addEventListener('click', () => done(undefined))
+    body.append(...(filter ? [filter] : []), list, row, cancel)
+    return filter?.querySelector('input') ?? list.querySelector<HTMLElement>('button') ?? cancel
+  })
+}
+
+/** The field that filters a long list (it calls `paint` with what is typed). */
+function filterField(placeholder: string, paint: (q: string) => void): HTMLElement {
+  const label = el('label', 'rr-ask-f')
+  const input = el('input', 'rr-ask-in')
+  input.type = 'search'
+  input.placeholder = placeholder
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.setAttribute('aria-label', placeholder)
+  input.addEventListener('input', () => paint(input.value))
+  label.append(input)
+  return label
 }
 
 export interface PickItem { value: string; label: string; detail?: string; color?: string }

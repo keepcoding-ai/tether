@@ -183,10 +183,12 @@ export type ChannelView = InstanceType<ChannelViews['View']>
 
 export function createChannelViews(host: ChannelHost) {
   const readOnly = host.readOnly === true
-  /** The view may manage the channel and its members, and attach files (the app's; a host that only converses may not). */
-  const manages = !readOnly && host.talkOnly !== true
+  /** The view is the app's: it manages the channel and its members, goes to tabs and links (a host that converses does not). */
+  const tabs = !readOnly && host.talkOnly !== true
+  /** The view may manage the channel and its members: the app's, or a host that converses and manages from afar (`manageAfar`). */
+  const manages = (): boolean => tabs || (!readOnly && host.manageAfar?.() !== undefined)
   /** The view attaches files: the app's, or a host that converses and brings its own files (`attachTalk`, the remote's). */
-  const attaches = manages || (!readOnly && host.attachTalk === true)
+  const attaches = tabs || (!readOnly && host.attachTalk === true)
   const marks = host.marks
   const channelList = (): readonly ChannelSummary[] => host.channels()
   /** The channels a "#" can name: the open ones (a closed channel is plain text). */
@@ -324,6 +326,8 @@ export function createChannelViews(host: ChannelHost) {
     /** Until when an emptied list moves the focus to the accent (set by "Tirar"; 0 = not waiting). */
     private joinFocusUntil = 0
     private endBtn: HTMLButtonElement | undefined
+    /** The bar's "⋯": a view that manages from afar gets it when its host says so (`manageAfar`), at a paint of the bar. */
+    private moreBtn: HTMLButtonElement | undefined
     /** Whether the empty state ("Ninguém no canal ainda.") was drawn last, to repaint the conversation when it flips. */
     private drewNoMembers = false
     /** Whether the pills were drawn as read only (a closed channel) last: the conversation is repainted when it flips. */
@@ -340,7 +344,7 @@ export function createChannelViews(host: ChannelHost) {
     private readonly composer = createComposer({
       send: (text, to, files) => this.say(text, to, files),
       ...(attaches ? { attach } : {}),
-      ...(!manages && attaches ? { clipNearPoll: true } : {}),
+      ...(!tabs && attaches ? { clipNearPoll: true } : {}),
       poll: {
         members: () => (this.answer?.members ?? []).map(m => ({ id: m.id, name: m.name, muted: m.muted, path: m.path })),
         open: async args => { await this.ask('poll', { ...args }) },
@@ -892,7 +896,7 @@ export function createChannelViews(host: ChannelHost) {
         whyOf: id => this.deafWhy(id),
       })
       // Closing a poll early is managing the channel: a view that only converses votes, and nothing more.
-      return manages || !card?.canClose ? card : { ...card, canClose: false }
+      return manages() || !card?.canClose ? card : { ...card, canClose: false }
     }
 
     /** Why a member does not hear now, as far as `members` says (a sleeping desk, a stopped process, the guia with the person). */
@@ -1344,7 +1348,7 @@ export function createChannelViews(host: ChannelHost) {
      * An open channel that is known to have nobody in it. A view that only reads never says so: its empty state is the way to
      * bring someone in, a gesture it does not have.
      */
-    private noMembers(): boolean { return manages && this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
+    private noMembers(): boolean { return manages() && this.answer !== undefined && !this.isClosed() && this.answer.members.length === 0 }
 
     private actionBtn(className: string, label: string, icon: Parameters<typeof glyph>[0], run: () => void): HTMLButtonElement {
       const b = el('button', className)
@@ -1381,7 +1385,8 @@ export function createChannelViews(host: ChannelHost) {
       const more = this.actionBtn('ch-act ch-more', PANE_TEXT.more, 'dots-three', () => this.openMenu(more))
       more.setAttribute('aria-haspopup', 'menu')
       // A view that only reads, or only converses, has no menu of the channel (its rows are gestures of managing it).
-      more.hidden = !manages
+      more.hidden = !manages()
+      this.moreBtn = more
       this.bar.setAttribute('role', 'toolbar')
       this.bar.setAttribute('aria-label', 'Ações do canal')
       this.bar.append(this.joinBtn, this.reopenBtn, members, end, more)
@@ -1410,7 +1415,7 @@ export function createChannelViews(host: ChannelHost) {
     /** What the bar shows now: the accent gesture and whether it carries text (not in the narrow composition, not in the empty state). */
     private barState(): PaneSnapshot['actions'] {
       const known = this.answer !== undefined
-      const primary: PaneSnapshot['actions']['primary'] = !known || !manages ? 'none'
+      const primary: PaneSnapshot['actions']['primary'] = !known || !manages() ? 'none'
         : !this.isClosed() ? 'join'
         : this.answer!.channel.desk === undefined ? 'reopen' : 'none'
       const labeled = primary === 'reopen' || (primary === 'join' && !this.isNarrow() && !this.noMembers())
@@ -1423,6 +1428,7 @@ export function createChannelViews(host: ChannelHost) {
       if (this.joinBtn) { this.joinBtn.hidden = s.primary !== 'join'; this.joinBtn.classList.toggle('labeled', s.labeled) }
       if (this.reopenBtn) { this.reopenBtn.hidden = s.primary !== 'reopen'; this.reopenBtn.classList.toggle('labeled', s.labeled) }
       if (this.endBtn) this.endBtn.hidden = !s.toEnd
+      if (this.moreBtn) this.moreBtn.hidden = !manages()
       // The accent changes face when the channel closes or reopens: the focus follows it (the button that held it just went away).
       if (held && held === this.joinBtn && this.joinBtn.hidden && this.reopenBtn && !this.reopenBtn.hidden) this.reopenBtn.focus()
       else if (held && held === this.reopenBtn && this.reopenBtn.hidden && this.joinBtn && !this.joinBtn.hidden) this.joinBtn.focus()
@@ -1628,7 +1634,9 @@ export function createChannelViews(host: ChannelHost) {
       if (this.kind === 'pane') return entries.map(rowOf)
       // Embedded: no tab to link, move or close (and no members' toggle when the column lives in the host); "Abrir como guia"
       // opens the channel's tab, or brings the one that exists forward (P3).
+      // From afar there is no tab (no channel link to open one) and closing the channel is there only when the host says so.
       const omit = (id: ChannelMenuId): boolean => EMBED_OMITS.has(id) || (id === 'members' && this.membersHost !== undefined)
+        || (!tabs && id === 'channelLink') || (!tabs && id === 'close' && host.manageAfar?.()?.close !== true)
       return entries.flatMap((e): ContextMenuRow[] => {
         if (e === 'sep' || 'heading' in e) return [rowOf(e)]
         if (omit(e.id)) return []
@@ -2378,12 +2386,12 @@ export function createChannelViews(host: ChannelHost) {
       const b = el('button', `${cls} ch-agent`, text)
       b.type = 'button'
       // A view that only reads (or only converses) has no tab to go to and no menu: the click is the host's quick look at the agent.
-      if (manages) b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
+      if (tabs) b.title = noDesk(id) ? PANE_TEXT.nameTipNoDesk : PANE_TEXT.nameTip
       b.dataset.agent = id
       const target = linkTargetOfUrl(url)
       // An agent with no pane has no tab to go to (the link would ask to reopen a closed tab): the click opens the peek card.
-      b.addEventListener('click', ev => { if (!manages || isPeekModifier(ev) || noDesk(id)) host.peek(id); else host.follow(target) })
-      if (!rowMenu && manages) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
+      b.addEventListener('click', ev => { if (!tabs || isPeekModifier(ev) || noDesk(id)) host.peek(id); else host.follow(target) })
+      if (!rowMenu && manages()) b.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); this.openNameMenu(id, text, ev.clientX, ev.clientY) })
       return b
     }
 
@@ -2469,7 +2477,11 @@ export function createChannelViews(host: ChannelHost) {
           talk: () => this.composer.address(m.name),
         } : {}),
       }
-      const rows: ContextMenuRow[] = entries.map((e): ContextMenuRow =>
+      // From afar there is no tab: its ways (go, the tab's emblem, the link) are left out, and a separator left last goes too.
+      const AFAR_OMITS = new Set(['go', 'emblem', 'copy'])
+      const kept = tabs ? entries : entries.filter(e => e === 'sep' || 'heading' in e || !AFAR_OMITS.has(e.id))
+      while (kept.length > 0 && kept[kept.length - 1] === 'sep') kept.pop()
+      const rows: ContextMenuRow[] = kept.map((e): ContextMenuRow =>
         e === 'sep' || 'heading' in e ? e
           : { icon: e.icon, label: e.label, run: run[e.id]!, ...(e.hint ? { hint: e.hint } : {}), ...(e.danger ? { danger: true } : {}) })
       // The menu takes headings (the core's `fromExtMenu`); only its declared parameter type leaves them out.
@@ -2527,7 +2539,7 @@ export function createChannelViews(host: ChannelHost) {
           warn.setAttribute('aria-hidden', 'true')
           l1.append(warn)
         }
-        if (!this.inert() && manages) {
+        if (!this.inert() && manages()) {
           // The owner's row has only the "⋯"; the others show Calar and Tirar on hover and focus, and the "⋯" always.
           // The command asks the consequence in its dialog (calar, tirar) before it acts.
           if (!m.crown) {

@@ -10,7 +10,8 @@
 // A device that only reads acts on nothing: every gesture of the shared screen that would (speak, react, vote, create,
 // rename, a menu) is off in the screen itself (`readOnly`) and answers nothing here. A device that may converse (RR4 4.2b)
 // gives the channel's host its talker (`RemoteTalk`): the view speaks, reacts, votes, opens a poll and tells "seen"
-// (`talkOnly`), and managing the channel (calling, muting, taking out, closing, reopening, closing a poll) stays absent.
+// (`talkOnly`); with the channels' scope it also manages the channel (RR5, fio-spec 18: calling, muting, taking out,
+// closing, reopening, closing a poll) through channel-afar.ts, by the view's own commands and dialogs (`manageAfar`).
 import type { IdentityInput } from '../../../app/renderer/agent-identity.ts'
 import type { ContextMenuEntry, PaneEmblem } from '../../../app/renderer/ext-api.ts'
 import { HUE_NAMES } from '../../../app/shared/palette.ts'
@@ -18,6 +19,7 @@ import type { ChannelSummary, MemberInfo, MessageReactions, PollState } from '..
 import type { ChannelMarks } from '../../../extensions/channels/mark-board.ts'
 import type { Line } from '../../../extensions/channels/rules.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../../extensions/channels/renderer/embed.ts'
+import type { ChannelAfarHost } from './channel-afar.ts'
 import { fileRef, parseFileRef } from './file-rules.ts'
 import { remoteFiles, type RemoteFiles } from './files.ts'
 import type { ChannelHost } from '../../../extensions/channels/renderer/host.ts'
@@ -190,6 +192,9 @@ export class RemoteHouse {
 
   /** The channels with a view open (a notice with `all` reads each again). */
   readonly openViews = new Set<string>()
+
+  /** Every open view reads its channel again and paints (what the device may do there changed: its scopes came). */
+  touchViews(): void { for (const id of [...this.openViews]) for (const l of [...this.stale]) l(id) }
 
   /** The first reading of the tree ended: it came, or the house said why it will not. */
   get loaded(): boolean { return this.treeAnswer !== undefined || this.treeProblem !== undefined }
@@ -397,7 +402,7 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
  * The channel's view over the house: reading only, or, with `talk`, conversing (`talkOnly`: speaking, reacting, voting,
  * opening a poll and "seen"; managing the channel stays at the machine).
  */
-export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: RemoteTalk, files: RemoteFiles = remoteFiles(house)): ChannelHost {
+export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: RemoteTalk, files: RemoteFiles = remoteFiles(house), afar?: ChannelAfarHost): ChannelHost {
   const summaryOf = (channelId: string, from?: PageAnswer['channel']): ChannelSummary => {
     const known = house.input().channels.find(c => c.id === channelId)
     if (known) return known
@@ -467,10 +472,13 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
     talkOnly: talk !== undefined,
     // A device that converses attaches files too (step 4.3), by its own picker and within the limits from afar.
     attachTalk: talk !== undefined,
+    // Managing the channel from afar (RR5): by the device's scopes, asked at every paint (they come with the session).
+    ...(talk && afar ? { manageAfar: () => afar.manageAfar() } : {}),
     request: async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
       const channel = String(args.channel ?? '')
       if (name === 'history') return await history(channel, typeof args.before === 'number' ? args.before : undefined) as T
       if (name === 'members') return await members(channel) as T
+      if (name === 'poll-close' && talk && afar?.manageAfar()) return await afar.pollClose(channel, typeof args.poll === 'number' ? args.poll : 0) as T
       if (talk) return await write(talk, name, channel, args) as T
       throw readOnlyError()
     },
@@ -507,8 +515,10 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
     linkMenu: () => {},
     // The rows are the view's: a device that only reads gets "Copiar" alone (the "⋯" of a speech is never a dead button).
     menu: (x, y, entries) => { acts.menu?.(x, y, entries) },
-    ask: () => Promise.reject(readOnlyError()),
-    run: async () => undefined,
+    // The app's dialogs (closing a poll, a link that leads elsewhere) on the web's box, for a device that converses.
+    ask: spec => (talk && afar ? afar.ask(spec) : Promise.reject(readOnlyError())),
+    // The channel's commands (Chamar agente…, Calar, Tirar, Encerrar, Reabrir) over the portal's ops, while the device manages.
+    run: async (command, args) => (talk && afar?.manageAfar() ? afar.run(command, (args && typeof args === 'object' ? args : {}) as Record<string, unknown>) : undefined),
     peek: paneId => acts.quick(paneId),
     copyLink: () => {},
     emblemMenu: () => {},

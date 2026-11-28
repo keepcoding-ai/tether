@@ -12,9 +12,12 @@ import { RONDA_INTERVAL_MAX, RONDA_TEXT_MAX, SLOT_NAME_MAX } from '../../../src/
 
 // ---------------------------------------------------------------- what this device may do
 
-/** The four families of management (src/remote/scopes.ts), as the device holds them. */
-export interface Caps { desks: boolean; agents: boolean; procs: boolean; destructive: boolean }
-export const NO_CAPS: Caps = { desks: false, agents: false, procs: false, destructive: false }
+/**
+ * The four families of management (src/remote/scopes.ts), as the device holds them, and `channels`: managing a channel from
+ * afar (calling, muting, taking out, reopening, closing a poll, creating one) is the channels' own scope (fio-spec 18).
+ */
+export interface Caps { desks: boolean; agents: boolean; procs: boolean; destructive: boolean; channels: boolean }
+export const NO_CAPS: Caps = { desks: false, agents: false, procs: false, destructive: false, channels: false }
 
 /**
  * What the device may do from its scopes (`session.info`). A device without a presence credential acts on nothing (E-8):
@@ -23,7 +26,7 @@ export const NO_CAPS: Caps = { desks: false, agents: false, procs: false, destru
 export function capsOf(scopes: readonly unknown[], credential: boolean): Caps {
   if (!credential) return NO_CAPS
   const has = (s: string): boolean => scopes.includes(s)
-  return { desks: has('manage:desks'), agents: has('manage:agents'), procs: has('manage:procs'), destructive: has('manage:destructive') }
+  return { desks: has('manage:desks'), agents: has('manage:agents'), procs: has('manage:procs'), destructive: has('manage:destructive'), channels: has('channels') }
 }
 
 export const managesAny = (c: Caps): boolean => c.desks || c.agents || c.procs || c.destructive
@@ -372,6 +375,11 @@ export function refusalWords(code: string): string {
     case 'spawn-failed': return 'O agente não conseguiu subir.'
     case 'agent-unavailable': return 'Este motor não está disponível na máquina.'
     case 'bad-request': return 'A máquina não entendeu o pedido. Nada foi feito.'
+    case 'desk-asleep': return 'Essa mesa está hibernando: desperte-a antes de criar nela.'
+    case 'unknown-folder': return 'Essa pasta não está mais na lista do tether.'
+    case 'unknown-profile': return 'Esse perfil não existe mais na máquina.'
+    case 'unknown-engine': return 'Esse motor não está disponível na máquina.'
+    case 'proc-exists': return 'Já existe um processo com esse nome: escolha outro nome.'
     default: return refusalText(code)
   }
 }

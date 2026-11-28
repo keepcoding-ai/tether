@@ -63,6 +63,14 @@ export interface ChannelHost {
    * `limits` its `files` gives). Absent: a view that only converses has no clip.
    */
   readonly attachTalk?: boolean
+  /**
+   * With `talkOnly`: the view also manages the channel from afar, by `run` (the commands' ids and arguments), `ask` and
+   * `request('poll-close')`: calling, muting and giving the voice back, taking out, reopening, closing a poll early, the
+   * channel's menu and the menus of a member, and closing the channel while `close` says so. What goes to a tab stays away
+   * (an agent's name still peeks; no "Ir até a guia", emblem, link, "Abrir como guia"). Read at every paint: undefined, the
+   * view only converses. Ignored without `talkOnly` (the app manages it all).
+   */
+  manageAfar?(): { close: boolean } | undefined
   /** A request to the channels' daemon half (`history`, `members`, `say`...). */
   request<T>(name: string, args?: Record<string, unknown>): Promise<T>
   /** The daemon half's events (`line`, `channel`, `reaction`, `poll`). */
