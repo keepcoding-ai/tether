@@ -10,6 +10,7 @@ import { OwnershipStore, ownsDesk, takesByTyping } from './daemon/ownership.ts'
 import { Reconciler } from './daemon/reconcile.ts'
 import { WriteGate } from './daemon/guard.ts'
 import { bindDeskOwners } from './desk-owners.ts'
+import { registerDenyOnScreen } from './daemon/deny-on-screen.ts'
 import { registerNotices } from './daemon/notices.ts'
 import { registerVerbs } from './daemon/verbs.ts'
 import { registerWatch } from './daemon/watch.ts'
@@ -53,6 +54,7 @@ export function wire(api: TetherDaemon): { forAgents: ForAgentsDaemon; disposabl
     api.onSlot((ev) => { if (ev.kind === 'removed') forgotten(ev.slot.slotId, slotTitle(ev.slot)) }),
     ...registerVerbs(api, { store, gate }),
     ...registerNotices(api, { store, gate }),
+    ...registerDenyOnScreen(api, { store }),
     ...registerWatch(api, { store, gate, reconciler }),
     api.onStarted(() => { reconciler.start().catch((e: unknown) => api.log(`a passada de partida falhou: ${(e as Error).message}`)) }),
     toDisposable(() => { reconciler.undo().catch((e: unknown) => api.log(`desfazer a posse falhou: ${(e as Error).message}`)) }),
