@@ -10,11 +10,12 @@ import { icon, type IconName } from '../../../app/renderer/icons.ts'
 import type { Talker } from './talk.ts'
 import { counterOf, SAY_TEXT_MAX, whyText, type OutItem } from './talk-rules.ts'
 import { el } from './ui-lite.ts'
+import { sizeLabel } from '../../../extensions/channels/attachments.ts'
 
 const glyph = (name: IconName): SVGSVGElement => { const g = icon(name); g.setAttribute('aria-hidden', 'true'); return g }
 
 /** What a state of a speech on its way says, on screen. */
-export const OUT_TEXT = { sending: 'enviando…', sent: 'enviada', failed: 'não enviada', retry: 'Tentar de novo', edit: 'Editar' } as const
+export const OUT_TEXT = { sending: 'enviando…', sent: 'enviada', failed: 'não enviada', retry: 'Tentar de novo', edit: 'Editar', cancel: 'Cancelar' } as const
 
 /** A touch screen with no keyboard to speak of: Enter breaks the line there. */
 const touchOnly = (): boolean => { try { return matchMedia('(hover: none) and (pointer: coarse)').matches } catch { return false } }
@@ -65,8 +66,45 @@ export function mountTalkView(o: TalkViewOptions): { dispose(): void } {
     st.append(glyph(it.state === 'sending' ? 'clock' : it.state === 'sent' ? 'check' : 'warning'), el('span', '', OUT_TEXT[it.state]))
     head.append(el('b', 'rr-out-me', 'Você'), el('span', 'rr-out-to', it.to.length ? `para ${it.to.join(', ')}` : 'para todos'), st)
     const body = el('p', 'rr-out-t', it.text)
-    li.append(head, body)
-    li.setAttribute('aria-label', `Sua fala, ${OUT_TEXT[it.state]}: ${short(it.text)}`)
+    li.append(head, ...(it.text ? [body] : []))
+    li.setAttribute('aria-label', `Sua fala, ${OUT_TEXT[it.state]}: ${short(it.text || (it.files ?? []).map(f => f.name).join(', '))}`)
+    // Its files (step 4.3): one row each, with how far it went up while it goes, and "Cancelar" while it can still stop.
+    if (it.files?.length) {
+      const prog = talker.progress(it.id)
+      const list = el('div', 'rr-up')
+      list.setAttribute('role', 'list')
+      list.setAttribute('aria-label', 'Anexos da fala')
+      it.files.forEach((f, i) => {
+        const row = el('div', 'rr-up-i')
+        row.setAttribute('role', 'listitem')
+        row.dataset.file = String(i)
+        const nm = el('span', 'rr-up-nm', f.name)
+        nm.title = f.name
+        row.append(glyph('file'), nm, el('span', 'rr-up-sz', sizeLabel(f.size)))
+        if (it.state === 'sending' && prog) {
+          const bar = el('div', 'rr-up-bar')
+          bar.setAttribute('role', 'progressbar')
+          bar.setAttribute('aria-label', `Enviando ${f.name}`)
+          bar.setAttribute('aria-valuemin', '0')
+          bar.setAttribute('aria-valuemax', '100')
+          bar.append(el('span', 'rr-up-fill'))
+          row.append(bar)
+        }
+        list.append(row)
+      })
+      li.append(list)
+      if (it.state === 'sending' && prog) {
+        const acts = el('div', 'rr-out-acts')
+        const stop = el('button', 'rr-btn quiet rr-out-b')
+        stop.type = 'button'
+        stop.dataset.act = 'cancel'
+        stop.append(glyph('x'), el('span', '', OUT_TEXT.cancel))
+        stop.addEventListener('click', () => cancelToBox(it.id))
+        acts.append(stop)
+        li.append(acts)
+      }
+      paintBars(li, it.id)
+    }
     if (it.state === 'failed') {
       const why = el('p', 'rr-out-why', whyText(it.why))
       const acts = el('div', 'rr-out-acts')
@@ -84,6 +122,31 @@ export function mountTalkView(o: TalkViewOptions): { dispose(): void } {
       li.append(why, acts)
     }
     return li
+  }
+
+  /** How far each file of a speech went up, on its bars (in place: a chunk that goes repaints no list). */
+  function paintBars(li: HTMLElement, id: string): void {
+    const prog = talker.progress(id)
+    if (!prog) return
+    li.querySelectorAll<HTMLElement>('.rr-up-i').forEach(row => {
+      const p = prog[Number(row.dataset.file)]
+      const bar = row.querySelector<HTMLElement>('.rr-up-bar')
+      if (!p || !bar) return
+      const pct = p.size > 0 ? Math.round((100 * p.received) / p.size) : 0
+      bar.setAttribute('aria-valuenow', String(pct))
+      bar.style.setProperty('--rr-up', `${pct}%`)
+    })
+  }
+
+  /** "Cancelar": the files stop going up, the speech leaves, its text goes back to the box (never over what is there). */
+  const cancelToBox = (id: string): void => {
+    const it = talker.cancel(id)
+    if (!it) return
+    announce('Envio cancelado.')
+    if (!field || !it.text) return
+    field.value = field.value.trim() === '' ? it.text : `${field.value}\n${it.text}`
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field.focus()
   }
 
   const paint = (): void => {
@@ -156,6 +219,10 @@ export function mountTalkView(o: TalkViewOptions): { dispose(): void } {
 
   const sub = talker.onChange(n => {
     if (n.channel !== channelId) return
+    if (n.what === 'progress') {
+      for (const li of strip.querySelectorAll<HTMLElement>('.rr-out-i')) paintBars(li, li.dataset.id ?? '')
+      return
+    }
     paint()
     // The box empties itself after a speech goes (no input event): the counter follows.
     paintCounter()

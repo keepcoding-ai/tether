@@ -17,6 +17,8 @@ export interface FileViewDeps {
   view(path: string, from: HTMLElement): void
   /** The menu of a file at page coordinates (an image's has "Ver imagem" in it). */
   menu(x: number, y: number, path: string, image: boolean, from: HTMLElement): void
+  /** What a click on a card does, said on it ("Baixar" on the remote, where a file is downloaded). Absent: the label alone. */
+  readonly action?: string
 }
 
 /** Looks kept in memory (thumbnails are small data: URLs); the oldest goes first. */
@@ -98,8 +100,9 @@ export function createFileViews(deps: FileViewDeps, now: () => number = Date.now
     const nm = el('span', 'ch-fcard-nm')
     const name = el('b', '', f.name)
     name.title = f.name
-    nm.append(name, el('small', '', gone ? GONE_TEXT : f.label))
+    nm.append(name, el('small', '', gone ? GONE_TEXT : deps.action ? `${f.label} · ${deps.action}` : f.label))
     b.append(fi, nm)
+    if (!gone && deps.action) b.setAttribute('aria-label', `${f.name}, ${f.label}, ${deps.action}`)
     if (gone) { b.title = GONE_TEXT; b.setAttribute('aria-label', `${f.name}, ${GONE_TEXT}`) }
     return b
   }
@@ -120,6 +123,12 @@ export function createFileViews(deps: FileViewDeps, now: () => number = Date.now
   /** What the look of a file does to its button: a gone file becomes a dimmed card, an image gets its thumbnail. Run once the button is in its block. */
   const settle = (b: HTMLButtonElement, f: ViewFile, l: FileLook): void => {
     if (l.missing) { if (!b.classList.contains('gone')) b.replaceWith(card(f, true)); return }
+    if (l.note) {
+      // The host's word after the size, on a card and under a thumbnail alike.
+      const small = b.querySelector('.ch-fcard-nm small') ?? b.querySelector('.ch-shot-cp > span:last-child')
+      if (small) small.textContent = `${b.classList.contains('ch-shot') ? sizeLabel(f.size) : f.label} · ${l.note}`
+      b.setAttribute('aria-label', `${f.name}, ${f.label}, ${l.note}`)
+    }
     const th = b.querySelector('.ch-shot-th')
     if (th && l.thumb && !th.querySelector('img')) {
       const img = el('img', '')

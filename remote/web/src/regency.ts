@@ -17,6 +17,7 @@ import { layoutParams, tierOf, type RegencyLayout, type Tier } from '../../../ex
 import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { keysStrip, mountSpatialFocus } from './focus.ts'
 import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type RemoteSource } from './host.ts'
+import { remoteFiles } from './files.ts'
 import { createMenu } from './menu.ts'
 import type { Talker } from './talk.ts'
 import { mountTalkView } from './talk-view.ts'
@@ -508,10 +509,12 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       now,
     })
     const talk = o.talk
+    // The files of the speeches of this session (step 4.3): what they brought is let go of with the session.
+    const files = remoteFiles(house)
     const views = createChannelViews(remoteChannelHost(house, {
       quick: id => card.open({ kind: 'pane', id }),
       menu: (x, y, entries) => menu.open(x, y, entries),
-    }, talk))
+    }, talk, files))
     pane = new RegencyPane(remoteRegencyHost(house, {
       mount: (place, channelId, opts) => {
         const view = views.mountEmbed(place, channelId, opts)
@@ -543,6 +546,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
         p.dispose()
         p.element.remove()
         house.dispose()
+        files.dispose()
       },
     }
     house.start()

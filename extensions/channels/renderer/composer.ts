@@ -20,6 +20,8 @@ export interface ComposerOptions {
   send(text: string, to: string[], files?: FileSource[]): Promise<void>
   /** Attaching files (A1): the clip and pasting. Absent: neither. */
   attach?: AttachDeps
+  /** The clip sits beside "Enquete" instead of at the start of the row. */
+  clipNearPoll?: boolean
   /** The open channels the "#" list offers, read when the list opens (the current one is marked). */
   channels?(): readonly ChannelChoice[]
 }
@@ -184,7 +186,9 @@ export function createComposer(opts: ComposerOptions): Composer {
   clipBtn.setAttribute('aria-label', 'Anexar arquivo')
   clipBtn.append(glyph('paperclip'))
   const box = opts.attach ? createAttachBox(opts.attach, () => paintFiles()) : undefined
-  row.append(...(box ? [clipBtn] : []), hint, el('span', 'ch-say-sp'), ...(opts.poll ? [pollBtn] : []), sendBtn)
+  // A host whose box is a phone's first (the remote) puts the clip beside "Enquete", where the thumb reaches both.
+  const clipNearPoll = opts.clipNearPoll === true
+  row.append(...(box && !clipNearPoll ? [clipBtn] : []), hint, el('span', 'ch-say-sp'), ...(box && clipNearPoll ? [clipBtn] : []), ...(opts.poll ? [pollBtn] : []), sendBtn)
   // The "@" list floats over the box, anchored on the caret; the field keeps the focus and points at the active row.
   const listId = `ch-mention-${++composerSeq}`
   const list = el('ul', 'ch-mention-list')

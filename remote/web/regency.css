@@ -227,6 +227,16 @@
 .rr .rr-btn.quiet:hover { background: var(--bg-hover); }
 .rr .rr-out-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* The files of a speech on its way (step 4.3): a row each, its bar while it goes up. */
+.rr .rr-up { display: flex; flex-direction: column; gap: 4px; margin-top: 5px; }
+.rr .rr-up-i { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 4px 6px; font-size: 12px; color: var(--fg-dim); }
+.rr .rr-up-i .ph { width: 13px; height: 13px; }
+.rr .rr-up-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.rr .rr-up-sz { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rr .rr-up-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
+.rr .rr-up-fill { display: block; height: 100%; width: var(--rr-up, 0%); background: var(--accent); transition: width .2s; }
+@media (prefers-reduced-motion: reduce) { .rr .rr-up-fill { transition: none; } }
+
 /* The counter near the ceiling of a speech, beside "Enviar". */
 .rr .rr-count { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--fg-dim); white-space: nowrap; }
 .rr .rr-count.over { color: color-mix(in srgb, var(--err) 75%, var(--fg)); font-weight: 600; }
@@ -244,6 +254,15 @@
 .rr .rg[data-tier="mobile"] .ch-msg-more { width: 37px; height: 37px; top: 0; right: 0; }
 /* Its "⋯" sits at the speech's top right: the text keeps clear of it. */
 .rr .rg[data-tier="mobile"] .ch-msg { padding-right: 38px; }
+/* The box's files on a phone: one row of thumbnails above the box that scrolls sideways, never a column that eats the view. */
+.rr .rg[data-tier="mobile"] .ch-pane .ch-fchips { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; max-height: none; padding-bottom: 2px; scroll-snap-type: x proximity; }
+.rr .rg[data-tier="mobile"] .ch-pane .ch-fchip { width: 200px; scroll-snap-align: start; }
+.rr .rg[data-tier="mobile"] :is(.ch-clip, .ch-fchip-rm) { min-width: 37px; min-height: 37px; }
+/* The big picture on a phone: the whole screen, its buttons 44 px. */
+.rr .rg[data-tier="mobile"] .ch-viewer { position: fixed; inset: 0; z-index: 900; padding: 0; }
+.rr .rg[data-tier="mobile"] .ch-vbox { border: 0; border-radius: 0; }
+.rr .rg[data-tier="mobile"] .ch-vh .ch-act { min-width: var(--target); min-height: var(--target); }
+.rr .rg[data-tier="mobile"] .ch-vnav { min-width: var(--target); }
 /* A long press on a speech is its menu: the system's own callout stays away from it. */
 .rr .rg[data-tier="mobile"] :is(.ch-msg, .ch-prow) { -webkit-touch-callout: none; }
 
@@ -256,7 +275,7 @@
 }
 
 /* TV: the box and the speeches are on the walk of the arrows; their ring is the walk's own. */
-.rr[data-keys] :is(.ch-msgs > .ch-msg, .ch-msgs > .ch-prow, button.ch-opt, .ch-say :is(.ch-field, .ch-dsel, .ch-send, .ch-pollbtn), .rr-out-b, .rr-lock, .ch-pf :is(input, button), .ch-reason :is(input, button)):focus {
+.rr[data-keys] :is(.ch-msgs > .ch-msg, .ch-msgs > .ch-prow, button.ch-opt, .ch-say :is(.ch-field, .ch-dsel, .ch-send, .ch-pollbtn), .rr-out-b, .rr-lock, .ch-pf :is(input, button), .ch-reason :is(input, button), .ch-shot, .ch-fcard, .ch-viewer .ch-act):focus {
   outline: 3px solid var(--accent); outline-offset: -3px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 

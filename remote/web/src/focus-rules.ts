@@ -68,7 +68,7 @@ export interface ItemFacts {
 
 /** The places of the Regency (every tier walks them) and of the open channel (the TV's, where nothing else reaches them). */
 export type Place = 'wait' | 'conv' | 'tree' | 'chip' | 'toggle' | ChannelPlace
-export type ChannelPlace = 'msg' | 'card' | 'opt' | 'older' | 'say' | 'out' | 'lock' | 'form' | 'reason'
+export type ChannelPlace = 'msg' | 'card' | 'opt' | 'older' | 'say' | 'out' | 'lock' | 'form' | 'reason' | 'file'
 
 /**
  * The stable name of an item: what it shows of the house, never the node (the tree is painted again on every change). The

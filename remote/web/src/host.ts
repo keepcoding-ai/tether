@@ -18,6 +18,8 @@ import type { ChannelSummary, MemberInfo, MessageReactions, PollState } from '..
 import type { ChannelMarks } from '../../../extensions/channels/mark-board.ts'
 import type { Line } from '../../../extensions/channels/rules.ts'
 import type { EmbeddedChannel, EmbedOptions } from '../../../extensions/channels/renderer/embed.ts'
+import { fileRef, parseFileRef } from './file-rules.ts'
+import { remoteFiles, type RemoteFiles } from './files.ts'
 import type { ChannelHost } from '../../../extensions/channels/renderer/host.ts'
 import type { HistoryPage, MembersAnswer } from '../../../extensions/channels/renderer/view-model.ts'
 import { regencyModelOf, stateCounts, type AgentRef, type RegencyInput, type RegencyModel, type StateCounts, type Target } from '../../../extensions/regency/model.ts'
@@ -113,6 +115,8 @@ export interface RemoteSource {
   marks(): Promise<MarksAnswer>
   /** A page of a channel: the newest, or the lines before `before`. */
   page(channel: string, before?: number): Promise<PageAnswer>
+  /** One chunk of the `file`-th file of the line `seq` (step 4.3), from `offset`. Absent: the files are names and sizes only. */
+  file?(channel: string, seq: number, file: number, offset: number): Promise<{ size: number; type: string; offset: number; data: string }>
   onNotice(listener: (n: RemoteNotice) => void): { dispose(): void }
 }
 
@@ -324,6 +328,11 @@ export class RemoteHouse {
   }
 
   /** Who is in the channel now: the newest page being read says it, else the last one read, else a page is read for it. */
+  /** One chunk of a file of a line, through the session's source (a source without files refuses it). */
+  fileChunk(channel: string, seq: number, file: number, offset: number): Promise<{ size: number; type: string; offset: number; data: string }> {
+    return this.source.file ? this.source.file(channel, seq, file, offset) : Promise.reject(new SourceRefused('failed'))
+  }
+
   async members(channel: string): Promise<readonly RemoteMember[]> {
     const reading = this.newest.get(channel)
     if (reading) return (await reading).members
@@ -343,13 +352,19 @@ export function emblemOf(agent: AgentRef | undefined): PaneEmblem | undefined {
 const NOTHING = { dispose: (): void => {} }
 const readOnlyError = (): Error => new Error('Daqui você só acompanha.')
 
-function lineOf(l: PageLine): Line {
+function lineOf(l: PageLine, channelId: string, files: RemoteFiles): Line {
   return {
     seq: l.seq, at: l.at, kind: l.kind, from: l.from, body: l.cut ? `${l.body}…` : l.body,
     ...(l.to ? { to: l.to } : {}), ...(l.replyTo !== undefined ? { replyTo: l.replyTo } : {}), ...(l.event ? { event: l.event } : {}),
     ...(l.poll ? { poll: l.poll } : {}),
-    // The path stays in the house: the name stands for it (the card shows the name and the size, and opens nothing).
-    ...(l.files?.length ? { files: l.files.map(f => ({ name: f.name, path: f.name, size: f.size, type: f.type })) } : {}),
+    // The path stays in the house: a reference to the line and the index stands for it (step 4.3), and the files ask by it.
+    ...(l.files?.length ? {
+      files: l.files.map((f, i) => {
+        const path = fileRef(channelId, l.seq, i)
+        files.known(path, { name: f.name, size: f.size, type: f.type })
+        return { name: f.name, path, size: f.size, type: f.type }
+      }),
+    } : {}),
   }
 }
 
@@ -366,7 +381,7 @@ export interface RemoteActs {
  * that confirm the speeches on their way. Absent: the view only reads.
  */
 export interface RemoteTalk {
-  say(channel: string, text: string, to: readonly string[]): Promise<void>
+  say(channel: string, text: string, to: readonly string[], files?: readonly { file: Blob; name: string }[]): Promise<void>
   react(channel: string, seq: number, reaction: string, remove: boolean): Promise<{ changed: boolean }>
   vote(channel: string, poll: number, vote: number, reason?: string): Promise<unknown>
   poll(channel: string, args: { question: string; options?: readonly string[]; to?: readonly string[]; timeoutMs?: number }): Promise<unknown>
@@ -380,7 +395,7 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
  * The channel's view over the house: reading only, or, with `talk`, conversing (`talkOnly`: speaking, reacting, voting,
  * opening a poll and "seen"; managing the channel stays at the machine).
  */
-export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: RemoteTalk): ChannelHost {
+export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: RemoteTalk, files: RemoteFiles = remoteFiles(house)): ChannelHost {
   const summaryOf = (channelId: string, from?: PageAnswer['channel']): ChannelSummary => {
     const known = house.input().channels.find(c => c.id === channelId)
     if (known) return known
@@ -408,7 +423,7 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
     }
     // The newest page holds what landed up to its last line: the speeches on their way that are there now leave the outbox.
     if (before === undefined) talk?.confirmed(channelId, answer.last)
-    return { channel: summaryOf(channelId, answer.channel), lines: lines.map(lineOf), reactions, polls, more: answer.before !== undefined, last: answer.last }
+    return { channel: summaryOf(channelId, answer.channel), lines: lines.map(l => lineOf(l, channelId, files)), reactions, polls, more: answer.before !== undefined, last: answer.last }
   }
 
   const members = async (channelId: string): Promise<MembersAnswer> => {
@@ -427,7 +442,12 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
   const write = async (t: RemoteTalk, name: string, channel: string, a: Record<string, unknown>): Promise<unknown> => {
     const int = (v: unknown): number => (typeof v === 'number' && Number.isSafeInteger(v) ? v : 0)
     switch (name) {
-      case 'say': await t.say(channel, typeof a.text === 'string' ? a.text : '', strings(a.to)); return {}
+      case 'say': {
+        // The box's files are this page's (files.ts `local`): the speech carries their bytes, the house never a path of here.
+        const paths = Array.isArray(a.files) ? a.files.flatMap(f => (f && typeof (f as { path?: unknown }).path === 'string' ? [(f as { path: string }).path] : [])) : []
+        await t.say(channel, typeof a.text === 'string' ? a.text : '', strings(a.to), files.local(paths))
+        return {}
+      }
       case 'react': return t.react(channel, int(a.seq), typeof a.reaction === 'string' ? a.reaction : '', a.remove === true)
       case 'vote': return t.vote(channel, int(a.poll), int(a.vote), typeof a.reason === 'string' ? a.reason : undefined)
       case 'poll': return t.poll(channel, {
@@ -443,6 +463,8 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
   return {
     readOnly: talk === undefined,
     talkOnly: talk !== undefined,
+    // A device that converses attaches files too (step 4.3), by its own picker and within the limits from afar.
+    attachTalk: talk !== undefined,
     request: async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
       const channel = String(args.channel ?? '')
       if (name === 'history') return await history(channel, typeof args.before === 'number' ? args.before : undefined) as T
@@ -472,18 +494,14 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
     onDidChangeEmblems: listener => house.onDidChange(() => listener(undefined)),
     // The person's name in the channels, as the house says it: the lines' `to` name her by it ("para você").
     moderatorName: () => house.moderatorName(),
-    files: {
-      inspect: async () => [],
-      pick: async () => [],
-      stageImage: async () => undefined,
-      discard: () => {},
-      pathOf: () => '',
-      // A file is in the house: here it is a name and a size, never "gone" and never a picture.
-      look: async paths => paths.map(path => ({ path, missing: false })),
-      view: async path => ({ path, missing: true }),
-    },
+    // The files of the speeches come through the session by reference, and the box's are this page's (./files.ts).
+    files,
     // Only an address of the web opens, in another tab, with no way back to this page; a place of the app has no door here.
-    follow: target => { if (target.kind === 'external' && /^https?:\/\//i.test(target.url)) window.open(target.url, '_blank', 'noopener,noreferrer') },
+    // A file of a speech is downloaded (step 4.3): its reference names a line of the house, never a path.
+    follow: target => {
+      if (target.kind === 'external' && /^https?:\/\//i.test(target.url)) window.open(target.url, '_blank', 'noopener,noreferrer')
+      else if (target.kind === 'file' && parseFileRef(target.path)) void files.download(target.path).catch(() => {})
+    },
     linkMenu: () => {},
     // The rows are the view's: a device that only reads gets "Copiar" alone (the "⋯" of a speech is never a dead button).
     menu: (x, y, entries) => { acts.menu?.(x, y, entries) },

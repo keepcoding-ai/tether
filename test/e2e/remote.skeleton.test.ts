@@ -253,7 +253,7 @@ describe('remote web client, skeleton end to end (RR1.5)', () => {
     await view('pair')
     const csp = await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content')
     // The whole policy, strict: workers and the manifest only from the origin itself, the one Trusted Types policy of the service worker.
-    assert.equal(csp, `default-src 'none'; script-src 'self'; worker-src 'self'; manifest-src 'self'; style-src 'self'; img-src 'self'; connect-src ${relayUrl}; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types tether-sw`)
+    assert.equal(csp, `default-src 'none'; script-src 'self'; worker-src 'self'; manifest-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src ${relayUrl}; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types tether-sw`)
     await shot('parear-390')
   })
 

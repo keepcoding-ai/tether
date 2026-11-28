@@ -11,9 +11,10 @@
 // LIMIT_HOLD_MS and asks once more. Nothing is kept on the device: what is read lives in the memory of the screen.
 import { EVT, opByName, RES_STATUS } from '../../../src/remote/index.ts'
 import {
-  channelsChanged, channelsMarks, channelsPage, PAGE_LINES_MAX, regencyChanged, regencyTree,
-  type ChannelsChangedSource, type MarksSource, type PagePollState, type RegencyChanged,
+  channelsChanged, channelsMarks, channelsPage, fileChunk, PAGE_LINES_MAX, regencyChanged, regencyTree,
+  type ChannelsChangedSource, type FileChunk, type FileChunkSource, type MarksSource, type PagePollState, type RegencyChanged,
 } from '../../../src/remote/projection.ts'
+import { PAGE_PACE } from './file-rules.ts'
 import type { PollState } from '../../../extensions/channels/daemon/requests.ts'
 import { SourceRefused, type MarksAnswer, type PageAnswer, type RefusedWhy, type RemoteNotice, type RemoteSource, type TreeAnswer } from './host.ts'
 import type { Reply } from './live.ts'
@@ -47,6 +48,7 @@ const OP = {
   tree: opByName('regency.tree')!.code,
   marks: opByName('channels.marks')!.code,
   page: opByName('channels.page')!.code,
+  file: opByName('channels.file')!.code,
 }
 
 const isRec = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -219,6 +221,29 @@ export function sessionSource(session: SourceSession, o: SessionSourceOptions = 
   const readPage = async (channel: string, before: number | undefined): Promise<PageAnswer> =>
     pageOf(await ask(OP.page, { channel, ...(before !== undefined ? { before } : {}) }), channel, before)
 
+  /**
+   * One chunk of a file of a line (step 4.3), outside the readings' budget: the chunks have the page's own pace
+   * (file-rules.ts PAGE_PACE), because the portal counts them apart. The body is the projector's, again, before it is used.
+   */
+  const readChunk = async (channel: string, seq: number, file: number, offset: number): Promise<FileChunk> => {
+    for (let attempt = 0; ; attempt++) {
+      if (disposed) throw gone()
+      await PAGE_PACE.take()
+      const r = await Promise.race([session.request(OP.file, { channel, seq, file, offset }), dead])
+      if (disposed || r.status === -1) throw gone()
+      o.onContact?.()
+      if (r.status === RES_STATUS.ok) {
+        const c = fileChunk(r.body as unknown as FileChunkSource)
+        if (c.offset !== offset) throw malformed()
+        return c
+      }
+      if (r.status === RES_STATUS.limit && attempt < 3) { await wait(2_000); continue }
+      const why = whyOf(r)
+      if (why === 'locked') o.onLocked?.()
+      throw new SourceRefused(why)
+    }
+  }
+
   const emit = (n: RemoteNotice): void => {
     for (const l of [...listeners]) { try { l(n) } catch (e) { console.error('remote source listener', e) } }
   }
@@ -236,6 +261,7 @@ export function sessionSource(session: SourceSession, o: SessionSourceOptions = 
       pagesWaiting.set(key, p)
       return p
     },
+    file: readChunk,
     onNotice: listener => { listeners.add(listener); return { dispose: () => { listeners.delete(listener) } } },
     heard: (evt, body) => {
       if (evt === EVT.channelsChanged.code) {

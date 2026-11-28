@@ -13,6 +13,9 @@ export type { LineFile }
 export const ATTACH_MAX_BYTES = 20 * 1024 * 1024
 /** The most files one speech may carry. */
 export const ATTACH_MAX_PER_SAY = 10
+/** The ceilings a box counts by: the app's, or a smaller host's (the remote's, src/remote/files.ts). */
+export interface AttachLimits { files: number; bytes: number }
+export const APP_ATTACH_LIMITS: AttachLimits = { files: ATTACH_MAX_PER_SAY, bytes: ATTACH_MAX_BYTES }
 /** The channel's folder of files, beside its record. */
 export const FILES_DIR = 'files'
 /** The longest name a copied file gets (the extension is kept). */
@@ -49,11 +52,11 @@ export function isSecretName(name: string): boolean {
 export interface FileFacts { name: string; size: number; isDirectory?: boolean; missing?: boolean }
 
 /** Why one file cannot go in, by itself (the count is `admit`'s): gone, a folder, a secret's name, too large. */
-export function fileRefusal(f: FileFacts): FileRefusal | undefined {
+export function fileRefusal(f: FileFacts, maxBytes: number = ATTACH_MAX_BYTES): FileRefusal | undefined {
   if (f.missing) return 'not-found'
   if (f.isDirectory) return 'is-folder'
   if (isSecretName(f.name)) return 'secret-file'
-  if (f.size > ATTACH_MAX_BYTES) return 'too-large'
+  if (f.size > maxBytes) return 'too-large'
   return undefined
 }
 
@@ -61,14 +64,14 @@ export function fileRefusal(f: FileFacts): FileRefusal | undefined {
  * Which of `incoming` go in when `have` files are on the speech already: each refused one with its reason, then the first ones
  * that fit under ATTACH_MAX_PER_SAY; `over` is how many fit-able ones were left out by the count.
  */
-export function admit<T extends FileFacts>(have: number, incoming: readonly T[]): { accepted: T[]; refused: Array<{ file: T; why: FileRefusal }>; over: number; tried: number } {
+export function admit<T extends FileFacts>(have: number, incoming: readonly T[], limits: AttachLimits = APP_ATTACH_LIMITS): { accepted: T[]; refused: Array<{ file: T; why: FileRefusal }>; over: number; tried: number } {
   const accepted: T[] = []
   const refused: Array<{ file: T; why: FileRefusal }> = []
   let over = 0
   for (const f of incoming) {
-    const why = fileRefusal(f)
+    const why = fileRefusal(f, limits.bytes)
     if (why) { refused.push({ file: f, why }); continue }
-    if (have + accepted.length >= ATTACH_MAX_PER_SAY) { over++; continue }
+    if (have + accepted.length >= limits.files) { over++; continue }
     accepted.push(f)
   }
   return { accepted, refused, over, tried: incoming.length - refused.length }
@@ -147,10 +150,11 @@ export function withFiles(body: string, files: readonly Pick<LineFile, 'path'>[]
 }
 
 /** What the screen says of a refused file: a bold lead and the rest (the texts of the approved preview, screen 10). */
-export function refusalText(why: FileRefusal, name: string, extra: { size?: number; accepted?: number; tried?: number } = {}): { lead: string; rest: string } {
+export function refusalText(why: FileRefusal, name: string, extra: { size?: number; accepted?: number; tried?: number; limits?: AttachLimits } = {}): { lead: string; rest: string } {
+  const limits = extra.limits ?? APP_ATTACH_LIMITS
   switch (why) {
     case 'too-large':
-      return { lead: `${name} não entrou.`, rest: `Tem ${sizeLabel(extra.size ?? 0)} e o limite é ${sizeLabel(ATTACH_MAX_BYTES)} por arquivo. Envie um trecho menor ou comprima o arquivo.` }
+      return { lead: `${name} não entrou.`, rest: `Tem ${sizeLabel(extra.size ?? 0)} e o limite é ${sizeLabel(limits.bytes)} por arquivo. Envie um trecho menor ou comprima o arquivo.` }
     case 'secret-file':
       return { lead: `${name} não entrou.`, rest: 'Arquivos de variáveis, chaves e certificados não são anexados, porque todos os membros do canal poderiam lê-los. Se for um arquivo comum com outro nome, renomeie e anexe de novo.' }
     case 'is-folder':
@@ -160,12 +164,12 @@ export function refusalText(why: FileRefusal, name: string, extra: { size?: numb
     case 'copy-failed':
       return { lead: `${name} não foi enviado.`, rest: 'Não consegui copiar o arquivo para a pasta do canal. Confira se o disco tem espaço e tente de novo.' }
     case 'too-many':
-      return { lead: `Entraram ${extra.accepted ?? 0} de ${extra.tried ?? 0} arquivos.`, rest: `O limite é ${ATTACH_MAX_PER_SAY} por fala. Envie estes e anexe o resto na fala seguinte.` }
+      return { lead: `Entraram ${extra.accepted ?? 0} de ${extra.tried ?? 0} arquivos.`, rest: `O limite é ${limits.files} por fala. Envie estes e anexe o resto na fala seguinte.` }
   }
 }
 
 /** The room's warning while the box holds files, and the count when there is more than one. */
-export function roomNote(n: number): string {
+export function roomNote(n: number, max: number = ATTACH_MAX_PER_SAY): string {
   if (n <= 0) return ''
-  return n === 1 ? 'Todos os membros do canal poderão ler este arquivo.' : `Todos os membros do canal poderão ler estes arquivos. · ${n} de ${ATTACH_MAX_PER_SAY}`
+  return n === 1 ? 'Todos os membros do canal poderão ler este arquivo.' : `Todos os membros do canal poderão ler estes arquivos. · ${n} de ${max}`
 }

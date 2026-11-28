@@ -31,6 +31,8 @@ export interface FileLook {
   missing: boolean
   /** A data: URL of at most VIEW_THUMB_PX on its longest side, for an image main could read. */
   thumb?: string
+  /** A word of the host on the file, after its size (the remote's "grande demais para ver de longe"). */
+  note?: string
 }
 /** The longest side of the picture the viewer gets (a bigger one is shrunk by main: the renderer never holds the file itself). */
 export const VIEWER_PX = 2400
@@ -44,6 +46,8 @@ export interface FileView {
   /** The size of the file's own picture (not of the shrunk one). */
   width?: number
   height?: number
+  /** Why there is no picture, in the host's words (the remote's "grande demais para ver de longe"); absent: the viewer's own. */
+  note?: string
 }
 /** The most paths one `inspect` looks at. */
 export const INSPECT_MAX = 64

@@ -5,6 +5,7 @@
 // src/talk.ts holds the state and talks to the session; src/talk-view.ts draws it.
 import { RES_STATUS } from '../../../src/remote/index.ts'
 import { NAME_MAX, POLL_REASON_MAX, REACTION_TEXT_MAX, SAY_TEXT_MAX, SAY_TO_MAX } from '../../../src/remote/talk.ts'
+import { FILES_PER_SAY_MAX } from '../../../src/remote/files.ts'
 
 export { POLL_REASON_MAX, SAY_TEXT_MAX }
 
@@ -65,7 +66,16 @@ export interface OutItem {
   seq?: number
   /** Why it did not go (`failed`): the portal's code, or `unknown` when it is too late to ask the house about it. */
   why?: string
+  /**
+   * The files the speech carries (step 4.3), by name and size only: the bytes live in this page's memory while they go up
+   * and never in the storage. A speech whose files a reload lost is resent as is: the portal holds them whole, or says
+   * `unknown-file`.
+   */
+  files?: OutFile[]
 }
+
+/** A file of a speech on its way, as the outbox keeps it. */
+export interface OutFile { name: string; size: number }
 
 /**
  * How long a speech is resent by itself with the same actId. The portal keeps an act's outcome for 15 minutes: past this,
@@ -93,8 +103,11 @@ export function parseOutbox(raw: string | null): OutItem[] {
     if (typeof x.text !== 'string' || x.text.length > SAY_TEXT_MAX || !Array.isArray(x.to) || typeof x.at !== 'number' || !Number.isFinite(x.at)) continue
     if (x.state !== 'sending' && x.state !== 'sent' && x.state !== 'failed') continue
     const to = x.to.filter((n): n is string => typeof n === 'string' && n.length <= NAME_MAX).slice(0, SAY_TO_MAX)
+    const files = Array.isArray(x.files)
+      ? x.files.slice(0, FILES_PER_SAY_MAX).flatMap((f): OutFile[] => (isRec(f) && typeof f.name === 'string' && f.name.length <= 512 && typeof f.size === 'number' && Number.isSafeInteger(f.size) && f.size >= 0 ? [{ name: f.name, size: f.size }] : []))
+      : []
     out.push({
-      id: x.id, channel: x.channel, text: x.text, to, at: x.at, state: x.state,
+      id: x.id, channel: x.channel, text: x.text, to, at: x.at, state: x.state, ...(files.length ? { files } : {}),
       ...(typeof x.seq === 'number' && Number.isSafeInteger(x.seq) && x.seq >= 1 ? { seq: x.seq } : {}),
       ...(typeof x.why === 'string' && x.why.length <= 40 ? { why: x.why } : {}),
     })
@@ -141,6 +154,11 @@ export function whyText(why: string | undefined): string {
     case 'too-long': return `A fala passa de ${SAY_TEXT_MAX} caracteres.`
     case 'no-credential': return 'Este aparelho não tem biometria cadastrada: ele só vê.'
     case 'no-scope': return 'Este aparelho não tem permissão para falar nos canais.'
+    case 'unknown-file': return 'Os anexos não chegaram inteiros à máquina. Anexe de novo.'
+    case 'secret-file': return 'Um anexo parece conter segredos e não foi enviado.'
+    case 'too-large': return 'Um anexo passa do limite de longe.'
+    case 'too-many': return 'Anexos demais para uma fala.'
+    case 'copy-failed': return 'A máquina não conseguiu guardar os anexos.'
     default: return 'A máquina recusou a fala.'
   }
 }
@@ -184,8 +202,9 @@ export function withDraft(d: Readonly<Record<string, string>>, channel: string, 
 export type SayCheck = { ok: true } | { ok: false; code: 'too-long' | 'bad-request'; message: string }
 
 /** A speech the portal would take: some text, at most SAY_TEXT_MAX characters, at most SAY_TO_MAX names of NAME_MAX. */
-export function checkSay(text: string, to: readonly string[]): SayCheck {
-  if (text.trim() === '') return { ok: false, code: 'bad-request', message: 'Escreva alguma coisa para enviar.' }
+export function checkSay(text: string, to: readonly string[], files = 0): SayCheck {
+  if (files > FILES_PER_SAY_MAX) return { ok: false, code: 'too-long', message: `No máximo ${FILES_PER_SAY_MAX} anexos numa fala.` }
+  if (text.trim() === '' && files === 0) return { ok: false, code: 'bad-request', message: 'Escreva alguma coisa para enviar.' }
   if (text.length > SAY_TEXT_MAX) return { ok: false, code: 'too-long', message: `A fala passa de ${SAY_TEXT_MAX} caracteres (${text.length}). Corte ${text.length - SAY_TEXT_MAX} para enviar.` }
   if (to.length > SAY_TO_MAX) return { ok: false, code: 'too-long', message: `No máximo ${SAY_TO_MAX} destinatários numa fala.` }
   if (to.some(n => n.length > NAME_MAX)) return { ok: false, code: 'too-long', message: 'Um destinatário tem o nome comprido demais.' }

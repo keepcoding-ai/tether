@@ -185,6 +185,8 @@ export function createChannelViews(host: ChannelHost) {
   const readOnly = host.readOnly === true
   /** The view may manage the channel and its members, and attach files (the app's; a host that only converses may not). */
   const manages = !readOnly && host.talkOnly !== true
+  /** The view attaches files: the app's, or a host that converses and brings its own files (`attachTalk`, the remote's). */
+  const attaches = manages || (!readOnly && host.attachTalk === true)
   const marks = host.marks
   const channelList = (): readonly ChannelSummary[] => host.channels()
   /** The channels a "#" can name: the open ones (a closed channel is plain text). */
@@ -238,6 +240,7 @@ export function createChannelViews(host: ChannelHost) {
       if (image && pane) pane.imageMenu(x, y, path)
       else host.linkMenu(x, y, { kind: 'file', path })
     },
+    ...(host.files.viewer ? { action: host.files.viewer.openApp } : {}),
   })
 
   class ChannelPane {
@@ -336,7 +339,8 @@ export function createChannelViews(host: ChannelHost) {
     private keyMenuAt = 0
     private readonly composer = createComposer({
       send: (text, to, files) => this.say(text, to, files),
-      ...(manages ? { attach } : {}),
+      ...(attaches ? { attach } : {}),
+      ...(!manages && attaches ? { clipNearPoll: true } : {}),
       poll: {
         members: () => (this.answer?.members ?? []).map(m => ({ id: m.id, name: m.name, muted: m.muted, path: m.path })),
         open: async args => { await this.ask('poll', { ...args }) },
@@ -352,6 +356,7 @@ export function createChannelViews(host: ChannelHost) {
       open: path => host.follow({ kind: 'file', path }),
       menu: (x, y, path) => { host.linkMenu(x, y, { kind: 'file', path }) },
       restore: path => { [...this.msgs.querySelectorAll<HTMLElement>('.ch-shot')].find(b => b.dataset.path === path)?.focus() },
+      ...(host.files.viewer ? { texts: host.files.viewer } : {}),
     })
     /** The zone to drop files on (A3), over the whole pane: it takes no pointer, the drag events reach the pane under it. */
     private readonly dropZone = el('div', 'ch-drop')
@@ -375,7 +380,7 @@ export function createChannelViews(host: ChannelHost) {
     // Files of the system dragged over the pane (A3): only a drag that carries `Files` counts, so a tab or a panel of the app that
     // is being moved (dockview's own drag) goes on as it was. The zone stays while dragover keeps coming, and goes when it stops.
     private onDrag(ev: DragEvent): void {
-      if (!manages || !dragHasFiles(ev.dataTransfer?.types)) return
+      if (!attaches || !dragHasFiles(ev.dataTransfer?.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       const refuse = this.isClosed()
@@ -393,7 +398,7 @@ export function createChannelViews(host: ChannelHost) {
 
     private onDrop(ev: DragEvent): void {
       const dt = ev.dataTransfer
-      if (!manages || !dt || !dragHasFiles(dt.types)) return
+      if (!attaches || !dt || !dragHasFiles(dt.types)) return
       ev.preventDefault()
       ev.stopPropagation()
       this.paintDrop(false)

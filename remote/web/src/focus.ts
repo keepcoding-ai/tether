@@ -31,6 +31,8 @@ const TV_PLACES: readonly (readonly [Place, string])[] = [
   ['msg', '.ch-msgs > .ch-msg[data-seq]'],
   ['card', '.ch-msgs > .ch-prow[data-seq]'],
   ['opt', '.ch-msgs .ch-prow button.ch-opt[data-n]'],
+  // The files of a speech (step 4.3): OK on a thumbnail opens it big, on a card downloads it.
+  ['file', '.ch-msgs .ch-msg-files button:is(.ch-shot, .ch-fcard)[data-path]'],
   ['older', '.ch-msgs > .ch-older'],
   ['reason', '.ch-msgs .ch-reason :is(input, button)'],
   ['say', '.ch-say :is(textarea.ch-field, select.ch-dsel, button.ch-pollbtn, button.ch-send)'],
@@ -53,6 +55,7 @@ function channelId(place: Place, e: HTMLElement): string | undefined {
   switch (place) {
     case 'msg': case 'card': return d.seq
     case 'opt': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.n ?? ''}`
+    case 'file': return d.path
     case 'older': case 'lock': return place
     case 'reason': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.key ?? e.tagName}`
     case 'say': return e.classList.contains('ch-field') ? 'field' : e.classList.contains('ch-dsel') ? 'to' : e.classList.contains('ch-send') ? 'send' : 'poll'
@@ -152,6 +155,8 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
   const onKeyCapture = (ev: KeyboardEvent): void => {
     const t = document.activeElement
     if (!shell.isConnected || !(nobody() || (t !== null && shell.contains(t)))) return
+    // The big picture walks its own arrows (the image before and after) and closes on Back: the walk stays out of it.
+    if (t instanceof Element && t.closest('.ch-viewer')) return
     cardAtKey = deps.cardShown()
     const inCard = t instanceof Element && t.closest('.rr-card') !== null
     const dir = DIRECTIONS[ev.key]

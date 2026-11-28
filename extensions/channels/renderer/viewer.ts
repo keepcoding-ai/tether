@@ -24,7 +24,15 @@ export interface ViewerDeps {
   menu(x: number, y: number, path: string): void
   /** The viewer closed: the focus goes back to the thumbnail of `path`. */
   restore(path: string): void
+  /**
+   * A host whose "open" is something else (the remote's: download the file), in its words; `menu: false` drops the "⋯" (a
+   * host with no file menu). Absent: the app's.
+   */
+  texts?: ViewerTexts
 }
+
+/** The words of the viewer's "open" button and of a picture it cannot show, and whether it has the file's menu. */
+export interface ViewerTexts { openApp: string; openAppTitle: string; unreadable: string; menu: boolean }
 
 /** What a test reads of the viewer. */
 export interface ViewerSnapshot {
@@ -70,6 +78,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 }
 
 export function createViewer(deps: ViewerDeps): Viewer {
+  const words = deps.texts ?? { openApp: VIEWER_TEXT.openApp, openAppTitle: VIEWER_TEXT.openAppTitle, unreadable: VIEWER_TEXT.unreadable, menu: true }
   let root: HTMLElement | undefined
   let current: ViewerItem | undefined
   let state: ViewerSnapshot['state'] = 'loading'
@@ -130,7 +139,7 @@ export function createViewer(deps: ViewerDeps): Viewer {
       if (mine !== token || !root) return
       dims = v.width !== undefined && v.height !== undefined ? { width: v.width, height: v.height } : undefined
       release()
-      if (v.missing) { state = 'gone'; message(GONE_TEXT) } else if (!v.url) { state = 'unreadable'; message(VIEWER_TEXT.unreadable) } else {
+      if (v.missing) { state = 'gone'; message(GONE_TEXT) } else if (!v.url) { state = 'unreadable'; message(v.note ?? words.unreadable) } else {
         state = 'ready'
         const img = el('img', 'ch-vimg')
         img.alt = item.name
@@ -143,7 +152,7 @@ export function createViewer(deps: ViewerDeps): Viewer {
     }, () => {
       if (mine !== token || !root) return
       state = 'unreadable'
-      message(VIEWER_TEXT.unreadable)
+      message(words.unreadable)
       paintHead()
     })
   }
@@ -193,9 +202,9 @@ export function createViewer(deps: ViewerDeps): Viewer {
     nm.append(nameEl, subEl)
     appBtn = el('button', 'ch-act ch-vapp')
     appBtn.type = 'button'
-    appBtn.title = VIEWER_TEXT.openAppTitle
-    appBtn.setAttribute('aria-label', VIEWER_TEXT.openApp)
-    appBtn.append(glyph('arrow-square-out'), el('span', 'ch-vapp-lbl', VIEWER_TEXT.openApp))
+    appBtn.title = words.openAppTitle
+    appBtn.setAttribute('aria-label', words.openApp)
+    appBtn.append(glyph('arrow-square-out'), el('span', 'ch-vapp-lbl', words.openApp))
     menuBtn = el('button', 'ch-act ch-vmenu')
     menuBtn.type = 'button'
     menuBtn.title = VIEWER_TEXT.menu
@@ -207,7 +216,7 @@ export function createViewer(deps: ViewerDeps): Viewer {
     closeBtn.title = `${VIEWER_TEXT.close} (Esc)`
     closeBtn.setAttribute('aria-label', VIEWER_TEXT.close)
     closeBtn.append(glyph('x'))
-    head.append(nm, appBtn, menuBtn, closeBtn)
+    head.append(nm, appBtn, ...(words.menu ? [menuBtn] : []), closeBtn)
     const body = el('div', 'ch-vb')
     prevBtn = el('button', 'ch-act ch-vnav ch-vprev')
     prevBtn.type = 'button'

@@ -3,7 +3,7 @@
 // did not go in, in plain words (the texts of the approved preview, screen 10). A file comes by pasting (Ctrl+V of a print or
 // of files copied in the system's explorer) or by the clip (the system's picker): the clip is the menu path of pasting.
 // Memory: the renderer never holds a file, only main's small thumbnail; at most ATTACH_MAX_PER_SAY chips.
-import { admit, kindOf, KIND_LABEL, refusalText, roomNote, screenshotName, sizeLabel, type FileRefusal, type FileSource } from '../attachments.ts'
+import { admit, APP_ATTACH_LIMITS, kindOf, KIND_LABEL, refusalText, roomNote, screenshotName, sizeLabel, type AttachLimits, type FileRefusal, type FileSource } from '../attachments.ts'
 import type { AttachInfo } from '../ipc.ts'
 import { glyph, type GlyphName } from './glyphs.ts'
 
@@ -15,6 +15,8 @@ export interface AttachDeps {
   discard(paths: string[]): void
   /** The path on disk of a pasted File; '' when there is none (a print). */
   pathOf(file: File): string
+  /** The ceilings the box counts by (absent: the app's). A host that sends from afar counts fewer and smaller files. */
+  readonly limits?: AttachLimits
 }
 
 /** The clip's tooltip: the three ways in. */
@@ -59,6 +61,7 @@ const KIND_GLYPH: Record<ReturnType<typeof kindOf>, GlyphName> = { image: 'file-
 interface Note { why: FileRefusal; lead: string; rest: string; name?: string }
 
 export function createAttachBox(deps: AttachDeps, changed: () => void): AttachBox {
+  const limits = deps.limits ?? APP_ATTACH_LIMITS
   const chipsEl = el('div', 'ch-fchips')
   chipsEl.setAttribute('role', 'list')
   chipsEl.setAttribute('aria-label', 'Anexos da fala')
@@ -108,7 +111,7 @@ export function createAttachBox(deps: AttachDeps, changed: () => void): AttachBo
       return d
     }))
     notesEl.hidden = notes.length === 0
-    const room = roomNote(files.length)
+    const room = roomNote(files.length, limits.files)
     roomEl.replaceChildren(...(room ? [glyph('lock'), el('span', '', room)] : []))
     roomEl.hidden = room === ''
     if (notify) changed()
@@ -117,15 +120,15 @@ export function createAttachBox(deps: AttachDeps, changed: () => void): AttachBo
   const add = (infos: readonly AttachInfo[]): void => {
     // A file already on the speech is not added twice.
     const fresh = infos.filter(i => !files.some(f => f.path.toLowerCase() === i.path.toLowerCase()))
-    const r = admit(files.length, fresh)
+    const r = admit(files.length, fresh, limits)
     bad = []
     notes = []
     for (const { file, why } of r.refused) {
       if (why === 'secret-file') bad.push(file)
-      notes.push({ why, name: file.name, ...refusalText(why, file.name, { size: file.size }) })
+      notes.push({ why, name: file.name, ...refusalText(why, file.name, { size: file.size, limits }) })
       if (file.staged) deps.discard([file.path])
     }
-    if (r.over > 0) notes.push({ why: 'too-many', ...refusalText('too-many', '', { accepted: r.accepted.length, tried: r.tried }) })
+    if (r.over > 0) notes.push({ why: 'too-many', ...refusalText('too-many', '', { accepted: r.accepted.length, tried: r.tried, limits }) })
     files = [...files, ...r.accepted]
     // A staged print over the count is deleted with the rest that did not go in.
     const out = fresh.filter(i => i.staged && !files.includes(i) && !r.refused.some(x => x.file === i))

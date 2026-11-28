@@ -11,6 +11,7 @@ import type { FileLook, FileView } from '../ipc.ts'
 import type { ChannelMarks, PollOwed } from '../mark-board.ts'
 import type { Ask } from '../rules.ts'
 import type { AttachDeps } from './attach-box.ts'
+import type { ViewerTexts } from './viewer.ts'
 
 export interface HostDisposable { dispose(): void }
 
@@ -35,6 +36,8 @@ export interface ChannelHostMarks {
 export interface ChannelHostFiles extends AttachDeps {
   look(paths: string[]): Promise<FileLook[]>
   view(path: string): Promise<FileView>
+  /** The image viewer in the host's words (the remote's "open" downloads, and it has no file menu). Absent: the app's. */
+  readonly viewer?: ViewerTexts
 }
 
 /** The key table, the part the view reads (the label of the key a command is bound to). */
@@ -55,6 +58,11 @@ export interface ChannelHost {
    * early, the channel's menu and the menus of a member are away, and an agent's name only peeks. Ignored with `readOnly`.
    */
   readonly talkOnly?: boolean
+  /**
+   * With `talkOnly`: the view also attaches files, by the host's own `files` (the remote's picker and uploads, within the
+   * `limits` its `files` gives). Absent: a view that only converses has no clip.
+   */
+  readonly attachTalk?: boolean
   /** A request to the channels' daemon half (`history`, `members`, `say`...). */
   request<T>(name: string, args?: Record<string, unknown>): Promise<T>
   /** The daemon half's events (`line`, `channel`, `reaction`, `poll`). */

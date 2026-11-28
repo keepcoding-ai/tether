@@ -7,7 +7,8 @@
 // draft of each channel are the person's own text, kept in this origin's storage (localStorage, every access guarded):
 // they survive a reload and another tab of the same device taking over; nothing of the house is written there.
 // The rules (what an answer means, the ceilings, the lanes) are talk-rules.ts; this file holds the state and the timers.
-import { fromHex, opByName, randomBytes, toHex, type Bytes } from '../../../src/remote/index.ts'
+import { b64url, fromHex, opByName, randomBytes, toHex, type Bytes } from '../../../src/remote/index.ts'
+import { FILE_CHUNK_BYTES, FILE_MAX_BYTES, PAGE_PACE } from './file-rules.ts'
 import type { PollState } from '../../../extensions/channels/daemon/requests.ts'
 import type { Reply } from './live.ts'
 import { pollStateOf } from './source.ts'
@@ -23,7 +24,14 @@ const OP = {
   vote: opByName('channels.vote')!.code,
   poll: opByName('channels.poll')!.code,
   seen: opByName('channels.seen')!.code,
+  upload: opByName('channels.upload')!.code,
+  cancel: opByName('channels.upload-cancel')!.code,
 }
+
+/** A file the person attached: its bytes (in this page's memory only) and the name it goes by. */
+export interface SayFile { file: Blob; name: string }
+/** How far one file of a speech went up. */
+export interface FileProgress { name: string; size: number; received: number }
 
 /** How long a reaction, a vote or a poll waits for a session and an answer before it gives up ("timeout"). */
 export const ACT_DEADLINE_MS = 45_000
@@ -63,16 +71,26 @@ export class TalkRefused extends Error {
   }
 }
 
-/** A change the screen tells aloud: a speech that went, or did not. */
-export type TalkNews = { channel: string; what: 'sent' | 'failed' | 'changed' }
+/** A change the screen tells aloud: a speech that went, or did not; `progress`: a file of a speech went further up. */
+export type TalkNews = { channel: string; what: 'sent' | 'failed' | 'changed' | 'progress' }
 
 export interface Talker {
   /** A session is up and unlocked: acts go through it, and what waited is sent again with its own actId. */
   attach(s: TalkSession): void
   /** The session is gone (cut, locked, another tab): nothing is sent until the next one. */
   detach(): void
-  /** A speech. Resolves once it is on its way (or went); rejects with TalkRefused when the box must keep the text. */
-  say(channel: string, text: string, to: readonly string[]): Promise<void>
+  /**
+   * A speech, with its files (step 4.3: up to FILES_PER_SAY_MAX, sent chunk by chunk under the speech's actId before it).
+   * Resolves once it is on its way (or went); rejects with TalkRefused when the box must keep the text.
+   */
+  say(channel: string, text: string, to: readonly string[], files?: readonly SayFile[]): Promise<void>
+  /** How far each file of a speech on its way went up (undefined: it carries none this page holds). */
+  progress(id: string): FileProgress[] | undefined
+  /**
+   * "Cancelar": a speech whose files are still going up stops, its files are given up at the house, and it leaves the
+   * outbox (its text is given back, for the box). Undefined when it can no longer be stopped (the speech itself is asked).
+   */
+  cancel(id: string): OutItem | undefined
   /** A reaction (put or taken off). Resolves with the portal's answer (`changed`). */
   react(channel: string, seq: number, reaction: string, remove: boolean): Promise<{ changed: boolean }>
   /** A vote. Resolves in the shape the card reads: the poll open with the votes now, or its result. */
@@ -153,15 +171,72 @@ export function createTalker(o: TalkerOptions): Talker {
 
   const find = (id: string): OutItem | undefined => items.find(x => x.id === id)
 
+  // ---- the files of a speech (step 4.3): in memory only, keyed by the speech's actId
+
+  const blobs = new Map<string, readonly SayFile[]>()
+  /** Bytes the house holds of each file of a speech, as it last said. */
+  const received = new Map<string, number[]>()
+  /** Speeches whose request itself is on its way: too late to cancel. */
+  const saying = new Set<string>()
+  const cancelled = new Set<string>()
+  const sleep = (ms: number): Promise<void> => new Promise(done => later(done, ms))
+
+  /**
+   * Sends every file of the speech up, chunk by chunk from where the house is (`received`), each chunk with an actId of its
+   * own and paced with every other chunk of the page. A cut, a lock or a refusal stops it with that step; the next send goes
+   * on from where the house said it is (the portal answers a chunk it already holds with its count, writing nothing).
+   */
+  const upload = async (item: OutItem): Promise<ReplyStep | undefined> => {
+    const list = blobs.get(item.id)
+    if (!list) return undefined
+    const got = received.get(item.id) ?? list.map(() => 0)
+    received.set(item.id, got)
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i]!
+      while (got[i]! < f.file.size) {
+        if (cancelled.has(item.id) || disposed) return { do: 'fail', code: 'cancelled' }
+        await PAGE_PACE.take()
+        const s = live()
+        if (!s) return { do: 'wait-session' }
+        const offset = Math.floor(got[i]! / FILE_CHUNK_BYTES) * FILE_CHUNK_BYTES
+        const bytes = new Uint8Array(await f.file.slice(offset, offset + FILE_CHUNK_BYTES).arrayBuffer())
+        const body = { channel: item.channel, act: item.id, file: i, name: f.name, size: f.file.size, offset, data: b64url(bytes) }
+        const step = stepOf(await s.request(OP.upload, body, { actId: randomBytes(16) }))
+        switch (step.do) {
+          case 'done': {
+            const n = step.body.received
+            got[i] = typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? Math.min(n, f.file.size) : 0
+            if (step.body.done === true) got[i] = f.file.size
+            emit({ channel: item.channel, what: 'progress' })
+            break
+          }
+          case 'hold': await sleep(AGAIN_MS); break
+          case 'resend': await sleep(step.afterMs); break
+          default: return step
+        }
+      }
+    }
+    return undefined
+  }
+
   /** Sends a speech once with its own actId; undefined when no session is up (it waits for the next). */
   const sendOnce = async (item: OutItem): Promise<ReplyStep | undefined> => {
-    const s = live()
-    if (!s || inFlight.has(item.id)) return undefined
+    const s0 = live()
+    if (!s0 || inFlight.has(item.id)) return undefined
     inFlight.add(item.id)
     try {
-      const r = await s.request(OP.say, { channel: item.channel, text: item.text, ...(item.to.length ? { to: item.to } : {}) }, { actId: bytesOf(item.id) })
-      return stepOf(r)
-    } finally { inFlight.delete(item.id) }
+      const stop = await upload(item)
+      if (stop) return stop
+      const s = live()
+      if (!s || cancelled.has(item.id)) return undefined
+      const files = item.files?.length ? { files: item.files.map((_, i) => i) } : {}
+      saying.add(item.id)
+      const r = await s.request(OP.say, { channel: item.channel, text: item.text, ...(item.to.length ? { to: item.to } : {}), ...files }, { actId: bytesOf(item.id) })
+      const step = stepOf(r)
+      // Answered for good: the bytes of its files are let go of (the house copied them, or refused them).
+      if (step.do === 'done' || step.do === 'fail') { blobs.delete(item.id); received.delete(item.id) }
+      return step
+    } finally { inFlight.delete(item.id); saying.delete(item.id) }
   }
 
   /** What an answer does to a speech that is still waiting (an edit or a retry may have taken it meanwhile). */
@@ -283,17 +358,25 @@ export function createTalker(o: TalkerOptions): Talker {
       void resendAll()
     },
     detach: () => { session = undefined },
-    say: async (channel, text, to) => {
-      const c = checkSay(text, to)
+    say: async (channel, text, to, files = []) => {
+      const c = checkSay(text, to, files.length)
       if (!c.ok) throw new TalkRefused(c.code, c.message)
-      const item: OutItem = { id: hex(randomBytes(16)), channel, text, to: [...new Set(to)], at: now(), state: 'sending' }
+      if (files.some(f => f.file.size < 1 || f.file.size > FILE_MAX_BYTES)) throw new TalkRefused('too-large', 'Um anexo está vazio ou passa do limite de longe.')
+      const item: OutItem = {
+        id: hex(randomBytes(16)), channel, text, to: [...new Set(to)], at: now(), state: 'sending',
+        ...(files.length ? { files: files.map(f => ({ name: f.name, size: f.file.size })) } : {}),
+      }
+      if (files.length) blobs.set(item.id, [...files])
       items = pushItem(items, item)
       saveItems()
       emit({ channel, what: 'changed' })
       const sent = sendOnce(item)
       const first = await Promise.race([sent, new Promise<'later'>(done => later(() => done('later'), FIRST_REPLY_MS))])
       if (first !== 'later' && first?.do === 'hold') {
-        // The portal's pace: nothing happened. The speech leaves the outbox and the box keeps its text.
+        // The portal's pace: nothing happened. The speech leaves the outbox and the box keeps its text (and its files).
+        blobs.delete(item.id)
+        received.delete(item.id)
+        void live()?.request(OP.cancel, { act: item.id }, { actId: randomBytes(16) })
         items = items.filter(x => x.id !== item.id)
         saveItems()
         emit({ channel, what: 'changed' })
@@ -331,11 +414,35 @@ export function createTalker(o: TalkerOptions): Talker {
       if (w.start) seenArm(channel)
     },
     items: channel => items.filter(x => x.channel === channel),
+    progress: id => {
+      const list = blobs.get(id)
+      if (!list) return undefined
+      const got = received.get(id) ?? []
+      return list.map((f, i) => ({ name: f.name, size: f.file.size, received: got[i] ?? 0 }))
+    },
+    cancel: id => {
+      const item = find(id)
+      if (!item || item.state !== 'sending' || !blobs.has(id) || saying.has(id)) return undefined
+      cancelled.add(id)
+      blobs.delete(id)
+      received.delete(id)
+      // The house gives up what it holds of them; a cut now leaves it to the portal's own sweep.
+      void live()?.request(OP.cancel, { act: id }, { actId: randomBytes(16) })
+      items = items.filter(x => x.id !== id)
+      saveItems()
+      emit({ channel: item.channel, what: 'changed' })
+      return item
+    },
     retry: id => {
       const old = find(id)
       if (!old || old.state !== 'failed') return
       // A new act: the old id's outcome (a refusal, or nothing known) stays the portal's for that id.
-      const item: OutItem = { id: hex(randomBytes(16)), channel: old.channel, text: old.text, to: old.to, at: now(), state: 'sending' }
+      const item: OutItem = { id: hex(randomBytes(16)), channel: old.channel, text: old.text, to: old.to, at: now(), state: 'sending', ...(old.files ? { files: old.files } : {}) }
+      // Its files go up again under the new act, from the start (what the house held belongs to the old one).
+      const had = blobs.get(id)
+      blobs.delete(id)
+      received.delete(id)
+      if (had) blobs.set(item.id, had)
       items = items.map(x => (x.id === id ? item : x))
       saveItems()
       emit({ channel: item.channel, what: 'changed' })
@@ -366,6 +473,8 @@ export function createTalker(o: TalkerOptions): Talker {
     forget: () => {
       items = []
       drafts = {}
+      blobs.clear()
+      received.clear()
       try { store.remove(keyOut); store.remove(keyDrafts) } catch { /* nothing kept */ }
     },
     dispose: () => {

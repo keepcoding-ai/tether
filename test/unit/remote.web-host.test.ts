@@ -229,8 +229,9 @@ describe('the channel view over the house', () => {
     assert.deepEqual(quick, ['p6'])
     assert.deepEqual(host.agent('p1'), { kind: 'claude' })
     assert.equal(host.agent('nobody'), undefined)
+    // A file is asked by its reference to a line (step 4.3); a name or a path is nothing the house is asked for.
     assert.deepEqual(await host.files.look(['a.png']), [{ path: 'a.png', missing: false }])
-    assert.equal(host.files.pathOf(undefined as never), '')
+    assert.equal(host.attachTalk, false, 'a device that only reads attaches nothing')
   })
 
   test('a device that converses: the four gestures and "seen" go to its talker, managing is still refused, a page confirms', async () => {
@@ -258,7 +259,7 @@ describe('the channel view over the house', () => {
     await host.request<HistoryPage>('history', { channel: 'obra' })
     host.menu(5, 6, [])
     assert.deepEqual(did.slice(0, 5), [
-      ['say', 'obra', 'oi', ['conferente']],
+      ['say', 'obra', 'oi', ['conferente'], []],
       ['react', 'obra', 4, 'agree', true],
       ['vote', 'obra', 6, 2, 'não'],
       ['poll', 'obra', { question: 'Sobe?', options: ['a', 'b'], to: ['p1', 'user'], timeoutMs: 600_000 }],
