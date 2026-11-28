@@ -77,17 +77,57 @@ export function admit<T extends FileFacts>(have: number, incoming: readonly T[],
   return { accepted, refused, over, tried: incoming.length - refused.length }
 }
 
-/** A name safe on every disk: no folder, no character Windows refuses, no reserved device name, no trailing dot or space, bounded. */
+/** What a name that the shell would act on gets at its end, so the folder holds an inert file (`a.url` → `a.url.download`). */
+export const INERT_SUFFIX = '.download'
+
+/**
+ * Extensions the Windows shell acts on by itself (an icon or target fetched, possibly over SMB/WebDAV, as soon as a folder
+ * is shown) or runs as a shortcut/program on a double click with no warning of origin. Lower case, with the dot.
+ */
+export const SHELL_TYPES: ReadonlySet<string> = new Set([
+  '.url', '.lnk', '.scf', '.library-ms', '.searchconnector-ms', '.search-ms', '.settingcontent-ms', '.appref-ms', '.website',
+  '.theme', '.themepack', '.deskthemepack', '.hta', '.cpl', '.msc', '.pif', '.application', '.xbap', '.jnlp',
+])
+/** Whole names the shell reads on its own when it shows a folder or a drive. */
+const SHELL_NAMES: ReadonlySet<string> = new Set(['desktop.ini', 'autorun.inf'])
+
+/** Whether Windows would take the name for a device: the part before the first dot, without trailing spaces (`con .txt`, `COM¹`, `CONIN$`). */
+export function isReservedName(name: string): boolean {
+  const head = (name.split('.')[0] ?? '').replace(/ +$/, '')
+  return /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i.test(head)
+}
+
+/** Whether the shell would act on a file of this name by itself (see SHELL_TYPES). */
+export function isShellResolved(name: string): boolean {
+  const n = name.toLowerCase()
+  return SHELL_TYPES.has(extOf(n)) || SHELL_NAMES.has(n)
+}
+
+/** Controls, format characters (bidi overrides, zero-width), line/paragraph separators, private and unassigned code points go; whitespace collapses. */
+function plainText(name: string): string {
+  return name.replace(/\s+/gu, ' ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cs}\p{Cn}]/gu, '').replace(/ +/g, ' ').trim()
+}
+
+/**
+ * A name safe on every disk: no folder, no control, format (Cf) or invisible character, no character Windows refuses, no
+ * reserved device name by Windows' own rule, no trailing dot or space, a type the shell acts on made inert by INERT_SUFFIX,
+ * bounded with its extension kept. Never empty (`arquivo`). The remote's uploadName (src/remote/files.ts) is the same rule.
+ */
 export function safeFileName(name: string): string {
+  let n = plainText(baseName(plainText(name)))
   // eslint-disable-next-line no-control-regex
-  let n = baseName(name).replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_').trim().replace(/[. ]+$/, '')
+  n = n.replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_').trim().replace(/[. ]+$/, '')
   if (n === '' || /^\.+$/.test(n)) n = 'arquivo'
-  const ext = extOf(n)
-  const stem = ext ? n.slice(0, -ext.length) : n
-  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(stem)) n = `_${n}`
+  if (isReservedName(n)) n = `_${n}`
+  let ext = extOf(n)
   if (n.length > FILE_NAME_MAX) {
     const keep = ext.length < 20 ? ext : ''
     n = n.slice(0, FILE_NAME_MAX - keep.length).replace(/[. ]+$/, '') + keep
+    ext = extOf(n)
+  }
+  if (isShellResolved(n)) {
+    if (n.length + INERT_SUFFIX.length > FILE_NAME_MAX) n = n.slice(0, FILE_NAME_MAX - INERT_SUFFIX.length - ext.length).replace(/[. ]+$/, '') + ext
+    n += INERT_SUFFIX
   }
   return n
 }

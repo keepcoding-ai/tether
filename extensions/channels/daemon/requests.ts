@@ -274,7 +274,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       if (files === 'bad-request') throw refuse('bad-request', 'o argumento files é uma lista de { path, name? } com caminhos absolutos')
       if (files === 'too-many') throw refuse('too-many', refusalText('too-many', '', { accepted: 0, tried: (a.files as unknown[]).length }).rest)
       const body = text(a, 'text', files.length > 0)
-      const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}) })
+      const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}), ...(files.length && ctx.client === 'remote' ? { fromAfar: true } : {}) })
       if (!r.ok && r.file !== undefined) throw refuse(r.error, (({ lead, rest }) => `${lead} ${rest}`)(refusalText(r.error as FileRefusal, r.file)))
       const said = done(r)
       return { line: said.line, receipts: said.receipts }

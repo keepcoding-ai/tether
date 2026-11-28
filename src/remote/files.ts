@@ -57,22 +57,38 @@ export const isImageType = (t: unknown): t is ImageType => typeof t === 'string'
 const lastSegment = (name: string): string => { const p = name.split(/[\\/]/); return p[p.length - 1] ?? '' }
 const extOf = (name: string): string => { const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i) : '' }
 
+/** The app's INERT_SUFFIX and SHELL_TYPES (extensions/channels/attachments.ts): a test keeps both in step. */
+export const UPLOAD_INERT_SUFFIX = '.download'
+export const UPLOAD_SHELL_TYPES: ReadonlySet<string> = new Set([
+  '.url', '.lnk', '.scf', '.library-ms', '.searchconnector-ms', '.search-ms', '.settingcontent-ms', '.appref-ms', '.website',
+  '.theme', '.themepack', '.deskthemepack', '.hta', '.cpl', '.msc', '.pif', '.application', '.xbap', '.jnlp',
+])
+const SHELL_NAMES: ReadonlySet<string> = new Set(['desktop.ini', 'autorun.inf'])
+const isReserved = (name: string): boolean =>
+  /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i.test((name.split('.')[0] ?? '').replace(/ +$/, ''))
+const isShellResolved = (name: string): boolean => { const n = name.toLowerCase(); return UPLOAD_SHELL_TYPES.has(extOf(n)) || SHELL_NAMES.has(n) }
+
 /**
- * A name safe on every disk, as the app makes it: the last segment only, no control, bidi or zero-width character
- * (sanitizeDeclaredName), no character Windows refuses, no reserved device name, no trailing dot or space, bounded with
- * its extension kept. Never empty (`arquivo`).
+ * A name safe on every disk, as the app makes it (safeFileName): the last segment only, no control, bidi or zero-width
+ * character (sanitizeDeclaredName), no character Windows refuses, no reserved device name by Windows' own rule (`con .txt`,
+ * `COM¹`, `CONIN$`), no trailing dot or space, a type the Windows shell acts on by itself made inert (`a.url.download`),
+ * bounded with its extension kept. Never empty (`arquivo`).
  */
 export function uploadName(name: string): string {
   let n = sanitizeDeclaredName(lastSegment(sanitizeDeclaredName(name)))
   // eslint-disable-next-line no-control-regex
   n = n.replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_').trim().replace(/[. ]+$/, '')
   if (n === '' || /^\.+$/.test(n)) n = 'arquivo'
-  const ext = extOf(n)
-  const stem = ext ? n.slice(0, -ext.length) : n
-  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(stem)) n = `_${n}`
+  if (isReserved(n)) n = `_${n}`
+  let ext = extOf(n)
   if (n.length > UPLOAD_NAME_MAX) {
     const keep = ext.length < 20 ? ext : ''
     n = n.slice(0, UPLOAD_NAME_MAX - keep.length).replace(/[. ]+$/, '') + keep
+    ext = extOf(n)
+  }
+  if (isShellResolved(n)) {
+    if (n.length + UPLOAD_INERT_SUFFIX.length > UPLOAD_NAME_MAX) n = n.slice(0, UPLOAD_NAME_MAX - UPLOAD_INERT_SUFFIX.length - ext.length).replace(/[. ]+$/, '') + ext
+    n += UPLOAD_INERT_SUFFIX
   }
   return n
 }

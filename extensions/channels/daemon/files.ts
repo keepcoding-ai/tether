@@ -3,7 +3,7 @@
 // The copy is the system's (copyFile with COPYFILE_EXCL): nothing of the file passes through this process's memory, and the
 // exclusive flag makes the unique name race-free. Nothing here opens a file to read its content.
 import { constants } from 'node:fs'
-import { copyFile, mkdir, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { ATTACH_MAX_PER_SAY, baseName, fileRefusal, mimeOf, numberedName, safeFileName, type FileRefusal, type FileSource, type LineFile } from '../attachments.ts'
 
@@ -21,7 +21,12 @@ export interface FilesDisk {
   /** Copies only when `to` does not exist; false when it does. */
   copyNew(from: string, to: string): Promise<boolean>
   rm(path: string): Promise<void>
+  /** Marks a copy as come from another computer (the Internet zone), where the disk can carry the mark; never fails. */
+  markFromAfar?(path: string): Promise<void>
 }
+
+/** The mark of origin Windows reads (Attachment Manager, SmartScreen): zone 3, the Internet. */
+export const ZONE_IDENTIFIER = '[ZoneTransfer]\r\nZoneId=3\r\n'
 
 const code = (e: unknown): string | undefined => (e as { code?: string } | undefined)?.code
 
@@ -46,6 +51,11 @@ export const nodeDisk: FilesDisk = {
     }
   },
   rm: async (p) => { await rm(p, { force: true }) },
+  // An alternate data stream: only on Windows, and only a disk that has streams (NTFS) takes it; elsewhere nothing is marked.
+  markFromAfar: async (p) => {
+    if (process.platform !== 'win32') return
+    await writeFile(`${p}:Zone.Identifier`, ZONE_IDENTIFIER, { flag: 'w' }).catch(() => undefined)
+  },
 }
 
 /** The sources as the request carries them: a list of `{ path, name? }`, at most ATTACH_MAX_PER_SAY, every path absolute. */
@@ -67,8 +77,9 @@ export function parseSources(v: unknown): FileSource[] | 'bad-request' | 'too-ma
 /**
  * Checks every source (gone, a folder, a secret's name by the source's name AND the name it goes by, too large) and only then
  * copies them all into `dir`; a copy that fails takes back the ones already made. The line gets each file's absolute path.
+ * `fromAfar`: the files came from a device (the portal's uploads), so every copy gets the mark of origin.
  */
-export async function storeFiles(dir: string, sources: readonly FileSource[], disk: FilesDisk = nodeDisk): Promise<FilesOutcome> {
+export async function storeFiles(dir: string, sources: readonly FileSource[], disk: FilesDisk = nodeDisk, opts: { fromAfar?: boolean } = {}): Promise<FilesOutcome> {
   if (sources.length > ATTACH_MAX_PER_SAY) return { ok: false, error: 'too-many', file: '' }
   const checked: Array<{ from: string; name: string; size: number }> = []
   for (const s of sources) {
@@ -92,6 +103,7 @@ export async function storeFiles(dir: string, sources: readonly FileSource[], di
         if (await disk.copyNew(c.from, target)) { to = target; made.push({ name, path: target, size: c.size, type: mimeOf(name) }) }
       }
       if (to === undefined) throw new Error('no free name')
+      if (opts.fromAfar) await disk.markFromAfar?.(to)
     }
   } catch {
     for (const f of made) await disk.rm(f.path).catch(() => undefined)

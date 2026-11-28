@@ -11,9 +11,9 @@ import { b64url, MAX_RECORD_CONTENT } from '../../src/remote/index.ts'
 import { READ_BODY_MAX } from '../../src/remote/projection.ts'
 import {
   cancelArgs, chunksOf, FILE_CHUNK_B64_MAX, FILE_CHUNK_BYTES, FILE_MAX_BYTES, FILES_PER_SAY_MAX, fileReadArgs, isSecretName, OTHER_TYPE,
-  sayFiles, sniffType, uploadArgs, uploadName,
+  sayFiles, sniffType, UPLOAD_INERT_SUFFIX, UPLOAD_SHELL_TYPES, uploadArgs, uploadName,
 } from '../../src/remote/files.ts'
-import { safeFileName } from '../../extensions/channels/attachments.ts'
+import { INERT_SUFFIX, safeFileName, SHELL_TYPES } from '../../extensions/channels/attachments.ts'
 import { talkArgs } from '../../src/remote/talk.ts'
 
 const bytes = (...xs: number[]): Uint8Array => new Uint8Array(xs)
@@ -39,6 +39,17 @@ describe('the name an upload gets', () => {
   test("the app's safe name for every plain name", () => {
     for (const n of ['foto.png', 'C:\\Users\\x\\foto.png', '../../etc/passwd', 'a:b*c?.txt', 'CON.txt', 'nul', 'lpt1.log', 'nome. . ', '...', '', 'x'.repeat(200) + '.jpeg', 'Captura de tela 2026-11-27 09.41.07.png'])
       assert.equal(uploadName(n), safeFileName(n), JSON.stringify(n))
+  })
+
+  test('RR4 M-1: the same inert names as the app for what the Windows shell acts on, devices and format characters', () => {
+    assert.deepEqual([...UPLOAD_SHELL_TYPES].sort(), [...SHELL_TYPES].sort())
+    assert.equal(UPLOAD_INERT_SUFFIX, INERT_SUFFIX)
+    const hostile = ['a.url', 'b.scf', 'c.library-ms', 'desktop.ini', 'Desktop.INI', 'autorun.inf', 'd.lnk', 'e.searchconnector-ms', 'con .txt', 'COM¹.txt',
+      'LPT²', 'CONIN$', 'conout$.txt', 'nul.tar.gz', 'fatura‮fdp.exe', `${'x'.repeat(116)}.url${'y'.repeat(30)}`, `${'x'.repeat(300)}.url`, 'o.url. .']
+    for (const n of [...hostile, ...[...SHELL_TYPES].map((t) => `x${t}`)]) assert.equal(uploadName(n), safeFileName(n), JSON.stringify(n))
+    assert.equal(uploadName('a.url'), 'a.url.download')
+    assert.equal(uploadName('con .txt'), '_con .txt')
+    assert.equal(uploadName('CONIN$'), '_CONIN$')
   })
 
   test('controls, bidi overrides and zero-width characters go; a path is its last segment; never empty', () => {

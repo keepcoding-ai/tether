@@ -123,6 +123,8 @@ export interface SayInput {
   replyTo?: number
   /** Files the speech carries (at most ATTACH_MAX_PER_SAY): copied into the channel's folder; with files the body may be ''. */
   files?: readonly FileSource[]
+  /** The files came from a device (the portal's uploads): their copies get the mark of origin. */
+  fromAfar?: boolean
 }
 
 export interface ReactInput {
@@ -782,7 +784,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         const refusal = sayRefusal(who, ch)
         if (refusal) return fail(refusal)
         // The files are checked again here (never trusting the screen) and copied before the line: a line never names a missing file.
-        const stored = sources.length ? await storeFiles(store.filesDir(ch.id), sources) : undefined
+        const stored = sources.length ? await storeFiles(store.filesDir(ch.id), sources, undefined, { fromAfar: input.fromAfar === true }) : undefined
         if (stored && !stored.ok) return { ok: false as const, error: stored.error, file: stored.file }
         const files = stored?.ok ? stored.files : []
         const role = roleIn(who, ch)!
