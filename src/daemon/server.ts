@@ -119,7 +119,7 @@ export function panelHostEnabled(settings: Record<string, unknown>, env: NodeJS.
   return treeValueAt(settings, 'daemon.panelHost') !== false
 }
 
-/** `agents.claude.denyPermissionPrompts` in settings.json: tether refuses Claude's permission cards for the person. Default on. */
+/** `agents.claude.denyPermissionPrompts` in settings.json: in bypass mode, tether refuses Claude's permission cards for the person. Default on. */
 export function denyPermissionPromptsEnabled(settings: Record<string, unknown>): boolean {
   return treeValueAt(settings, 'agents.claude.denyPermissionPrompts') !== false
 }

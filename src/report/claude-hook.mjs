@@ -210,11 +210,14 @@ export const DENY_MESSAGE =
   'Na dúvida, deixe como está e relate.'
 
 /**
- * PermissionRequest: answers deny on the person's behalf (no `interrupt`, so the model keeps going with the message).
+ * PermissionRequest: in bypass mode only (`permission_mode === 'bypassPermissions'`), answers deny on the person's behalf (no
+ * `interrupt`, so the model keeps going with the message). In any other mode (default, acceptEdits, plan, absent) it writes
+ * nothing and the normal card reaches the person.
  * Returns the stdout JSON, and a one-line trace for tether.log (who asked, what; never blocks).
- * @param {Payload} payload @returns {{ out: string, trace: string }}
+ * @param {Payload} payload @returns {{ out: string, trace: string } | undefined}
  */
 export function permissionStep(payload) {
+  if (payload.permission_mode !== 'bypassPermissions') return undefined
   const input = payload.tool_input && typeof payload.tool_input === 'object' ? /** @type {Payload} */ (payload.tool_input) : {}
   const what = str(input.command) ?? str(input.file_path) ?? ''
   const trace = `denied permission prompt: tool=${str(payload.tool_name) ?? '?'} agent=${str(payload.agent_type) ?? 'main'}${str(payload.agent_id) ? `/${str(payload.agent_id)}` : ''} ${JSON.stringify(what.slice(0, 200))}`
@@ -242,9 +245,11 @@ function record(stdin) {
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
     const ts = new Date().toISOString()
     if (hookName === 'PermissionRequest') {
-      const { out, trace } = permissionStep(payload)
-      process.stdout.write(out)
-      log(home, `slot ${slotId}: ${trace}`)
+      const denial = permissionStep(payload)
+      if (denial) {
+        process.stdout.write(denial.out)
+        log(home, `slot ${slotId}: ${denial.trace}`)
+      }
       return
     }
     // Everything for the agent goes out as ONE JSON on stdout: notices first, the pause request last (it asks to stop).

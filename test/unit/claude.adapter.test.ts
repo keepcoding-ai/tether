@@ -420,10 +420,24 @@ describe('status line', () => {
     assert.equal('PermissionRequest' in (await read(false)), false)
   })
 
-  test('the hook script answers deny with the message on PermissionRequest', () => {
+  test('the hook script writes nothing on PermissionRequest outside bypass mode', () => {
+    for (const mode of [{ permission_mode: 'default' }, { permission_mode: 'acceptEdits' }, { permission_mode: 'plan' }, {}]) {
+      const home = homes.make()
+      const r = spawnSync(process.execPath, [HOOK, 'PermissionRequest'], {
+        input: JSON.stringify({ hook_event_name: 'PermissionRequest', session_id: 's1', tool_name: 'Bash', tool_input: { command: 'rm -rf /tmp/x' }, ...mode }),
+        env: { ...process.env, TETHER_HOME: home, TETHER_SLOT_ID: 'slot-1' },
+        encoding: 'utf8',
+      })
+      assert.equal(r.status, 0)
+      assert.equal(r.stdout, '')
+      assert.equal(existsSync(join(home, 'tether.log')), false)
+    }
+  })
+
+  test('the hook script answers deny with the message on PermissionRequest in bypass mode', () => {
     const home = homes.make()
     const r = spawnSync(process.execPath, [HOOK, 'PermissionRequest'], {
-      input: JSON.stringify({ hook_event_name: 'PermissionRequest', session_id: 's1', tool_name: 'Bash', tool_input: { command: 'rm -rf /tmp/x' }, agent_id: 'a1', agent_type: 'general-purpose' }),
+      input: JSON.stringify({ hook_event_name: 'PermissionRequest', permission_mode: 'bypassPermissions', session_id: 's1', tool_name: 'Bash', tool_input: { command: 'rm -rf /tmp/x' }, agent_id: 'a1', agent_type: 'general-purpose' }),
       env: { ...process.env, TETHER_HOME: home, TETHER_SLOT_ID: 'slot-1' },
       encoding: 'utf8',
     })

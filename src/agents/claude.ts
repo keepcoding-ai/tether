@@ -62,7 +62,7 @@ export function hookSettings(hookPath: string = defaultHookPath(), statusLinePat
       SubagentStop: hook('SubagentStop'),
     },
   }
-  // Setting `agents.claude.denyPermissionPrompts` (default on): tether answers every permission card with a refusal, so no pane waits on a person.
+  // Setting `agents.claude.denyPermissionPrompts` (default on): in bypass mode, tether answers every permission card with a refusal, so no pane waits on a person.
   if (denyPermissionPrompts) (settings.hooks as Record<string, unknown>).PermissionRequest = [{ matcher: '*', hooks: [{ type: 'command', command: `node "${script}" PermissionRequest` }] }]
   // Model (loud when it is Fable), effort and cwd. Left out (null) only by callers that want hooks alone.
   if (statusLinePath !== null) settings.statusLine = { type: 'command', command: `node "${statusLinePath.replace(/\\/g, '/')}"` }
