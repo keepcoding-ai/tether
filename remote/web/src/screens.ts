@@ -114,6 +114,15 @@ export function idleScreen(onConnect: () => void): HTMLElement {
   return screen('idle', head('A sessão fechou por falta de uso'), h('p', { class: 'lead' }, 'Para ver quem espera você, conecte de novo.'), button('Conectar', onConnect))
 }
 
+/** Another window of this browser holds the session with the house (one session per device, see house-lock.ts). */
+export function elsewhereScreen(onUseHere: () => void): HTMLElement {
+  return screen('elsewhere',
+    head('A Regência está aberta em outra janela'),
+    h('p', { class: 'lead' }, 'Este aparelho conversa com a máquina por uma janela de cada vez. Se você fechar a outra, esta assume sozinha.'),
+    button('Usar aqui', onUseHere),
+  )
+}
+
 export function unsupportedScreen(): HTMLElement {
   return screen('unsupported',
     head('Este navegador não serve'),

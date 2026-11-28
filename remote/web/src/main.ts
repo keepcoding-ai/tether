@@ -8,13 +8,14 @@
 import { CLOSE, evtByCode, opByName, RES_STATUS, relayUrlAllowed, selfTest } from '../../../src/remote/index.ts'
 import { parseWaiting, waitedFor, type WaitingList } from './attention.ts'
 import { mount } from './dom.ts'
+import { browserLocks, holdHouse, type HouseLock } from './house-lock.ts'
 import { connect, type Ended, type Live } from './live.ts'
 import { pair, type PairInput } from './pair.ts'
 import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
 import { mountRegency, type RemoteRegency } from './regency.ts'
 import { sessionSource, type SessionSource } from './source.ts'
 import {
-  connectingScreen, hardScreen, idleScreen, isPairNotice, listScreen, offlineScreen, pairFailedScreen, pairScreen,
+  connectingScreen, elsewhereScreen, hardScreen, idleScreen, isPairNotice, listScreen, offlineScreen, pairFailedScreen, pairScreen,
   pairWaitScreen, retryText, unsupportedScreen, type Guard, type Lock, type PairNotice,
 } from './screens.ts'
 import { deleteHouse, loadHouse, saveHouse, type HouseRecord } from './store.ts'
@@ -40,6 +41,7 @@ type View =
   | { s: 'regency' }
   | { s: 'offline' | 'hard' }
   | { s: 'idle' }
+  | { s: 'elsewhere' }
   | { s: 'unsupported' }
 
 let view: View = { s: 'connecting' }
@@ -63,10 +65,13 @@ let regency: RemoteRegency | undefined
 let source: { live: Live; src: SessionSource } | undefined
 /** When the house last answered, on this device's clock (memory only: the offline notice says it). */
 let lastContactMs: number | undefined
+/** One session per device and house across tabs: this tab talks to the house only while it holds the lock. */
+let houseLock: HouseLock | undefined
+let holdsHouse = true
 
 const TITLE: Record<View['s'], string> = {
   pair: 'Parear', 'pair-wait': 'Parear', 'pair-failed': 'Parear', connecting: 'Conectando', list: 'Esperam você',
-  regency: 'Regência', offline: 'Offline', hard: 'Atenção', idle: 'Sessão fechada', unsupported: 'Navegador sem suporte',
+  regency: 'Regência', offline: 'Offline', hard: 'Atenção', idle: 'Sessão fechada', elsewhere: 'Outra janela', unsupported: 'Navegador sem suporte',
 }
 
 function dropSource(): void {
@@ -128,6 +133,10 @@ function render(): void {
     }
     case 'hard': mount(root, hardScreen({ retryInS: retryInS(), onRetry: retryNow })); return
     case 'idle': mount(root, idleScreen(retryNow)); return
+    case 'elsewhere':
+      mount(root, elsewhereScreen(() => houseLock?.takeOver()))
+      root.querySelector<HTMLButtonElement>('.btn')?.focus()
+      return
     case 'unsupported': mount(root, unsupportedScreen()); return
   }
 }
@@ -164,7 +173,7 @@ async function startPair(input: Omit<PairInput, 'relayUrl' | 'onSas'>): Promise<
   regChallenge = await registrationOf(kept, record.kD.pub)
   guard = (await biometricsAvailable()) ? { s: 'offer' } : { s: 'read-only', fail: 'no-biometrics' }
   pairingTimer = setTimeout(() => endPairingSession(), REGISTER_WINDOW_MS)
-  await reconnect({ afterPair: true })
+  await claimHouse({ afterPair: true })
   if (guard.s === 'read-only') endPairingSession()
 }
 
@@ -291,8 +300,43 @@ async function watch(l: Live, notice?: string): Promise<void> {
   enter(notice)
 }
 
+/**
+ * Takes this house's lock (one session per device across tabs) and connects once this tab holds it. Before pairing there
+ * is no house id and so no lock.
+ */
+function claimHouse(o: { afterPair?: boolean } = {}): Promise<void> {
+  houseLock?.release()
+  houseLock = undefined
+  if (!record) return Promise.resolve()
+  let first: { afterPair?: boolean } | undefined = o
+  holdsHouse = false
+  const lock = holdHouse(browserLocks(navigator), record.id, {
+    own: () => { holdsHouse = true; const a = first ?? {}; first = undefined; return reconnect(a) },
+    wait: yieldHouse,
+  })
+  houseLock = lock
+  return lock.started
+}
+
+/** Another window holds the session: this one closes its own, cleanly, and says where the Regency is. */
+function yieldHouse(): void {
+  holdsHouse = false
+  clearRetry()
+  const l = live
+  live = undefined
+  lock = undefined
+  if (l && !l.ended) void l.close(CLOSE.normal)
+  show({ s: 'elsewhere' })
+}
+
+function dropHouseLock(): void {
+  houseLock?.release()
+  houseLock = undefined
+  holdsHouse = true
+}
+
 async function reconnect(o: { afterPair?: boolean } = {}): Promise<void> {
-  if (busy || !record) return
+  if (busy || !record || !holdsHouse) return
   busy = true
   clearRetry()
   if (view.s !== 'offline' && view.s !== 'hard') show({ s: 'connecting' })
@@ -300,6 +344,11 @@ async function reconnect(o: { afterPair?: boolean } = {}): Promise<void> {
   const rec = record
   try {
     const r = await connect(rec)
+    if (r.ok && !holdsHouse) {
+      // The lock went to another window while this one was dialling.
+      void r.live.close(CLOSE.normal)
+      return
+    }
     if (r.ok) {
       skewMs = r.info.houseNow * 1000 - Date.now()
       if (rec.state === 'pending' || r.info.pinnedVer !== rec.pinnedVer) {
@@ -313,6 +362,7 @@ async function reconnect(o: { afterPair?: boolean } = {}): Promise<void> {
     if (!o.afterPair && r.why === 'hs-fail' && rec.state === 'pending' && Date.now() - rec.pairedAtMs < PENDING_GRACE_MS) {
       await deleteHouse(rec.id)
       record = undefined
+      dropHouseLock()
       show({ s: 'pair', notice: 'pending-failed' })
       return
     }
@@ -330,6 +380,7 @@ async function ended(e: Ended): Promise<void> {
     // Spec 4.7: CLOSE(0x04) erases this house from the device, keys included.
     if (record) await deleteHouse(record.id).catch(() => undefined)
     record = undefined
+    dropHouseLock()
     list = { items: [], more: 0 }
     endPairingSession()
     guard = { s: 'read-only' }
@@ -377,7 +428,7 @@ async function boot(): Promise<void> {
   try { record = await loadHouse() } catch { show({ s: 'unsupported' }); return }
   if (fragment.startsWith('#pair=') && !record) { void startPair({ qrFragment: fragment }); return }
   if (!record) { show({ s: 'pair' }); return }
-  void reconnect()
+  void claimHouse()
 }
 
 // The countdown and "há quanto tempo" are rewritten in place from memory; no request leaves for them.
