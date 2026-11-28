@@ -11,6 +11,7 @@ import { mount } from './dom.ts'
 import { browserLocks, holdHouse, type HouseLock } from './house-lock.ts'
 import { connect, type Ended, type Live } from './live.ts'
 import { pair, type PairInput } from './pair.ts'
+import { createPush } from './push.ts'
 import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
 import { mountRegency, type RemoteRegency } from './regency.ts'
 import { sessionSource, type SessionSource } from './source.ts'
@@ -79,6 +80,16 @@ function dropSource(): void {
   source?.src.dispose()
   source = undefined
   talker?.detach()
+  devicePush.detach()
+}
+
+/** "Avisos neste aparelho" (push.ts): one per page; the session it reads is the Regency's. */
+const devicePush = createPush()
+const VISIBLE = opByName('session.visible')!.code
+
+/** Tells the house whether this page is on the person's screen: it sends no notice to a device that is looking (step 4.4). */
+function sayVisible(l: Live | undefined): void {
+  if (l && !l.ended) void l.request(VISIBLE, { visible: document.visibilityState === 'visible' })
 }
 
 /**
@@ -154,7 +165,9 @@ function render(): void {
         source = { live: l, src }
         r.online(src)
         // Unlocked and on screen: what waited to be said goes now, with its own actId.
-        talkerFor(record)?.attach(l)
+        const t = talkerFor(record)
+        t?.attach(l)
+        if (t) devicePush.attach(l)
       }
       return
     }
@@ -236,7 +249,7 @@ function casing(): RemoteRegency {
   const talk = talkerFor(record)
   regency ??= mountRegency(root, {
     houseName: record?.houseName ?? '', onRetry: retryNow,
-    ...(talk ? { talk, onLock: () => void lockHere() } : {}),
+    ...(talk ? { talk, onLock: () => void lockHere(), push: devicePush } : {}),
     layout: {
       initial: paramsOfUrlState(parseUrlState(location.search)),
       changed: l => writeUrlState(location, history, urlStateOf(l)),
@@ -315,6 +328,7 @@ async function adopt(l: Live, notice?: string): Promise<void> {
   }
   l.onEnded = (e) => { if (live === l) { live = undefined; lock = undefined; void ended(e) } }
   lock = undefined
+  sayVisible(l)
   await watch(l, notice)
 }
 
@@ -487,7 +501,10 @@ setInterval(() => {
   }
 }, SINCE_REFRESH_MS)
 addEventListener('online', () => { if (view.s === 'offline') retryNow() })
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && view.s === 'offline') retryNow() })
+document.addEventListener('visibilitychange', () => {
+  sayVisible(live)
+  if (document.visibilityState === 'visible' && view.s === 'offline') retryNow()
+})
 
 // The service worker holds the shell only (sw.ts): a new version takes over at the next visit, never under a screen in use.
 if ('serviceWorker' in navigator) {

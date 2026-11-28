@@ -200,6 +200,20 @@
 .rr[data-tier="mobile"] .rr-lock-t { display: none; }
 .rr[data-tier="wide"] .rr-lock { min-height: 2.6em; }
 
+/* "Avisos neste aparelho", beside "Trancar" and in its form; on the TV only a quiet word that it is not available there. */
+.rr-push { display: inline-flex; align-items: center; justify-content: center; gap: .4em; flex: none; min-height: 2.3em; padding: 0 .85em; border-radius: 999px;
+  border: 1px solid var(--border); background: none; color: var(--fg); font: inherit; font-size: .82em; cursor: pointer; }
+.rr-push:hover { background: var(--bg-hover); }
+.rr-push .ph { width: 1.2em; height: 1.2em; }
+.rr-push:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rr-push:is([data-state="off"], [data-state="blocked"], [data-state="install"], [data-state="unavailable"], [data-state="failed"]) { color: var(--fg-dim); }
+.rr-push[data-state="busy"] { opacity: .7; }
+.rr[data-tier="mobile"] .rr-push { width: 44px; height: 44px; padding: 0; font-size: 15px; }
+.rr[data-tier="mobile"] .rr-push-t { display: none; }
+.rr-push-na { display: none; flex: none; font-size: .82em; color: var(--fg-dim); }
+.rr[data-tier="wide"] .rr-push { display: none; }
+.rr[data-tier="wide"] .rr-push-na { display: inline; }
+
 /* The virtual keyboard is up (regency.ts): the casing is the height that is left; the three places step aside. */
 .rr[data-kb="up"] { height: var(--rr-vvh, 100dvh); }
 .rr[data-kb="up"] .rg > .rg-tabbar { display: none !important; }

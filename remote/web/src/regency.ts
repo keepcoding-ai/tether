@@ -20,6 +20,8 @@ import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, 
 import { remoteFiles } from './files.ts'
 import { createMenu } from './menu.ts'
 import type { Talker } from './talk.ts'
+import type { DevicePush } from './push.ts'
+import { PUSH_TEXT } from './push-rules.ts'
 import { mountTalkView } from './talk-view.ts'
 import { el, registerEngines } from './ui-lite.ts'
 import { channelOnOpen } from './url-state.ts'
@@ -112,6 +114,8 @@ export interface RegencyOptions {
   talk?: Talker
   /** "Trancar": the device asks the session to lock (only a device that can unlock again gets the gesture). */
   onLock?(): void
+  /** "Avisos neste aparelho" (step 4.4), beside "Trancar": only a device that can act subscribes. */
+  push?: DevicePush
 }
 
 /** How long a finger rests on a speech before it opens the speech's menu (a touch screen's right click). */
@@ -267,6 +271,8 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
 
   // ---- the strip of the house
   const top = el('header', 'rr-top')
+  /** Paints "Avisos" again (its state, or the tier changed). */
+  let paintPush: (() => void) | undefined
   const brand = el('span', 'rr-brand')
   brand.append(glyph('columns'))
   // The phone's strip is short: there the house's name stands alone (the sheet hides the prefix).
@@ -296,6 +302,36 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     lockBtn.append(glyph('lock'), el('span', 'rr-lock-t', TEXT.lock))
     lockBtn.addEventListener('click', () => o.onLock?.())
     top.append(lockBtn)
+  }
+  // "Avisos neste aparelho": with the session's things, before "Trancar". A tap opens its card (the web's menu: a sheet on the
+  // phone, at the button elsewhere) with what the notices are, where they are now and the one gesture. The TV has nothing to
+  // tap: there it only says it is not available.
+  const pushBtn = o.push ? el('button', 'rr-push') : undefined
+  if (pushBtn && o.push) {
+    const push = o.push
+    pushBtn.type = 'button'
+    pushBtn.append(glyph('bell'), el('span', 'rr-push-t', PUSH_TEXT.button))
+    const na = el('span', 'rr-push-na', `${PUSH_TEXT.button}: ${PUSH_TEXT.unavailable.replace(/\.$/, '').toLowerCase()}`)
+    const paint = (): void => {
+      const m = push.model(tier === 'wide')
+      pushBtn.dataset.state = m.phase
+      pushBtn.title = `${m.title}: ${m.state}`
+      pushBtn.setAttribute('aria-label', `${m.title}: ${m.state}`)
+      const g = pushBtn.querySelector('svg')
+      g?.replaceWith(glyph(m.phase === 'on' ? 'bell' : 'bell-slash'))
+    }
+    pushBtn.addEventListener('click', () => {
+      const m = push.model(tier === 'wide')
+      const r = pushBtn.getBoundingClientRect()
+      menu.open(r.left, r.bottom + 6, [
+        { heading: m.title }, { heading: m.lead }, { heading: m.state },
+        ...(m.action ? [{ icon: m.action.turn === 'on' ? 'bell' : 'bell-slash', label: m.action.label, run: () => void push.turn(m.action!.turn) }] : []),
+      ])
+    })
+    push.onChange = paint
+    paintPush = paint
+    if (lockBtn) lockBtn.before(pushBtn, na)
+    else top.append(pushBtn, na)
   }
 
   // ---- the stage (the pane) and the notice of "offline"
@@ -357,6 +393,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
 
   // The menu of a speech or a poll (the app's context menu): at the point, or a sheet on the phone.
   const menu = createMenu({ sheet: () => tier === 'mobile', tier: () => tier })
+  paintPush?.()
 
   // A finger resting on a speech opens its menu, as a right click does (a touch screen has none; Android's own
   // `contextmenu` after a long press counts the same, and the second one is not opened).
@@ -572,6 +609,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     if (next === tier) return
     tier = next
     paintTop()
+    paintPush?.()
     // The card changes form with the tier (a sheet on the phone): it closes, the row is one tap away.
     session?.card.close()
     focus.tierChanged()
@@ -604,6 +642,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       menu.close()
       focus.dispose()
       endSession()
+      if (o.push) o.push.onChange = () => {}
       shell.remove()
     },
   }
