@@ -137,9 +137,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   const env: NodeJS.ProcessEnv = {
     ...process.env, TETHER_TEST_REMOTE: '1', TETHER_TEST_REMOTE_NOTICE: join(home, 'notices.txt'), TETHER_TEST_REMOTE_TICK_MS: '200',
     TETHER_TEST_REMOTE_CHANNELS_GAP_MS: '500', TETHER_TEST_REMOTE_REGENCY_GAP_MS: '500',
-    // Web Push (RR4 4.4): on the bench the portal dials only this origin (nothing listens there: no notice leaves the machine).
-    TETHER_TEST_REMOTE_PUSH_ORIGIN: 'http://localhost:9',
   }
+  /** Web Push (RR4 4.4): on the bench the portal dials only this origin (set in before(); nothing listens there). */
+  let pushOrigin = ''
   /**
    * The Regency keeper's clock: `skewMs` moves it past the lease (the app "closed" without waiting 75 s), and `expire` is the
    * keeper's own lease timer, run at once.
@@ -334,11 +334,16 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   before(async () => {
     mkdirSync(tvShots, { recursive: true })
     mkdirSync(profile, { recursive: true })
-    const w = await spawnNode(['remote/web/bench/serve.ts', '--dir', out, '--port', '0'], 'web.listening', webLines)
+    // `--shell`: the service worker too (step 18 needs one to ask the browser for a subscription).
+    const w = await spawnNode(['remote/web/bench/serve.ts', '--dir', out, '--port', '0', '--shell'], 'web.listening', webLines)
     web = w.proc
     pageUrl = `http://localhost:${Number(w.line.port)}/`
     const relayPort = await freePort()
     relayUrl = `ws://localhost:${relayPort}`
+    // A port that was free when taken, so no notice leaves the machine. It must be one benchPushOrigin takes (2 to 5 digits):
+    // any other is no bench origin, and the portal refuses the page's subscription as `push-service`.
+    pushOrigin = `http://localhost:${await freePort()}`
+    env.TETHER_TEST_REMOTE_PUSH_ORIGIN = pushOrigin
     // The relay of an origin is written into its page by the build (spec 3.2): the published bundle, with this bench's relay.
     const b = spawnSync(process.execPath, ['remote/web/build.mjs', '--relay', relayUrl, '--out', out], { cwd: root, encoding: 'utf8' })
     assert.equal(b.status, 0, `web build: ${b.stdout}${b.stderr}`)
@@ -740,7 +745,10 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     assert.equal(await said(), 1, 'said once')
   })
 
-  test('18. avisos neste aparelho: o item mora junto do "Trancar", pede a permissão no toque, e a assinatura chega ao portal; desligar a tira', async () => {
+  // What this step does NOT prove: a real push service (the bench's Electron has none), a notice delivered, the service
+  // worker showing it on a locked screen, nor its tap. Those are the unit tests' (remote.webpush, remote.web-push) and
+  // remote.talk's (the portal's POST, the cipher and VAPID against a fake push service).
+  test('18. avisos neste aparelho, num navegador sem serviço de push: o item junto do "Trancar"; o toque pede a permissão (o diálogo do navegador simulado); o navegador não assina e a tela diz que não ligou; uma assinatura injetada vai da página ao portal e desligar a tira', async () => {
     await toRegency()
     await page.waitForSelector('.rr-top .rr-push', { timeout: 10_000 })
     assert.ok(await page.evaluate(() => document.querySelector('.rr-top .rr-push')?.nextElementSibling?.nextElementSibling?.classList.contains('rr-lock') === true), 'beside "Trancar"')
@@ -763,25 +771,53 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     assert.match(words, /Avisa quando um agente espera você ou quando falam com você num canal\./)
     assert.match(words, /Desligados\./)
     await page.screenshot({ path: join(shots, 'rr4-44-avisos-cartao.png') })
-    // The tap: the browser's permission is asked there (the bench's browser grants it), then the browser subscribes.
+    // The bench's browser grants notifications by itself and never shows a dialog, so the page's ask is watched through a
+    // stand-in for that dialog: the permission reads "default" until the page asks, and the ask grants it.
+    await page.evaluate(() => {
+      const w = window as unknown as { __asked: number }
+      w.__asked = 0
+      let perm: NotificationPermission = 'default'
+      Object.defineProperty(Notification, 'permission', { configurable: true, get: () => perm })
+      Notification.requestPermission = async () => { w.__asked++; perm = 'granted'; return perm }
+    })
+    // The tap: the permission is asked there, then the browser is asked to subscribe.
     await page.click('#ctx-menu button.rr-mi')
     const first = await settled()
-    const permission = await page.evaluate(() => Notification.permission)
-    assert.equal(permission, 'granted', 'asked and granted on the tap')
+    assert.deepEqual(await page.evaluate(() => [(window as unknown as { __asked: number }).__asked, Notification.permission]), [1, 'granted'], 'asked once, on the tap')
     if (first === 'on') {
       // A browser with a push service: its endpoint is one of the list (and on the bench no notice is ever sent to it).
       assert.match(pushOf()!.endpoint, /^https:\/\/(fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[\w.-]+\.push\.apple\.com|[\w.-]+\.notify\.windows\.com)\//)
     } else {
-      // The bench's browser (Electron) has no push service: subscribing fails, and the item says so. From here the page's
-      // own path to the portal is proven with a subscription made in the page, as PushManager would give it.
-      assert.equal(first, 'failed', `the item after a failed subscription: ${first}`)
+      // Why it did not turn on, asked of the browser itself (the service worker is up; any key will do): it has no push
+      // service. The item says it did not turn on and offers the tap again; nothing reached the house.
+      const refusal = await page.evaluate(async () => {
+        const within = <T,>(p: Promise<T>, what: string): Promise<T> => Promise.race([p, new Promise<never>((_, no) => setTimeout(() => no(new Error(`${what}: no answer in 8 s`)), 8_000))])
+        try {
+          const reg = await within(navigator.serviceWorker.ready, 'serviceWorker.ready')
+          const k = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])
+          const raw = new Uint8Array(await crypto.subtle.exportKey('raw', k.publicKey))
+          await within(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw }), 'pushManager.subscribe')
+          return 'subscribed'
+        } catch (e) { return `${(e as Error).name}: ${(e as Error).message}` }
+      })
+      // Electron answers "AbortError: Registration failed - push service not available". A timeout here would be a bench
+      // with no service worker, which proves nothing about the browser.
+      assert.notEqual(refusal, 'subscribed', 'the bench\'s browser has no push service')
+      assert.doesNotMatch(refusal, /no answer in 8 s/, `the service worker is up and the browser itself refused: ${refusal}`)
+      assert.equal(first, 'failed', `the item after the browser refused (${refusal}): ${first}`)
+      const said = await card()
+      assert.match(said, /Não consegui ligar agora\. Tente de novo\./, `the honest state (${refusal})`)
+      assert.match(said, /Ligar avisos/)
+      await page.screenshot({ path: join(shots, 'rr4-44-avisos-sem-servico.png') })
+      await page.keyboard.press('Escape')
       assert.equal(pushOf(), undefined)
-      await page.evaluate(async () => {
+      // From here the page's own path to the portal, with a subscription the bench puts in the page in PushManager's
+      // place, as a browser with a push service would give it.
+      await page.evaluate(async (endpoint: string) => {
         const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])
         const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
         const auth = crypto.getRandomValues(new Uint8Array(16))
         const b64 = (u: Uint8Array): string => btoa(String.fromCharCode(...u)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-        const endpoint = 'http://localhost:9/push/web'
         let current: unknown = null
         const proto = PushManager.prototype as unknown as Record<string, unknown>
         proto.getSubscription = async () => current
@@ -794,11 +830,12 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
           }
           return current
         }
-      })
+      }, `${pushOrigin}/push/web`)
       await card()
       await page.click('#ctx-menu button.rr-mi')
-      assert.equal(await settled(), 'on')
-      assert.equal(pushOf()?.endpoint, 'http://localhost:9/push/web', 'the subscription reached the portal and the registry')
+      const second = await settled()
+      assert.equal(second, 'on', `the item with the injected subscription: ${second}, "${await text('.rr-top .rr-push')}"`)
+      assert.equal(pushOf()?.endpoint, `${pushOrigin}/push/web`, 'the subscription reached the portal and the registry')
     }
     assert.match(await card(), /Ligados\./)
     await page.screenshot({ path: join(shots, 'rr4-44-avisos-ligados.png') })
