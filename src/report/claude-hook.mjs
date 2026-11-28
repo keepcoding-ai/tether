@@ -203,6 +203,25 @@ export function answerStep(home, slotId, hookName, payload, ts) {
   }
 }
 
+/** Why tether refuses in the person's place (the first sentence is generic: the payload does not say what Claude judged dangerous). */
+export const DENY_MESSAGE =
+  'Recusado pelo tether no lugar da pessoa: este pedido de permissão ficaria esperando alguém responder. ' +
+  'Não reescreva o mesmo comando de outro jeito. Repense o passo na direção da segurança: por que isto precisava ser feito? ' +
+  'Na dúvida, deixe como está e relate.'
+
+/**
+ * PermissionRequest: answers deny on the person's behalf (no `interrupt`, so the model keeps going with the message).
+ * Returns the stdout JSON, and a one-line trace for tether.log (who asked, what; never blocks).
+ * @param {Payload} payload @returns {{ out: string, trace: string }}
+ */
+export function permissionStep(payload) {
+  const input = payload.tool_input && typeof payload.tool_input === 'object' ? /** @type {Payload} */ (payload.tool_input) : {}
+  const what = str(input.command) ?? str(input.file_path) ?? ''
+  const trace = `denied permission prompt: tool=${str(payload.tool_name) ?? '?'} agent=${str(payload.agent_type) ?? 'main'}${str(payload.agent_id) ? `/${str(payload.agent_id)}` : ''} ${JSON.stringify(what.slice(0, 200))}`
+  const out = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: DENY_MESSAGE } } })
+  return { out, trace }
+}
+
 /** @param {string} stdin */
 function record(stdin) {
   const home = tetherHome()
@@ -222,6 +241,12 @@ function record(stdin) {
     }
     const hookName = process.argv[2] ?? str(payload.hook_event_name) ?? ''
     const ts = new Date().toISOString()
+    if (hookName === 'PermissionRequest') {
+      const { out, trace } = permissionStep(payload)
+      process.stdout.write(out)
+      log(home, `slot ${slotId}: ${trace}`)
+      return
+    }
     // Everything for the agent goes out as ONE JSON on stdout: notices first, the pause request last (it asks to stop).
     /** @type {string[]} */
     const parts = []
