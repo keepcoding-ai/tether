@@ -9,6 +9,7 @@
 // `data-ready` on <html> says the screen settled (what a capture waits for).
 import { mountRegency } from '../../src/regency.ts'
 import { createTalker, type Talker } from '../../src/talk.ts'
+import { createManager, type Manager } from '../../src/manage.ts'
 import { fakeHouse } from './fake.ts'
 
 const q = new URLSearchParams(location.hash.slice(1))
@@ -39,8 +40,39 @@ function benchTalker(): Talker {
   return t
 }
 
+/**
+ * `&gere=1` (with `&fala=1`): the device manages (step 5.4). Its made-up session holds every `manage:*` scope, lists two
+ * processes (one an agent uses), has no ronda, and answers each act after a moment (the row says "fazendo…" meanwhile); the
+ * biometrics always passes.
+ */
+function benchManager(): Manager {
+  const m = createManager({
+    credential: true,
+    prover: {
+      act: async () => ({ ok: true, uvProof: { uvCtr: 1, authenticatorData: new Uint8Array(37), clientDataJSON: new Uint8Array(1), signature: new Uint8Array(8) } }),
+      window: async () => ({ ok: true }),
+    },
+  })
+  const until = new Date(Date.now() + 25 * 60_000).toISOString()
+  const procs = [
+    { name: 'web', status: 'running', card: { command: '', cwd: 'C:/obra/web', ports: [5173], createdAt: '' }, envNames: [], ports: [{ port: 5173, listening: true }], startedBy: { kind: 'app' },
+      uses: [{ by: { kind: 'agent', name: 'conferente' }, until, purpose: 'rodando a bateria de paginação' }] },
+    { name: 'api', status: 'exited', card: { command: '', cwd: 'C:/obra/api', ports: [], createdAt: '' }, envNames: ['PORT'], exit: { code: 1, at: new Date(Date.now() - 4 * 60_000).toISOString(), cause: 'exit' }, attention: true },
+  ]
+  const answer = (op: number): { status: number; body: Record<string, unknown> } => {
+    if (op === 0x0001) return { status: 0, body: { scopes: ['attention', 'channels', 'regency:read', 'manage:agents', 'manage:desks', 'manage:procs', 'manage:destructive'], deviceId: 'ab'.repeat(16) } }
+    if (op === 0x0420) return { status: 0, body: { procs, more: 0 } }
+    if (op === 0x0410) return { status: 0, body: { ronda: null } }
+    if (op === 0x0423) return { status: 0x09, body: { error: 'proc-in-use', uses: procs[0]!.uses } }
+    return { status: 0, body: { state: 'done' } }
+  }
+  m.attach({ ended: undefined, sessionId: new Uint8Array(16), request: (op: number) => new Promise(done => setTimeout(() => done(answer(op)), op >= 0x0430 ? 900 : 30)) })
+  return m
+}
+
 const talk = q.get('fala') === '1' ? benchTalker() : undefined
-const screen = mountRegency(root, { houseName: 'Máquina de casa', onRetry: () => { screen.retryIn(0) }, ...(talk ? { talk, onLock: () => {} } : {}) })
+const manage = talk && q.get('gere') === '1' ? benchManager() : undefined
+const screen = mountRegency(root, { houseName: 'Máquina de casa', onRetry: () => { screen.retryIn(0) }, ...(talk ? { talk, onLock: () => {} } : {}), ...(manage ? { manage } : {}) })
 
 const settle = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms))
 const click = (selector: string): boolean => {
@@ -69,6 +101,30 @@ async function run(): Promise<void> {
       click(`.rg-tree [data-target="agent:${id}"], .rg-tree [data-target="pane:${id}"]`)
     }
     await settle(300)
+    // `&sistema=processos|ronda`: "Sistema" open on that section. `&menu=<desk:x|pane:y|agent:y|session:z>`: the row's menu
+    // (as a right click on it), then `&acao=<label>`: that row of the menu (its question, its sheet). `&fazendo=<label>`: the
+    // row run and caught while its act is on its way.
+    const sys = q.get('sistema')
+    if (sys) {
+      click('.rg-sys-open')
+      await settle(200)
+      click(`.rg-sys-tab[data-section="${sys === 'ronda' ? 'ronda' : 'processes'}"]`)
+      await settle(300)
+      if (q.get('parar')) { click(`.rg-sr.proc[data-proc="${CSS.escape(q.get('parar')!)}"] [data-sys="stop"]`); await settle(300) }
+    }
+    const menu = q.get('menu')
+    if (menu) {
+      const row = document.querySelector<HTMLElement>(`.rg-tree [data-target="${CSS.escape(menu)}"]`)
+      const r = row?.getBoundingClientRect()
+      row?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: (r?.left ?? 0) + 60, clientY: (r?.top ?? 0) + 10 }))
+      await settle(200)
+      const label = q.get('acao') ?? q.get('fazendo')
+      if (label) {
+        const item = [...document.querySelectorAll<HTMLElement>('#ctx-menu .rr-mi')].find(b => b.textContent?.includes(label))
+        item?.click()
+        await settle(q.get('fazendo') ? 150 : 300)
+      }
+    }
   }
   // `&medir=1`: the boxes of the channel's column, for a capture that asks where the room went.
   if (q.get('medir') === '1') {

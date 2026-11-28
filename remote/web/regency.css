@@ -96,7 +96,7 @@
 .rr .rg[data-tier="wide"]:not([data-readonly]) > .rg-qcol { display: none !important; }
 .rr:is([data-manage~="procs"], [data-manage~="agents"]) .rg[data-tier="wide"][data-mode="manage"]:not([data-readonly]) { grid-template-columns: 400px minmax(0, 760px) minmax(0, 1fr) 440px; }
 /* A row whose act is on its way: "fazendo…" where its state is, until the house answers (no state is drawn before it). */
-.rr .rg-tree [aria-busy="true"] > .rg-st { display: none; }
+.rr .rg-tree [aria-busy="true"] > :is(.rg-st, .rg-acts) { display: none !important; }
 .rr .rr-doing { flex: none; padding: 0 6px; font-size: .88em; font-style: italic; color: var(--fg-dim); white-space: nowrap; }
 @media (prefers-reduced-motion: no-preference) {
   .rr .rr-doing { animation: rr-doing 1.2s ease-in-out infinite alternate; }
@@ -134,6 +134,7 @@
 .rr-ask-c { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; box-sizing: border-box; max-width: 100%; min-height: 44px; padding: 8px 14px;
   border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .rr-ask-c:hover { background: var(--bg-hover); }
+.rr-ask[data-form="dialog"] .rr-ask-c { max-width: min(100%, 26em); }
 .rr-ask-c[data-tone="safe"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
 .rr-ask-c[data-tone="destructive"] { border-color: color-mix(in srgb, var(--err) 55%, var(--border)); }
 .rr-ask-c[data-tone="destructive"] .rr-ask-cl { color: color-mix(in srgb, var(--err) 72%, var(--fg)); }

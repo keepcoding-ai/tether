@@ -629,7 +629,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     if (manage && newBtn) {
       newBtn.title = 'Nova mesa: o nome e a cor; ela entra no fim da fila'
       newBtn.setAttribute('aria-label', 'Nova mesa')
-      const word = newBtn.querySelector('span')
+      const word = newBtn.querySelector(':scope > span:last-child')
       if (word) word.textContent = 'Nova mesa'
     }
     // The "⋯" of a process: the view's own menu is about its record (on the machine); from afar it is "Esquecer…".
