@@ -11,9 +11,17 @@ import { createMenus } from './renderer/menus.ts'
 import { createStatus } from './renderer/status.ts'
 import { failedDialog, refusalWords } from './renderer/texts.ts'
 
+import { FONT_SIZE_DEFAULT } from './manifest.ts'
+
 export { manifest } from './manifest.ts'
 
 export function activate(ui: TetherUi): Disposable[] {
+  // The chat's font size: `extensions.channels.fontSize` lives on :root as --channels-font-size, so every pane and embed follows live.
+  const root = document.documentElement
+  const applyFontSize = (): void => { root.style.setProperty('--channels-font-size', `${ui.settings.get<number>('fontSize') ?? FONT_SIZE_DEFAULT}px`) }
+  applyFontSize()
+  const fontSub = ui.settings.onChange('fontSize', applyFontSize)
+  const fontDisposable: Disposable = { dispose: () => { fontSub.dispose(); root.style.removeProperty('--channels-font-size') } }
   const directory = createDirectory(ui)
   // The marks hear the daemon's `line` before the panes do: a line seen the moment it comes never counts as unread.
   const marks = createMarks(ui, directory)
@@ -55,6 +63,7 @@ export function activate(ui: TetherUi): Disposable[] {
     },
   })
   return [
+    fontDisposable,
     feed,
     links,
     ...directory.disposables, ...marks.disposables, ...panes.disposables,

@@ -66,11 +66,11 @@
 .ch-pane.narrow .ch-name-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ch-pane.narrow .ch-role.ch-closed-chip { display: inline-flex; }
 .ch-pane.narrow .ch-bar { flex: none; }
-.ch-msgs { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.ch-msgs { font-size: var(--channels-font-size, 13px); flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
 
-.ch-day { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 600; color: var(--fg-dim); }
+.ch-day { display: flex; align-items: center; gap: 10px; font-size: .846em; font-weight: 600; color: var(--fg-dim); }
 .ch-day::before, .ch-day::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
-.ch-sys { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.4; text-align: center; padding: 2px 0; }
+.ch-sys { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--fg-dim); font-size: .885em; line-height: 1.4; text-align: center; padding: 2px 0; }
 .ch-sys svg.ph { width: 13px; height: 13px; }
 .ch-sys time { opacity: .85; }
 
@@ -81,15 +81,15 @@
 .ch-msg > p { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ch-msg a.ch-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
 .ch-who { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
-.ch-who time { margin-left: auto; font-size: 11px; color: var(--fg-dim); }
+.ch-who time { margin-left: auto; font-size: .846em; color: var(--fg-dim); }
 .ch-author { font-weight: 600; }
 /* A name takes its agent's hue only when it has one (`--oh` set inline): the person's own, and a name no agent owns, stay in --fg. */
 .ch-oname { font-weight: 600; color: var(--fg); }
 .ch-oname[style*="--oh"], [style*="--oh"] > .ch-who > .ch-author, [style*="--oh"] > .ch-l1 > .ch-oname { color: hsl(var(--oh) var(--mark-s) var(--mark-fg-l)); }
-.ch-dest { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--fg-dim); white-space: nowrap; min-width: 0; }
+.ch-dest { display: inline-flex; align-items: center; gap: 3px; font-size: .846em; color: var(--fg-dim); white-space: nowrap; min-width: 0; }
 .ch-dest svg.ph { width: 12px; height: 12px; }
 .ch-dest .ch-oname { font-weight: 500; }
-.ch-role { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); font-size: 10.5px; line-height: 15px; white-space: nowrap; flex: none; }
+.ch-role { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-dim); font-size: .81em; line-height: 15px; white-space: nowrap; flex: none; }
 .ch-role svg.ph { width: 10px; height: 10px; }
 .ch-role.mod { background: var(--bg-3); color: var(--fg); }
 .ch-role.mute { border-style: dashed; }
@@ -109,7 +109,7 @@
 .ch-say { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--frame-bg); }
 .ch-say-to { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--fg-dim); }
 .ch-dsel { height: 24px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: 12px var(--ui); max-width: 100%; }
-.ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--ui); }
+.ch-field { box-sizing: border-box; width: 100%; min-height: 52px; max-height: 160px; resize: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: var(--channels-font-size, 13px)/1.45 var(--ui); }
 /* The "@" list floats over the box, above the caret's line. A mark ("calado", "não ouve agora") is dim, like the member list's. */
 .ch-say { position: relative; }
 .ch-mention-list { position: absolute; z-index: 5; margin: 0; padding: 4px; list-style: none; min-width: 180px; max-width: min(320px, calc(100% - 16px)); max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2); box-shadow: 0 6px 20px rgb(0 0 0 / .25); font: 12.5px var(--ui); color: var(--fg); }
@@ -510,7 +510,7 @@ button.ch-opt:hover { background: var(--bg-hover); }
 .ch-speech s { text-decoration: line-through; }
 .ch-speech code { font-family: var(--mono, ui-monospace, monospace); font-size: .92em; padding: 0 4px; border-radius: 3px; background: var(--bg-3); }
 .ch-speech pre { margin: 5px 0; padding: 6px 8px; border-radius: 5px; background: var(--bg-2); overflow-x: auto; white-space: pre; overflow-wrap: normal; line-height: 1.4; }
-.ch-speech pre > code { padding: 0; border-radius: 0; background: none; font-size: 12px; }
+.ch-speech pre > code { padding: 0; border-radius: 0; background: none; font-size: .92em; }
 .ch-speech ul, .ch-speech ol { margin: 5px 0; padding-left: 1.3em; }
 .ch-speech li { margin: 1px 0; }
 .ch-speech blockquote { margin: 5px 0; padding: 0 0 0 10px; border-left: 3px solid var(--fg-dim); color: var(--fg-dim); }
