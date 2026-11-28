@@ -49,6 +49,8 @@ export interface HouseBenchOptions {
   push?: { send: PushSend; benchOrigin?: string; now?: () => number }
   /** The waiting list the house reads (a test feeds it slots); absent, an empty one. */
   attention?: AttentionView
+  /** The house's log (a canary test reads it); absent, dropped. */
+  log?: (m: string) => void
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -163,7 +165,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
   let tick: NodeJS.Timeout | undefined
   const up = async (devices: PortalDevice[]): Promise<House> => {
     const house = new House({
-      keys, aud, houseName: 'bench', attention: o.attention ?? new AttentionView(), log: () => {}, now: o.now ?? Date.now, ask: answer,
+      keys, aud, houseName: 'bench', attention: o.attention ?? new AttentionView(), log: o.log ?? (() => {}), now: o.now ?? Date.now, ask: answer,
       ...(push ? { push } : {}),
       send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),

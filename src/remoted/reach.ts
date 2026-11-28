@@ -1,7 +1,7 @@
 // The reach of the `remote` client on the pipe (rule 3; RR3 gate B-8): the ONE source both sides read. The portal
 // (src/remoted/gate.ts re-exports it, src/remoted/reads.ts sends by it) and tetherd (src/daemon/server.ts refuses by it)
-// take the same tables, so what the portal may send and what tetherd lets through cannot drift apart. Only type imports:
-// tetherd loads this file and nothing of the portal with it.
+// take the same tables, so what the portal may send and what tetherd lets through cannot drift apart. Type imports, and one
+// pure rule (./recipe.ts, the recipe a `remote` client may send): tetherd loads nothing else of the portal with it.
 //
 // Every message type a client may send tetherd is classified here, and the type is a mapped type over the pipe's union,
 // so a new message type of src/daemon/protocol.ts does not compile until it is classified. `op`: some line of the table
@@ -11,6 +11,7 @@
 import type { OP_TABLE } from '../remote/scopes.ts'
 import type { ClientMessage } from '../daemon/protocol.ts'
 import type { OpName } from '../remote/index.ts'
+import { remoteRecipeOk } from './recipe.ts'
 
 export type PipeType = ClientMessage['t']
 export type PipeReach = 'op' | 'ext-read' | 'portal' | 'never'
@@ -162,9 +163,10 @@ export type OpPipeType = { [T in PipeType]: (typeof PIPE_REACH)[T] extends 'op' 
 /**
  * What a field of an `op` message may hold from a `remote` client: `string` any text (tetherd checks and folds it itself),
  * or the closed list of its values. A field absent from the type's rule is refused, so a `remote` never sends `by` (it
- * would speak as an agent's panel), a recipe, a wait, a `force` on start, or a `why` other than `end`.
+ * would speak as an agent's panel), a recipe outside the form of "Novo processo" (`recipe`), a wait, a `force` on start, or a
+ * `why` other than `end`.
  */
-type ArgRule = 'string' | readonly (string | boolean)[]
+type ArgRule = 'string' | 'recipe' | readonly (string | boolean)[]
 /**
  * Total by type over the class: a type marked `op` without its rule, or a rule for a type outside the class, does not
  * compile. The portal builds its messages by src/remote/manage.ts and checks them here before sending (the same function
@@ -181,7 +183,9 @@ export const REMOTE_ACT_ARGS = {
   'ronda-off': { slotId: 'string', force: [true] },
   'proc-list': {},
   'proc-info': { name: 'string' },
-  'proc-start': { name: 'string' },
+  // A recipe only of the form "Novo processo" from afar builds (RR5 5.5, ./recipe.ts remoteRecipeOk): the
+  // portal sends it for a name no process has; never `force` over a busy port, never `info` nor a grace.
+  'proc-start': { name: 'string', recipe: 'recipe' },
   'proc-stop': { name: 'string', reason: 'string', force: 'string' },
   'proc-restart': { name: 'string', reason: 'string', force: 'string' },
   'proc-use': { name: 'string', duration: 'string', purpose: 'string' },
@@ -207,7 +211,7 @@ export function remoteMayAct(msg: Readonly<Record<string, unknown>>): boolean {
     if (k === 't' || k === 'id') continue
     if (!Object.hasOwn(rule, k)) return false
     const r = rule[k]!
-    if (r === 'string' ? typeof v !== 'string' : !r.includes(v as string | boolean)) return false
+    if (r === 'recipe' ? !remoteRecipeOk(v) : r === 'string' ? typeof v !== 'string' : !r.includes(v as string | boolean)) return false
   }
   return true
 }

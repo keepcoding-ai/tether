@@ -75,6 +75,7 @@ describe('remote operations registry', () => {
       [0x0428, 'procs.release', 'manage:procs', 'unlocked', true, true],
       [0x0429, 'procs.forget', 'manage:destructive', 'per-act', true, true],
       [0x042a, 'procs.forget-force', 'manage:destructive', 'per-act', true, true],
+      [0x042b, 'procs.new', 'manage:procs', 'per-act', true, true],
       [0x0430, 'desks.hibernate', 'manage:desks', 'unlocked', true, true],
       [0x0431, 'desks.wake', 'manage:desks', 'unlocked', true, true],
       [0x0432, 'desks.create', 'manage:desks', 'unlocked', true, true],
@@ -117,8 +118,10 @@ describe('remote operations registry', () => {
       // Closing a channel from afar destroys (RR5, fio-spec 18): the channels' range reuses manage:destructive for it alone.
       else if (l.name === 'channels.close') assert.deepEqual([l.scope, l.presence], ['manage:destructive', 'per-act'])
       else assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
-      // What destroys is manage:destructive with a proof per act, and only it (RR5 5.2).
-      if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive', l.name)
+      // What destroys is manage:destructive with a proof per act (RR5 5.2); the one other act with a proof is running a new
+      // command on the machine ("Novo processo", RR5 5.5), of manage:procs.
+      if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive' || l.name === 'procs.new', l.name)
+      if (l.name === 'procs.new') assert.deepEqual([l.scope, l.presence], ['manage:procs', 'per-act'])
       assert.ok(l.scope.length > 0, 'a line always declares its scope')
     }
   })
@@ -128,7 +131,7 @@ describe('remote operations registry', () => {
       'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'attention.push-on', 'attention.push-off', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel',
       'channels.create', 'channels.join', 'channels.remove', 'channels.mute', 'channels.unmute', 'channels.close', 'channels.reopen', 'channels.poll-close',
       'agents.stop', 'agents.start', 'agents.restart', 'agents.rename', 'agents.forget', 'ronda.set', 'ronda.off',
-      'procs.start', 'procs.stop', 'procs.stop-force', 'procs.restart', 'procs.restart-force', 'procs.use', 'procs.release', 'procs.forget', 'procs.forget-force',
+      'procs.start', 'procs.stop', 'procs.stop-force', 'procs.restart', 'procs.restart-force', 'procs.use', 'procs.release', 'procs.forget', 'procs.forget-force', 'procs.new',
       'desks.hibernate', 'desks.wake', 'desks.create', 'desks.rename', 'desks.color', 'desks.close',
       'panes.hibernate', 'panes.wake', 'panes.suspend', 'panes.move', 'panes.close', 'closed.reopen', 'closed.forget',
       'owners.give', 'owners.revoke', 'owners.take', 'owners.return',

@@ -37,7 +37,9 @@ import { ActError, PIPE_ACT_TIMEOUT_MS, type ActOutcome, type PipeActs } from '.
 import { ACT_REFUSALS, isActRefusal, isManageOp, manageArgs, type ManageOp } from '../remote/manage.ts'
 import { APP_ACT_PORTAL_MS, APP_ACT_REFUSALS, appActArgs, isAppActOp, isAppActRefusal, type AppActOp } from '../remote/app-acts.ts'
 import { CREATE_REFUSALS, createSlotArgs, isCreateRefusal, isCreateSlotOp, type CreateSlotOp } from '../remote/create.ts'
-import { inUseBody } from '../remote/projection.ts'
+import { inUseBody, secretEnvBody } from '../remote/projection.ts'
+import { procNewArgs } from './recipe.ts'
+import { folderPathOf } from '../remote/create.ts'
 import { linePathOf, type PortalFiles } from './files.ts'
 import { cancelArgs, fileReadArgs, uploadArgs } from '../remote/files.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
@@ -833,6 +835,7 @@ export class House {
       // Not kept for the actId: the same act may come again with a good proof.
       if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, final: false, ...(v.lockout ? { lockout: true } : {}) }
     }
+    if (line.name === 'procs.new') return this.#procNew(s, req, body)
     if (isManageOp(line.name)) return this.#manage(s, line.name, req, body)
     if (isAppActOp(line.name) || isCreateSlotOp(line.name)) return this.#appAct(s, line.name, req, body)
     switch (line.name) {
@@ -1160,8 +1163,73 @@ export class House {
     return { ...(await result), final: false }
   }
 
+  /**
+   * "Novo processo" from afar (RR5 5.5, fio-spec 18; src/remote/procs-new.ts). Its proof was verified before (per-act). In
+   * order: the body checked and the secret rules applied (a refusal names the variables, never a value); the folder's id
+   * resolved against tetherd's list read now (`create.options`, never a path from the device); the name free at tetherd
+   * (`proc-info` answers `unknown-proc`: from afar a recipe never replaces another); the door conferred again right before
+   * the act (RR4 B-4: the reads above awaited); then `proc-start` with the recipe through the act path, which checks it by
+   * tetherd's own rule. As #manage: the device answered by the deadline, the real outcome kept for the actId whenever it
+   * comes. What is kept is the projected answer (env by names), never the body; the audit has the name and the result.
+   */
+  async #procNew(s: SessionRoute, req: Req, body: Record<string, unknown>): Promise<Served> {
+    const op = 'procs.new'
+    const acts = this.#d.acts
+    const reads = this.#d.reads
+    if (!acts || !reads) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const checked = procNewArgs(body)
+    if ('why' in checked) {
+      if (checked.why === 'secret-env') return { status: RES_STATUS.failed, bytes: secretEnvBody(checked.names), audit: 'refused:secret-env', final: false }
+      if (checked.why === 'secret-command') return { status: RES_STATUS.failed, bytes: errorBody('secret-command'), audit: 'refused:secret-command', final: false }
+      return { status: RES_STATUS.badRequest, bytes: errorBody(checked.why), final: false }
+    }
+    const target = checked.name
+    const shut: Served = { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'refused:revoked', target, final: false }
+    if (this.#closedTo(s)) return shut
+    let cwd: string | undefined
+    try { cwd = folderPathOf(await reads.read('create.options', {}), checked.folder) } catch (e) {
+      if (e instanceof ReadError && e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', target, final: false }
+      this.#d.log(`${op}: the folders could not be read`)
+      return { status: RES_STATUS.failed, bytes: errorBody('failed'), target, final: false }
+    }
+    if (cwd === undefined) return { status: RES_STATUS.notFound, bytes: errorBody('unknown-folder'), audit: 'refused:unknown-folder', target, final: false }
+    try {
+      await acts.read({ t: 'proc-info', name: target })
+      return { status: RES_STATUS.failed, bytes: errorBody('proc-exists'), audit: 'refused:proc-exists', target, final: false }
+    } catch (e) {
+      if (!(e instanceof ActError && e.why === 'refused' && e.code === 'unknown-proc')) {
+        if (e instanceof ActError && e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', target, final: false }
+        return { status: RES_STATUS.failed, bytes: errorBody('failed'), target, final: false }
+      }
+    }
+    // From here to acts.act nothing awaits, so no revocation slips in between.
+    if (this.#closedTo(s)) return shut
+    const flight = acts.act({ t: 'proc-start', name: target, recipe: { ...checked.recipe, cwd } })
+    const result = flight.settled.then((o) => this.#acted(op, o, target)).catch((): Served => ({ status: RES_STATUS.failed, bytes: errorBody('failed'), target }))
+    const mem = this.#memOf(s.deviceId)
+    if (req.actId) {
+      const actId = req.actId
+      const id = toHex(actId)
+      const kept = Promise.all([flight.settled, result]).then(([o, sv]): DoneAct => {
+        if (!(o.ok === false && o.error.why === 'limit')) mem.acts.put(actId, { op: req.op, status: sv.status, body: sv.bytes }, this.#d.now())
+        return { op: req.op, status: sv.status, body: sv.bytes }
+      })
+      mem.pending.set(id, kept)
+      void kept.finally(() => { if (mem.pending.get(id) === kept) mem.pending.delete(id) })
+    }
+    try {
+      await flight.answer
+    } catch (e) {
+      if (e instanceof ActError && e.why === 'timeout') {
+        const late = result.then((sv) => sv.audit ?? statusName(sv.status))
+        return { status: RES_STATUS.failed, bytes: errorBody('timeout'), audit: 'timeout', target, final: false, late }
+      }
+    }
+    return { ...(await result), final: false }
+  }
+
   /** The answer of an act's outcome: the line's projector on success; tetherd's code mapped by ACT_REFUSALS otherwise. */
-  async #acted(op: ManageOp, o: ActOutcome, target: string): Promise<Served> {
+  async #acted(op: ManageOp | 'procs.new', o: ActOutcome, target: string): Promise<Served> {
     const aim = target === '' ? {} : { target }
     if (o.ok) {
       const bytes = resultBody(op, { answer: o.reply })

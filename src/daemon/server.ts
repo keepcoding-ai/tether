@@ -2179,7 +2179,8 @@ class DaemonImpl implements Daemon {
   private withinRemoteReach(client: Client, msg: Partial<ClientMessage>): boolean {
     const t = (msg as { t?: unknown }).t
     const typeOk = remoteMaySend(t)
-    // An act (class `op`, RR5 5.2) only with the fields and values its rule lists: never `by`, a recipe nor a wait.
+    // An act (class `op`, RR5 5.2) only with the fields and values its rule lists: never `by` nor a wait, and a recipe only in
+    // the form of "Novo processo" from afar (RR5 5.5, src/remoted/recipe.ts remoteRecipeOk: no secret-looking variable).
     const isAct = typeOk && PIPE_REACH[t as keyof typeof PIPE_REACH] === 'op'
     if (typeOk && (t === 'ext-request' ? remoteMayRequest((msg as { ext?: unknown }).ext, (msg as { name?: unknown }).name) : !isAct || remoteMayAct(msg as Record<string, unknown>))) return true
     const what = typeOk ? (isAct ? `a ${String(t)} outside its reach` : 'an ext-request outside its reach') : typeof t === 'string' && Object.hasOwn(PIPE_REACH, t) ? t : 'a message of unknown type'

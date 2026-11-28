@@ -10,6 +10,7 @@
 // lives outside this pure module, and a device has no use for them yet. Text is hostile: names are sanitized and capped.
 // Pure: no node:*, no DOM; the PWA imports the types of what it receives from here.
 import { appActAnswer, APP_ACT_ERROR_CODES, type AppActAnswer } from './app-acts.ts'
+import { ENV_MAX, PROC_NEW_ERROR_CODES } from './procs-new.ts'
 import { CREATE_ERROR_CODES, createOptionsView, createSlotAnswer, type CreateOptions, type CreateSlotAnswer } from './create.ts'
 import { b64url, utf8, type Bytes } from './bytes.ts'
 import { PRESENCE, type Presence } from './constants.ts'
@@ -126,6 +127,8 @@ export const ERROR_CODES = [
   ...APP_ACT_ERROR_CODES,
   // "+ Novo" from afar (RR5 5.3, src/remote/create.ts).
   ...CREATE_ERROR_CODES,
+  // "Novo processo" from afar (RR5 5.5, src/remote/procs-new.ts).
+  ...PROC_NEW_ERROR_CODES,
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
@@ -1081,6 +1084,14 @@ const appActed = (s: WriteSource): AppActAnswer => appActAnswer(s.answer)
 const createOptions = (s: WriteSource): CreateOptions => createOptionsView(s.answer)
 const slotCreated = (s: WriteSource): CreateSlotAnswer => createSlotAnswer(s.answer)
 
+/**
+ * The body of a new process refused for its variables (RR5 5.5): the names that look like a secret, so the screen says
+ * which ones go in the command itself (`dotenvx run -- …`). Names only, of the form a name takes; never a value.
+ */
+export function secretEnvBody(names: readonly string[]): Bytes {
+  return encode({ error: 'secret-env', names: names.filter((n) => ENV_NAME_RE.test(n)).slice(0, ENV_MAX) })
+}
+
 /** The body of a refusal "in use by another": the uses of others the board shows (the person's own never refuses her). */
 export function inUseBody(uses: readonly unknown[]): Bytes {
   const body: InUseRefused = { error: 'proc-in-use', uses: remoteUses(uses) }
@@ -1145,6 +1156,7 @@ export const RESULTS = {
   'procs.release': procReleased,
   'procs.forget': forgot,
   'procs.forget-force': forgot,
+  'procs.new': procActed,
   'desks.hibernate': appActed,
   'desks.wake': appActed,
   'desks.create': appActed,

@@ -90,6 +90,8 @@ export const OP_CODES = {
   'procs.release': 0x0428,
   'procs.forget': 0x0429,
   'procs.forget-force': 0x042a,
+  // "Novo processo" from afar (RR5 5.5, fio-spec 18): a recipe of the person's, its env by name and value, never echoed.
+  'procs.new': 0x042b,
   // The gestures only the app knows (RR5 5.1, fio-spec 17): through tetherd to the app's bridge, `regency/act`.
   'desks.hibernate': 0x0430,
   'desks.wake': 0x0431,
@@ -236,6 +238,12 @@ export const OP_TABLE = {
   'procs.release': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name'], pipe: ['proc-release'] },
   'procs.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name'], pipe: ['proc-forget', 'proc-info'] },
   'procs.forget-force': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-forget'] },
+  // "Novo processo" (RR5 5.5; src/remote/procs-new.ts): the command as the person types it, a folder of the known list by its
+  // id (resolved by the portal from tetherd's `create.options`, never a path from the device), ports, a description and
+  // variables. It runs a command on the machine: a proof per act. A name or a value that looks like a secret, or a command
+  // that carries one, is refused (no "anyway" from afar); a value never comes back, nor goes to the audit, a log or the
+  // actId's cache. Only a name no process has (`proc-info` first): from afar a recipe never replaces another.
+  'procs.new': { scope: 'manage:procs', presence: 'per-act', mutates: true, gesture: true, body: ['name', 'command', 'folder', 'ports', 'description', 'env'], pipe: ['proc-info', 'proc-start'] },
   // The gestures only the app knows how to do (RR5 5.1, fio-spec 17). Each reaches tetherd as the ONE `ext-request` of
   // EXT_WRITES (`regency/act`) with its act's name and fields (src/remote/app-acts.ts, the closed list tetherd takes field by
   // field); tetherd confers what it can alone (the desk, the pane in that desk, the slot, the person typing there), refuses

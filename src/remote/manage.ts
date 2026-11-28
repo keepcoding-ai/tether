@@ -20,8 +20,11 @@ export const PROC_REASON_MAX = 200
 export const PROC_PURPOSE_MAX = 200
 export const PROC_DURATION_MAX = 16
 
-/** The ops of this module: the management lines that reach tetherd by a pipe message of their own. */
-export type ManageOp = Extract<OpName, `agents.${string}` | `ronda.${string}` | `procs.${string}`>
+/**
+ * The ops of this module: the management lines that reach tetherd by a pipe message of their own. `procs.new` (RR5 5.5) is
+ * apart (src/remote/procs-new.ts): it reads before it acts, and its body carries values that never go where a body is kept.
+ */
+export type ManageOp = Exclude<Extract<OpName, `agents.${string}` | `ronda.${string}` | `procs.${string}`>, 'procs.new'>
 /** The pipe messages these ops send (without the request's `id`): a type of the line's `pipe`, and its checked fields. */
 export type ManagePipe = (typeof OP_TABLE)[ManageOp]['pipe'][number]
 export interface ActMessage { readonly t: ManagePipe; readonly [k: string]: unknown }
@@ -118,7 +121,7 @@ export function manageArgs(op: ManageOp, body: Record<string, unknown>): ManageA
 }
 
 /** Whether a line's name is one of this module's. */
-export const isManageOp = (name: string): name is ManageOp => /^(agents|ronda|procs)\./.test(name)
+export const isManageOp = (name: string): name is ManageOp => /^(agents|ronda|procs)\./.test(name) && name !== 'procs.new'
 
 export type ManageCode = (typeof MANAGE_ERROR_CODES)[number]
 /**
