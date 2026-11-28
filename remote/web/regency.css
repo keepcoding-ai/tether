@@ -205,7 +205,7 @@
 .rr[data-kb="up"] .rg > .rg-tabbar { display: none !important; }
 
 /* The speeches on their way: right above the box, at the right, as her own lines are. */
-.rr .rr-out { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-height: min(34%, 240px); overflow: auto; padding: 8px 14px 6px; border-top: 1px solid var(--border); background: var(--frame-bg); }
+.rr .rr-out { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-height: min(26vh, 240px); overflow: auto; padding: 8px 14px 6px; border-top: 1px solid var(--border); background: var(--frame-bg); }
 .rr .rr-out-i { box-sizing: border-box; max-width: min(560px, 92%); padding: 7px 10px; border-radius: 10px 10px 3px 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
 .rr .rr-out-i[data-state="sending"] { border-style: dashed; }
@@ -237,7 +237,7 @@
 .rr .rg[data-tier="mobile"] :is(.ch-send, .ch-pollbtn) { height: 37px; min-width: 37px; }
 .rr .rg[data-tier="mobile"] .ch-dsel { height: 30px; }
 .rr .rg[data-tier="mobile"] .ch-say-hint { display: none; }
-.rr .rg[data-tier="mobile"] .rr-out { padding: 6px 9px 4px; }
+.rr .rg[data-tier="mobile"] .rr-out { max-height: 18vh; padding: 6px 9px 4px; }
 .rr .rg[data-tier="mobile"] .rr-out-b { min-height: 37px; }
 .rr .rg[data-tier="mobile"] .ch-pill { height: 33px; }
 .rr .rg[data-tier="mobile"] .ch-pill-add { width: 37px; }

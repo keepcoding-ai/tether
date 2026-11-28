@@ -7,11 +7,17 @@
 // slot of the bench that speaks by the CLI's road (the pipe's `verb` request).
 //
 // The roteiro of RR3, one test each, in order: pair; "Agora não" on the offer to protect; unlock; the Regency's tree; a line
-// in a channel re-reads the marks; the app closed ("como estavam às HH:MM"); offline (only the notice); a poll, read only;
-// paging the channel back; locked by the machine; a burst of events. Then the TV (2560 px): five captures of the walk by
-// arrows. Last, a device without the scopes of the Regency and of the channels (the bench restarts tetherd with the
-// device's scopes narrowed in its registry, the one place they live), because nothing after it could read.
-// Captures go to REMOTE_SHOTS_DIR (else test/e2e/artifacts): rr3-live-*.png, and the TV's under rr3-tv/.
+// in a channel re-reads the marks; the app closed ("como estavam às HH:MM"); offline (only the notice); paging the channel
+// back; locked by the machine; a burst of events. Then the TV (2560 px): five captures of the walk by arrows. Last, a device
+// without the scopes of the Regency and of the channels (the bench restarts tetherd with the device's scopes narrowed in its
+// registry, the one place they live), because nothing after it could read.
+// RR4 4.2b, the person converses from the phone (a protected device): she votes with a short reason on the "não"; opening
+// the channel marks it seen and its marks change; at 390 px she speaks (with "@" for whom), the speech shows "enviando" at
+// once and is confirmed by its seq, and the channel has it from the moderator; she reacts and takes the reaction off; she
+// opens a poll; the four sizes are captured with the box and a poll's card; she locks the device from its strip, and once
+// unlocked what waited to be said goes; two windows of the device: the second says where the Regency is, "Usar aqui" takes
+// it, and closing the owner gives it back to the other.
+// Captures go to REMOTE_SHOTS_DIR (else test/e2e/artifacts): rr3-live-*.png and rr4-*.png, and the TV's under rr3-tv/.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -102,7 +108,7 @@ async function eventually<T>(f: () => Promise<T | undefined>, ms: number, what: 
 interface VirtualCredential { credentialId: string; signCount: number }
 interface DeviceRow { id: string; state: string; biometrics: boolean }
 /** What the page says of the element that holds the keyboard. */
-interface Held { key: string; left: number; right: number; inTree: boolean; inLeft: boolean; inRight: boolean; ring: boolean }
+interface Held { key: string; left: number; right: number; inTree: boolean; inLeft: boolean; inCenter: boolean; inRight: boolean; ring: boolean }
 
 describe('remote web client live (RR3): the real PWA over the real relay, portal and tetherd of the bench', () => {
   const home = benchHome('tether-remote-web-live-')
@@ -136,7 +142,11 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   let pageUrl = ''
   let relayUrl = ''
   let channelId = ''
+  let extraId = ''
   let memberId = ''
+  let auditorId = ''
+  /** The device's own speech of step 13, the one it reacts on. */
+  let saidSeq = 0
   let channelRows: unknown[] = []
   let treeSig = ''
   let treeAt = 0
@@ -245,6 +255,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     return r.verb
   }
 
+  /** What the house holds of a channel (the app's own reading). */
+  const historyOf = async (channel: string): Promise<Record<string, unknown>> => ext(app, 'history', { channel }, 'channels')
+
   // ---- the page ------------------------------------------------------------------------------------------------------
 
   const view = (v: string, ms = 20_000): Promise<unknown> => page.waitForSelector(`#app[data-view="${v}"]`, { timeout: ms })
@@ -295,7 +308,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const d = a.dataset
     return {
       key: d.key ?? d.target ?? d.filter ?? d.action ?? a.className, left: r.left, right: r.right,
-      inTree: a.closest('.rg-tree') !== null, inLeft: a.closest('.rg-left') !== null, inRight: a.closest('.rg-right') !== null,
+      inTree: a.closest('.rg-tree') !== null, inLeft: a.closest('.rg-left') !== null, inCenter: a.closest('.rg-center') !== null, inRight: a.closest('.rg-right') !== null,
       ring: (cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px') || cs.boxShadow !== 'none',
     }
   })
@@ -326,7 +339,15 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const created = await cli.request({ t: 'create', kind: 'claude', cwd: home, name: 'conferente', start: false }) as { slot?: { slotId: string } }
     memberId = created.slot!.slotId
     await ext(app, 'join', { channel: channelId, agent: memberId }, 'channels')
+    // A second member (a poll that calls it stays open after the person votes) and a second channel (it calls the person
+    // while another one is on screen, so its marks are seen only when she opens it).
+    const auditor = await cli.request({ t: 'create', kind: 'claude', cwd: home, name: 'auditor', start: false }) as { slot?: { slotId: string } }
+    auditorId = auditor.slot!.slotId
+    await ext(app, 'join', { channel: channelId, agent: auditorId }, 'channels')
     for (let i = 1; i <= LINES; i++) await ext(app, 'say', { channel: channelId, text: `linha ${pad(i)}` }, 'channels')
+    const extra = await ext(app, 'create', { name: 'extra' }, 'channels')
+    extraId = (extra.channel as { id: string }).id
+    await ext(app, 'join', { channel: extraId, agent: memberId }, 'channels')
     channelRows = (await ext(app, 'list', {}, 'channels')).channels as unknown[]
     await publish()
     appOpens()
@@ -417,13 +438,15 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await shot('4-arvore')
   })
 
+  // The channel that calls her is not the one on screen: a device that converses marks seen what it shows (step 16).
   test('5. uma fala num canal faz a tela reler as marcas: "para você" e a conta de não lidas chegam sem recarregar', async () => {
-    const conv = `.rg-conv[data-target="channel:${channelId}"]`
-    assert.equal(await page.locator(`${conv} .rg-tome`).count(), 0, "the person's own lines call nobody")
-    await agent('say', { canal: channelId, text: 'Qual das duas telas de filtro fica?', to: ['usuário'] })
+    const conv = `.rg-conv[data-target="channel:${extraId}"]`
+    assert.equal(await page.locator(`.rg-conv[data-target="channel:${channelId}"] .rg-tome`).count(), 0, "the person's own lines call nobody")
+    await agent('say', { canal: extraId, text: 'Qual das duas telas de filtro fica?', to: ['usuário'] })
     await page.waitForSelector(`${conv} .rg-tome`, { timeout: 15_000 })
     assert.equal(await text(`${conv} .rg-mk .cnt`), '1', 'one line unread')
-    await eventually(async () => (await msgsHave('Qual das duas telas de filtro fica?')) || undefined, 15_000, 'the new line in the open channel')
+    await agent('say', { canal: channelId, text: 'Deixei as duas telas no #extra.' })
+    await eventually(async () => (await msgsHave('Deixei as duas telas no')) || undefined, 15_000, 'the new line in the open channel')
     await shot('5-marcas')
   })
 
@@ -458,22 +481,121 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await toRegency()
   })
 
-  test('9. enquete aparece só para leitura: o cartão com a pergunta e as opções, nenhuma delas vota', async () => {
-    await agent('poll', { canal: channelId, question: 'Qual tela de filtro fica?', options: ['a de cima', 'a de baixo'], to: ['usuário'] })
-    await page.waitForSelector('.ch-poll[data-state="open"]', { timeout: 15_000 })
-    const card = page.locator('.ch-poll[data-state="open"]').last()
-    assert.match((await card.textContent()) ?? '', /Qual tela de filtro fica\?/)
-    assert.equal(await card.locator('.ch-opt').count(), 2)
-    assert.equal(await card.locator('button.ch-opt').count(), 0, 'no option is a button')
-    await card.locator('.ch-opt').first().click()
-    await page.keyboard.press('1')
-    await sleep(800)
-    const h = await ext(app, 'history', { channel: channelId }, 'channels')
-    const open = (h.polls as { open?: { votes: Record<string, unknown> } }[]).find((p) => p.open)
-    assert.ok(open, 'the poll is open in the house')
-    assert.deepEqual(open.open!.votes, {}, 'a tap or a key on the device voted nothing')
+  test('9. votar numa enquete: "não ok" vota na hora e pede a razão curta; a razão vai com o voto', async () => {
+    await agent('poll', { canal: channelId, question: 'Subo a ata hoje?', to: ['usuário', 'auditor'] })
+    const card = page.locator('.ch-poll[data-state="open"]', { hasText: 'Subo a ata hoje?' })
+    await card.waitFor({ timeout: 15_000 })
+    assert.equal(await card.locator('button.ch-opt').count(), 2, 'each option votes')
+    assert.equal(await card.locator('.ch-pmore').count(), 1)
+    await card.locator('button.ch-opt[data-n="2"]').click()
+    await page.waitForSelector('.ch-reason .ch-pr-in', { timeout: 10_000 })
+    await page.fill('.ch-reason .ch-pr-in', 'falta a revisão')
+    await page.press('.ch-reason .ch-pr-in', 'Enter')
+    const vote = await eventually(async () => {
+      const h = await historyOf(channelId)
+      const p = (h.polls as { open?: { question: string; votes: Record<string, { option: number; reason?: string }> } }[]).find((x) => x.open?.question === 'Subo a ata hoje?')
+      const v = p?.open?.votes.user
+      return v?.reason ? v : undefined
+    }, 15_000, 'the vote with its reason in the house')
+    assert.deepEqual([vote.option, vote.reason], [2, 'falta a revisão'])
+    await eventually(async () => (await card.locator('button.ch-opt.mine[data-n="2"]').count()) === 1 || undefined, 10_000, 'the card says her vote')
+    // Closing a poll early is managing the channel: not on this device.
+    await card.locator('.ch-pmore').click()
+    await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+    assert.doesNotMatch(await text('#ctx-menu'), /Encerrar/, 'no "Encerrar agora" from afar')
+    await page.keyboard.press('Escape')
     await card.scrollIntoViewIfNeeded()
     await shot('9-enquete')
+  })
+
+  test('16. visto: abrir o canal que chama a pessoa marca o que ela viu, e as marcas mudam na casa e na tela', async () => {
+    const conv = `.rg-conv[data-target="channel:${extraId}"]`
+    const last = Number((await historyOf(extraId)).last)
+    const seenOf = async (): Promise<number> => ((await ext(app, 'list', {}, 'channels')).channels as { id: string; seenByUser: number }[]).find((c) => c.id === extraId)!.seenByUser
+    assert.ok((await seenOf()) < last, 'not seen before she looks')
+    await page.click(conv)
+    await eventually(async () => (await msgsHave('Qual das duas telas de filtro fica?')) || undefined, 15_000, 'the channel on screen')
+    await eventually(async () => ((await seenOf()) >= last) || undefined, 15_000, 'the house holds it seen')
+    await eventually(async () => ((await page.locator(`${conv} .rg-tome`).count()) === 0) || undefined, 15_000, 'the "para você" mark goes')
+    await shot('16-visto')
+    await page.click(`.rg-conv[data-target="channel:${channelId}"]`)
+    await eventually(async () => (await msgsHave('Subo a ata hoje?')) || undefined, 15_000, 'back to the first channel')
+  })
+
+  test('13. falar pelo navegador a 390 px: "enviando" na hora, confirmada com o seq, e o canal a tem da moderadora, para quem o "@" disse', async () => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForSelector('.rr[data-tier="mobile"]', { timeout: 10_000 })
+    await page.click('.rg-tab[data-tab="conversation"]')
+    await page.waitForSelector('.ch-say textarea.ch-field', { timeout: 15_000 })
+    // Every state the speech on its way goes through, as the page draws it.
+    await page.evaluate(() => {
+      const seen: string[] = []
+      ;(window as unknown as { __out: string[] }).__out = seen
+      new MutationObserver(() => {
+        for (const i of document.querySelectorAll<HTMLElement>('.rr-out-i')) { const s = i.dataset.state ?? ''; if (seen[seen.length - 1] !== s) seen.push(s) }
+      }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-state'] })
+    })
+    const before = Number((await historyOf(channelId)).last)
+    await page.click('.ch-field')
+    await page.keyboard.type('@conf')
+    await page.waitForSelector('.ch-mention-list:not([hidden])', { timeout: 5_000 })
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Revisa a ata pelo celular?')
+    await page.screenshot({ path: join(shots, 'rr4-13-caixa-390.png') })
+    await page.click('.ch-send')
+    const line = await eventually(async () => ((await historyOf(channelId)).lines as { seq: number; body: string; to?: string[]; from: { id: string; role: string } }[])
+      .find((l) => l.seq > before && l.body.includes('Revisa a ata pelo celular?')), 15_000, 'the speech in the channel')
+    saidSeq = line.seq
+    assert.deepEqual([line.from.id, line.from.role, line.to, line.body], ['user', 'moderator', ['conferente'], '@conferente Revisa a ata pelo celular?'])
+    await eventually(async () => ((await msgsHave('Revisa a ata pelo celular?')) && !(await page.isVisible('.rr-out-i'))) || undefined, 15_000, 'the line in the conversation, nothing on its way')
+    const states = await page.evaluate(() => (window as unknown as { __out: string[] }).__out)
+    assert.equal(states[0], 'sending', `shown at once as "enviando" (${states.join(' → ')})`)
+    assert.equal(await page.inputValue('.ch-field'), '', 'the box emptied')
+    assert.match((await page.textContent('.rr-out + .rr-sr')) ?? '', /Fala enviada/, 'said aloud once')
+    await page.screenshot({ path: join(shots, 'rr4-13-enviada-390.png') })
+  })
+
+  test('14. reagir pelo "⋯" da fala (a folha do celular) e tirar a reação no próprio selo', async () => {
+    const mine = page.locator(`.ch-msgs > .ch-msg[data-seq="${saidSeq}"]`)
+    await mine.locator('.ch-msg-more').click()
+    await page.waitForSelector('#ctx-menu[data-form="sheet"]', { timeout: 5_000 })
+    assert.doesNotMatch(await text('#ctx-menu'), /Calar|Tirar|Encerrar/, 'nothing that manages')
+    await page.screenshot({ path: join(shots, 'rr4-14-menu-390.png') })
+    await page.locator('#ctx-menu .rr-mi', { hasText: '👍' }).click()
+    const tallies = async (): Promise<{ emoji: string; by: { id: string }[] }[]> =>
+      (((await historyOf(channelId)).reactions as { seq: number; tallies: { emoji: string; by: { id: string }[] }[] }[]).find((r) => r.seq === saidSeq)?.tallies) ?? []
+    await eventually(async () => (await tallies()).some((t) => t.emoji === '👍' && t.by.some((b) => b.id === 'user')) || undefined, 15_000, 'the reaction in the house')
+    await mine.locator('.ch-pill.mine').waitFor({ timeout: 10_000 })
+    await mine.locator('.ch-pill.mine').click()
+    await eventually(async () => ((await tallies()).length === 0) || undefined, 15_000, 'the reaction taken off')
+  })
+
+  test('15. abrir enquete pela caixa: o cartão aberto, da moderadora, chamando os membros', async () => {
+    await page.click('.ch-pollbtn')
+    await page.waitForSelector('.ch-pf:not([hidden]) .ch-pf-q', { timeout: 5_000 })
+    await page.fill('.ch-pf-q', 'Subimos hoje à noite?')
+    await page.click('.ch-pf-go')
+    const line = await eventually(async () => ((await historyOf(channelId)).lines as { seq: number; kind: string; body: string; from: { role: string } }[])
+      .find((l) => l.kind === 'poll' && l.body.includes('Subimos hoje à noite?')), 15_000, 'the poll in the channel')
+    assert.equal(line.from.role, 'moderator')
+    const state = ((await historyOf(channelId)).polls as { seq: number; open?: { to: { id: string }[] } }[]).find((p) => p.seq === line.seq)
+    assert.deepEqual(state?.open?.to.map((t) => t.id).sort(), [memberId, auditorId].sort())
+    await page.locator('.ch-poll[data-state="open"]', { hasText: 'Subimos hoje à noite?' }).waitFor({ timeout: 15_000 })
+  })
+
+  test('capturas: a caixa de fala e um cartão de enquete nos quatro tamanhos', async () => {
+    for (const [w, h, tier] of [[390, 844, 'mobile'], [1024, 768, 'tablet'], [1440, 900, 'desktop'], [2560, 1440, 'wide']] as const) {
+      await page.setViewportSize({ width: w, height: h })
+      await page.waitForSelector(`.rr[data-tier="${tier}"]`, { timeout: 10_000 })
+      if (tier === 'mobile') await tap('.rg-tab[data-tab="conversation"]')
+      await page.waitForSelector('.ch-say textarea.ch-field', { timeout: 10_000 })
+      await page.fill('.ch-field', 'Combinado: subimos às 21h.')
+      await page.locator('.ch-poll[data-state="open"]', { hasText: 'Subimos hoje à noite?' }).scrollIntoViewIfNeeded()
+      await sleep(400)
+      await page.screenshot({ path: join(shots, `rr4-${w}.png`) })
+    }
+    await page.fill('.ch-field', '')
+    await page.setViewportSize({ width: 1440, height: 900 })
   })
 
   test('10. paginar o histórico do canal: subindo, as páginas anteriores chegam até a primeira fala', async () => {
@@ -520,7 +642,32 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     assert.ok((await credentials())[0]!.signCount > signs, 'the unlock was a new proof')
   })
 
-  test('11b. trancar pelo aparelho', { skip: 'a PWA não oferece o gesto: session.lock (0x0007) existe no protocolo e no portal, mas nenhuma tela de remote/web/src o manda' }, () => {})
+  test('11b. trancar pelo aparelho: "Trancar" na faixa tranca a sessão; destrancada, o que esperava para ser dito vai, uma vez', async () => {
+    const signs = (await credentials())[0]!.signCount
+    await page.click('.rr-top .rr-lock')
+    await page.waitForSelector('[data-panel="lock"] #unlock:not([disabled])', { timeout: 15_000 })
+    assert.match(await text('[data-panel="lock"]'), /Trancado/)
+    assert.equal(await page.locator('.rr, .rg-tree, .ch-msgs').count(), 0, 'nothing of the house while locked')
+    await page.screenshot({ path: join(shots, 'rr4-11b-trancado.png') })
+    // A speech that was waiting for the session (as one cut on its way is): the outbox of this origin holds it.
+    const put = await page.evaluate((channel) => {
+      const key = Object.keys(localStorage).find((k) => /^tether\.remote\.v1\.[0-9a-f]+\.outbox$/.test(k))
+      if (!key) return false
+      const box = JSON.parse(localStorage.getItem(key) ?? '{"v":1,"items":[]}') as { v: 1; items: unknown[] }
+      const id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('')
+      box.items.push({ id, channel, text: 'Esperou o destrancar.', to: [], at: Date.now(), state: 'sending' })
+      localStorage.setItem(key, JSON.stringify(box))
+      return true
+    }, channelId)
+    assert.ok(put, 'the outbox of this device is in its storage')
+    await page.click('#unlock')
+    await toRegency()
+    assert.ok((await credentials())[0]!.signCount > signs, 'the unlock was a new proof')
+    const said = async (): Promise<number> => ((await historyOf(channelId)).lines as { body: string }[]).filter((l) => l.body === 'Esperou o destrancar.').length
+    await eventually(async () => ((await said()) === 1) || undefined, 15_000, 'what waited, said once unlocked')
+    await sleep(1_500)
+    assert.equal(await said(), 1, 'said once')
+  })
 
   test('12. rajada de eventos não quebra a tela: falas, uma enquete e árvores em sequência rápida, e a tela chega ao último estado', async () => {
     const errors = pageErrors.length
@@ -550,6 +697,43 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const all = await page.evaluate(() => document.querySelector('.ch-msgs')?.textContent ?? '')
     const missing = Array.from({ length: N }, (_, i) => `rajada ${pad(i + 1)}`).filter((l) => !all.includes(l))
     assert.deepEqual(missing, [], 'every line of the burst, no hole between the pages')
+  })
+
+  test('duas abas: a segunda diz que a Regência está aberta em outra janela, "Usar aqui" toma, fechar a dona faz a outra assumir', async () => {
+    const ctx = page.context()
+    const opened = ctx.waitForEvent('page', { timeout: 20_000 })
+    await page.evaluate((u) => { window.open(u, '_blank') }, pageUrl)
+    const page2 = await opened
+    page2.on('pageerror', (e) => pageErrors.push(`[2] ${String(e)}`))
+    // The second window's platform authenticator holds the same credential (one phone, one fingerprint).
+    const cdp2 = await ctx.newCDPSession(page2)
+    await cdp2.send('WebAuthn.enable', { enableUI: false })
+    const a2 = ((await cdp2.send('WebAuthn.addVirtualAuthenticator', {
+      options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+    })) as { authenticatorId: string }).authenticatorId
+    for (const c of await credentials()) await cdp2.send('WebAuthn.addCredential', { authenticatorId: a2, credential: c as never })
+    await cdp2.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await page2.setViewportSize({ width: 1440, height: 900 })
+    await page2.waitForSelector('#app[data-view="elsewhere"]', { timeout: 20_000 })
+    assert.match((await page2.textContent('#app')) ?? '', /A Regência está aberta em outra janela/)
+    assert.equal(await page.getAttribute('#app', 'data-view'), 'regency', 'the first window keeps it meanwhile')
+    await page2.screenshot({ path: join(shots, 'rr4-abas-outra-janela.png') })
+    await page2.click('#app .btn')
+    await page.waitForSelector('#app[data-view="elsewhere"]', { timeout: 20_000 })
+    await eventually(async () => {
+      if (await page2.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page2.click('#unlock', { timeout: 1_500 }).catch(() => undefined)
+      return (await page2.isVisible('.rr[data-link="live"] .rg-tree [data-key]')) || undefined
+    }, 45_000, 'the Regency in the second window')
+    // One authenticator per window, one credential: the first goes on from the count the second reached.
+    const [c2] = ((await cdp2.send('WebAuthn.getCredentials', { authenticatorId: a2 })) as { credentials: VirtualCredential[] }).credentials
+    await page2.close()
+    const [c1] = await credentials()
+    if (c1 && c2 && c2.signCount > c1.signCount) {
+      await cdp.send('WebAuthn.removeCredential', { authenticatorId, credentialId: c1.credentialId })
+      await cdp.send('WebAuthn.addCredential', { authenticatorId, credential: { ...c1, signCount: c2.signCount } as never })
+    }
+    await toRegency()
+    assert.equal(await page.getAttribute('#app', 'data-view'), 'regency', 'closing the owner gave it back')
   })
 
   const tv = (name: string): Promise<Buffer> => page.screenshot({ path: join(tvShots, name) })
@@ -585,7 +769,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     // The strip of the remote's keys, on top.
     assert.ok(await page.isVisible('.rr-keys'), 'the strip of keys shows on the TV')
     await page.locator('.rr-top').screenshot({ path: join(tvShots, '3-faixa-de-teclas.png') })
-    // From the left column into the desks' column: the walk crosses the centre (nothing to open there).
+    // From the left column into the conversation (its speeches, its box: the TV converses too), and on into the desks.
     let at = ring
     for (let i = 0; i < 6 && !at.inLeft; i++) {
       await page.keyboard.press('ArrowLeft')
@@ -595,7 +779,13 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const from = at
     await page.keyboard.press('ArrowRight')
     at = await eventually(held, 5_000, 'the focus after ArrowRight')
-    assert.ok(at.inRight && at.left > from.right, `one ArrowRight crossed from ${from.key} into the desks' column (${at.key})`)
+    assert.ok(at.inCenter && at.left > from.right, `one ArrowRight crossed from ${from.key} into the conversation (${at.key})`)
+    assert.ok(at.ring, `the ring is drawn on ${at.key}`)
+    await tv('6-setas-na-conversa.png')
+    const mid = at
+    await page.keyboard.press('ArrowRight')
+    at = await eventually(held, 5_000, 'the focus after ArrowRight')
+    assert.ok(at.inRight && at.left > mid.right, `the next ArrowRight crossed from ${mid.key} into the desks' column (${at.key})`)
     assert.ok(at.ring)
     await tv('5-setas-entre-colunas.png')
     // Down into the desks' rows.

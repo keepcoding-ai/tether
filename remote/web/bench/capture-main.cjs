@@ -63,7 +63,8 @@ async function shoot(base, shot) {
     const facts = await win.webContents.executeJavaScript(`(() => {
       const rr = document.querySelector('.rr'), rg = document.querySelector('.rg')
       return { link: rr?.dataset.link, tier: rr?.dataset.tier, pane: rg?.dataset.tier, width: innerWidth, icons: document.querySelectorAll('svg.ph').length,
-        emptyIcons: [...document.querySelectorAll('svg.ph')].filter(s => !s.firstElementChild).length, scrollX: document.documentElement.scrollWidth > innerWidth }
+        emptyIcons: [...document.querySelectorAll('svg.ph')].filter(s => !s.firstElementChild).length, scrollX: document.documentElement.scrollWidth > innerWidth,
+        ...(document.documentElement.dataset.probe ? { probe: document.documentElement.dataset.probe } : {}) }
     })()`).catch((e) => ({ error: String(e) }))
     const image = await win.webContents.capturePage()
     writeFileSync(join(out, `${shot.name}.png`), image.toPNG())

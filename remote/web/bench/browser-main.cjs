@@ -17,6 +17,15 @@ app.whenReady().then(async () => {
     // Off-screen rendering keeps painting while hidden, so screenshots never wait for a frame that does not come.
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, offscreen: true },
   })
+  // A second window of the page (the E2E's "duas abas", opened by the page itself) is hidden and off screen too, in the
+  // same session: the same origin, the same storage and the same Web Locks, as a second tab of one browser.
+  win.webContents.setWindowOpenHandler(() => ({
+    action: 'allow',
+    overrideBrowserWindowOptions: {
+      width: 1440, height: 900, useContentSize: true, show: false,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, offscreen: true },
+    },
+  }))
   await win.loadURL(url)
 }).catch((err) => { console.error(err); app.exit(1) })
 

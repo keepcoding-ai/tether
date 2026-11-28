@@ -70,6 +70,20 @@ async function run(): Promise<void> {
     }
     await settle(300)
   }
+  // `&medir=1`: the boxes of the channel's column, for a capture that asks where the room went.
+  if (q.get('medir') === '1') {
+    const sizes = ['.rg-center', '.rg-embed', '.ch-pane', '.ch-conv', '.ch-msgs-wrap', '.ch-foot', '.rg-tabbar'].map(s => {
+      const r = document.querySelector(s)?.getBoundingClientRect()
+      return r ? `${s} ${Math.round(r.top)}-${Math.round(r.bottom)}` : `${s} -`
+    })
+    const fs = document.querySelector('.ch-foot')
+    if (fs) { const cs = getComputedStyle(fs); sizes.push(`foot ${cs.display} ${cs.flex} h=${cs.height} pad=${cs.paddingBottom} zoom=${cs.zoom}`) }
+    for (const e of [...document.querySelectorAll('.ch-foot > *, .ch-say > *')]) {
+      const r = e.getBoundingClientRect()
+      sizes.push(`${e.className || e.tagName} ${Math.round(r.top)}-${Math.round(r.bottom)}`)
+    }
+    document.documentElement.dataset.probe = sizes.join(' | ')
+  }
   document.documentElement.dataset.ready = '1'
 }
 
