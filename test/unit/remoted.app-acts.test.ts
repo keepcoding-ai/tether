@@ -176,6 +176,22 @@ describe('the app acts through a real House', () => {
     assert.equal((await send(OP['create.agent'], { engine: 'claude', deskId: 'desk-1', folder, device: 'f'.repeat(32) })).status, RES_STATUS.badRequest, 'the device is never the body\'s')
   })
 
+  test('RR5 M-3: an agent "sem restrições" is its own op, proven per act; tetherd\'s unsafe-profile comes back as 0x09', async () => {
+    sent.length = 0
+    const folder = '0123456789abcdef'
+    answer = async (m) => {
+      if (m.name === 'create' && m.args.unrestricted !== true) throw new DaemonError('unsafe-profile' as never, `recusado ${MARKER}`)
+      return { result: { slotId: 's_dev' } }
+    }
+    const body = { engine: 'claude', profile: 'Claude modo dev', deskId: 'desk-1', folder }
+    assert.deepEqual(await send(OP['create.agent'], body), { status: RES_STATUS.failed, body: { error: 'unsafe-profile' } }, 'the common op: tetherd refuses')
+    assert.equal((await send(OP['create.agent-unrestricted'], body)).status, RES_STATUS.presenceRequired, 'no proof')
+    assert.equal((await act(s, auth, OP['create.agent-unrestricted'], body, { proof: false })).status, RES_STATUS.presenceRequired)
+    assert.equal(sent.length, 1, 'nothing more reached the pipe')
+    assert.deepEqual(await act(s, auth, OP['create.agent-unrestricted'], body), { status: RES_STATUS.ok, body: { slotId: 's_dev' } })
+    assert.deepEqual(sent.at(-1)!.args, { what: 'agent', unrestricted: true, engine: 'claude', profile: 'Claude modo dev', deskId: 'desk-1', folder, device: deviceId() })
+  })
+
   test("tetherd's and the app's refusals come back by their code, never the message: no-app 0x08, a stale id 0x06, busy 0x07", async () => {
     const code = { 'desks.wake': 'no-app', 'desks.rename': 'unknown-desk', 'panes.hibernate': 'with-user', 'panes.suspend': 'busy', 'closed.reopen': 'not-closed', 'desks.color': 'door-denied', 'owners.take': 'stale' } as Record<string, string>
     answer = async (m) => { throw new DaemonError(code[m.args.act as string] as never, `recusado ${MARKER}`) }

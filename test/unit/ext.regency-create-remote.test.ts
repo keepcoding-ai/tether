@@ -184,3 +184,49 @@ describe('a note and a tab: tetherd confers, the app makes them behind', () => {
     assert.deepEqual(calls, [['note', { deskId: 'desk-1', cwd: 'C:\\p\\obra' }], ['tab', 'desk-1']])
   })
 })
+
+describe('RR5 M-3: a profile "sem restrições" from afar', () => {
+  const folder = folderId('C:\\p\\obra', true)
+  const dev = { id: 'claude-dev', name: 'Claude modo dev', agent: 'claude', args: ['--dangerously-skip-permissions'] }
+  const safe = { id: 'claude', name: 'Claude', agent: 'claude', args: [] }
+  const bench = (defaultId: string) => creatorBench({
+    profiles: async () => [safe, dev],
+    defaultFor: (e) => (e === 'claude' ? [safe, dev].find((p) => p.id === defaultId) : undefined),
+  })
+
+  test('create.options marks it unsafe, as the app badges it; never its args', async () => {
+    const { creator } = bench('claude')
+    const o = await creator.options()
+    assert.deepEqual(o.profiles.filter((p) => p.engine === 'claude'), [{ name: 'Claude', engine: 'claude', default: true }, { name: 'Claude modo dev', engine: 'claude', unsafe: true }])
+    assert.equal(JSON.stringify(o).includes('dangerously'), false)
+    assert.deepEqual(createOptionsView(o).profiles.find((p) => p.name === 'Claude modo dev'), { name: 'Claude modo dev', engine: 'claude', unsafe: true }, 'the device sees the mark')
+  })
+
+  test('by create.agent: unsafe-profile, nothing created; by its own op (unrestricted): created', async () => {
+    const { creator, created } = bench('claude')
+    const ok = { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, profile: 'Claude modo dev' }
+    await assert.rejects(creator.create(ok, remote), code('unsafe-profile'))
+    assert.deepEqual(created, [])
+    assert.deepEqual(await creator.create({ ...ok, unrestricted: true }, remote), { slotId: 's_new' })
+    assert.equal((created[0] as unknown as { profileId: string }).profileId, 'claude-dev')
+    assert.deepEqual(await creator.create({ ...ok, profile: 'Claude' }, remote), { slotId: 's_new' }, 'a safe profile by the common op')
+  })
+
+  test('no profile named: the engine\'s default as the app opens it; "Claude modo dev" made the default is unsafe', async () => {
+    const devDefault = bench('claude-dev')
+    const none = { what: 'agent', engine: 'claude', deskId: 'desk-1', folder }
+    await assert.rejects(devDefault.creator.create(none, remote), code('unsafe-profile'))
+    assert.deepEqual(devDefault.created, [])
+    assert.deepEqual(await devDefault.creator.create({ ...none, unrestricted: true }, remote), { slotId: 's_new' })
+    assert.deepEqual(await bench('claude').creator.create(none, remote), { slotId: 's_new' }, 'the safe default needs nothing more')
+  })
+
+  test('the act: `unrestricted` only from its op, only for an agent, only `true`', () => {
+    assert.deepEqual(createSlotArgs('create.agent-unrestricted', { engine: 'claude', deskId: 'desk-1', folder }), { args: { what: 'agent', unrestricted: true, engine: 'claude', deskId: 'desk-1', folder }, target: 'desk-1' })
+    assert.deepEqual(parseCreateSlot({ what: 'agent', unrestricted: true, engine: 'claude', deskId: 'desk-1', folder }), { what: 'agent', unrestricted: true, engine: 'claude', deskId: 'desk-1', folder })
+    for (const v of [
+      { what: 'agent', unrestricted: 'yes', engine: 'claude', deskId: 'desk-1', folder }, { what: 'agent', unrestricted: false, engine: 'claude', deskId: 'desk-1', folder },
+      { what: 'terminal', unrestricted: true, engine: 'shell', deskId: 'desk-1', folder },
+    ]) assert.equal(parseCreateSlot(v), undefined, JSON.stringify(v))
+  })
+})

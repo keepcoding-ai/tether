@@ -116,6 +116,8 @@ export const OP_CODES = {
   'create.terminal': 0x0462,
   'create.note': 0x0463,
   'create.browser': 0x0464,
+  // RR5 M-3: an agent with a profile "sem restrições", with a proof of the act (tetherd refuses one by `create.agent`).
+  'create.agent-unrestricted': 0x0465,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
 } as const
@@ -284,6 +286,10 @@ export const OP_TABLE = {
   'create.terminal': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['profile', 'deskId', 'folder', 'name'], pipe: ['ext-request'] },
   'create.note': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'folder'], pipe: ['ext-request'] },
   'create.browser': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId'], pipe: ['ext-request'] },
+  // RR5 M-3: the agent born "sem restrições" (its profile skips the permission prompts) runs commands without asking anyone:
+  // a proof of this very act, as `procs.new`. The same body and pair as `create.agent`; the act says `unrestricted`, and
+  // tetherd refuses an unsafe profile on any act without it (`unsafe-profile`).
+  'create.agent-unrestricted': { scope: 'manage:agents', presence: 'per-act', mutates: true, gesture: true, body: ['engine', 'profile', 'deskId', 'folder', 'name'], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }

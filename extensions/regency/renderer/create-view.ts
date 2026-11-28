@@ -71,6 +71,19 @@ export interface CreateViewSnapshot {
   tier: string
 }
 
+/**
+ * The badge of a profile "sem restrições" (the app's own words and shield, app/renderer/panel.ts UNSAFE_LABEL), in the card
+ * of the app and in the card from afar (RR5 M-3): the agent is born acting without asking for permission.
+ */
+const UNSAFE_WORDS = 'sem restrições'
+const UNSAFE_TIP = 'Sem restrições: o agente nasce sem pedir permissão para agir.'
+function unsafeMark(): HTMLElement {
+  const m = el('span', 'rg-cr-unsafe')
+  m.append(glyph('shield-warning', UNSAFE_TIP), document.createTextNode(UNSAFE_WORDS))
+  m.title = UNSAFE_TIP
+  return m
+}
+
 const TILE_ICON: Readonly<Record<string, { icon: string; hint: string }>> = {
   agent: { icon: 'robot', hint: 'uma IA para trabalhar' },
   terminal: { icon: 'terminal-window', hint: 'um terminal numa pasta' },
@@ -237,8 +250,10 @@ export class CreateCard {
   }
 
   private profileRow(i: CreateItem): PickItem<string> {
+    // A profile "sem restrições" says so in its row, as the app's chooser badges it (from afar there is no args line).
+    const detail = i.unsafe ? [i.hint, UNSAFE_WORDS].filter(Boolean).join(' · ') : i.hint
     return {
-      value: i.id, label: i.name, ...(i.hint ? { detail: i.hint } : {}), ...(i.engine ? { engine: i.engine } : {}),
+      value: i.id, label: i.name, ...(detail ? { detail } : {}), ...(i.engine ? { engine: i.engine } : {}),
       group: i.recent ? 'Recentes' : (identityOf({ kind: i.engine ?? '', name: i.name, seed: i.id }).engine.label || i.group),
     }
   }
@@ -745,6 +760,7 @@ export class CreateCard {
           const mark = identityMark(identityOf({ kind: item.engine ?? '', name: item.name, seed: item.id }))
           mark.querySelector('.aid-mark')?.remove()
           who.append(mark, el('span', 'rg-cr-vt', item.name))
+          if (item.unsafe) who.append(unsafeMark())
           if (item.hint) who.append(el('span', 'rg-cr-vd', item.hint))
         }
         const change = this.textButton('profile', 'Trocar', 'Escolher outro agente')

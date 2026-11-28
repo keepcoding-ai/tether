@@ -19,6 +19,7 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { DeskMap, DeskMapDesk, DoorSlots, ExtRequestContext } from '../../src/daemon/door/types.ts'
 import type { ErrorCode, SlotState } from '../../src/daemon/protocol.ts'
 import { AfarCaps, afarDevice } from '../../src/daemon/afar-caps.ts'
+import { isUnsafe } from '../../src/core/unsafe.ts'
 import { EXT_ID } from './manifest.ts'
 import {
   ACT_TAKE, APP_ACT_BRIDGE_MS, APP_ACT_DONE, APP_ACT_EVENT, APP_ACT_REQUEST, APP_ACTS_PENDING_MAX, APP_ANSWER_CODES, appActAnswer, appActTarget, parseAppAct, seenMatches,
@@ -367,9 +368,12 @@ export interface CreateDeps {
   slots: Pick<DoorSlots, 'list' | 'create'>
   /** The engines registered now (`claude`, `codex`…), without `shell`. */
   engines: () => Promise<readonly string[]>
-  /** The profiles the person keeps (profiles.json) and the one each engine opens with. */
-  profiles: () => Promise<readonly { id: string; name: string; agent: string }[]>
-  defaultFor: (engine: string) => { id: string; name: string; agent: string } | undefined
+  /**
+   * The profiles the person keeps (profiles.json) and the one each engine opens with. `args` decide whether one is "sem
+   * restrições" (src/core/unsafe.ts isUnsafe, the app's badge); they never leave tetherd.
+   */
+  profiles: () => Promise<readonly CreatorProfile[]>
+  defaultFor: (engine: string) => CreatorProfile | undefined
   /** The app's pinned projects and recent folders, from the home they share. */
   appFolders: () => Promise<{ pinned: readonly string[]; recent: readonly string[] }>
   exists: (path: string) => Promise<boolean>
@@ -379,6 +383,12 @@ export interface CreateDeps {
   /** The ceilings on what is created from afar (RR5 M-2); absent, tetherd's own (AFAR_CAPS). */
   caps?: AfarCaps
 }
+
+/** A profile as the Creator reads it: what the choices show, and the args that say whether it is "sem restrições". */
+export interface CreatorProfile { id: string; name: string; agent: string; args?: readonly string[] }
+
+/** A profile "sem restrições" as the app badges it: its own args skip the agent's permission prompts. */
+const unsafeProfile = (p: CreatorProfile | undefined): boolean => !!p && isUnsafe(p.args ?? [])
 
 /** A slot made from afar (this extension created it: Creator is its only creation) that runs or will run at the next start. */
 const liveFromAfar = (s: SlotState): boolean => s.createdBy?.ext === EXT_ID && (LIVE_STATUS.has(s.status) || s.want === 'run')
@@ -394,17 +404,18 @@ export class Creator {
     return knownFolders({ pinned: app.pinned, agents, recent: app.recent }, this.#d.caseInsensitive)
   }
 
-  async #profiles(): Promise<{ id: string; name: string; engine: string; default?: true }[]> {
+  async #profiles(): Promise<{ id: string; name: string; engine: string; default?: true; unsafe?: true }[]> {
     const engines = new Set([...await this.#d.engines(), 'shell'])
-    const out: { id: string; name: string; engine: string; default?: true }[] = []
+    const out: { id: string; name: string; engine: string; default?: true; unsafe?: true }[] = []
+    const marks = (p: CreatorProfile): { unsafe?: true } => (unsafeProfile(p) ? { unsafe: true as const } : {})
     for (const p of await this.#d.profiles()) {
       if (!engines.has(p.agent) || out.length >= CREATE_PROFILES_MAX) continue
-      out.push({ id: p.id, name: p.name, engine: p.agent, ...(this.#d.defaultFor(p.agent)?.id === p.id ? { default: true as const } : {}) })
+      out.push({ id: p.id, name: p.name, engine: p.agent, ...(this.#d.defaultFor(p.agent)?.id === p.id ? { default: true as const } : {}), ...marks(p) })
     }
     // An engine the file has no profile of opens with the default tetherd merges in (core/profile.ts mergeMissingMotors).
     for (const e of engines) {
       const d = this.#d.defaultFor(e)
-      if (d && !out.some((p) => p.id === d.id) && out.length < CREATE_PROFILES_MAX) out.push({ id: d.id, name: d.name, engine: e, default: true })
+      if (d && !out.some((p) => p.id === d.id) && out.length < CREATE_PROFILES_MAX) out.push({ id: d.id, name: d.name, engine: e, default: true, ...marks(d) })
     }
     return out
   }
@@ -441,10 +452,20 @@ export class Creator {
     this.desk(a.deskId)
     const cwd = await this.folderPath(a.folder)
     let profileId: string | undefined
+    let unsafe = false
     if (a.profile !== undefined) {
-      profileId = (await this.#profiles()).find((p) => p.engine === a.engine && p.name === a.profile)?.id
-      if (profileId === undefined) refuseCreate('unknown-profile', 'esse perfil não existe nesse motor')
-    } else profileId = this.#d.defaultFor(a.engine)?.id
+      const p = (await this.#profiles()).find((x) => x.engine === a.engine && x.name === a.profile)
+      if (p === undefined) refuseCreate('unknown-profile', 'esse perfil não existe nesse motor')
+      profileId = p!.id
+      unsafe = p!.unsafe === true
+    } else {
+      // No profile named: the engine's default, as the app opens it (and badges it: "Claude modo dev" made the default is unsafe).
+      const d = this.#d.defaultFor(a.engine)
+      profileId = d?.id
+      unsafe = unsafeProfile(d)
+    }
+    // RR5 M-3: an agent "sem restrições" acts without asking anyone; from afar only by its own op, with a proof of the act.
+    if (unsafe && a.unrestricted !== true) refuseCreate('unsafe-profile', 'esse perfil é sem restrições: pede a prova do ato')
     if (!(await this.#d.exists(cwd))) refuseCreate('cwd-missing', 'a pasta não existe mais')
     // The ceilings (RR5 M-2), last, with nothing awaited between the count and the create's start.
     const device = afarDevice((args as { device?: unknown }).device)
@@ -473,13 +494,13 @@ async function appFoldersOf(io: TetherDaemon['io'], home: string): Promise<{ pin
 }
 
 /** The profiles of profiles.json (names, engines, ids): only what the choices show. */
-async function profilesOf(io: TetherDaemon['io'], home: string): Promise<{ id: string; name: string; agent: string }[]> {
+async function profilesOf(io: TetherDaemon['io'], home: string): Promise<CreatorProfile[]> {
   // Loaded when asked: core/profile.ts loads the agents, which load the extensions, this one among them (a cycle at import).
   const { parseProfilesFile, profilesPath } = await import('../../src/core/profile.ts')
   const text = await io.tryReadText(profilesPath(home)).catch(() => undefined)
   if (text === undefined) return []
   const parsed = parseProfilesFile(text)
-  return parsed.ok ? parsed.profiles.map((p) => ({ id: p.id, name: p.name, agent: p.agent })) : []
+  return parsed.ok ? parsed.profiles.map((p) => ({ id: p.id, name: p.name, agent: p.agent, args: [...p.args] })) : []
 }
 
 /**

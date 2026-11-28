@@ -167,8 +167,8 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     ])
     // RR5 5.1: the rest are the gestures the app does, all of them the one pair `regency/act`, and (RR5 5.3) the agent and the
     // terminal tetherd creates alone, the pair `regency/create`.
-    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), [...Object.keys(APP_ACT_FIELDS), 'create.agent', 'create.terminal'].sort())
-    assert.deepEqual([EXT_WRITES['create.agent'], EXT_WRITES['create.terminal']], [{ ext: 'regency', name: 'create' }, { ext: 'regency', name: 'create' }])
+    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), [...Object.keys(APP_ACT_FIELDS), 'create.agent', 'create.agent-unrestricted', 'create.terminal'].sort())
+    assert.deepEqual([EXT_WRITES['create.agent'], EXT_WRITES['create.agent-unrestricted'], EXT_WRITES['create.terminal']], [{ ext: 'regency', name: 'create' }, { ext: 'regency', name: 'create' }, { ext: 'regency', name: 'create' }])
   })
 
   test('each act of the app changes state, is a gesture, needs an actId, a scope of management, a strict body; what destroys a proof per act', () => {

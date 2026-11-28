@@ -132,7 +132,7 @@ export const EXT_WRITES = {
   'owners.give': REGENCY_ACT, 'owners.revoke': REGENCY_ACT, 'owners.take': REGENCY_ACT, 'owners.return': REGENCY_ACT,
   // "+ Novo" from afar (RR5 5.3): an agent or a terminal tetherd creates alone (src/remote/create.ts CREATE_REQUEST, the act
   // taken field by field by parseCreateSlot); a note or a tab the app makes, through the bridge of acts.
-  'create.agent': REGENCY_CREATE, 'create.terminal': REGENCY_CREATE,
+  'create.agent': REGENCY_CREATE, 'create.agent-unrestricted': REGENCY_CREATE, 'create.terminal': REGENCY_CREATE,
   'create.note': REGENCY_ACT, 'create.browser': REGENCY_ACT,
 } as const satisfies { readonly [K in ExtWriteOp]: ExtPair }
 

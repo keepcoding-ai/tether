@@ -34,7 +34,17 @@ export function itemsOf(o: CreateOptions): CreateItem[] {
   return o.profiles.map(p => ({
     id: profileIdOf(p.engine, p.name), kind: 'profile' as const, group: p.engine, name: p.name, engine: p.engine,
     icon: p.engine === 'shell' ? 'terminal-window' : 'robot', needsFolder: true, ...(p.default ? { default: true } : {}),
+    ...(p.unsafe ? { unsafe: true } : {}),
   }))
+}
+
+/**
+ * Whether the agent of this engine and profile is born "sem restrições" (RR5 M-3): the profile of that name, or with none
+ * the engine's default, as the app opens and badges it.
+ */
+export function unsafeChoice(o: CreateOptions, engine: string, profile: string | undefined): boolean {
+  const p = o.profiles.find(x => x.engine === engine && (profile === undefined ? x.default === true : x.name === profile))
+  return p?.unsafe === true
 }
 
 /** The folders the tether knows, projects first, as the card's list (the value is the tether's id; never a path). */
@@ -55,7 +65,10 @@ const tooLong = (what: string): { error: string } => ({ error: `${what} passa de
  * `join` is one call per agent (the caller runs them in order). What only the machine's screen does (`show`, `give`,
  * `move`) has no op: the caller does `show` itself, and the card from afar never plans the others.
  */
-export function callsOf(act: CreateAct): AfarCall[] {
+export function callsOf(act: CreateAct): AfarCall[] { return callsWith(act, undefined) }
+
+/** callsOf with the choices of `create.options`: an agent "sem restrições" (unsafeChoice) is `create.agent-unrestricted`, proven per act. */
+export function callsWith(act: CreateAct, options: CreateOptions | undefined): AfarCall[] {
   switch (act.act) {
     case 'desk': {
       if (act.name.length > CREATE_NAME_MAX) return [tooLong('O nome da mesa')]
@@ -67,7 +80,9 @@ export function callsOf(act: CreateAct): AfarCall[] {
       if ((act.name ?? '').length > CREATE_NAME_MAX) return [tooLong('O nome')]
       const profile = profileOfId(act.profileId)
       const named = { deskId: act.deskId, folder: act.cwd, ...(profile ? { profile: profile.name } : {}), ...(act.name ? { name: act.name } : {}) }
-      return act.kind === 'shell' ? [{ op: 'create.terminal', body: named }] : [{ op: 'create.agent', body: { engine: act.kind, ...named } }]
+      if (act.kind === 'shell') return [{ op: 'create.terminal', body: named }]
+      const unrestricted = options !== undefined && unsafeChoice(options, act.kind, profile?.name)
+      return [{ op: unrestricted ? 'create.agent-unrestricted' : 'create.agent', body: { engine: act.kind, ...named } }]
     }
     case 'item':
       if (!FOLDER_ID_RE.test(act.cwd)) return [{ error: 'Escolha a pasta na lista do tether' }]

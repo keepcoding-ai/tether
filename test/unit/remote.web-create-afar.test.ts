@@ -3,9 +3,9 @@
 // ceilings checked before anything goes and never a path.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { advance, NEW_DESK, patchDraft, planOf, startCreate, stepsOf, type CreateState } from '../../extensions/regency/create-rules.ts'
-import { callsOf, createsAny, defaultFolderOf, foldersOf, itemsOf, profileIdOf, profileOfId, tilesOf } from '../../remote/web/src/create-afar-rules.ts'
-import { capsOf, NO_CAPS } from '../../remote/web/src/manage-rules.ts'
+import { advance, NEW_DESK, patchDraft, planOf, startCreate, stepsOf, type CreateAct, type CreateState } from '../../extensions/regency/create-rules.ts'
+import { callsOf, callsWith, createsAny, defaultFolderOf, foldersOf, itemsOf, profileIdOf, profileOfId, tilesOf, unsafeChoice } from '../../remote/web/src/create-afar-rules.ts'
+import { capsOf, NO_CAPS, refusalWords, unrestrictedAgentQuestion } from '../../remote/web/src/manage-rules.ts'
 import type { CreateOptions } from '../../src/remote/create.ts'
 
 const F1 = '0123456789abcdef'
@@ -105,5 +105,31 @@ describe('the plan as the portal\'s ops', () => {
     assert.deepEqual(planOf(path, ctx).flatMap(callsOf), [{ error: 'Escolha a pasta na lista do tether' }])
     const long = ready(patchDraft(startCreate({ deskId: 'd1' }), { what: 'terminal', kind: 'shell', cwd: F1, name: 'x'.repeat(65) }))
     assert.deepEqual(planOf(long, ctx).flatMap(callsOf), [{ error: 'O nome passa de 64 letras' }])
+  })
+})
+
+describe('RR5 M-3: a profile "sem restrições" from afar', () => {
+  const o: CreateOptions = {
+    ...options,
+    profiles: [{ name: 'Claude', engine: 'claude', default: true }, { name: 'Claude modo dev', engine: 'claude', unsafe: true }, { name: 'pwsh', engine: 'shell', default: true }],
+  }
+  const slot = (profile?: string): CreateAct => ({ act: 'slot', runs: 'tetherd', doing: '', done: '', deskId: 'd1', kind: 'claude', cwd: F1, front: false, ...(profile ? { profileId: profileIdOf('claude', profile) } : {}) } as CreateAct)
+
+  test('the card\'s item carries the mark; the act is its own op, the common one for the others and for the safe default', () => {
+    assert.deepEqual(itemsOf(o).filter(i => i.unsafe).map(i => i.name), ['Claude modo dev'])
+    assert.equal(unsafeChoice(o, 'claude', 'Claude modo dev'), true)
+    assert.equal(unsafeChoice(o, 'claude', undefined), false, 'no profile: the default, safe here')
+    assert.equal(unsafeChoice({ ...o, profiles: [{ name: 'Claude modo dev', engine: 'claude', default: true, unsafe: true }] }, 'claude', undefined), true, 'the default made unsafe')
+    assert.deepEqual(callsWith(slot('Claude modo dev'), o), [{ op: 'create.agent-unrestricted', body: { engine: 'claude', deskId: 'd1', folder: F1, profile: 'Claude modo dev' } }])
+    assert.deepEqual(callsWith(slot('Claude'), o).map(c => 'op' in c && c.op), ['create.agent'])
+    assert.deepEqual(callsWith(slot(), o).map(c => 'op' in c && c.op), ['create.agent'])
+  })
+
+  test('the question before the biometrics says the agent is born without asking permission', () => {
+    const q = unrestrictedAgentQuestion('Claude modo dev')
+    assert.match(q.title, /sem restrições/)
+    assert.match(q.lead ?? '', /nasce sem pedir permissão/)
+    assert.equal(q.choices[0]!.proof, true)
+    assert.match(refusalWords('unsafe-profile'), /biometria/)
   })
 })

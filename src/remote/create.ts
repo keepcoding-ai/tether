@@ -69,10 +69,17 @@ export function knownFolders(src: { pinned: readonly string[]; agents: readonly 
   return out
 }
 
+/**
+ * A profile as the choices name it: its name within its engine, whether it is the engine's default, and (RR5 M-3) whether
+ * it is "sem restrições" (`unsafe`: its launch skips the agent's permission prompts, src/core/unsafe.ts isUnsafe, the
+ * app's own badge). Never its args, env or folder.
+ */
+export interface CreateProfile { name: string; engine: string; default?: true; unsafe?: true }
+
 /** What tetherd answers `create.options` (the portal keeps the paths to itself: the device gets them without). */
 export interface CreateOptionsAnswer {
   engines: string[]
-  profiles: { name: string; engine: string; default?: true }[]
+  profiles: CreateProfile[]
   desks: { deskId: string; name: string; asleep?: true }[]
   folders: KnownFolder[]
 }
@@ -80,7 +87,7 @@ export interface CreateOptionsAnswer {
 /** The device's view of the choices: the same lists, the folders by id and label only. */
 export interface CreateOptions {
   engines: string[]
-  profiles: { name: string; engine: string; default?: true }[]
+  profiles: CreateProfile[]
   desks: { deskId: string; name: string; asleep?: true }[]
   folders: { id: string; label: string; kind: 'project' | 'recent' }[]
 }
@@ -101,7 +108,9 @@ export function createOptionsView(v: unknown): CreateOptions {
     profiles: list(a.profiles, CREATE_PROFILES_MAX).flatMap((p0) => {
       const p = rec(p0)
       const name = nameOf(p.name)
-      return name && typeof p.engine === 'string' && ENGINE_RE.test(p.engine) ? [{ name, engine: p.engine, ...(p.default === true ? { default: true as const } : {}) }] : []
+      return name && typeof p.engine === 'string' && ENGINE_RE.test(p.engine)
+        ? [{ name, engine: p.engine, ...(p.default === true ? { default: true as const } : {}), ...(p.unsafe === true ? { unsafe: true as const } : {}) }]
+        : []
     }),
     desks: list(a.desks, CREATE_DESKS_MAX).flatMap((d0) => {
       const d = rec(d0)
@@ -124,13 +133,18 @@ export function folderPathOf(answer: unknown, id: string): string | undefined {
 
 // ---- the creation tetherd does alone: an agent or a terminal ------------------------------------------------------
 
-/** The ops of the creation tetherd does alone. */
-export type CreateSlotOp = 'create.agent' | 'create.terminal'
-export const isCreateSlotOp = (name: string): name is CreateSlotOp => name === 'create.agent' || name === 'create.terminal'
+/**
+ * The ops of the creation tetherd does alone. `create.agent-unrestricted` (RR5 M-3) is the agent with a profile "sem
+ * restrições": its own op, with a proof per act, and tetherd refuses such a profile by any other (`unsafe-profile`).
+ */
+export type CreateSlotOp = 'create.agent' | 'create.agent-unrestricted' | 'create.terminal'
+export const isCreateSlotOp = (name: string): name is CreateSlotOp => name === 'create.agent' || name === 'create.agent-unrestricted' || name === 'create.terminal'
 
 /** The act as it crosses the pipe (`regency/create`): what to create, from what, where. Nothing else. */
 export interface CreateSlotAct {
   what: 'agent' | 'terminal'
+  /** Built only by `create.agent-unrestricted`: the agent may be born with a profile "sem restrições". */
+  unrestricted?: true
   /** The engine of an agent; a terminal's is `shell`. */
   engine: string
   /** A profile by its name, within the engine; absent: the engine's default. */
@@ -145,7 +159,7 @@ export type CreateRefusal = 'bad-request' | 'too-long'
 
 /** The portal's half: the act from the strict body (its keys already checked by the table), or why it is refused (0x01). */
 export function createSlotArgs(op: CreateSlotOp, b: Record<string, unknown>): { args: CreateSlotAct; target: string } | CreateRefusal {
-  const what = op === 'create.agent' ? 'agent' : 'terminal'
+  const what = op === 'create.terminal' ? 'terminal' : 'agent'
   const engine = what === 'agent' ? b.engine : 'shell'
   if (typeof engine !== 'string' || !ENGINE_RE.test(engine) || (what === 'agent' && engine === 'shell')) return 'bad-request'
   if (typeof b.deskId !== 'string' || !ID_RE.test(b.deskId)) return 'bad-request'
@@ -161,7 +175,7 @@ export function createSlotArgs(op: CreateSlotOp, b: Record<string, unknown>): { 
   const name = text(b.name)
   for (const t of [profile, name]) if (t === 'bad-request' || t === 'too-long') return t
   const args: CreateSlotAct = {
-    what, engine, deskId: b.deskId, folder: b.folder,
+    what, ...(op === 'create.agent-unrestricted' ? { unrestricted: true as const } : {}), engine, deskId: b.deskId, folder: b.folder,
     ...(profile !== undefined ? { profile: profile as string } : {}), ...(name !== undefined ? { name: name as string } : {}),
   }
   return { args, target: b.deskId }
@@ -180,10 +194,11 @@ export const CREATE_DEVICE_RE = /^[0-9a-f]{32}$/
 export function parseCreateSlot(v: unknown): CreateSlotAct | undefined {
   const o = rec(v)
   const keys = Object.keys(o)
-  if (keys.some((k) => !['what', 'engine', 'profile', 'deskId', 'folder', 'name', 'device'].includes(k))) return undefined
+  if (keys.some((k) => !['what', 'unrestricted', 'engine', 'profile', 'deskId', 'folder', 'name', 'device'].includes(k))) return undefined
   if (o.device !== undefined && !(typeof o.device === 'string' && CREATE_DEVICE_RE.test(o.device))) return undefined
   if (o.what !== 'agent' && o.what !== 'terminal') return undefined
-  const built = createSlotArgs(o.what === 'agent' ? 'create.agent' : 'create.terminal', o)
+  if (o.unrestricted !== undefined && !(o.unrestricted === true && o.what === 'agent')) return undefined
+  const built = createSlotArgs(o.what === 'terminal' ? 'create.terminal' : o.unrestricted === true ? 'create.agent-unrestricted' : 'create.agent', o)
   if (typeof built === 'string') return undefined
   // A field not in its kept form (a name not folded, a terminal with another engine) is not the portal's.
   if (o.what === 'terminal' && o.engine !== 'shell') return undefined
@@ -212,6 +227,8 @@ export const CREATE_REFUSALS = {
   'spawn-failed': RES_STATUS.failed,
   // RR5 M-2: the device, or the house, already created as many as it may from afar (src/daemon/afar-caps.ts).
   'too-many': RES_STATUS.limit,
+  // RR5 M-3: a profile "sem restrições" by the common op; only `create.agent-unrestricted`, with its proof, makes one.
+  'unsafe-profile': RES_STATUS.failed,
 } as const satisfies Record<string, ResStatus>
 export const CREATE_ERROR_CODES = Object.keys(CREATE_REFUSALS) as (keyof typeof CREATE_REFUSALS)[]
 export type CreateCode = keyof typeof CREATE_REFUSALS

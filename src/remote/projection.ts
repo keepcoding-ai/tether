@@ -1176,6 +1176,7 @@ export const RESULTS = {
   'owners.return': appActed,
   'create.options': createOptions,
   'create.agent': slotCreated,
+  'create.agent-unrestricted': slotCreated,
   'create.terminal': slotCreated,
   'create.note': appActed,
   'create.browser': appActed,

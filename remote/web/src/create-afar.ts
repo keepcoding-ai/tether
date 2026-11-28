@@ -11,11 +11,11 @@ import { CreateCard, type CreateRunEnd, type CreateViewHost } from '../../../ext
 import type { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { createOptionsView, type CreateOptions } from '../../../src/remote/create.ts'
 import { walkBoxByArrows } from './box-keys.ts'
-import { callsOf, defaultFolderOf, foldersOf, itemsOf, tilesOf } from './create-afar-rules.ts'
+import { callsWith, defaultFolderOf, foldersOf, itemsOf, tilesOf } from './create-afar-rules.ts'
 import type { RemoteHouse } from './host.ts'
 import type { Manager } from './manage.ts'
-import { refusalWords } from './manage-rules.ts'
-import { pickList, pickMany } from './sheet.ts'
+import { refusalWords, unrestrictedAgentQuestion } from './manage-rules.ts'
+import { ask, pickList, pickMany } from './sheet.ts'
 
 export interface CreateAfarDeps {
   house: RemoteHouse
@@ -29,7 +29,7 @@ export interface CreateAfarDeps {
 /** How long a new channel is awaited in the house's list before the centre is left as it was. */
 const CHANNEL_WAIT_MS = 10_000
 /** The codes that end a plan where nothing was made with their own sentence (said whole, not as "Não consegui …"). */
-const WHOLE = new Set(['no-app', 'desk-asleep', 'locked', 'cancelled', 'no-scope', 'no-credential', 'too-many'])
+const WHOLE = new Set(['no-app', 'desk-asleep', 'locked', 'cancelled', 'no-scope', 'no-credential', 'too-many', 'unsafe-profile'])
 
 export class CreateAfar {
   private readonly d: CreateAfarDeps
@@ -103,9 +103,15 @@ export class CreateAfar {
       if (act.act === 'show') { this.showChannel(act.channel); return { ok: true } }
       const refused: string[] = []
       let result: ActResult = { ok: true }
-      for (const call of callsOf(act)) {
+      for (const call of callsWith(act, this.options)) {
         if ('error' in call) return { ok: false, error: call.error }
-        const r = await this.d.manager.act(call.op, call.body)
+        // RR5 M-3: an agent "sem restrições" is said as such and proven by the biometrics of this very act.
+        const unrestricted = call.op === 'create.agent-unrestricted'
+        if (unrestricted && !(await ask(this.d.tier(), unrestrictedAgentQuestion(String(call.body.profile ?? call.body.engine))))) {
+          lastCode = 'cancelled'
+          return { ok: false, error: refusalWords('cancelled') }
+        }
+        const r = await this.d.manager.act(call.op, call.body, unrestricted ? { proof: 'act' } : {})
         if (!r.ok) {
           // One agent a channel refused does not stop the others (the app joins each in order and tells who did not come).
           if (act.act === 'join') { refused.push(this.agentName(String(call.body.agent))); continue }

@@ -306,6 +306,20 @@ export function forgetClosedQuestion(name: string): Question {
   }
 }
 
+/**
+ * RR5 M-3: an agent born "sem restrições" from afar (its profile skips the permission prompts). Said before the biometrics,
+ * with the app's own badge words: it acts without asking anyone.
+ */
+export const UNRESTRICTED_LEAD = 'Sem restrições: este agente nasce sem pedir permissão para agir. Ele roda comandos e mexe em arquivos sem perguntar a ninguém.'
+export function unrestrictedAgentQuestion(profile: string): Question {
+  return {
+    title: `Criar ${profile} sem restrições?`,
+    lead: UNRESTRICTED_LEAD,
+    choices: [{ id: 'create', label: 'Criar sem restrições', consequence: 'O agente nasce sem pedir permissão para nada.', tone: 'destructive', proof: true }],
+    cancel: 'Cancelar',
+  }
+}
+
 /** Hibernating panes whose agents are mid-turn (situations.ts hibernateSituation); asked only then. */
 export function hibernateQuestion(where: string, busy: readonly string[]): Question {
   return {
@@ -357,6 +371,7 @@ export function refusalWords(code: string): string {
     case 'timeout': return 'A máquina não respondeu a tempo. Pode ter feito: a tela mostra quando ela contar.'
     case 'busy': return 'Outro pedido espera a máquina agora. Tente de novo em instantes.'
     case 'slow-down': return 'Pedidos demais em seguida. Espere um pouco.'
+    case 'unsafe-profile': return 'Esse perfil é sem restrições: criar com ele pede a biometria deste aparelho. Nada foi feito.'
     case 'too-many': return 'Já foi criado muito de longe por agora. Espere um pouco ou crie na máquina.'
     case 'unknown-desk': return 'Essa mesa não existe mais.'
     case 'stale': return 'A mesa mudou; confira e tente de novo.'

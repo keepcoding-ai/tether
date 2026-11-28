@@ -98,6 +98,7 @@ describe('remote operations registry', () => {
       [0x0462, 'create.terminal', 'manage:desks', 'unlocked', true, true],
       [0x0463, 'create.note', 'manage:desks', 'unlocked', true, true],
       [0x0464, 'create.browser', 'manage:desks', 'unlocked', true, true],
+      [0x0465, 'create.agent-unrestricted', 'manage:agents', 'per-act', true, true],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
     ])
@@ -119,8 +120,8 @@ describe('remote operations registry', () => {
       else if (l.name === 'channels.close') assert.deepEqual([l.scope, l.presence], ['manage:destructive', 'per-act'])
       else assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
       // What destroys is manage:destructive with a proof per act (RR5 5.2); the one other act with a proof is running a new
-      // command on the machine ("Novo processo", RR5 5.5), of manage:procs.
-      if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive' || l.name === 'procs.new', l.name)
+      // command on the machine ("Novo processo", RR5 5.5), of manage:procs, and an agent born "sem restrições" (RR5 M-3).
+      if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive' || l.name === 'procs.new' || l.name === 'create.agent-unrestricted', l.name)
       if (l.name === 'procs.new') assert.deepEqual([l.scope, l.presence], ['manage:procs', 'per-act'])
       assert.ok(l.scope.length > 0, 'a line always declares its scope')
     }
@@ -135,7 +136,7 @@ describe('remote operations registry', () => {
       'desks.hibernate', 'desks.wake', 'desks.create', 'desks.rename', 'desks.color', 'desks.close',
       'panes.hibernate', 'panes.wake', 'panes.suspend', 'panes.move', 'panes.close', 'closed.reopen', 'closed.forget',
       'owners.give', 'owners.revoke', 'owners.take', 'owners.return',
-      'create.agent', 'create.terminal', 'create.note', 'create.browser',
+      'create.agent', 'create.terminal', 'create.note', 'create.browser', 'create.agent-unrestricted',
       'device.revoke',
     ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])

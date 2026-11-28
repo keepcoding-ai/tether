@@ -372,6 +372,8 @@ dialog.rg-cr[data-tier="mobile"] { width: 100vw; max-width: 100vw; max-height: 8
 .rg-cr-val:hover { background: var(--bg-hover); }
 .rg-cr-vt { font-weight: 600; white-space: nowrap; }
 .rg-cr-vd { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--fg-dim); }
+/* A profile "sem restrições" (RR5 M-3): the app's warning colour and shield. */
+.rg-cr-unsafe { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11px; font-weight: 600; color: var(--x-warning, var(--warn)); }
 .rg-cr-val > .rg-ic:last-child { margin-left: auto; }
 .rg-cr[data-tier="mobile"] .rg-cr-val { min-height: 46px; }
 .rg-cr-who { display: flex; align-items: center; gap: 7px; min-width: 0; }
