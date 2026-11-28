@@ -16,6 +16,8 @@ import type { OpName } from './scopes.ts'
 /** The extension request tetherd answers (ext `regency`), the event it emits to the app and the app's answer. */
 export const APP_ACT_REQUEST = 'act'
 export const APP_ACT_EVENT = 'act'
+/** The app claims an act before doing it (only a claim tetherd accepts lets it act), then answers it. */
+export const ACT_TAKE = 'act.take'
 export const APP_ACT_DONE = 'act.done'
 
 /** How long the device waits (the portal's deadline): past it `timeout`, and the real outcome is a `late:` line of the audit. */
@@ -210,7 +212,7 @@ export const APP_ACT_ERROR_CODES = [
   'not-given', 'cannot', 'owners-off', 'no-answer',
 ] as const
 
-/** The event tetherd emits to the app: one ask, its act, and when it stops counting (an act that comes too late is not done). */
+/** The event tetherd emits to the app: one ask, its act, and until when it may be claimed (epoch ms; past it, not done). */
 export interface AppActEvent { ask: string; act: AppAct; until: number }
 /** The app's answer: done (`state`, a new desk's id) or refused by a code. */
 export type AppActDoneArgs = { ask: string; ok: true; state?: 'done' | 'already'; deskId?: string } | { ask: string; ok: false; code: string }
