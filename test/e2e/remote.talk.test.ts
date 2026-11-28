@@ -7,8 +7,11 @@
 // records every channel notification it gets, as the channels' E2E observe a delivery. Played in order: pair and register;
 // the device speaks and the agent hears the person (role `moderator`); it reacts; it votes on a poll the agent opened; it
 // opens a poll and the agent is asked; it marks seen and the marks change; the thin notice reaches it after each write; a
-// resend with the same actId after reconnecting does not speak twice; a locked session is refused; and a device without the
-// `channels` scope (the registry edited, the bench restarted) is refused before anything is written.
+// resend with the same actId after reconnecting does not speak twice; Web Push (RR4 4.4), through a FAKE push service of
+// the bench on localhost (it checks VAPID and opens the body with the "device's" keys; no test reaches a real one): the
+// device subscribes, an agent that begins to wait and a speech addressed to the person each make a notice with the name and
+// no text, a page on the screen gets none, and 410 drops the subscription; a locked session is refused; and a device
+// without the `channels` scope (the registry edited, the bench restarted) is refused before anything is written.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -19,8 +22,10 @@ import { DaemonClient } from '../../src/daemon/client.ts'
 import { DoorHost } from '../../src/daemon/door/host.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { decodeOuter, OP_CODES, RES_STATUS, toHex, WS_SUBPROTOCOL, type Bytes } from '../../src/remote/index.ts'
+import { createServer as createHttpServer, type Server } from 'node:http'
+import { b64url, decodeOuter, OP_CODES, RES_STATUS, toHex, WS_SUBPROTOCOL, type Bytes } from '../../src/remote/index.ts'
 import { EVT } from '../../src/remote/scopes.ts'
+import { verifyVapid, webPushDecrypt, type PushNotice } from '../../src/remote/webpush.ts'
 import { removeHome, uniquePipe } from '../unit/daemon.helpers.ts'
 import { actId, ORIGIN, present, registerAndUnlock, type SoftAuthenticator } from '../unit/remoted.authenticator.ts'
 import { benchHome, TestDevice, until, type DeviceSession, type FakeRelay } from '../unit/remoted.helpers.ts'
@@ -30,6 +35,7 @@ const OP = {
   say: OP_CODES['channels.say'], react: OP_CODES['channels.react'], vote: OP_CODES['channels.vote'], poll: OP_CODES['channels.poll'],
   seen: OP_CODES['channels.seen'], marks: OP_CODES['channels.marks'], page: OP_CODES['channels.page'], lock: OP_CODES['session.lock'],
   file: OP_CODES['channels.file'], upload: OP_CODES['channels.upload'],
+  visible: OP_CODES['session.visible'], pushKey: OP_CODES['attention.push-key'], pushOn: OP_CODES['attention.push-on'], pushOff: OP_CODES['attention.push-off'],
 }
 
 const ext = async (c: DaemonClient, name: string, args?: Record<string, unknown>, extName = 'remote'): Promise<Record<string, any>> =>
@@ -131,6 +137,58 @@ async function freePort(): Promise<number> {
   return port
 }
 
+// ---- a fake push service (RR4 4.4): the bench's, on localhost; nothing here talks to a real one ----------------------
+
+interface PushGot { path: string; vapid: Awaited<ReturnType<typeof verifyVapid>>; encoding: string | undefined; ttl: string | undefined; notice?: PushNotice; text: string; headers: string[] }
+
+/**
+ * Takes each POST as a push service would: checks the VAPID header for its own origin, then opens the body with the
+ * "device's" subscription keys (the browser's half, held here). `status` is what it answers next (201, or 410 when the
+ * subscription is gone).
+ */
+class FakePushService {
+  readonly got: PushGot[] = []
+  status = 201
+  origin = ''
+  #server: Server | undefined
+  #device: { priv: CryptoKey; pub: Uint8Array; auth: Uint8Array } | undefined
+
+  async start(): Promise<void> {
+    this.#server = createHttpServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      req.on('end', () => {
+        const body = new Uint8Array(Buffer.concat(chunks))
+        void (async () => {
+          const vapid = await verifyVapid(String(req.headers.authorization ?? ''), this.origin, Math.floor(Date.now() / 1000))
+          const d = this.#device!
+          let text = ''
+          let notice: PushNotice | undefined
+          try {
+            text = new TextDecoder().decode(await webPushDecrypt({ uaPrivate: d.priv, uaPublic: d.pub, auth: d.auth, body }))
+            notice = JSON.parse(text) as PushNotice
+          } catch { /* did not open */ }
+          this.got.push({ path: req.url ?? '', vapid, encoding: req.headers['content-encoding'], ttl: req.headers.ttl as string | undefined, notice, text, headers: Object.keys(req.headers).sort() })
+          res.writeHead(this.status).end()
+        })()
+      })
+    })
+    await new Promise<void>((r) => this.#server!.listen(0, 'localhost', r))
+    this.origin = `http://localhost:${(this.#server.address() as { port: number }).port}`
+  }
+
+  /** The browser's subscription: a P-256 key pair and a 16-octet secret, as PushManager.subscribe makes them. */
+  async subscription(path: string): Promise<{ endpoint: string; p256dh: string; auth: string }> {
+    const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits'])
+    const pub = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
+    const auth = crypto.getRandomValues(new Uint8Array(16))
+    this.#device = { priv: pair.privateKey, pub, auth }
+    return { endpoint: `${this.origin}${path}`, p256dh: b64url(pub), auth: b64url(auth) }
+  }
+
+  close(): Promise<void> { return new Promise((r) => (this.#server ? this.#server.close(() => r()) : r())) }
+}
+
 // ---- the test ---------------------------------------------------------------------------------------------------
 
 /** The fake agent (no LLM): found as `claude` on the PATH of the bench, through a shim. */
@@ -156,6 +214,7 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
   let channelId = ''
   let memberId = ''
   let said = 0
+  const pushService = new FakePushService()
 
   /**
    * This process IS the bench's tetherd (its panes run here too): nothing of the person's tether may reach it or its panes,
@@ -167,6 +226,8 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     Object.assign(process.env, {
       TETHER_TEST_REMOTE: '1', TETHER_TEST_REMOTE_NOTICE: join(home, 'notices.txt'), TETHER_TEST_REMOTE_TICK_MS: '200',
       TETHER_TEST_REMOTE_CHANNELS_GAP_MS: '200', TETHER_TEST_REMOTE_REGENCY_GAP_MS: '300',
+      // Web Push (RR4 4.4): the portal dials only this fake service on the bench, and the gap of one tag is short.
+      TETHER_TEST_REMOTE_PUSH_ORIGIN: pushService.origin, TETHER_TEST_REMOTE_PUSH_GAP_MS: '300',
     })
     mkdirSync(shim, { recursive: true })
     if (process.platform === 'win32') writeFileSync(join(shim, 'claude.cmd'), `@echo off\r\n"${process.execPath}" "${AGENT}" %*\r\n`)
@@ -247,6 +308,7 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     // No --origins: the device here is no browser; the Origin check is the relay's own test.
     const r = await spawnNode(['remote/relay/src/main.ts', 'serve', '--port', String(port), '--aud', aud], 'relay.listening', relayLines)
     relay = r.proc
+    await pushService.start()
     benchEnv()
     await up()
     const made = await ext(app, 'create', { name: 'obra' }, 'channels')
@@ -268,6 +330,7 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     s?.leg.close()
     await down()
     killTree(relay)
+    await pushService.close()
     await removeHome(home)
   })
 
@@ -403,6 +466,73 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     assert.equal((await call(OP.upload, { channel: '..', act: toHex(actId()), file: 0, name: 'a.png', size: 3, offset: 0, data: 'AAAA' })).status, RES_STATUS.badRequest)
     assert.equal(existsSync(join(home, 'files')), false, 'nothing above the channels')
     assert.equal((await history()).last, before, 'no refusal wrote a line')
+  })
+
+  test('push (RR4 4.4): the device subscribes; an agent that waits and a speech to the person each make a notice, with the name and no text; 410 drops it', async () => {
+    const MARKER = `canary${toHex(actId())}`
+    const key = await s.request(OP.pushKey)
+    assert.equal(key.status, RES_STATUS.ok)
+    assert.equal(key.body.on, false)
+    assert.match(String(key.body.key), /^[A-Za-z0-9_-]{87}$/)
+    const sub = await pushService.subscription('/push/telefone')
+    // Outside the list of push services: refused, nothing kept.
+    assert.deepEqual(await call(OP.pushOn, { ...sub, endpoint: 'https://10.0.0.1/push' }), { status: RES_STATUS.badRequest, body: { error: 'push-service' } })
+    assert.deepEqual(await ok(OP.pushOn, sub), { on: true })
+    const reg = JSON.parse(readFileSync(join(home, 'remote', 'devices.json'), 'utf8')) as { devices: { deviceId: string; push?: { endpoint: string } }[] }
+    assert.equal(reg.devices.find((d) => d.deviceId === toHex(device.result!.deviceId))?.push?.endpoint, sub.endpoint, 'kept by the registry')
+    assert.equal((await s.request(OP.pushKey)).body.on, true)
+
+    // The app is "closed": the page says it is not on the screen.
+    assert.equal((await s.request(OP.visible, { visible: false })).status, RES_STATUS.ok)
+    // The agent begins to wait for the person (its Notification hook, as Claude Code writes it).
+    writeFileSync(join(home, 'slots', `${memberId}.attention`), JSON.stringify({ ts: new Date().toISOString(), kind: 'waiting', reason: 'permission_prompt' }) + '\n')
+    const first = await until(() => pushService.got.find((g) => g.notice?.kind === 'waiting'), 15_000, 'the notice of who waits')
+    assert.equal(first.vapid.ok, true, `VAPID: ${JSON.stringify(first.vapid)}`)
+    assert.equal(first.vapid.ok && b64url(first.vapid.pub), key.body.key, 'signed with K_V, the key the device subscribed with')
+    assert.equal(first.encoding, 'aes128gcm')
+    assert.equal(first.path, '/push/telefone')
+    assert.deepEqual(first.notice, { kind: 'waiting', title: 'conferente', body: 'espera você', tag: `a:${memberId}`, url: '?tab=waiting' })
+    assert.deepEqual(first.headers.filter((h) => !['host', 'connection', 'content-length', 'accept', 'accept-encoding', 'accept-language', 'sec-fetch-mode', 'user-agent'].includes(h)), ['authorization', 'content-encoding', 'content-type', 'ttl', 'urgency'], 'no header that names the house')
+
+    // A speech of the agent addressed to the person.
+    await agent('say', { canal: channelId, text: `Preciso de você: ${MARKER}`, to: ['usuário'] })
+    const talk = await until(() => pushService.got.find((g) => g.notice?.kind === 'talk'), 15_000, 'the notice of the speech')
+    assert.deepEqual(talk.notice, { kind: 'talk', title: 'conferente', body: 'falou com você em #obra', tag: `c:${channelId}`, url: `?c=${channelId}` })
+    // A speech to everyone makes none.
+    const n = pushService.got.length
+    await agent('say', { canal: channelId, text: 'Para todos.' })
+    // On the screen: no notice, even for a speech to her.
+    assert.equal((await s.request(OP.visible, { visible: true })).status, RES_STATUS.ok)
+    await new Promise((r) => setTimeout(r, 400))
+    await agent('say', { canal: channelId, text: 'De novo para você.', to: ['usuário'] })
+    await new Promise((r) => setTimeout(r, 1_500))
+    assert.equal(pushService.got.length, n, 'nothing for a speech to all, nothing while the page is on the screen')
+
+    // The push service says the subscription is gone: the portal drops it, and so does the registry.
+    pushService.status = 410
+    assert.equal((await s.request(OP.visible, { visible: false })).status, RES_STATUS.ok)
+    await agent('say', { canal: channelId, text: 'Ainda aí?', to: ['usuário'] })
+    await until(() => pushService.got.length > n || undefined, 15_000, 'one more POST')
+    await eventually(async () => (await s.request(OP.pushKey)).body.on === false, 10_000, 'the house forgot the subscription')
+    await eventually(async () => {
+      const r = JSON.parse(readFileSync(join(home, 'remote', 'devices.json'), 'utf8')) as { devices: { deviceId: string; push?: unknown }[] }
+      return r.devices.find((d) => d.deviceId === toHex(device.result!.deviceId))?.push === undefined
+    }, 10_000, 'the registry forgot it')
+
+    // Never the text of a line, never the endpoint, in what the service got, the audit or the portal's log.
+    assert.equal(pushService.got.some((g) => g.text.includes(MARKER) || g.text.includes('Preciso')), false)
+    const audit = readFileSync(join(home, 'remote', 'audit.jsonl'), 'utf8')
+    assert.match(audit, /"act":"attention\.push-on"/)
+    assert.match(audit, /"act":"push\.send"[^\n]*"result":"ok"/)
+    assert.match(audit, /"act":"push\.send"[^\n]*"result":"gone"/)
+    const portalLog = existsSync(join(home, 'tether-remoted.log')) ? readFileSync(join(home, 'tether-remoted.log'), 'utf8') : ''
+    for (const [what, text] of [['audit', audit], ['log', portalLog]] as const) {
+      assert.equal(text.includes(MARKER), false, `${what}: no text of a line`)
+      assert.equal(text.includes('/push/telefone'), false, `${what}: no endpoint`)
+      assert.equal(text.includes(sub.p256dh) || text.includes(sub.auth), false, `${what}: no key of the subscription`)
+    }
+    // The agent waits no more (the test after this one locks the session).
+    writeFileSync(join(home, 'slots', `${memberId}.attention`), JSON.stringify({ ts: new Date().toISOString(), kind: 'done' }) + '\n')
   })
 
   test('a locked session is refused, and nothing is written', async () => {

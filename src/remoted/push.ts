@@ -49,6 +49,8 @@ export interface PushDeps {
   benchOrigin?: string
   /** True on the bench: then only `benchOrigin` is dialled, so no test ever reaches a real push service. */
   benchOnly?: boolean
+  /** Bench: a shorter gap between two notices of one device and tag (PUSH_GAP_MS). */
+  gapMs?: number
   audit(act: string, result: string, deviceId?: string, target?: string): void
   log(msg: string): void
   /** The service said the subscription is gone: the registry's writer forgets it (the portal already did). */
@@ -108,7 +110,8 @@ export class PortalPush {
   /** One notice to each of these devices (already eligible by the house's rule), by the pace of this file. */
   notify(notice: PushNotice, deviceIds: readonly string[]): void {
     const now = this.#d.now()
-    for (const [k, t] of this.#last) if (now - t >= PUSH_GAP_MS) this.#last.delete(k)
+    const gap = this.#d.gapMs ?? PUSH_GAP_MS
+    for (const [k, t] of this.#last) if (now - t >= gap) this.#last.delete(k)
     for (const deviceId of deviceIds) {
       const sub = this.#subs.get(deviceId)
       if (!sub) continue

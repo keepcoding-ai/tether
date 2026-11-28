@@ -153,6 +153,7 @@ async function main(): Promise<void> {
   const push = new PortalPush({
     key: vapid, now: Date.now, log,
     ...(bench ? { benchOnly: true } : {}),
+    ...(knob('TETHER_TEST_REMOTE_PUSH_GAP_MS') !== undefined ? { gapMs: knob('TETHER_TEST_REMOTE_PUSH_GAP_MS')! } : {}),
     ...(bench && benchPushOrigin(process.env.TETHER_TEST_REMOTE_PUSH_ORIGIN) ? { benchOrigin: benchPushOrigin(process.env.TETHER_TEST_REMOTE_PUSH_ORIGIN)! } : {}),
     audit: (act, result, deviceId, target) => send({ t: 'note', note: 'audit', act, result, ...(deviceId ? { deviceId } : {}), ...(target ? { target } : {}) }),
     gone: (deviceId) => pushHouse?.pushGone(deviceId),
