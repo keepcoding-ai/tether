@@ -171,8 +171,10 @@ export function caretAtEdge(c: Caret, dir: Direction): boolean {
  * What the remote's OK does on an item: a speech or a poll's card opens its menu (react, vote, copy: what a right click
  * opens); a field keeps its own Enter (the box sends, the form opens the poll); anything else is clicked.
  */
-export function okDoes(place: Place, editable: boolean): 'menu' | 'click' | 'own' {
+export function okDoes(place: Place, editable: boolean, manages = false): 'menu' | 'click' | 'own' {
   if (editable) return 'own'
+  // A device that manages (step 5.4): a row of the tree opens its menu ("Espiar" is its first row), as a right click does.
+  if (manages && place === 'tree') return 'menu'
   return place === 'msg' || place === 'card' ? 'menu' : 'click'
 }
 

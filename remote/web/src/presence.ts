@@ -131,9 +131,45 @@ function uvCtrOf(r: Reply): number | undefined {
  */
 export async function withPresence(o: { live: Live; credentialId: Uint8Array | undefined; ask: PresenceAsk }): Promise<PresenceOutcome<{ reply: Reply }>> {
   const { live, ask } = o
-  if (!o.credentialId) return { ok: false, fail: 'no-credential' }
-  if (live.ended) return { ok: false, fail: 'cut' }
   const act = ask.purpose === 'act' ? { actId: randomBytes(16), body: new TextEncoder().encode(JSON.stringify(ask.body)) } : undefined
+  const proved = await proveFor(live, o.credentialId, ask, act)
+  if (!proved.ok) return proved
+  const uvProof = proved.uvProof
+  const reply = act && ask.purpose === 'act'
+    ? await live.request(ask.op, act.body, { actId: act.actId, uvProof })
+    : await live.request(ASSERT, ASSERT_BODY, { mutates: true, uvProof })
+  if (reply.status === RES_STATUS.ok || (act && reply.status !== -1 && reply.status !== RES_STATUS.presenceRequired)) return { ok: true, reply }
+  return { ok: false, fail: replyFail(reply) }
+}
+
+/** What a proof is asked over: the session's challenge, and the request it travels with. */
+export interface ProofSession {
+  request(op: number, body?: Record<string, unknown> | Bytes, o?: { mutates?: boolean; actId?: Bytes; uvProof?: UvProof }): Promise<Reply>
+  readonly ended: unknown
+  readonly sessionId: Bytes
+}
+
+/**
+ * The proof of ONE act, not sent: the caller sends the act itself with it (and sends it again, under the same actId and the
+ * same body bytes, when the answer did not come: the portal answers the repeat with the real outcome). The challenge is bound
+ * to this session, this op, this actId and these exact bytes (spec 7.4 point 4).
+ */
+export function proveAct(o: { live: ProofSession; credentialId: Uint8Array | undefined; op: number; actId: Bytes; body: Bytes }): Promise<PresenceOutcome<{ uvProof: UvProof }>> {
+  return proveFor(o.live, o.credentialId, { purpose: 'act', op: o.op, body: {} }, { actId: o.actId, body: o.body })
+}
+
+/** The elevation window (spec 7.3 "janela"): the proof goes in `uv.assert`; the answer is the portal's. */
+export async function elevate(o: { live: ProofSession; credentialId: Uint8Array | undefined; deviceId: Uint8Array }): Promise<PresenceOutcome> {
+  const proved = await proveFor(o.live, o.credentialId, { purpose: 'elevate', deviceId: o.deviceId })
+  if (!proved.ok) return proved
+  const reply = await o.live.request(ASSERT, ASSERT_BODY, { mutates: true, uvProof: proved.uvProof })
+  return reply.status === RES_STATUS.ok ? { ok: true } : { ok: false, fail: replyFail(reply) }
+}
+
+/** The challenge of `ask` from the portal, the assertion of the platform authenticator over it, as a `UvProof`. */
+async function proveFor(live: ProofSession, credentialId: Uint8Array | undefined, ask: PresenceAsk, act?: { actId: Bytes; body: Bytes }): Promise<PresenceOutcome<{ uvProof: UvProof }>> {
+  if (!credentialId) return { ok: false, fail: 'no-credential' }
+  if (live.ended) return { ok: false, fail: 'cut' }
   const ch = await live.request(CHALLENGE, CHALLENGE_BODY(ask))
   if (ch.status !== RES_STATUS.ok) return { ok: false, fail: replyFail(ch) }
   const uvCtr = uvCtrOf(ch)
@@ -148,7 +184,7 @@ export async function withPresence(o: { live: Live; credentialId: Uint8Array | u
     const c = await navigator.credentials.get({
       publicKey: {
         challenge: buf(challenge),
-        allowCredentials: [{ type: 'public-key', id: buf(o.credentialId), transports: ['internal'] }],
+        allowCredentials: [{ type: 'public-key', id: buf(credentialId), transports: ['internal'] }],
         userVerification: 'required',
         timeout: CEREMONY_MS,
       },
@@ -156,12 +192,5 @@ export async function withPresence(o: { live: Live; credentialId: Uint8Array | u
     if (!(c instanceof PublicKeyCredential)) return { ok: false, fail: 'browser-refused' }
     res = c.response as AuthenticatorAssertionResponse
   } catch (e) { return { ok: false, fail: browserFail(e) } }
-  const uvProof: UvProof = {
-    uvCtr, authenticatorData: bytesOf(res.authenticatorData), clientDataJSON: bytesOf(res.clientDataJSON), signature: bytesOf(res.signature),
-  }
-  const reply = act && ask.purpose === 'act'
-    ? await live.request(ask.op, act.body, { actId: act.actId, uvProof })
-    : await live.request(ASSERT, ASSERT_BODY, { mutates: true, uvProof })
-  if (reply.status === RES_STATUS.ok || (act && reply.status !== -1 && reply.status !== RES_STATUS.presenceRequired)) return { ok: true, reply }
-  return { ok: false, fail: replyFail(reply) }
+  return { ok: true, uvProof: { uvCtr, authenticatorData: bytesOf(res.authenticatorData), clientDataJSON: bytesOf(res.clientDataJSON), signature: bytesOf(res.signature) } }
 }
