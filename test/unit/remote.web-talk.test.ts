@@ -328,6 +328,12 @@ describe('the talker', () => {
     t.seen('obra', 9)
     await b.advance(300)
     assert.equal(s.calls.length, 1, 'told once')
+    // A conversation that keeps coming is told every so often, not line by line.
+    t.seen('obra', 12)
+    await b.advance(300)
+    assert.equal(s.calls.length, 1, 'spaced from the last one')
+    await b.advance(2_000)
+    assert.deepEqual(s.calls.map(c => c.body.seq), [9, 12])
   })
 
   test('the revoked device forgets the outbox and the drafts', async () => {

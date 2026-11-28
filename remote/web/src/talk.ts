@@ -31,6 +31,11 @@ export const ACT_DEADLINE_MS = 45_000
 const AGAIN_MS = 2_000
 /** The short delay that coalesces the "seen" of a burst of lines (the app's marks wait the same before they write). */
 export const SEEN_DELAY_MS = 250
+/**
+ * The least time between two "seen" of one channel: a conversation that keeps coming is told every so often, not line by
+ * line (the portal counts every request of the device against one budget a minute, the readings' too).
+ */
+export const SEEN_SPACING_MS = 2_000
 
 /** What the talker needs of a session: one request with its actId, and whether it ended. */
 export interface TalkSession {
@@ -123,6 +128,8 @@ export function createTalker(o: TalkerOptions): Talker {
   const timers = new Set<unknown>()
   const seenLanes = new Map<string, SeenLane>()
   const seenTimers = new Map<string, unknown>()
+  /** When each channel's last "seen" left. */
+  const seenAt = new Map<string, number>()
   /** The acts waiting for a session (a reaction, a vote, a poll): woken by attach. */
   const waiters = new Set<() => void>()
 
@@ -248,6 +255,7 @@ export function createTalker(o: TalkerOptions): Talker {
       if (d.start) seenArm(channel)
     }
     if (!s) { done(false); return }
+    seenAt.set(channel, now())
     void s.request(OP.seen, { channel, seq }, { actId: randomBytes(16) }).then(r => {
       const step = stepOf(r)
       if (step.do === 'locked') locked()
@@ -256,9 +264,10 @@ export function createTalker(o: TalkerOptions): Talker {
     }, () => done(false))
   }
 
-  const seenArm = (channel: string): void => {
+  const seenArm = (channel: string, ms = SEEN_DELAY_MS): void => {
     if (seenTimers.has(channel) || disposed) return
-    const t = setTimer(() => { timers.delete(t); if (!disposed) seenFire(channel) }, SEEN_DELAY_MS)
+    const wait = Math.max(ms, (seenAt.get(channel) ?? -Infinity) + SEEN_SPACING_MS - now())
+    const t = setTimer(() => { timers.delete(t); if (!disposed) seenFire(channel) }, wait)
     timers.add(t)
     seenTimers.set(channel, t)
   }
