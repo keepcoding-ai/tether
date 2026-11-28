@@ -81,6 +81,95 @@
 /* An ended session has no menu here: its line is not a door. */
 .rg[data-readonly] .rg-cl { cursor: default; }
 
+/* ---------- managing from afar (RR5 5.4): the pane is the app's, less what has no road from here ----------
+   `data-manage` on the casing lists what this device may manage (its scopes): desks, agents, procs, destructive. What no
+   device may do from afar is not drawn: a new pane in a desk, "Criar canal", the immersion's switch, the shelf of the system
+   desks. */
+.rr[data-manage] .rg:not([data-readonly]) :is([data-action="row-new"], [data-action="create-channel"], .rg-mode, .rg-edge-sys, .rg-vazia-b, .rg-shelf) { display: none !important; }
+.rr[data-manage]:not([data-manage~="desks"]) .rg :is(.rg-new, [data-action="row-sleep"], [data-action="row-wake"]) { display: none !important; }
+/* "Sistema" from afar is Processos (manage:procs) and Ronda (manage:agents): without either, no door to it. */
+.rr[data-manage]:not([data-manage~="procs"]):not([data-manage~="agents"]) .rg :is(.rg-reserved, .rg-srail) { display: none !important; }
+/* No "Novo processo" from afar yet, and the record of a process lives on the machine. */
+.rr .rg-sys :is([data-sys="proc-new"], [data-sys="log"]) { display: none !important; }
+.rr .rg-sr.proc > .rg-sr-h { cursor: default; }
+/* TV: the quick view is the web's own card; "Sistema" is the rail at the right edge, always in view. */
+.rr .rg[data-tier="wide"]:not([data-readonly]) > .rg-qcol { display: none !important; }
+.rr:is([data-manage~="procs"], [data-manage~="agents"]) .rg[data-tier="wide"][data-mode="manage"]:not([data-readonly]) { grid-template-columns: 400px minmax(0, 760px) minmax(0, 1fr) 440px; }
+/* A row whose act is on its way: "fazendo…" where its state is, until the house answers (no state is drawn before it). */
+.rr .rg-tree [aria-busy="true"] > .rg-st { display: none; }
+.rr .rr-doing { flex: none; padding: 0 6px; font-size: .88em; font-style: italic; color: var(--fg-dim); white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) {
+  .rr .rr-doing { animation: rr-doing 1.2s ease-in-out infinite alternate; }
+}
+@keyframes rr-doing { from { opacity: 1; } to { opacity: .45; } }
+/* A touch screen has no hover: a row's buttons ("⋯", the moon) are always there, as on the phone. */
+@media (hover: none) {
+  .rr .rg:not([data-readonly]) :is(.rg-desk, .rg-pane, .rg-agent, .rg-cl) > .rg-acts:not(:empty) { display: inline-flex; }
+}
+/* A long press on a row is its menu: the system's own callout stays away from it. */
+.rr .rg:not([data-readonly]) .rg-tree [data-key] { -webkit-touch-callout: none; }
+
+/* ---------- the question before an act (sheet.ts): a sheet from the bottom on the phone, a dialog elsewhere ----------
+   It lives in the body, outside the casing, so it says its own sizes and its own second grey. A choice never runs from
+   edge to edge outside the phone. */
+.rr-ask-veil { position: fixed; inset: 0; z-index: 1001; background: var(--backdrop, rgba(0, 0, 0, .45)); }
+.rr-ask { --rr-ask-dim: color-mix(in srgb, var(--fg) 72%, var(--bg-3));
+  position: fixed; z-index: 1002; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; overflow: auto;
+  border: 1px solid var(--border); background: var(--bg-3); color: var(--fg); box-shadow: var(--shadow); font: 14px/1.45 var(--ui); }
+.rr-ask[data-form="dialog"] { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 18px 20px; border-radius: 12px; }
+.rr-ask[data-form="dialog"][data-tier="tablet"] { font-size: 15px; }
+.rr-ask[data-form="dialog"][data-tier="wide"] { width: min(820px, calc(100vw - 96px)); padding: 30px 36px; border-radius: 16px; font-size: 22px; gap: 18px; }
+.rr-ask[data-form="sheet"] { left: 0; right: 0; bottom: 0; max-height: 88vh; padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; border-bottom: 0; font-size: 16px; }
+.rr-ask-grab { display: none; }
+.rr-ask[data-form="sheet"] .rr-ask-grab { display: block; flex: none; width: 40px; height: 4px; margin: 0 auto; border-radius: 2px; background: var(--border); }
+.rr-ask-t { margin: 0; font-size: 1.12em; font-weight: 650; line-height: 1.3; }
+.rr-ask-b { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.rr-ask-ctx { display: flex; flex-direction: column; gap: 3px; padding: 8px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); }
+.rr-ask-n { font-weight: 600; overflow-wrap: anywhere; }
+.rr-ask-st { font-size: .88em; color: var(--rr-ask-dim); }
+.rr-ask-l { margin: 2px 0 0; padding-left: 1.1em; color: var(--rr-ask-dim); font-size: .92em; }
+.rr-ask-p { margin: 0; color: var(--rr-ask-dim); }
+.rr-ask-proof { margin: 0; font-weight: 600; }
+.rr-ask-cs { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.rr-ask-c { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; box-sizing: border-box; max-width: 100%; min-height: 44px; padding: 8px 14px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.rr-ask-c:hover { background: var(--bg-hover); }
+.rr-ask-c[data-tone="safe"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
+.rr-ask-c[data-tone="destructive"] { border-color: color-mix(in srgb, var(--err) 55%, var(--border)); }
+.rr-ask-c[data-tone="destructive"] .rr-ask-cl { color: color-mix(in srgb, var(--err) 72%, var(--fg)); }
+.rr-ask-cl { font-weight: 600; }
+.rr-ask-cc { font-size: .88em; color: var(--rr-ask-dim); }
+.rr-ask-x { align-self: flex-start; min-height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--border); background: none; color: var(--fg); font: inherit; cursor: pointer; }
+.rr-ask-x:hover { background: var(--bg-hover); }
+.rr-ask-f { display: flex; flex-direction: column; gap: 4px; font-size: .92em; color: var(--rr-ask-dim); }
+.rr-ask-in { box-sizing: border-box; min-height: 40px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; }
+.rr-ask[data-form="sheet"] .rr-ask-in { min-height: 44px; font-size: 16px; }
+.rr-ask-err { margin: 0; font-size: .9em; color: color-mix(in srgb, var(--err) 75%, var(--fg)); }
+.rr-ask-pick { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow: auto; }
+.rr-ask-o { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-height: 44px; padding: 6px 12px; border-radius: 8px; border: 1px solid transparent;
+  background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.rr-ask-o:hover { background: var(--bg-hover); }
+.rr-ask-ol { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-ask-od { flex: none; font-size: .86em; color: var(--rr-ask-dim); }
+.rr-ask-hues { display: grid; grid-template-columns: repeat(6, 36px); gap: 8px; }
+.rr-ask-hue { width: 36px; height: 36px; padding: 0; border-radius: 8px; border: 2px solid transparent; background: var(--rr-desk); cursor: pointer; }
+.rr-ask-hue[aria-checked="true"] { border-color: var(--fg); box-shadow: inset 0 0 0 2px var(--bg-3); }
+.rr-ask[data-form="sheet"] .rr-ask-hues { grid-template-columns: repeat(6, 44px); justify-content: space-between; }
+.rr-ask[data-form="sheet"] .rr-ask-hue { width: 44px; height: 44px; }
+.rr-ask[data-tier="wide"] .rr-ask-hues { grid-template-columns: repeat(6, 60px); gap: 14px; }
+.rr-ask[data-tier="wide"] .rr-ask-hue { width: 60px; height: 60px; }
+.rr-ask[data-tier="wide"] :is(.rr-ask-c, .rr-ask-x, .rr-ask-o, .rr-ask-in) { min-height: 64px; }
+/* The phone: a choice is the width of the thumb's reach, the whole sheet. */
+.rr-ask[data-form="sheet"] :is(.rr-ask-cs, .rr-ask-c, .rr-ask-x) { align-self: stretch; width: 100%; }
+.rr-ask[data-form="sheet"] .rr-ask-cs { align-items: stretch; }
+.rr-ask :is(.rr-ask-c, .rr-ask-x, .rr-ask-o, .rr-ask-hue, .rr-ask-in):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rr-ask[data-tier="wide"] :is(.rr-ask-c, .rr-ask-x, .rr-ask-o, .rr-ask-hue, .rr-ask-in):focus { outline: 4px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 22%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .rr-ask[data-form="sheet"] { animation: rr-card-up .22s cubic-bezier(.2, .7, .2, 1); }
+}
+/* The TV's menu: its rows on the walk of the arrows, the ring seen from the sofa. */
+#ctx-menu.rr-menu[data-tier="wide"] .rr-mi:focus { outline: 4px solid var(--accent); outline-offset: -4px; }
+
 /* The speaking box's place: a calm line, not a box turned off (channel-pane.ts `ch-follow`). */
 .rr .ch-follow { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 8px 14px calc(8px + var(--rr-foot, 0px)); border-top: 1px solid var(--border); background: var(--bg-2); color: var(--fg-dim); font-size: 12px; line-height: 1.4; }
 .rr .ch-follow .ph { width: 15px; height: 15px; flex: none; }

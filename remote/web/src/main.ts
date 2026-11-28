@@ -12,7 +12,8 @@ import { browserLocks, holdHouse, type HouseLock } from './house-lock.ts'
 import { connect, type Ended, type Live } from './live.ts'
 import { pair, type PairInput } from './pair.ts'
 import { createPush } from './push.ts'
-import { biometricsAvailable, registerPresence, registrationOf, withPresence } from './presence.ts'
+import { createManager, type Manager } from './manage.ts'
+import { biometricsAvailable, elevate, proveAct, registerPresence, registrationOf, withPresence } from './presence.ts'
 import { mountRegency, type RemoteRegency } from './regency.ts'
 import { sessionSource, type SessionSource } from './source.ts'
 import { createTalker, type Talker } from './talk.ts'
@@ -80,7 +81,32 @@ function dropSource(): void {
   source?.src.dispose()
   source = undefined
   talker?.detach()
+  manager?.detach()
   devicePush.detach()
+}
+
+/**
+ * Managing from afar (manage.ts), for the house this device knows: one per record, like the talker. Only a device with a
+ * presence credential manages; the proofs are the platform authenticator's, over the session the act goes in.
+ */
+let manager: Manager | undefined
+let managerOf = ''
+
+function managerFor(rec: HouseRecord | undefined): Manager | undefined {
+  if (!rec?.credentialId) return undefined
+  if (manager && managerOf === rec.id) return manager
+  manager?.dispose()
+  managerOf = rec.id
+  const cred = (): Uint8Array | undefined => record?.credentialId
+  manager = createManager({
+    credential: true,
+    prover: {
+      act: (s, op, actId, body) => proveAct({ live: s, credentialId: cred(), op, actId, body }),
+      window: (s, deviceId) => elevate({ live: s, credentialId: cred(), deviceId }),
+    },
+  })
+  manager.onLocked = () => { if (live) locked(live) }
+  return manager
 }
 
 /** "Avisos neste aparelho" (push.ts): one per page; the session it reads is the Regency's. */
@@ -116,9 +142,10 @@ async function lockHere(): Promise<void> {
   const l = live
   if (!l || lock) return
   talker?.detach()
+  manager?.detach()
   const r = await l.request(LOCK, {}, { mutates: true })
   if (live !== l) return
-  if (r.status === RES_STATUS.ok) { lock = { busy: false }; show({ s: 'list' }) } else if (!l.ended) talker?.attach(l)
+  if (r.status === RES_STATUS.ok) { lock = { busy: false }; show({ s: 'list' }) } else if (!l.ended) { talker?.attach(l); manager?.attach(l) }
 }
 
 function show(v: View): void {
@@ -167,6 +194,7 @@ function render(): void {
         // Unlocked and on screen: what waited to be said goes now, with its own actId.
         const t = talkerFor(record)
         t?.attach(l)
+        managerFor(record)?.attach(l)
         if (t) devicePush.attach(l)
       }
       return
@@ -250,6 +278,7 @@ function casing(): RemoteRegency {
   regency ??= mountRegency(root, {
     houseName: record?.houseName ?? '', onRetry: retryNow,
     ...(talk ? { talk, onLock: () => void lockHere(), push: devicePush } : {}),
+    ...(talk && managerFor(record) ? { manage: managerFor(record)! } : {}),
     layout: {
       initial: paramsOfUrlState(parseUrlState(location.search)),
       changed: l => writeUrlState(location, history, urlStateOf(l)),
@@ -373,6 +402,7 @@ function yieldHouse(): void {
   clearRetry()
   // The other window goes on with what waited to be said (the outbox is the origin's): this one sends nothing more.
   talker?.detach()
+  manager?.detach()
   const l = live
   live = undefined
   lock = undefined
@@ -434,6 +464,9 @@ async function ended(e: Ended): Promise<void> {
     talker?.dispose()
     talker = undefined
     talkerOf = ''
+    manager?.dispose()
+    manager = undefined
+    managerOf = ''
     record = undefined
     dropHouseLock()
     list = { items: [], more: 0 }

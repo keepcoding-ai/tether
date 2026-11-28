@@ -18,6 +18,8 @@ import { RegencyPane } from '../../../extensions/regency/renderer/pane.ts'
 import { keysStrip, mountSpatialFocus } from './focus.ts'
 import { RemoteHouse, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type RemoteSource } from './host.ts'
 import { remoteFiles } from './files.ts'
+import type { Manager } from './manage.ts'
+import { ManageUi } from './manage-view.ts'
 import { createMenu } from './menu.ts'
 import type { Talker } from './talk.ts'
 import type { DevicePush } from './push.ts'
@@ -90,7 +92,11 @@ export interface RemoteRegency {
   /** The countdown of the notice moved. */
   retryIn(seconds: number | undefined): void
   /** What a capture or a test reads of the screen: text and flags, never elements. */
-  snapshot(): { link: 'live' | 'closed' | 'offline' | 'loading'; tier: Tier; paneTier: Tier | undefined; card: string | undefined; channel: string | undefined }
+  snapshot(): {
+    link: 'live' | 'closed' | 'offline' | 'loading'; tier: Tier; paneTier: Tier | undefined; card: string | undefined; channel: string | undefined
+    /** Managing from afar: the last notice and the rows whose act is on its way. */
+    manage?: { notice: string | undefined; doing: string[] }
+  }
   dispose(): void
 }
 
@@ -116,6 +122,11 @@ export interface RegencyOptions {
   onLock?(): void
   /** "Avisos neste aparelho" (step 4.4), beside "Trancar": only a device that can act subscribes. */
   push?: DevicePush
+  /**
+   * Managing from afar (step 5.4): the acts of a device with a presence credential. Its scopes (`session.info`) decide which
+   * rows show; without any `manage:*` scope the pane stays as it reads. Absent: reading only.
+   */
+  manage?: Manager
 }
 
 /** How long a finger rests on a speech before it opens the speech's menu (a touch screen's right click). */
@@ -130,6 +141,8 @@ interface Session {
   house: RemoteHouse
   pane: RegencyPane
   card: QuickCard
+  /** The acts from afar, for a device that may manage. */
+  manage?: ManageUi
   dispose(): void
 }
 
@@ -389,6 +402,8 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     tier: () => tier,
     cardShown: () => session?.card.shown() !== undefined,
     closeCard: () => session?.card.close(true),
+    // A device that manages: the TV's OK on a row of the tree opens its menu (the rows' acts live there).
+    manages: () => session?.manage?.active === true,
   })
 
   // The menu of a speech or a poll (the app's context menu): at the point, or a sheet on the phone.
@@ -404,7 +419,9 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     endPress()
     if (ev.pointerType !== 'touch' || !o.talk) return
     const t = ev.target instanceof Element ? ev.target : null
-    const msg = t?.closest<HTMLElement>('.ch-msgs > .ch-msg, .ch-msgs > .ch-prow')
+    // A speech's menu, and (a device that manages) a row's of the tree: the pane opens it on the row's `contextmenu`.
+    const rows = session?.manage?.active ? '.ch-msgs > .ch-msg, .ch-msgs > .ch-prow, .rg-tree [data-key]' : '.ch-msgs > .ch-msg, .ch-msgs > .ch-prow'
+    const msg = t?.closest<HTMLElement>(rows)
     // A button, a link or a field of the speech keeps its own tap.
     if (!t || !msg || t.closest('button, a, input, textarea, select')) return
     const { clientX: x, clientY: y } = ev
@@ -513,12 +530,31 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       // (The casing's own tier: the pane learns its width a frame later.)
       if (link === 'closed' && tier === 'mobile' && !tabAsked) s.pane.setTab('tether')
     }
+    paintManage(s)
     s.pane.paint()
     s.card.refresh()
     paintSnap()
+    s.manage?.afterPaint(s.pane.element)
     focus.afterPaint()
   }
+
+  /**
+   * What the device may manage, on the pane: until its scopes are known (and without any `manage:*`) the pane reads as
+   * before; "Sistema" shows when Processos or Ronda is the device's.
+   */
+  const paintManage = (s: Session): void => {
+    const m = s.manage
+    const on = m?.active === true
+    const el2 = s.pane.element
+    if (on && el2.dataset.readonly !== undefined) delete el2.dataset.readonly
+    else if (!on && el2.dataset.readonly === undefined) el2.dataset.readonly = ''
+    const caps = o.manage?.caps
+    const flags = !on || !caps ? '' : [caps.desks ? 'desks' : '', caps.agents ? 'agents' : '', caps.procs ? 'procs' : '', caps.destructive ? 'destructive' : ''].filter(Boolean).join(' ')
+    if ((shell.dataset.manage ?? '') !== flags) { if (flags) shell.dataset.manage = flags; else delete shell.dataset.manage }
+  }
   const schedule = (): void => { if (!frame && !disposed) frame = requestAnimationFrame(paint) }
+  // The caps came, a process or a ronda was read again: paint.
+  if (o.manage) o.manage.onChange = schedule
 
   const endSession = (): void => {
     const s = session
@@ -546,6 +582,11 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       now,
     })
     const talk = o.talk
+    // Managing from afar (step 5.4): the rows' menus, the questions, "Sistema"; its pane is the one made below.
+    const manage = o.manage ? new ManageUi({
+      house, manager: o.manage, menu, tier: () => tier, pane: () => pane,
+      quick: t => card.open(t), schedule, now,
+    }) : undefined
     // The files of the speeches of this session (step 4.3): what they brought is let go of with the session.
     const files = remoteFiles(house)
     const views = createChannelViews(remoteChannelHost(house, {
@@ -563,6 +604,15 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       quick: { open: t => card.open(t), toggle: t => card.toggle(t), shown: () => card.shown(), close: () => card.close() },
       visible: () => !stage.hidden,
       width: () => shell.clientWidth,
+      ...(manage ? {
+        manage: {
+          rowMenu: (t, anchor, at) => manage.rowMenu(t, anchor, at),
+          sleepDesk: (id, wake) => manage.sleepDesk(id, wake),
+          renameRefused: () => manage.renameRefused(),
+          create: restore => { void manage.create(restore) },
+          system: manage.system,
+        },
+      } : {}),
     }))
     const p = pane
     // The layout is the page's while it lives: a new session starts from where the last one was.
@@ -574,11 +624,31 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     })
     stage.replaceChildren(p.element)
     p.setShown(true)
+    // From afar the heading's "+" makes a desk (its name and colour), the one thing of "+ Novo" with a road here.
+    const newBtn = p.element.querySelector<HTMLElement>('.rg-new')
+    if (manage && newBtn) {
+      newBtn.title = 'Nova mesa: o nome e a cor; ela entra no fim da fila'
+      newBtn.setAttribute('aria-label', 'Nova mesa')
+      const word = newBtn.querySelector('span')
+      if (word) word.textContent = 'Nova mesa'
+    }
+    // The "⋯" of a process: the view's own menu is about its record (on the machine); from afar it is "Esquecer…".
+    const onSysMore = (ev: MouseEvent): void => {
+      const b = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.rg-sr.proc [data-sys="more"]') : null
+      const name = b?.closest<HTMLElement>('.rg-sr.proc')?.dataset.proc
+      if (!b || !name || !manage) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      manage.procMenu(name, b)
+    }
+    p.element.addEventListener('click', onSysMore, true)
     const subs = [house.onDidChange(schedule), ...views.disposables]
     session = {
-      house, pane: p, card,
+      house, pane: p, card, ...(manage ? { manage } : {}),
       dispose: () => {
         for (const s of subs) s.dispose()
+        p.element.removeEventListener('click', onSysMore, true)
+        manage?.dispose()
         card.dispose()
         p.dispose()
         p.element.remove()
@@ -630,7 +700,10 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     online,
     offline,
     retryIn: seconds => { offlineState = { ...offlineState, retryInS: seconds }; if (link === 'offline') paintOffline() },
-    snapshot: () => ({ link, tier, paneTier: session?.pane.tier, card: session?.card.shown(), channel: session?.pane.state.channelId }),
+    snapshot: () => ({
+      link, tier, paneTier: session?.pane.tier, card: session?.card.shown(), channel: session?.pane.state.channelId,
+      ...(session?.manage ? { manage: session.manage.snapshot() } : {}),
+    }),
     dispose: () => {
       disposed = true
       if (frame) cancelAnimationFrame(frame)
@@ -643,6 +716,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
       focus.dispose()
       endSession()
       if (o.push) o.push.onChange = () => {}
+      if (o.manage) o.manage.onChange = () => {}
       shell.remove()
     },
   }

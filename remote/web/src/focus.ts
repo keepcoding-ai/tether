@@ -102,6 +102,8 @@ export interface SpatialFocusDeps {
   cardShown(): boolean
   /** Closes the card and gives the keyboard back to the row that opened it. */
   closeCard(): void
+  /** The device manages from afar: OK on a row of the tree opens its menu (step 5.4). */
+  manages?(): boolean
 }
 
 export interface SpatialFocus {
@@ -190,7 +192,8 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
     // The remote's OK on an item: what a click does (the tree's own Enter would go to the tab, which the web has not); on a
     // speech or a poll's card, its menu (what a right click opens); a field keeps its own Enter.
     if (ev.key === 'Enter' && deps.tier() === 'wide' && isItem(t) && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
-      const does = okDoes(placeOf(t) ?? 'tree', editable(t))
+      // The head of "Fechadas" folds (it has no menu).
+      const does = okDoes(placeOf(t) ?? 'tree', editable(t), deps.manages?.() === true && t.dataset.row !== 'closed-head')
       if (does === 'own') return
       ev.preventDefault()
       ev.stopPropagation()

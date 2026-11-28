@@ -537,6 +537,18 @@ export interface RemoteRegencyParts {
   visible(): boolean
   /** The casing's width: the tier is the screen's, not the framed pane's. */
   width?(): number
+  /** A device that may manage (RR5 5.4): the rows' menus, the desk's moon, "+ Nova mesa" and "Sistema" act through it. */
+  manage?: RemoteManageParts
+}
+
+/** What managing from afar gives the Regency's pane (manage-view.ts). Absent: the pane only reads. */
+export interface RemoteManageParts {
+  rowMenu(target: Target, anchor: HTMLElement, at?: { x: number; y: number }): void
+  sleepDesk(deskId: string, wake: boolean): void
+  renameRefused(what: 'desk' | 'pane'): void
+  /** "+ Nova mesa": a desk's name and colour (the app's "+ Novo" card has no road from afar). */
+  create(restore: () => void): void
+  system: SystemViewHost
 }
 
 /** "Sistema" is out of the reading Regency: an empty model and no act (the pane's sheet takes its door away). */
@@ -576,17 +588,18 @@ export function remoteRegencyHost(house: RemoteHouse, parts: RemoteRegencyParts)
     return a ? { kind: a.kind, name: a.name, seed: a.id, emblem: emblemOf(a) } : undefined
   }
   const openChannels = (): ChannelSummary[] => house.input().channels.filter(c => !c.closed)
+  const manage = parts.manage
   return {
-    readOnly: true,
+    readOnly: manage === undefined,
     view,
     quickView: target => parts.quick.open(target),
     toggleQuick: target => parts.quick.toggle(target),
     quicked: () => parts.quick.shown(),
     closeQuick: () => parts.quick.close(),
-    rowMenu: () => {},
+    rowMenu: (target, anchor, at) => manage?.rowMenu(target, anchor, at),
     talk: target => parts.quick.open(target),
-    sleepDesk: () => {},
-    renameRefused: () => {},
+    sleepDesk: (deskId, wake) => manage?.sleepDesk(deskId, wake),
+    renameRefused: what => manage?.renameRefused(what),
     loading: () => !house.loaded,
     identity,
     // The seal's lines, only while the app publishes them (cleaned as a title by the house's projector).
@@ -608,7 +621,8 @@ export function remoteRegencyHost(house: RemoteHouse, parts: RemoteRegencyParts)
     ...(parts.width ? { tierWidth: () => parts.width!() } : {}),
     gone: () => {},
     immersionKey: () => '',
-    create: (_fixed, restore) => restore(),
-    system: noSystem(),
+    // Only a desk is made from afar: the heading's "+" (a desk row's "+" and "Criar canal" have no road and are not drawn).
+    create: (fixed, restore, what) => { if (manage && fixed.deskId === undefined && fixed.forAgent === undefined && what === undefined) manage.create(restore); else restore() },
+    system: manage?.system ?? noSystem(),
   }
 }

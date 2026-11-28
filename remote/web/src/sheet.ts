@@ -1,0 +1,284 @@
+// The web's question box (RR5 5.4): where a gesture from afar asks before it acts, the same questions as the app's dialogs.
+// On the phone a sheet from the bottom over a veil; elsewhere a dialog in the middle (an act's question is short and
+// predictable). Modal: the keyboard is held inside it (Tab walks its buttons and fields and comes round), Esc or the TV's
+// Back closes it as a cancel, a press on the veil too, and the keyboard goes back to where it was when it closes. Every text
+// goes in as a text node. Three forms: a question with its choices (and a reason, when one is asked), a list to pick from
+// (a desk), and a desk's name and colour.
+import { HUE_NAMES, type HueName } from '../../../app/shared/palette.ts'
+import { HUE_LABELS } from '../../../app/renderer/emblem-rules.ts'
+import type { Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
+import { PROOF_LINE, reasonCheck, type Question } from './manage-rules.ts'
+import { el } from './ui-lite.ts'
+
+const BACK = new Set(['Escape', 'GoBack', 'BrowserBack'])
+let seq = 0
+
+const focusables = (box: HTMLElement): HTMLElement[] =>
+  [...box.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]')].filter(e => e.getClientRects().length > 0)
+
+const editable = (e: EventTarget | null): boolean => e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement
+
+/**
+ * The last element of the page that held the keyboard outside a menu or a box: a box opened from a menu's row finds the
+ * menu gone (and the keyboard on the body), and gives the keyboard back to the row the menu was opened on.
+ */
+let lastHeld: HTMLElement | undefined
+let watching = false
+export function watchFocus(): void {
+  if (watching) return
+  watching = true
+  document.addEventListener('focusin', ev => {
+    const t = ev.target
+    if (t instanceof HTMLElement && !t.closest('#ctx-menu, .rr-ask')) lastHeld = t
+  })
+}
+
+/** Where the keyboard goes back: the opener, or the row of the tree a repaint put in its place (by its key). */
+function backTo(e: HTMLElement | undefined): HTMLElement | undefined {
+  if (!e) return undefined
+  if (e.isConnected) return e
+  const key = e.dataset.key
+  return key ? [...document.querySelectorAll<HTMLElement>('[data-key]')].find(x => x.dataset.key === key) : undefined
+}
+
+/** The box, its veil, the trap and the way back; `build` fills the body and says who takes the keyboard first. */
+export function openSheet<T>(tier: Tier, title: string, build: (body: HTMLElement, done: (v: T | undefined) => void) => HTMLElement | undefined): Promise<T | undefined> {
+  watchFocus()
+  return new Promise(resolve => {
+    const active = document.activeElement
+    const opener = active instanceof HTMLElement && active !== document.body && !active.closest('#ctx-menu') ? active : lastHeld
+    const veil = el('div', 'rr-ask-veil')
+    const box = el('div', 'rr-ask')
+    box.setAttribute('role', 'dialog')
+    box.setAttribute('aria-modal', 'true')
+    box.dataset.form = tier === 'mobile' ? 'sheet' : 'dialog'
+    box.dataset.tier = tier
+    const h = el('h2', 'rr-ask-t', title)
+    h.id = `rr-ask-${++seq}`
+    box.setAttribute('aria-labelledby', h.id)
+    const body = el('div', 'rr-ask-b')
+    box.append(el('div', 'rr-ask-grab'), h, body)
+    let settled = false
+    const done = (v: T | undefined): void => {
+      if (settled) return
+      settled = true
+      veil.remove()
+      box.remove()
+      backTo(opener)?.focus({ preventScroll: true })
+      resolve(v)
+    }
+    const first = build(body, done)
+    veil.addEventListener('click', () => done(undefined))
+    box.addEventListener('keydown', ev => {
+      if (BACK.has(ev.key) || (ev.key === 'Backspace' && !editable(ev.target))) { ev.preventDefault(); ev.stopPropagation(); done(undefined); return }
+      if (ev.key !== 'Tab') { ev.stopPropagation(); return }
+      const all = focusables(box)
+      if (all.length === 0) return
+      const at = all.indexOf(document.activeElement as HTMLElement)
+      const next = ev.shiftKey ? (at <= 0 ? all.length - 1 : at - 1) : (at < 0 || at === all.length - 1 ? 0 : at + 1)
+      ev.preventDefault()
+      ev.stopPropagation()
+      all[next]!.focus()
+    })
+    document.body.append(veil, box)
+    ;(first ?? focusables(box)[0])?.focus()
+  })
+}
+
+function button(cls: string, label: string, tone?: string): HTMLButtonElement {
+  const b = el('button', cls, label)
+  b.type = 'button'
+  if (tone) b.dataset.tone = tone
+  return b
+}
+
+/** The arrows walk a list of buttons (the TV's remote, a keyboard): up and down, and Home and End. */
+function arrowsWalk(list: HTMLElement): void {
+  list.addEventListener('keydown', ev => {
+    const all = [...list.querySelectorAll<HTMLElement>('button:not([disabled])')]
+    const at = all.indexOf(document.activeElement as HTMLElement)
+    const go = (i: number): void => { ev.preventDefault(); ev.stopPropagation(); all[(i + all.length) % all.length]?.focus() }
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight') go(at + 1)
+    else if (ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') go(at - 1)
+    else if (ev.key === 'Home') go(0)
+    else if (ev.key === 'End') go(-1)
+  })
+}
+
+export interface Answer { choice: string; reason?: string }
+
+/**
+ * A question of the app's (manage-rules.ts): what is at stake, each choice with its consequence, the cancel. When a choice
+ * needs the biometrics, the line that says so comes before the buttons; when a reason is asked, it is checked here (required,
+ * at most the portal's ceiling) before the answer goes.
+ */
+export function ask(tier: Tier, q: Question): Promise<Answer | undefined> {
+  return openSheet<Answer>(tier, q.title, (body, done) => {
+    if (q.context) {
+      const c = el('div', 'rr-ask-ctx')
+      c.append(el('b', 'rr-ask-n', q.context.name))
+      if (q.context.status) c.append(el('span', 'rr-ask-st', q.context.status))
+      if (q.context.lines.length > 0) {
+        const ul = el('ul', 'rr-ask-l')
+        for (const l of q.context.lines) ul.append(el('li', '', l))
+        c.append(ul)
+      }
+      body.append(c)
+    }
+    if (q.lead) body.append(el('p', 'rr-ask-p', q.lead))
+    let reason: HTMLInputElement | undefined
+    let err: HTMLElement | undefined
+    if (q.reason) {
+      const label = el('label', 'rr-ask-f', q.reason.label)
+      reason = el('input', 'rr-ask-in')
+      reason.type = 'text'
+      reason.placeholder = q.reason.placeholder
+      reason.dataset.field = 'reason'
+      label.append(reason)
+      err = el('p', 'rr-ask-err')
+      err.setAttribute('role', 'alert')
+      err.hidden = true
+      body.append(label, err)
+    }
+    if (q.choices.some(c => c.proof)) {
+      const p = el('p', 'rr-ask-proof', PROOF_LINE)
+      body.append(p)
+    }
+    const list = el('div', 'rr-ask-cs')
+    let first: HTMLElement | undefined
+    for (const c of q.choices) {
+      const b = button('rr-ask-c', '', c.tone)
+      b.dataset.choice = c.id
+      b.append(el('span', 'rr-ask-cl', c.label), el('span', 'rr-ask-cc', c.consequence))
+      b.addEventListener('click', () => {
+        if (reason && err) {
+          const r = reasonCheck(reason.value)
+          if (!r.ok) { err.textContent = r.why; err.hidden = false; reason.focus(); return }
+          done({ choice: c.id, reason: r.value })
+          return
+        }
+        done({ choice: c.id })
+      })
+      list.append(b)
+      // The safe way takes the keyboard first; with a reason, its field does.
+      if (!first && c.tone !== 'destructive') first = b
+    }
+    arrowsWalk(list)
+    const cancel = button('rr-ask-x', q.cancel)
+    cancel.dataset.choice = 'cancel'
+    cancel.addEventListener('click', () => done(undefined))
+    body.append(list, cancel)
+    reason?.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); list.querySelector<HTMLElement>('button')?.click() } })
+    return reason ?? first ?? cancel
+  })
+}
+
+export interface PickItem { value: string; label: string; detail?: string; color?: string }
+
+/** A list to choose one from (the desk a pane goes to, the desk a session reopens in); the cancel at its foot. */
+export function pick(tier: Tier, title: string, items: readonly PickItem[], o: { note?: string; empty: string; cancel?: string }): Promise<string | undefined> {
+  return openSheet<string>(tier, title, (body, done) => {
+    if (o.note) body.append(el('p', 'rr-ask-p', o.note))
+    const list = el('div', 'rr-ask-pick')
+    list.setAttribute('role', 'group')
+    list.setAttribute('aria-label', title)
+    for (const it of items) {
+      const b = button('rr-ask-o', '')
+      b.dataset.value = it.value
+      if (it.color) {
+        const sw = el('span', 'rr-swatch')
+        sw.style.setProperty('--rr-desk', `var(--x-${it.color}, var(--accent))`)
+        b.append(sw)
+      }
+      b.append(el('span', 'rr-ask-ol', it.label))
+      if (it.detail) b.append(el('span', 'rr-ask-od', it.detail))
+      b.addEventListener('click', () => done(it.value))
+      list.append(b)
+    }
+    if (items.length === 0) list.append(el('p', 'rr-ask-p', o.empty))
+    arrowsWalk(list)
+    const cancel = button('rr-ask-x', o.cancel ?? 'Cancelar')
+    cancel.addEventListener('click', () => done(undefined))
+    body.append(list, cancel)
+    return list.querySelector<HTMLElement>('button') ?? cancel
+  })
+}
+
+export interface DeskDraft { name: string; color: HueName }
+
+/**
+ * A desk's name and colour (a new desk), or the colour alone ("Cor…"). The colours are the app's twelve, a group of radios
+ * the arrows walk; `check` says why a name is refused (the portal's ceiling) before anything goes.
+ */
+export function deskForm(tier: Tier, o: { title: string; submit: string; name?: string; color: HueName; withName: boolean; check(name: string): string | undefined }): Promise<DeskDraft | undefined> {
+  return openSheet<DeskDraft>(tier, o.title, (body, done) => {
+    let color: HueName = o.color
+    let input: HTMLInputElement | undefined
+    const err = el('p', 'rr-ask-err')
+    err.setAttribute('role', 'alert')
+    err.hidden = true
+    if (o.withName) {
+      const label = el('label', 'rr-ask-f', 'Nome')
+      input = el('input', 'rr-ask-in')
+      input.type = 'text'
+      input.value = o.name ?? ''
+      input.placeholder = 'Nome da mesa'
+      input.autocomplete = 'off'
+      input.spellcheck = false
+      input.dataset.field = 'name'
+      label.append(input)
+      body.append(label)
+    }
+    const group = el('div', 'rr-ask-hues')
+    group.setAttribute('role', 'radiogroup')
+    group.setAttribute('aria-label', 'Cor')
+    const paint = (): void => {
+      for (const b of group.querySelectorAll<HTMLButtonElement>('button')) {
+        const on = b.dataset.hue === color
+        b.setAttribute('aria-checked', String(on))
+        b.tabIndex = on ? 0 : -1
+      }
+    }
+    for (const h of HUE_NAMES) {
+      const b = el('button', 'rr-ask-hue')
+      b.type = 'button'
+      b.setAttribute('role', 'radio')
+      b.dataset.hue = h
+      b.title = HUE_LABELS[h]
+      b.setAttribute('aria-label', HUE_LABELS[h])
+      b.style.setProperty('--rr-desk', `var(--x-${h})`)
+      b.addEventListener('click', () => { color = h; paint() })
+      group.append(b)
+    }
+    group.addEventListener('keydown', ev => {
+      const i = HUE_NAMES.indexOf(color)
+      const step = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' ? -1 : 0
+      if (step === 0) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      color = HUE_NAMES[(i + step + HUE_NAMES.length) % HUE_NAMES.length]!
+      paint()
+      group.querySelector<HTMLElement>(`[data-hue="${color}"]`)?.focus()
+    })
+    paint()
+    const lab = el('span', 'rr-ask-f', 'Cor')
+    lab.setAttribute('aria-hidden', 'true')
+    body.append(lab, group, err)
+    const go = button('rr-ask-c', o.submit, 'neutral')
+    go.dataset.choice = 'submit'
+    const submit = (): void => {
+      const name = input?.value ?? o.name ?? ''
+      const why = o.withName ? o.check(name) : undefined
+      if (why) { err.textContent = why; err.hidden = false; input?.focus(); return }
+      done({ name, color })
+    }
+    go.addEventListener('click', submit)
+    input?.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); submit() } })
+    const cancel = button('rr-ask-x', 'Cancelar')
+    cancel.addEventListener('click', () => done(undefined))
+    const row = el('div', 'rr-ask-cs')
+    row.append(go)
+    body.append(row, cancel)
+    return input ?? group.querySelector<HTMLElement>('[tabindex="0"]') ?? go
+  })
+}
