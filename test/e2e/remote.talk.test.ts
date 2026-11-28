@@ -484,9 +484,19 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
 
     // The app is "closed": the page says it is not on the screen.
     assert.equal((await s.request(OP.visible, { visible: false })).status, RES_STATUS.ok)
-    // The agent begins to wait for the person (its Notification hook, as Claude Code writes it).
-    writeFileSync(join(home, 'slots', `${memberId}.attention`), JSON.stringify({ ts: new Date().toISOString(), kind: 'waiting', reason: 'permission_prompt' }) + '\n')
+    // The agent's own turn must be over first. agent-live.cjs answers each channel notification with `start` and, TURN_MS
+    // later, `done` in this same file: a `done` that lands after the `waiting` below ends the wait (or hides it, inside
+    // tetherd's debounce) before the portal's tick sees it, and then no notice is due. The last notification it heard came
+    // from the test before this one, often less than TURN_MS ago.
+    const attentionFile = join(home, 'slots', `${memberId}.attention`)
+    const report = (): { ts?: string; kind?: string } => { try { return JSON.parse(readFileSync(attentionFile, 'utf8')) as { ts?: string; kind?: string } } catch { return {} } }
+    const slotNow = async () => ((await cli.request({ t: 'list' })).slots ?? []).find((x) => x.slotId === memberId)
+    await eventually(async () => report().kind !== 'start' && (await slotNow())?.busySince === undefined, 10_000, 'the agent\'s turn over')
+    // The agent begins to wait for the person (its Notification hook, as Claude Code writes it), later than its last report.
+    const ts = new Date(Math.max(Date.now(), (Date.parse(report().ts ?? '') || 0) + 1)).toISOString()
+    writeFileSync(attentionFile, JSON.stringify({ ts, kind: 'waiting', reason: 'permission_prompt' }) + '\n')
     const first = await until(() => pushService.got.find((g) => g.notice?.kind === 'waiting'), 15_000, 'the notice of who waits')
+      .catch(async (e: Error) => { throw new Error(`${e.message}; attention file ${JSON.stringify(report())}, slot attention ${(await slotNow())?.attention}, posts ${pushService.got.length}`) })
     assert.equal(first.vapid.ok, true, `VAPID: ${JSON.stringify(first.vapid)}`)
     assert.equal(first.vapid.ok && b64url(first.vapid.pub), key.body.key, 'signed with K_V, the key the device subscribed with')
     assert.equal(first.encoding, 'aes128gcm')
