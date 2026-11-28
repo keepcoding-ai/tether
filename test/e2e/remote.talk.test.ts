@@ -11,7 +11,7 @@
 // `channels` scope (the registry edited, the bench restarted) is refused before anything is written.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
@@ -29,6 +29,7 @@ const root = resolve(import.meta.dirname, '..', '..')
 const OP = {
   say: OP_CODES['channels.say'], react: OP_CODES['channels.react'], vote: OP_CODES['channels.vote'], poll: OP_CODES['channels.poll'],
   seen: OP_CODES['channels.seen'], marks: OP_CODES['channels.marks'], page: OP_CODES['channels.page'], lock: OP_CODES['session.lock'],
+  file: OP_CODES['channels.file'], upload: OP_CODES['channels.upload'],
 }
 
 const ext = async (c: DaemonClient, name: string, args?: Record<string, unknown>, extName = 'remote'): Promise<Record<string, any>> =>
@@ -358,6 +359,50 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     await until(() => notes().some((n) => n.content === 'Uma vez só.') || undefined, 15_000, 'the agent heard it')
     await new Promise((r) => setTimeout(r, 1_000))
     assert.equal(notes().filter((n) => n.content === 'Uma vez só.').length, 1, 'the agent heard it once')
+  })
+
+  test('files (RR4 4.3): an image goes up and is said, the agent gets its path, the device reads it back by its line; the refusals', async () => {
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(300, 7)])
+    const speech = actId()
+    const act = toHex(speech)
+    const up = await ok(OP.upload, { channel: channelId, act, file: 0, name: 'foto da obra.png', size: png.length, offset: 0, data: png.toString('base64url') })
+    assert.deepEqual(up, { received: png.length, done: true })
+    const body = await ok(OP.say, { channel: channelId, text: 'Olha a foto.', files: [0] }, speech)
+    const folder = join(home, 'channels', channelId, 'files')
+    const line = (await history()).lines.find((l: { seq: number }) => l.seq === body.seq)
+    assert.equal(line.files.length, 1)
+    assert.equal(line.files[0].name, 'foto da obra.png')
+    assert.equal(resolve(line.files[0].path), resolve(folder, 'foto da obra.png'), 'tetherd copied it into the channel folder')
+    assert.deepEqual(readFileSync(line.files[0].path), png)
+    const heard = await until(() => notes().find((n) => n.content.startsWith('Olha a foto.')), 15_000, 'the agent hears the speech with its file')
+    assert.match(heard.content, /anexos:/)
+    await eventually(async () => !existsSync(join(folder, '.remote-upload')) || readdirSync(join(folder, '.remote-upload')).length === 0, 10_000, 'no temporary file left')
+    // Back to the device, by (channel, seq, index): the bytes and the type by signature, never a path.
+    const got = await call(OP.file, { channel: channelId, seq: body.seq, file: 0, offset: 0 })
+    assert.equal(got.status, RES_STATUS.ok)
+    assert.deepEqual(Object.keys(got.body).sort(), ['data', 'offset', 'size', 'type'])
+    assert.deepEqual([got.body.size, got.body.type], [png.length, 'image/png'])
+    assert.deepEqual(Buffer.from(got.body.data as string, 'base64url'), png)
+    // An image an agent put in the channel, the same way.
+    const agentPng = join(home, 'conferente', 'planta.png')
+    writeFileSync(agentPng, png)
+    const put = await agent('say', { canal: channelId, text: 'A planta.', files: [agentPng] })
+    const agentSeq = (put.line?.seq ?? put.seq) as number
+    const back = await call(OP.file, { channel: channelId, seq: agentSeq, file: 0 })
+    assert.equal(back.status, RES_STATUS.ok, JSON.stringify(back.body))
+    assert.equal(back.body.type, 'image/png')
+    // The refusals: no file at that index, a line with no file, a channel that is not there: all "not there".
+    for (const b of [{ seq: body.seq, file: 1 }, { seq: said, file: 0 }]) {
+      assert.deepEqual(await call(OP.file, { channel: channelId, ...b }), { status: RES_STATUS.notFound, body: {} }, JSON.stringify(b))
+    }
+    assert.equal((await call(OP.file, { channel: 'c_nada', seq: 1, file: 0 })).status, RES_STATUS.notFound)
+    assert.equal((await call(OP.file, { channel: channelId, seq: body.seq, file: 0, path: folder })).status, RES_STATUS.badRequest, 'no path in a body')
+    assert.deepEqual(await call(OP.upload, { channel: channelId, act: toHex(actId()), file: 0, name: '.env', size: 3, offset: 0, data: 'AAAA' }), { status: RES_STATUS.failed, body: { error: 'secret-file' } })
+    assert.deepEqual(await call(OP.say, { channel: channelId, text: 'sem arquivo', files: [0] }), { status: RES_STATUS.notFound, body: { error: 'unknown-file' } })
+    const before = (await history()).last
+    assert.equal((await call(OP.upload, { channel: '..', act: toHex(actId()), file: 0, name: 'a.png', size: 3, offset: 0, data: 'AAAA' })).status, RES_STATUS.badRequest)
+    assert.equal(existsSync(join(home, 'files')), false, 'nothing above the channels')
+    assert.equal((await history()).last, before, 'no refusal wrote a line')
   })
 
   test('a locked session is refused, and nothing is written', async () => {
