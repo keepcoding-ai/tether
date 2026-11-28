@@ -137,6 +137,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   const env: NodeJS.ProcessEnv = {
     ...process.env, TETHER_TEST_REMOTE: '1', TETHER_TEST_REMOTE_NOTICE: join(home, 'notices.txt'), TETHER_TEST_REMOTE_TICK_MS: '200',
     TETHER_TEST_REMOTE_CHANNELS_GAP_MS: '500', TETHER_TEST_REMOTE_REGENCY_GAP_MS: '500',
+    // Web Push (RR4 4.4): on the bench the portal dials only this origin (nothing listens there: no notice leaves the machine).
+    TETHER_TEST_REMOTE_PUSH_ORIGIN: 'http://localhost:9',
   }
   /**
    * The Regency keeper's clock: `skewMs` moves it past the lease (the app "closed" without waiting 75 s), and `expire` is the
@@ -736,6 +738,92 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await eventually(async () => ((await said()) === 1) || undefined, 15_000, 'what waited, said once unlocked')
     await sleep(1_500)
     assert.equal(await said(), 1, 'said once')
+  })
+
+  test('18. avisos neste aparelho: o item mora junto do "Trancar", pede a permissão no toque, e a assinatura chega ao portal; desligar a tira', async () => {
+    await toRegency()
+    await page.waitForSelector('.rr-top .rr-push', { timeout: 10_000 })
+    assert.ok(await page.evaluate(() => document.querySelector('.rr-top .rr-push')?.nextElementSibling?.nextElementSibling?.classList.contains('rr-lock') === true), 'beside "Trancar"')
+    const pushOf = (): { endpoint: string } | undefined => {
+      const reg = JSON.parse(readFileSync(join(home, 'remote', 'devices.json'), 'utf8')) as { devices: { state: string; push?: { endpoint: string } }[] }
+      return reg.devices.find((d) => d.state === 'active' && d.push)?.push
+    }
+    const settled = async (): Promise<string> => eventually(async () => {
+      const s = await page.getAttribute('.rr-top .rr-push', 'data-state')
+      return s && s !== 'busy' ? s : undefined
+    }, 20_000, 'the item settled')
+    const card = async (): Promise<string> => {
+      await page.click('.rr-top .rr-push')
+      await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+      return text('#ctx-menu')
+    }
+    // The card says what the notices are, where they are now, and offers the one gesture.
+    const words = await card()
+    assert.match(words, /Avisos neste aparelho/)
+    assert.match(words, /Avisa quando um agente espera você ou quando falam com você num canal\./)
+    assert.match(words, /Desligados\./)
+    await page.screenshot({ path: join(shots, 'rr4-44-avisos-cartao.png') })
+    // The tap: the browser's permission is asked there (the bench's browser grants it), then the browser subscribes.
+    await page.click('#ctx-menu button.rr-mi')
+    const first = await settled()
+    const permission = await page.evaluate(() => Notification.permission)
+    assert.equal(permission, 'granted', 'asked and granted on the tap')
+    if (first === 'on') {
+      // A browser with a push service: its endpoint is one of the list (and on the bench no notice is ever sent to it).
+      assert.match(pushOf()!.endpoint, /^https:\/\/(fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[\w.-]+\.push\.apple\.com|[\w.-]+\.notify\.windows\.com)\//)
+    } else {
+      // The bench's browser (Electron) has no push service: subscribing fails, and the item says so. From here the page's
+      // own path to the portal is proven with a subscription made in the page, as PushManager would give it.
+      assert.equal(first, 'failed', `the item after a failed subscription: ${first}`)
+      assert.equal(pushOf(), undefined)
+      await page.evaluate(async () => {
+        const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])
+        const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
+        const auth = crypto.getRandomValues(new Uint8Array(16))
+        const b64 = (u: Uint8Array): string => btoa(String.fromCharCode(...u)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+        const endpoint = 'http://localhost:9/push/web'
+        let current: unknown = null
+        const proto = PushManager.prototype as unknown as Record<string, unknown>
+        proto.getSubscription = async () => current
+        proto.subscribe = async (o: { applicationServerKey: Uint8Array }) => {
+          const k = o.applicationServerKey
+          current = {
+            endpoint, options: { applicationServerKey: k.buffer.slice(k.byteOffset, k.byteOffset + k.byteLength) },
+            toJSON: () => ({ endpoint, keys: { p256dh: b64(raw), auth: b64(auth) } }),
+            unsubscribe: async () => { current = null; return true },
+          }
+          return current
+        }
+      })
+      await card()
+      await page.click('#ctx-menu button.rr-mi')
+      assert.equal(await settled(), 'on')
+      assert.equal(pushOf()?.endpoint, 'http://localhost:9/push/web', 'the subscription reached the portal and the registry')
+    }
+    assert.match(await card(), /Ligados\./)
+    await page.screenshot({ path: join(shots, 'rr4-44-avisos-ligados.png') })
+    // Off: the house forgets it.
+    await page.click('#ctx-menu button.rr-mi')
+    assert.equal(await settled(), 'off')
+    await eventually(async () => pushOf() === undefined || undefined, 10_000, 'the registry forgot the subscription')
+    const audit = readFileSync(join(home, 'remote', 'audit.jsonl'), 'utf8')
+    assert.match(audit, /"act":"attention\.push-on"[^\n]*"result":"ok"/)
+    assert.match(audit, /"act":"attention\.push-off"[^\n]*"result":"ok"/)
+    assert.equal(audit.includes('/push/web'), false, 'no endpoint in the audit')
+    // The phone: the card is a sheet from the bottom.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await sleep(300)
+    await card()
+    assert.equal(await page.getAttribute('#ctx-menu', 'data-form'), 'sheet')
+    await page.screenshot({ path: join(shots, 'rr4-44-avisos-390.png') })
+    await page.keyboard.press('Escape')
+    // The TV: nothing to tap, it only says so.
+    await page.setViewportSize({ width: 2560, height: 1440 })
+    await sleep(300)
+    assert.equal(await page.isVisible('.rr-top .rr-push'), false)
+    assert.match(await text('.rr-top .rr-push-na'), /não disponível aqui/)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await sleep(300)
   })
 
   test('12. rajada de eventos não quebra a tela: falas, uma enquete e árvores em sequência rápida, e a tela chega ao último estado', async () => {
