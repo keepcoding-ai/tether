@@ -20,7 +20,7 @@ const FAKE_AGENT = String.raw`
 const fs = require('node:fs')
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ slot: process.env.FAKE_SLOT, resume: process.env.FAKE_RESUME, pid: process.pid }) + '\n')
 if (fs.existsSync(process.env.FAKE_DIE)) process.exit(1)
-setInterval(() => {}, 60000)
+setInterval(() => { if (fs.existsSync(process.env.FAKE_DIE + '.exit')) process.exit(0) }, 50)
 `
 
 interface Launch { slot: string; resume: string; pid: number }
@@ -97,6 +97,15 @@ class Bench {
     const ev: TetherEvent = { v: 1, ts: new Date().toISOString(), slotId, agent: 'soul', kind: 'start', source: 'startup', sessionId, cwd: this.cwd, resume: { cwd: this.cwd, args: ['-r', sessionId] } }
     appendFileSync(slotEventsPath(this.home, slotId), JSON.stringify(ev) + '\n')
   }
+
+  /** The agent's end event (what Claude's SessionEnd hook writes), with its reason in `source`. */
+  end(slotId: string, sessionId: string, reason: string): void {
+    const ev: TetherEvent = { v: 1, ts: new Date().toISOString(), slotId, agent: 'soul', kind: 'end', source: reason, sessionId }
+    appendFileSync(slotEventsPath(this.home, slotId), JSON.stringify(ev) + '\n')
+  }
+
+  /** The agent leaves by itself (exit code 0), as after `/exit`. */
+  exitByItself(slotId: string): void { writeFileSync(this.dieFile(slotId) + '.exit', '') }
 
   /** A soul slot created and started by a client, its session reported and seen running. */
   async running(rec: Recorder, sessionId: string | undefined): Promise<string> {
@@ -367,6 +376,68 @@ describe('lifecycle intent: the boot relaunches what is meant to run', () => {
       assert.ok(count() <= MAX_STARTING)
     }
     rec.close()
+  })
+})
+
+describe('lifecycle intent: the user leaving from inside the agent ends the slot', () => {
+  /** A running slot whose agent wrote `reason` (or nothing) and then exited by itself; returns after the exit verdict. */
+  async function leaves(b: Bench, rec: Recorder, session: string, reason: string | undefined): Promise<string> {
+    const id = await b.running(rec, session)
+    const pid = b.state(id).pid!
+    if (reason) b.end(id, session, reason)
+    b.exitByItself(id)
+    await waitUntil(() => !pidAlive(pid), 10_000, 'the agent left')
+    await waitUntil(() => b.state(id).status === 'exited' && b.logs.includes(`slot ${id}: exited (code 0)`), 10_000, 'tetherd saw the exit')
+    await sleep(300)
+    return id
+  }
+
+  test('10. /exit (prompt_input_exit) and logout record ended and do not come back at boot', async () => {
+    const b = bench()
+    await b.boot()
+    const rec = await Recorder.connect(b.daemon!.pipe)
+    const exited = await leaves(b, rec, 'sess-10e', 'prompt_input_exit')
+    const loggedOut = await leaves(b, rec, 'sess-10l', 'logout')
+    for (const id of [exited, loggedOut]) {
+      assert.equal(b.state(id).want, 'ended')
+      await waitUntil(() => b.meta(id).want === 'ended', 10_000, `${id} meta says ended`)
+    }
+    rec.close()
+    await b.close()
+    await b.boot()
+    await noLaunch(b, exited, 1)
+    await noLaunch(b, loggedOut, 1)
+  })
+
+  test('11. an exit with reason other, clear or no end at all keeps run and comes back at boot', async () => {
+    const b = bench()
+    await b.boot()
+    const rec = await Recorder.connect(b.daemon!.pipe)
+    const ids = [await leaves(b, rec, 'sess-11o', 'other'), await leaves(b, rec, 'sess-11c', 'clear'), await leaves(b, rec, 'sess-11n', undefined)]
+    for (const id of ids) assert.equal(b.meta(id).want, 'run')
+    rec.close()
+    await b.close()
+    await b.boot()
+    for (const id of ids) await waitUntil(() => b.launches(id).length === 2, 10_000, `the relaunch of ${id}`)
+  })
+
+  test('12. an end with prompt_input_exit written while tetherd stops the run does not turn into ended', async () => {
+    const b = bench()
+    await b.boot()
+    const rec = await Recorder.connect(b.daemon!.pipe)
+    const hibernated = await b.running(rec, 'sess-12h')
+    b.end(hibernated, 'sess-12h', 'prompt_input_exit')
+    assert.equal((await rec.client.request({ t: 'stop', slotId: hibernated, why: 'hibernate' })).slot!.want, 'asleep')
+    const tornDown = await b.running(rec, 'sess-12t')
+    b.end(tornDown, 'sess-12t', 'prompt_input_exit')
+    await sleep(300) // the end is read while the run is alive
+    rec.close()
+    await b.close() // teardown kills it: the intent stays run
+    assert.equal(b.meta(hibernated).want, 'asleep')
+    assert.equal(b.meta(tornDown).want, 'run')
+    await b.boot()
+    await waitUntil(() => b.launches(tornDown).length === 2, 10_000, 'the torn-down slot comes back')
+    await noLaunch(b, hibernated, 1)
   })
 })
 

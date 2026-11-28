@@ -277,6 +277,8 @@ interface Slot {
   restarting?: true
   /** A stop is waiting for the agent to be old enough to kill (see MIN_AGENT_AGE_MS). */
   stopping?: true
+  /** `spawnedAt` of the run tetherd asked to stop (stop, restart, teardown): its exit is not the user leaving from inside. */
+  stopAskedOf?: string
   /** Whether the CURRENT process was launched with --dangerously-skip-permissions (set at spawn). */
   runUnsafe?: boolean
   scrollback: Scrollback
@@ -1810,6 +1812,11 @@ class DaemonImpl implements Daemon {
       this.log(`slot ${meta.slotId}: no start event for this run; binding unconfirmed`)
     }
     // Crash-loop guard: a run that reported its session or lived long enough was healthy (measured at its exit, no timer).
+    // The user left from inside the agent (`/exit`, logout): the same as ending it here, so it does not come back at boot.
+    // A run tetherd stopped, a crash or a kill by the system (taskkill /F runs no hook: no end event) keeps its intent.
+    if ((slot.status === 'exited' || slot.status === 'unconfirmed') && !this.closing && !slot.restarting && slot.stopAskedOf !== slot.spawnedAt && this.userLeftThisRun(slot) && this.setWant(slot, 'ended')) {
+      this.log(`slot ${meta.slotId}: the user left from inside the agent; ended`)
+    }
     if (meta.bootTries !== undefined && (this.reportedThisRun(slot) || (slot.spawnedAt !== undefined && Date.now() - Date.parse(slot.spawnedAt) >= BOOT_HEALTHY_MS))) this.clearBootTries(slot)
     this.broadcastState(slot)
     this.emitSlot('exited', slot)
@@ -1888,6 +1895,19 @@ class DaemonImpl implements Daemon {
     return slot.binding !== undefined && slot.spawnedAt !== undefined && slot.binding.since >= slot.spawnedAt
   }
 
+  /** The last end event of this run says the user left from inside (Claude's SessionEnd reasons; `clear` keeps it alive). */
+  private userLeftThisRun(slot: Slot): boolean {
+    const since = slot.spawnedAt
+    const kept = slot.events?.kept
+    if (!since || !kept) return false
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const e = kept[i]!
+      if (e.ts < since) return false
+      if (e.kind === 'end') return e.source === 'prompt_input_exit' || e.source === 'logout'
+    }
+    return false
+  }
+
   /** Records when the run ended (in the meta, so a restarted daemon still knows). */
   private markEnded(slot: Slot): void {
     slot.meta.endedAt = new Date().toISOString()
@@ -1952,6 +1972,7 @@ class DaemonImpl implements Daemon {
     }
     if (slot.launching) await slot.launching // stop what the host is spawning, not nothing
     const pty = slot.pty
+    if (pty) slot.stopAskedOf = slot.spawnedAt
     if (!pty) {
       this.dropInput(slot)
       this.unwatchTitle(slot)
