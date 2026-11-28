@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { DaemonError } from '../../src/daemon/client.ts'
-import { assertionChallenge, OP_CODES, RES_STATUS } from '../../src/remote/index.ts'
+import { assertionChallenge, OP_CODES, RES_STATUS, toHex } from '../../src/remote/index.ts'
 import { ERROR_CODES } from '../../src/remote/projection.ts'
 import { ENV_MAX, PROC_COMMAND_MAX, PROC_NEW_ERROR_CODES } from '../../src/remote/procs-new.ts'
 import { folderId } from '../../src/remote/create.ts'
@@ -94,6 +94,7 @@ describe('"Novo processo" through a real House', () => {
       return { proc: { name: m.name, status: 'stopped', card: { command: 'x', cwd: 'C:\\', env: {}, ports: [] } }, events: [] }
     }
     const recipe = m.recipe as { command: string; cwd: string; env: Record<string, string>; ports: number[] }
+    if (m.name === 'cheio') throw new DaemonError('too-many' as never, `teto ${MARKER}`)
     known.add(String(m.name))
     // A tetherd that answers the whole card, its env values among it: only the names may pass.
     return { proc: { name: m.name, status: 'running', run: 1, card: { ...recipe, createdAt: '2026-11-28T10:00:00.000Z' }, env: recipe.env, args: [MARKER] } }
@@ -123,9 +124,15 @@ describe('"Novo processo" through a real House', () => {
     assert.equal(has(r), false, 'the value never comes back')
     assert.deepEqual(reads, [{ op: 'create.options' }])
     assert.deepEqual(sent.map((m) => m.t), ['proc-info', 'proc-start'])
-    assert.deepEqual(sent[1], { t: 'proc-start', name: 'bench-web', recipe: { command: 'node', args: ['server.js', '--port', '3000'], env: { BENCH_MODE: MARKER }, ports: [3000], description: 'o site', cwd: 'C:\\p\\web' } })
+    assert.deepEqual(sent[1], { t: 'proc-start', name: 'bench-web', recipe: { command: 'node', args: ['server.js', '--port', '3000'], env: { BENCH_MODE: MARKER }, ports: [3000], description: 'o site', cwd: 'C:\\p\\web' }, device: toHex(bench.device.result!.deviceId) }, 'the device that asks goes with it (RR5 M-2)')
     const line = audits().filter((l) => l.act === 'procs.new').at(-1)!
     assert.deepEqual([line.result, line.target], ['ok', 'bench-web'])
+  })
+
+  test('RR5 M-2: tetherd over its ceiling of what is created from afar answers too-many, 0x07, by code alone', async () => {
+    const r = await act(s, auth, OP_CODES['procs.new'], { ...BODY, name: 'cheio' })
+    assert.deepEqual(r, { status: RES_STATUS.limit, body: { error: 'too-many' } })
+    assert.equal(audits().filter((l) => l.act === 'procs.new').at(-1)!.result, 'refused:too-many')
   })
 
   test('the same act again (the actId replayed) is the kept answer, without the value; nothing is sent again', async () => {

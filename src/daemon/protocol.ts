@@ -202,6 +202,7 @@ export type ErrorCode =
   | 'bad-adopt'        // proc-adopt refused: nothing was touched (message: why and what to do)
   | 'proc-in-use'       // stop/restart/forget refused: others declared a use (message = the board: who, until when, what for, options)
   | 'port-busy'         // proc-start refused: a declared port listens already, or another live process declares it (message: who)
+  | 'too-many'          // a creation from afar over its ceiling (RR5 M-2, afar-caps.ts): per device or house, hourly or live
   | 'door-unavailable'  // the agent door is not live in this process (a satellite), or the owning extension left
   | 'door-no-pty'       // a door write to a slot with no process
   | 'door-denied'       // the caller's identity does not match
@@ -341,7 +342,8 @@ export type Request =
   | { t: 'proc-info'; id: number; name: string }
   /** Register (or change the recipe of a stopped one) and start; no recipe = the stored one. Reply: `proc` (status failed when it did not start). */
   /** `force`: start even when a declared port is busy (else `port-busy`). */
-  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy; force?: boolean }
+  /** `device`: from the `remote` client only, the device that asks for a new process (RR5 M-2, src/daemon/afar-caps.ts). */
+  | { t: 'proc-start'; id: number; name: string; recipe?: ProcRecipe; by?: ProcBy; force?: boolean; device?: string }
   /**
    * Ctrl+C, the card's grace, then the tree. Answers once it stopped. stop / restart / forget meet the uses others
    * declared: refused with `proc-in-use` by default; `waitMs` holds the act until they end (at most 5 min);

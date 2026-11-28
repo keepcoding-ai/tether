@@ -29,7 +29,7 @@ export interface CreateAfarDeps {
 /** How long a new channel is awaited in the house's list before the centre is left as it was. */
 const CHANNEL_WAIT_MS = 10_000
 /** The codes that end a plan where nothing was made with their own sentence (said whole, not as "Não consegui …"). */
-const WHOLE = new Set(['no-app', 'desk-asleep', 'locked', 'cancelled', 'no-scope', 'no-credential'])
+const WHOLE = new Set(['no-app', 'desk-asleep', 'locked', 'cancelled', 'no-scope', 'no-credential', 'too-many'])
 
 export class CreateAfar {
   private readonly d: CreateAfarDeps

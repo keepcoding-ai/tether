@@ -158,12 +158,14 @@ describe('the app acts through a real House', () => {
     assert.deepEqual(await send(OP['create.browser'], { deskId: 'desk-1' }), { status: RES_STATUS.ok, body: { state: 'done', paneId: 'note-3' } })
     assert.deepEqual(await send(OP['create.agent'], { engine: 'claude', profile: 'nao-ha', deskId: 'desk-1', folder }), { status: RES_STATUS.notFound, body: { error: 'unknown-profile' } })
     assert.equal((await send(OP['create.agent'], { engine: 'claude', deskId: 'desk-1', folder: 'C:\\Windows' })).status, RES_STATUS.badRequest, 'never a path')
+    // A creation names the device that asks (RR5 M-2: tetherd counts per device), from the session, never from the body.
+    const device = deviceId()
     assert.deepEqual(sent.map((m) => [m.name, m.args]), [
-      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, name: 'revisor' }],
-      ['create', { what: 'terminal', engine: 'shell', deskId: 'desk-1', folder }],
+      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, name: 'revisor', device }],
+      ['create', { what: 'terminal', engine: 'shell', deskId: 'desk-1', folder, device }],
       ['act', { act: 'create.note', deskId: 'desk-1', folder }],
       ['act', { act: 'create.browser', deskId: 'desk-1' }],
-      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, profile: 'nao-ha' }],
+      ['create', { what: 'agent', engine: 'claude', deskId: 'desk-1', folder, profile: 'nao-ha', device }],
     ])
     const lines = bench.audits().slice(from)
     assert.deepEqual(lines.map((l) => [l.act, l.result, l.target]), [
@@ -171,6 +173,7 @@ describe('the app acts through a real House', () => {
       ['create.agent', 'refused:unknown-profile', 'desk-1'], ['create.agent', 'badRequest', undefined],
     ])
     assert.equal(JSON.stringify(lines).includes('revisor') || JSON.stringify(lines).includes(MARKER), false, 'never the name nor anything of the answer')
+    assert.equal((await send(OP['create.agent'], { engine: 'claude', deskId: 'desk-1', folder, device: 'f'.repeat(32) })).status, RES_STATUS.badRequest, 'the device is never the body\'s')
   })
 
   test("tetherd's and the app's refusals come back by their code, never the message: no-app 0x08, a stale id 0x06, busy 0x07", async () => {

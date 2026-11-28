@@ -357,6 +357,7 @@ export function refusalWords(code: string): string {
     case 'timeout': return 'A máquina não respondeu a tempo. Pode ter feito: a tela mostra quando ela contar.'
     case 'busy': return 'Outro pedido espera a máquina agora. Tente de novo em instantes.'
     case 'slow-down': return 'Pedidos demais em seguida. Espere um pouco.'
+    case 'too-many': return 'Já foi criado muito de longe por agora. Espere um pouco ou crie na máquina.'
     case 'unknown-desk': return 'Essa mesa não existe mais.'
     case 'stale': return 'A mesa mudou; confira e tente de novo.'
     case 'unknown-pane': return 'A guia não está mais nessa mesa.'
@@ -417,7 +418,7 @@ export function actStepOf(r: Reply, proof: 'none' | 'act' | 'window'): ActStep {
     case RES_STATUS.presenceRequired: return proof === 'none' ? { do: 'fail', code: 'no-credential' } : { do: 'prove' }
     case RES_STATUS.noScope: return { do: 'fail', code: 'no-scope' }
     case RES_STATUS.noApp: return { do: 'fail', code: 'no-app' }
-    case RES_STATUS.limit: return { do: 'fail', code: code === 'slow-down' ? 'slow-down' : 'busy' }
+    case RES_STATUS.limit: return { do: 'fail', code: code === 'slow-down' || code === 'too-many' ? code : 'busy' }
     case RES_STATUS.notFound: return { do: 'fail', code: code ?? 'unknown-desk' }
     case RES_STATUS.badRequest: return { do: 'fail', code: code ?? 'bad-request' }
     case RES_STATUS.failed: return code === 'timeout' ? { do: 'resend', afterMs: RESEND_MS } : { do: 'fail', code: code ?? 'refused' }

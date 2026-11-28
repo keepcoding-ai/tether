@@ -135,10 +135,14 @@ describe('the refusals in the person\'s words', () => {
     assert.match(refusalWords('last-desk'), /É a última mesa/)
     for (const code of ['no-app', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed', 'not-given', 'cannot', 'owners-off', 'unconfirmed',
       'no-answer', 'refused', 'timeout', 'busy', 'unknown-desk', 'unknown-pane', 'unknown-slot', 'unknown-agent', 'unknown-proc', 'proc-in-use',
-      'proc-running', 'port-busy', 'too-long', 'bad-request', 'no-scope', 'no-credential', 'locked', 'cut', 'cancelled', 'whatever-else']) {
+      'proc-running', 'port-busy', 'too-long', 'bad-request', 'no-scope', 'no-credential', 'locked', 'cut', 'cancelled', 'stale', 'too-many', 'whatever-else']) {
       const w = refusalWords(code)
       assert.ok(w.length > 8 && !w.includes(code), `${code}: ${w}`)
     }
+    // RR5 M-1 and M-2, in the person's words.
+    assert.equal(refusalWords('stale'), 'A mesa mudou; confira e tente de novo.')
+    assert.match(refusalWords('too-many'), /criado muito de longe/)
+    assert.deepEqual(actStepOf({ status: RES_STATUS.limit, body: { error: 'too-many' } }, 'none'), { do: 'fail', code: 'too-many' })
   })
 })
 

@@ -184,8 +184,9 @@ export const REMOTE_ACT_ARGS = {
   'proc-list': {},
   'proc-info': { name: 'string' },
   // A recipe only of the form "Novo processo" from afar builds (RR5 5.5, ./recipe.ts remoteRecipeOk): the
-  // portal sends it for a name no process has; never `force` over a busy port, never `info` nor a grace.
-  'proc-start': { name: 'string', recipe: 'recipe' },
+  // portal sends it for a name no process has; never `force` over a busy port, never `info` nor a grace. With a recipe
+  // the portal names the device that asks (`device`), and tetherd counts what each device creates (RR5 M-2).
+  'proc-start': { name: 'string', recipe: 'recipe', device: 'string' },
   'proc-stop': { name: 'string', reason: 'string', force: 'string' },
   'proc-restart': { name: 'string', reason: 'string', force: 'string' },
   'proc-use': { name: 'string', duration: 'string', purpose: 'string' },

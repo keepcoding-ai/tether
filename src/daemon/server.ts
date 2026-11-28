@@ -2432,7 +2432,7 @@ class DaemonImpl implements Daemon {
         return { t: 'ok', id, proc, events }
       }
       case 'proc-start':
-        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind, req.force === true)) }
+        return { t: 'ok', id, proc: await this.procAct(() => this.procs.start(req.name, req.recipe, req.by, client.kind, req.force === true, client.kind === 'remote' ? req.device : undefined)) }
       case 'proc-stop':
         return { t: 'ok', id, proc: await this.procAct(() => this.procs.stop(req.name, optText(req.reason), req.by, client.kind, guardOf(req))) }
       case 'proc-restart':

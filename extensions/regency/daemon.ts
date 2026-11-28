@@ -17,7 +17,9 @@ import { remoteBenchOn } from '../../src/core/paths.ts'
 import { DoorError } from '../../src/daemon/door/port.ts'
 import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { DeskMap, DeskMapDesk, DoorSlots, ExtRequestContext } from '../../src/daemon/door/types.ts'
-import type { ErrorCode } from '../../src/daemon/protocol.ts'
+import type { ErrorCode, SlotState } from '../../src/daemon/protocol.ts'
+import { AfarCaps, afarDevice } from '../../src/daemon/afar-caps.ts'
+import { EXT_ID } from './manifest.ts'
 import {
   ACT_TAKE, APP_ACT_BRIDGE_MS, APP_ACT_DONE, APP_ACT_EVENT, APP_ACT_REQUEST, APP_ACTS_PENDING_MAX, APP_ANSWER_CODES, appActAnswer, appActTarget, parseAppAct, seenMatches,
   type AppAct, type AppActAnswer, type AppActCode, type AppActEvent,
@@ -374,11 +376,17 @@ export interface CreateDeps {
   caseInsensitive: boolean
   /** The bench: a `test` connection may create too. */
   bench?: boolean
+  /** The ceilings on what is created from afar (RR5 M-2); absent, tetherd's own (AFAR_CAPS). */
+  caps?: AfarCaps
 }
+
+/** A slot made from afar (this extension created it: Creator is its only creation) that runs or will run at the next start. */
+const liveFromAfar = (s: SlotState): boolean => s.createdBy?.ext === EXT_ID && (LIVE_STATUS.has(s.status) || s.want === 'run')
 
 export class Creator {
   readonly #d: CreateDeps
-  constructor(deps: CreateDeps) { this.#d = deps }
+  readonly #caps: AfarCaps
+  constructor(deps: CreateDeps) { this.#d = deps; this.#caps = deps.caps ?? new AfarCaps() }
 
   async folders(): Promise<KnownFolder[]> {
     const app = await this.#d.appFolders()
@@ -438,6 +446,9 @@ export class Creator {
       if (profileId === undefined) refuseCreate('unknown-profile', 'esse perfil não existe nesse motor')
     } else profileId = this.#d.defaultFor(a.engine)?.id
     if (!(await this.#d.exists(cwd))) refuseCreate('cwd-missing', 'a pasta não existe mais')
+    // The ceilings (RR5 M-2), last, with nothing awaited between the count and the create's start.
+    const device = afarDevice((args as { device?: unknown }).device)
+    if (!this.#caps.take('slots', device, this.#d.slots.list().filter(liveFromAfar).length)) refuseCreate('too-many', 'criações de longe demais por agora')
     let slot
     try {
       slot = await this.#d.slots.create({ kind: a.engine, cwd, ...(profileId ? { profileId } : {}), ...(a.name ? { name: a.name } : {}), desk: a.deskId, start: true })

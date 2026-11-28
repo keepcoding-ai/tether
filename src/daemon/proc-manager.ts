@@ -14,6 +14,7 @@ import type { HostRun, RunExit } from '../procd/protocol.ts'
 import { relativeTime } from '../cli/format.ts'
 import { sampleProcessTable } from './memory.ts'
 import { noticeLine, quoted } from './notices.ts'
+import { AfarCaps, afarDevice } from './afar-caps.ts'
 import { buildPortRows, listListeners, ownerText, probePort, treeOwners, type PortRow } from './ports.ts'
 import { LaunchError, planForAsync } from './proc-launch.ts'
 import {
@@ -80,6 +81,8 @@ export interface ProcManagerOptions {
   broadcast: (msg: DaemonMessage) => void
   /** Pids tetherd must never adopt: every panel's agent or shell (its own pid and the host's are known here). */
   protectedPids?: () => number[]
+  /** The ceilings on processes registered from afar (RR5 M-2); absent, tetherd's own (AFAR_CAPS). */
+  afarCaps?: AfarCaps
   /** The portrait of whoever asks (tetherd knows its slots). */
   author: (by: ProcBy | undefined, client: string | undefined) => ProcAuthor
   /** Connects to the host; `launch` = start one when nothing answers (only a start does). */
@@ -141,6 +144,7 @@ export class ProcManager {
   private readonly sampleSoon: (() => void) | undefined
   private readonly onData: ((name: string, data: string) => void) | undefined
   private readonly protectedPids: (() => number[]) | undefined
+  private readonly afarCaps: AfarCaps
   /** Names whose output tetherd is attached to in the host (a new host connection attaches them again). */
   private readonly watched = new Set<string>()
   private readonly entries = new Map<string, Entry>()
@@ -167,6 +171,7 @@ export class ProcManager {
     this.sampleSoon = opts.sampleSoon
     this.onData = opts.onData
     this.protectedPids = opts.protectedPids
+    this.afarCaps = opts.afarCaps ?? new AfarCaps()
   }
 
   /** Loads the cards; with any, only TRIES the host (never launches it) and reconciles. */
@@ -298,7 +303,11 @@ export class ProcManager {
     }
   }
 
-  start(name: string, recipe: ProcRecipe | undefined, by: ProcBy | undefined, client: string | undefined, force = false): Promise<ProcState> {
+  /**
+   * `device`: the remote portal's device that asks for a new process (RR5 M-2). A process registered by the `remote` client
+   * is marked `fromAfar` on its card and counts against the ceilings of src/daemon/afar-caps.ts.
+   */
+  start(name: string, recipe: ProcRecipe | undefined, by: ProcBy | undefined, client: string | undefined, force = false, device?: string): Promise<ProcState> {
     checkName(name)
     return this.locked(name, async () => {
       const author = this.author(by, client)
@@ -310,9 +319,13 @@ export class ProcManager {
         const busy = await this.portConflict(name, fields?.ports ?? e!.card.ports)
         if (busy) throw new ProcError('port-busy', `não iniciei ${name}: ${busy}. Escolha outra porta (tether proc ports mostra quem ouve onde), pare quem ocupa, ou inicie mesmo assim com --force`)
       }
+      const afar = client === 'remote'
+      // The ceilings, after the last await before the card is written: the count and the take are one step.
+      if (fields && !e && afar && !this.afarCaps.take('procs', afarDevice(device), this.liveFromAfar()))
+        throw new ProcError('too-many', 'processos novos de longe demais por agora')
       if (fields) {
         if (!e) {
-          const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString() }
+          const card: ProcCard = { v: 1, name, ...fields, registeredBy: author, createdAt: new Date().toISOString(), ...(afar ? { fromAfar: true as const } : {}) }
           this.files.writeCard(card)
           e = newEntry(card, [])
           this.entries.set(name, e)
@@ -331,6 +344,13 @@ export class ProcManager {
       await this.launch(e!, author)
       return this.state(e!)
     })
+  }
+
+  /** The processes registered from afar that run now (RR5 M-2: the house's live ceiling). */
+  private liveFromAfar(): number {
+    let n = 0
+    for (const e of this.entries.values()) if (e.card.fromAfar === true && isLive(e)) n++
+    return n
   }
 
   stop(name: string, reason: string | undefined, by: ProcBy | undefined, client: string | undefined, guard: GuardOptions = {}): Promise<ProcState> {

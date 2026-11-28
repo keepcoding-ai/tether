@@ -1204,7 +1204,7 @@ export class House {
     }
     // From here to acts.act nothing awaits, so no revocation slips in between.
     if (this.#closedTo(s)) return shut
-    const flight = acts.act({ t: 'proc-start', name: target, recipe: { ...checked.recipe, cwd } })
+    const flight = acts.act({ t: 'proc-start', name: target, recipe: { ...checked.recipe, cwd }, device: s.deviceId })
     const result = flight.settled.then((o) => this.#acted(op, o, target)).catch((): Served => ({ status: RES_STATUS.failed, bytes: errorBody('failed'), target }))
     const mem = this.#memOf(s.deviceId)
     if (req.actId) {
@@ -1263,7 +1263,9 @@ export class House {
     const aim = checked.target === '' ? {} : { target: checked.target }
     // From here to acts.write nothing awaits, so no revocation slips in between.
     if (this.#closedTo(s)) return { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'refused:revoked', ...aim, final: false }
-    const flight = acts.write(op, checked.args as unknown as Record<string, unknown>)
+    // A creation names the device that asks (never from its body): tetherd counts what each device creates (RR5 M-2).
+    const sentArgs = isCreateSlotOp(op) ? { ...(checked.args as unknown as Record<string, unknown>), device: s.deviceId } : checked.args as unknown as Record<string, unknown>
+    const flight = acts.write(op, sentArgs)
     const outcome = (o: WriteOutcome): Served => this.#appActed(op, o, checked.target)
     const mem = this.#memOf(s.deviceId)
     if (req.actId) {

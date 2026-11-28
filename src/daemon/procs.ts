@@ -17,6 +17,7 @@ export const SECRET_MASK = '•••'
 export const INFO_EVENTS = 20
 
 export type ProcErrorCode = 'bad-adopt' | 'unknown-proc' | 'proc-running' | 'proc-not-stopped' | 'proc-host' | 'proc-in-use' | 'port-busy' | 'bad-request'
+  | 'too-many'
 
 export class ProcError extends Error {
   readonly code: ProcErrorCode
@@ -72,6 +73,8 @@ export interface ProcCard {
   info: Record<string, string>
   registeredBy: ProcAuthor
   createdAt: string
+  /** Registered by the remote portal ("Novo processo" from afar): counts against the live ceiling (src/daemon/afar-caps.ts). */
+  fromAfar?: true
 }
 
 /** The recipe part of a card: what `recipe-changed` compares and records. */

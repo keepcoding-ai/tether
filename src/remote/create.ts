@@ -167,11 +167,21 @@ export function createSlotArgs(op: CreateSlotOp, b: Record<string, unknown>): { 
   return { args, target: b.deskId }
 }
 
-/** tetherd's half: the act exactly as the portal builds it (every field checked again, nothing more), or undefined. */
+/**
+ * The device that asks, as the portal adds it to the act it sends (RR5 M-2): tetherd counts what each device creates from
+ * afar (src/daemon/afar-caps.ts). 16 bytes, hex; never from the device's body (the portal writes it from the session).
+ */
+export const CREATE_DEVICE_RE = /^[0-9a-f]{32}$/
+
+/**
+ * tetherd's half: the act exactly as the portal builds it (every field checked again, nothing more), or undefined. The
+ * portal's `device` (CREATE_DEVICE_RE) may come with it and is not part of the act.
+ */
 export function parseCreateSlot(v: unknown): CreateSlotAct | undefined {
   const o = rec(v)
   const keys = Object.keys(o)
-  if (keys.some((k) => !['what', 'engine', 'profile', 'deskId', 'folder', 'name'].includes(k))) return undefined
+  if (keys.some((k) => !['what', 'engine', 'profile', 'deskId', 'folder', 'name', 'device'].includes(k))) return undefined
+  if (o.device !== undefined && !(typeof o.device === 'string' && CREATE_DEVICE_RE.test(o.device))) return undefined
   if (o.what !== 'agent' && o.what !== 'terminal') return undefined
   const built = createSlotArgs(o.what === 'agent' ? 'create.agent' : 'create.terminal', o)
   if (typeof built === 'string') return undefined
@@ -200,6 +210,8 @@ export const CREATE_REFUSALS = {
   'desk-asleep': RES_STATUS.failed,
   'cwd-missing': RES_STATUS.failed,
   'spawn-failed': RES_STATUS.failed,
+  // RR5 M-2: the device, or the house, already created as many as it may from afar (src/daemon/afar-caps.ts).
+  'too-many': RES_STATUS.limit,
 } as const satisfies Record<string, ResStatus>
 export const CREATE_ERROR_CODES = Object.keys(CREATE_REFUSALS) as (keyof typeof CREATE_REFUSALS)[]
 export type CreateCode = keyof typeof CREATE_REFUSALS

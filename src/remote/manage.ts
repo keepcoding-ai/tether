@@ -128,7 +128,9 @@ export type ManageCode = (typeof MANAGE_ERROR_CODES)[number]
  * The status each refusal of tetherd becomes: an id that names nothing is 0x06; the rest is what tetherd would not do,
  * 0x09 with its code. `bad-request` is not here: the portal's check makes it a bug (`failed`, logged).
  */
-export const ACT_REFUSALS: Readonly<Record<ManageCode, ResStatus>> = {
+export const ACT_REFUSALS: Readonly<Record<ManageCode | 'too-many', ResStatus>> = {
+  // "Novo processo" over a ceiling of what is created from afar (RR5 M-2, src/daemon/afar-caps.ts).
+  'too-many': RES_STATUS.limit,
   'unknown-slot': RES_STATUS.notFound,
   'unknown-proc': RES_STATUS.notFound,
   'proc-in-use': RES_STATUS.failed,
@@ -144,4 +146,4 @@ export const ACT_REFUSALS: Readonly<Record<ManageCode, ResStatus>> = {
   'spawn-failed': RES_STATUS.failed,
   'agent-unavailable': RES_STATUS.failed,
 }
-export const isActRefusal = (code: unknown): code is ManageCode => typeof code === 'string' && Object.hasOwn(ACT_REFUSALS, code)
+export const isActRefusal = (code: unknown): code is ManageCode | 'too-many' => typeof code === 'string' && Object.hasOwn(ACT_REFUSALS, code)
