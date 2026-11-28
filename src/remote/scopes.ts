@@ -52,6 +52,9 @@ export const OP_CODES = {
   'channels.vote': 0x0204,
   'channels.poll': 0x0205,
   'channels.seen': 0x0206,
+  'channels.file': 0x0207,
+  'channels.upload': 0x0208,
+  'channels.upload-cancel': 0x0209,
   'regency.tree': 0x0300,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
@@ -95,9 +98,10 @@ export const OP_TABLE = {
   // The person talks from afar (step 4.2a): each line reaches the pipe as the ONE `ext-request` its pair names in
   // src/remoted/reach.ts EXT_WRITES, the person as moderator (extensions/channels/daemon/requests.ts gate `person`). Class
   // `unlocked` (fio-spec 7.3: "ler, conversar, reagir, votar"), so a device without a presence credential gets 0x05 (E-8).
-  // The bodies are checked field by field by src/remote/talk.ts before the pipe; no attachment on `say` (step 4.3).
+  // The bodies are checked field by field by src/remote/talk.ts before the pipe. A speech's `files` are the indexes of
+  // the files uploaded under its own actId (`channels.upload`, step 4.3): the portal gives tetherd their paths, never the device.
   // A speech, to every member of the channel (`to`: the names it is addressed to, an address, not a filter).
-  'channels.say': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'text', 'to'], pipe: ['ext-request'] },
+  'channels.say': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'text', 'to', 'files'], pipe: ['ext-request'] },
   // A reaction on one message, added or (`remove: true`) taken back: explicit, so a repeat changes nothing.
   'channels.react': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'seq', 'reaction', 'remove'], pipe: ['ext-request'] },
   // The person's vote on a poll that calls her, by the option's number.
@@ -108,6 +112,17 @@ export const OP_TABLE = {
   // credential; it is NO gesture: the screen sends it on its own when lines come into view, and a phone left open on a
   // channel that keeps talking must still lock when idle (E-11).
   'channels.seen': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: false, body: ['channel', 'seq'], pipe: ['ext-request'] },
+  // The files of a speech from afar (step 4.3; src/remote/files.ts, src/remoted/files.ts). A device names a file by the line
+  // and its index on it, never by a path: the portal finds the path on the line tetherd keeps (EXT_READS `history`) and gives
+  // only a file that lives inside that channel's folder. One chunk per request; the chunk ops count against the device's
+  // bytes of files a minute, not its requests.
+  'channels.file': { scope: 'channels', presence: 'unlocked', mutates: false, gesture: false, body: ['channel', 'seq', 'file', 'offset'], pipe: ['ext-request'] },
+  // One chunk of a file of a speech still to be said, under that speech's actId (`act`). The portal writes it to a temporary
+  // file in the channel's folder; nothing reaches tetherd until the speech (`channels.say` with `files`). No gesture: the
+  // speech is.
+  'channels.upload': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: false, body: ['channel', 'act', 'file', 'name', 'size', 'offset', 'data'], pipe: [] },
+  // The person gives up a file (or all) of a speech still to be said: its temporary files go.
+  'channels.upload-cancel': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['act', 'file'], pipe: [] },
   // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`).
   'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },

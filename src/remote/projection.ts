@@ -92,6 +92,9 @@ export interface RemoteProfile {
 export const TALK_ERROR_CODES = [
   'unknown-channel', 'unknown-line', 'unknown-poll', 'slow-down', 'bad-reaction', 'bad-option', 'too-long', 'closed', 'too-old',
   'not-a-message', 'poll-closed', 'not-called', 'vote-first', 'limit', 'nobody-called', 'timeout', 'busy',
+  // The files of a speech (step 4.3): a secret's name, more files than a speech carries, the files of a speech that are not
+  // whole at the portal, a copy into the channel's folder that failed.
+  'secret-file', 'too-many', 'unknown-file', 'copy-failed',
 ] as const
 /** The error codes a body may carry; nothing else of a failure goes out. `too-large`: a read whose body passes READ_BODY_MAX. */
 export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large', ...TALK_ERROR_CODES] as const
@@ -673,6 +676,36 @@ function seenMark(s: WriteSource): SeenMark {
   return { seenByUser: int(rec(s.answer).seenByUser) ?? 0 }
 }
 
+// ---- the files of a speech from afar (step 4.3)
+
+/**
+ * One chunk of a file of a line: its whole size and type first (every chunk says them, so the first one announces them),
+ * the offset of this chunk and its bytes in base64url. `type` is decided by the file's first bytes at the portal: one of
+ * the four images, or `application/octet-stream` (an SVG or an HTML among them). Never the path nor the name.
+ */
+export interface FileChunk { size: number; type: string; offset: number; data: string }
+/** The source the portal built from the disk; nothing of it is copied whole. */
+export interface FileChunkSource { size: number; type: string; offset: number; data: string }
+const FILE_TYPE_RE = /^(image\/(png|jpeg|webp|gif)|application\/octet-stream)$/
+const B64URL_BODY_RE = /^[A-Za-z0-9_-]*$/
+
+function fileChunk(s: FileChunkSource): FileChunk {
+  return {
+    size: int(s.size) ?? 0,
+    type: typeof s.type === 'string' && FILE_TYPE_RE.test(s.type) ? s.type : 'application/octet-stream',
+    offset: int(s.offset) ?? 0,
+    data: typeof s.data === 'string' && B64URL_BODY_RE.test(s.data) ? s.data : '',
+  }
+}
+
+/** An upload's chunk: how many bytes of the file the portal holds now, and whether the file is whole and checked. */
+export interface Uploaded { received: number; done: boolean }
+export interface UploadedSource { received: number; done: boolean }
+
+function uploaded(s: UploadedSource): Uploaded {
+  return { received: int(s.received) ?? 0, done: s.done === true }
+}
+
 // ---- regency.tree
 
 /**
@@ -873,6 +906,9 @@ export const RESULTS = {
   'channels.vote': voted,
   'channels.poll': pollOpened,
   'channels.seen': seenMark,
+  'channels.file': fileChunk,
+  'channels.upload': uploaded,
+  'channels.upload-cancel': empty,
   'regency.tree': regencyTree,
   'device.list': unbuilt,
   'device.revoke': empty,

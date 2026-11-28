@@ -26,6 +26,7 @@ import { KEY_FILES, loadKeys } from './keyfiles.ts'
 import { makeNotice } from './notice.ts'
 import { pipeReads } from './reads.ts'
 import { pipeWrites } from './writes.ts'
+import { PortalFiles } from './files.ts'
 import { audOf, RelayLink } from './relay.ts'
 
 const home = tetherHome()
@@ -141,6 +142,7 @@ async function main(): Promise<void> {
   const renewDenyAfterMs = knob('TETHER_TEST_REMOTE_DENY_AFTER_MS')
   const channelsGap = knob('TETHER_TEST_REMOTE_CHANNELS_GAP_MS')
   const regencyGap = knob('TETHER_TEST_REMOTE_REGENCY_GAP_MS')
+  const uploadIdleMs = knob('TETHER_TEST_REMOTE_UPLOAD_IDLE_MS')
   const house = new House({
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
     // The class `ext-read` of PIPE_REACH: the only paths from a device to tetherd's extensions, the reads (./reads.ts) and,
@@ -148,6 +150,9 @@ async function main(): Promise<void> {
     reads: pipeReads((body) => client.request(body)),
     writes: pipeWrites((body) => client.request(body), { log }),
     userHome: homedir(),
+    // The files of a speech from afar: read from and written to the channels' folders under tetherd's home, nowhere else.
+    files: new PortalFiles({ home, now: Date.now, log }),
+    ...(uploadIdleMs !== undefined ? { uploadIdleMs } : {}),
     ...(channelsGap !== undefined || regencyGap !== undefined
       ? { noticeGapsMs: { ...(channelsGap !== undefined ? { channels: channelsGap } : {}), ...(regencyGap !== undefined ? { regency: regencyGap } : {}) } }
       : {}),

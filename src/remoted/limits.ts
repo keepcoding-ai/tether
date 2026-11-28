@@ -2,6 +2,7 @@
 // relay per house and IP, ceilings at the portal per device). The values that already existed are unchanged; the two
 // per-device rates and the strike count are new. Pure: no node:*.
 import { ADMIT_TTL_S, ROUTES_PER_HOUSE, SESSIONS_PER_DEVICE } from '../remote/index.ts'
+import { FILE_CHUNKS_PER_DEVICE_PER_MIN } from '../remote/files.ts'
 
 export interface Limits {
   /** Routes the relay may hold open on the house's socket (admissions, pairing and sessions together). */
@@ -48,6 +49,12 @@ export interface Limits {
    */
   speechPerDevicePerMin: number
   /**
+   * Chunk requests of files (channels.file, channels.upload) per minute per device (RR4 4.3): they are counted here and NOT
+   * against `reqPerDevicePerMin`, each as a whole chunk, so this is the device's bytes of files a minute
+   * (src/remote/files.ts FILE_BYTES_PER_DEVICE_PER_MIN). Over it, `limit` with `slow-down`, a strike like the others.
+   */
+  fileChunksPerDevicePerMin: number
+  /**
    * Requests refused by the two rates above, within one minute, before the session is closed (CLOSE 0x07). Five is the
    * number of attempts a pairing ticket tolerates (plano §2): enough for a bug or a retry, not for insisting.
    */
@@ -93,6 +100,7 @@ export const LIMITS: Readonly<Limits> = Object.freeze({
   reqPerDevicePerMin: 120,
   gesturesPerDevicePerMin: 30,
   speechPerDevicePerMin: 30,
+  fileChunksPerDevicePerMin: FILE_CHUNKS_PER_DEVICE_PER_MIN,
   strikesMax: 5,
   renewMinGapS: 20 * 3600,
   renewMinAgeS: ADMIT_TTL_S / 2,
@@ -113,13 +121,14 @@ export type LimitVerdict = 'ok' | 'limit' | 'close'
  * instants per list), so a device cannot grow it. A refused request does not count against the window (the device
  * recovers when it stops) but is a strike; the strikes also slide over a minute.
  */
-type LimiterLimits = Pick<Limits, 'reqPerDevicePerMin' | 'gesturesPerDevicePerMin' | 'strikesMax'> & Partial<Pick<Limits, 'speechPerDevicePerMin'>>
+type LimiterLimits = Pick<Limits, 'reqPerDevicePerMin' | 'gesturesPerDevicePerMin' | 'strikesMax'> & Partial<Pick<Limits, 'speechPerDevicePerMin' | 'fileChunksPerDevicePerMin'>>
 
 export class DeviceLimiter {
   readonly #lim: LimiterLimits
   readonly #reqs: number[] = []
   readonly #gestures: number[] = []
   readonly #speech: number[] = []
+  readonly #files: number[] = []
   readonly #strikes: number[] = []
 
   constructor(lim: LimiterLimits = LIMITS) { this.#lim = lim }
@@ -132,6 +141,9 @@ export class DeviceLimiter {
 
   /** A new speech (not a repeat of an act already done), once the body is checked. */
   speech(nowMs: number): LimitVerdict { return this.#take(this.#speech, this.#lim.speechPerDevicePerMin ?? LIMITS.speechPerDevicePerMin, nowMs) }
+
+  /** A chunk request of a file (in place of `request`): the device's bytes of files a minute, by whole chunks. */
+  fileChunk(nowMs: number): LimitVerdict { return this.#take(this.#files, this.#lim.fileChunksPerDevicePerMin ?? LIMITS.fileChunksPerDevicePerMin, nowMs) }
 
   #take(list: number[], max: number, nowMs: number): LimitVerdict {
     prune(list, nowMs)

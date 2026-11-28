@@ -7,6 +7,7 @@
 // is the most a page shows of a line whole (LINE_BODY_MAX). Also the error codes a refusal of tetherd becomes, by status.
 // Pure: no node:*, no DOM; the PWA reads the same ceilings.
 import { RES_STATUS, sanitizeDeclaredName, type ResStatus } from './content.ts'
+import { sayFiles } from './files.ts'
 import { LINE_BODY_MAX, multiline, type ErrorCode } from './projection.ts'
 
 /** Characters of a speech: a page shows a line whole up to this, so the phone never writes what it cannot read back. */
@@ -33,8 +34,11 @@ export type TalkOp = 'channels.say' | 'channels.react' | 'channels.vote' | 'chan
 /** Why a body is refused before the pipe: its shape (`bad-request`) or a field over its ceiling (`too-long`). */
 export type TalkRefusal = 'bad-request' | 'too-long'
 
-/** The arguments for tetherd and the channel the act touches (the audit's target). */
-export interface TalkArgs { channel: string; args: Record<string, unknown> }
+/**
+ * The arguments for tetherd and the channel the act touches (the audit's target). `files`: the indexes of the files of a
+ * speech (src/remote/files.ts `sayFiles`), which the portal turns into tetherd's `files` from its own uploads.
+ */
+export interface TalkArgs { channel: string; args: Record<string, unknown>; files?: number[] }
 
 const CHANNEL_RE = /^[\w.:-]{1,64}$/
 const AGENT_RE = /^[\w.:-]{1,64}$/
@@ -72,9 +76,12 @@ export function talkArgs(op: TalkOp, b: Record<string, unknown>): TalkArgs | Tal
     const channel = channelOf(b.channel)
     switch (op) {
       case 'channels.say': {
-        const text = body(b.text, SAY_TEXT_MAX)
+        const files = b.files === undefined ? undefined : sayFiles(b.files)
+        if (files === 'bad-request') refuse()
+        // With files the text may be empty (the app's rule): a speech of files alone.
+        const text = files && (b.text === undefined || b.text === '') ? '' : body(b.text, SAY_TEXT_MAX)
         const to = b.to === undefined ? [] : [...new Set(list(b.to, SAY_TO_MAX).map((n) => oneLine(n, NAME_MAX)))]
-        return { channel, args: { channel, text, ...(to.length ? { to } : {}) } }
+        return { channel, args: { channel, text, ...(to.length ? { to } : {}) }, ...(files ? { files: files as number[] } : {}) }
       }
       case 'channels.react': {
         const seq = seqOf(b.seq)
@@ -135,6 +142,11 @@ export const TALK_REFUSALS = {
   'vote-first': RES_STATUS.failed,
   limit: RES_STATUS.failed,
   'nobody-called': RES_STATUS.failed,
+  // The files of a speech (step 4.3; requests.ts `say`): checked again by tetherd, by name and by size, then copied.
+  'secret-file': RES_STATUS.failed,
+  'copy-failed': RES_STATUS.failed,
+  'too-many': RES_STATUS.badRequest,
+  'too-large': RES_STATUS.badRequest,
 } as const satisfies Partial<Record<ErrorCode, ResStatus>>
 export type TalkRefusalCode = keyof typeof TALK_REFUSALS
 

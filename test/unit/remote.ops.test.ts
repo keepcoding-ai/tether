@@ -40,6 +40,9 @@ describe('remote operations registry', () => {
       [0x0204, 'channels.vote', 'channels', 'unlocked', true, true],
       [0x0205, 'channels.poll', 'channels', 'unlocked', true, true],
       [0x0206, 'channels.seen', 'channels', 'unlocked', false, true],
+      [0x0207, 'channels.file', 'channels', 'unlocked', false, false],
+      [0x0208, 'channels.upload', 'channels', 'unlocked', false, true],
+      [0x0209, 'channels.upload-cancel', 'channels', 'unlocked', true, true],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
@@ -64,7 +67,7 @@ describe('remote operations registry', () => {
 
   test('only lines triggered by the person are gestures; the one exception to E-8 is declared on its line', () => {
     assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), [
-      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'device.revoke',
+      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel', 'device.revoke',
     ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])
     for (const l of OPS) if (l.gesture) assert.equal(l.mutates, true, `${l.name}: a gesture changes state`)

@@ -87,6 +87,8 @@ export type ExtReadPair = ExtPair
 export const EXT_READS = {
   'channels.marks': { ext: 'channels', name: 'marks' },
   'channels.page': { ext: 'channels', name: 'history' },
+  // A file of a line (step 4.3): the line itself, one line of history, read to find the path the device never names.
+  'channels.file': { ext: 'channels', name: 'history' },
   'regency.tree': { ext: 'regency', name: 'tree.read' },
 } as const satisfies { readonly [K in ExtReadOp]: ExtReadPair }
 

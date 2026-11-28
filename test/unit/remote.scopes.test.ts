@@ -157,7 +157,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     const emitters = OPS.filter(l => l.pipe.includes('ext-request' as never)).map(l => l.name).sort()
     assert.deepEqual([...Object.keys(EXT_READS), ...Object.keys(EXT_WRITES)].sort(), emitters, 'one pair per line that emits ext-request, and no pair without one')
     assert.deepEqual(Object.keys(EXT_READS).filter(k => Object.hasOwn(EXT_WRITES, k)), [])
-    assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.marks', 'channels.page', 'regency.tree'])
+    assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.file', 'channels.marks', 'channels.page', 'regency.tree'])
     assert.deepEqual(Object.keys(EXT_WRITES).sort(), ['channels.poll', 'channels.react', 'channels.say', 'channels.seen', 'channels.vote'])
   })
 
@@ -170,7 +170,8 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
       assert.equal(l.code >>> 8, 0x02, `${name}: in the range of the channels`)
       assert.deepEqual(l.pipe, ['ext-request'], `${name}: a write emits nothing but its pair`)
       assert.ok(Array.isArray(l.body) && l.body.includes('channel'), `${name}: a strict body naming its channel`)
-      assert.equal(l.body!.includes('files'), false, `${name}: no attachment (step 4.3)`)
+      // Step 4.3: only a speech carries files (indexes of its own uploads, never paths).
+      assert.equal(l.body!.includes('files'), name === 'channels.say', `${name}: files on the speech alone`)
       assert.notEqual(RESULT_OF[name]!.name, 'unbuilt', `${name}: a projector that can be called`)
       assert.equal(l.gesture, name !== 'channels.seen', `${name}: a gesture of the person, except the seen the screen sends by itself`)
     }
@@ -195,6 +196,7 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     assert.deepEqual(EXT_READS, {
       'channels.marks': { ext: 'channels', name: 'marks' },
       'channels.page': { ext: 'channels', name: 'history' },
+      'channels.file': { ext: 'channels', name: 'history' },
       'regency.tree': { ext: 'regency', name: 'tree.read' },
     })
     // The writes of the same extensions (the person's speech and gestures, the app's publish): none is a read pair.

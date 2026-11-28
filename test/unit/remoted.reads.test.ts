@@ -232,6 +232,8 @@ const ANSWERS: Record<ExtReadOp, unknown> = {
     members: [{ id: 'a1b2c3d4', name: `conferente em /mnt/c/Users/${MARKER}/obra`, muted: true, since: ISO, by: MARKER, alive: true, path: 'inside', ...later() }],
     moderator: { name: 'Guga', ...later() }, ...later(),
   },
+  // A file of a line (step 4.3): the line read for its path, which never leaves (remoted.files.test.ts proves the rest).
+  'channels.file': { lines: [{ seq: 5, kind: 'message', files: [{ name: 'a.txt', path: `C:/Users/${MARKER}/a.txt`, size: 3, type: 'text/plain' }] }] },
   'regency.tree': {
     input: {
       desks: { desks: [

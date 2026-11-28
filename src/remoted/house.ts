@@ -31,6 +31,8 @@ import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import { ReadError, SharedRead, type PipeReads } from './reads.ts'
 import { PIPE_WRITE_TIMEOUT_MS, WriteError, type PipeWrites, type WriteOutcome } from './writes.ts'
+import { linePathOf, type PortalFiles } from './files.ts'
+import { cancelArgs, fileReadArgs, uploadArgs } from '../remote/files.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
 import { challengeLive, DevicePresence, PRESENCE_CLOCK, type PendingChallenge, type PresenceClock, type UvPurposeName } from './uv.ts'
 
@@ -97,7 +99,14 @@ export interface HouseDeps {
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
   /** The person's home folder (os.homedir()): it becomes `~` in the titles and names the reads carry (projection.ts pathsOut). */
   userHome?: string
+  /** The files of a speech from afar (./files.ts). Absent: the three file lines answer `not-implemented`, and a speech's `files` too. */
+  files?: PortalFiles
+  /** Bench: a shorter idle time before an abandoned upload goes. */
+  uploadIdleMs?: number
 }
+
+/** The ops of the chunks of a file: counted by the device's bytes of files a minute, not its requests. */
+const FILE_CHUNK_OPS: ReadonlySet<number> = new Set([opByName('channels.file')!.code, opByName('channels.upload')!.code])
 
 interface DeviceMem {
   acts: ActCache<DoneAct>
@@ -222,6 +231,8 @@ export class House {
     this.#fingerprint = houseFingerprint(await houseIdOf(this.#d.keys.kH.pub))
     for (const dv of devices) this.#devices.set(dv.deviceId, dv)
     for (const r of deny) this.#addDeny(r.ticketId, r.exp)
+    // What a previous portal left of uploads: this one holds none of them.
+    await this.#d.files?.sweepDisk()
   }
 
   get fingerprint(): string { return this.#fingerprint }
@@ -241,6 +252,7 @@ export class House {
     this.#devices.delete(deviceId)
     this.#closeDevice(deviceId, CLOSE.revoked)
     this.#mem.delete(deviceId)
+    void this.#d.files?.forgetDevice(deviceId)
   }
 
   /** Spec 6.1, after the registry was written: close the live sessions with CLOSE(0x04), deny every live ticket. */
@@ -254,6 +266,7 @@ export class House {
     for (const r of deny) if (this.#addDeny(r.ticketId, r.exp)) added.push(r)
     if (added.length) this.#sendDeny(added)
     this.#mem.delete(deviceId)
+    void this.#d.files?.forgetDevice(deviceId)
     this.#audit('device.revoke.closed', 'ok', deviceId) // the registry's own line says who revoked; this one says the sessions are down
   }
 
@@ -572,8 +585,10 @@ export class House {
     const mem = this.#memOf(s.deviceId)
     // The rate of the device, all its sessions together, before anything of the request is looked at, the ceiling in flight
     // included: a request refused for being one too many in flight still counts, so insisting closes the session.
-    const rate = mem.limiter.request(nowMs)
-    if (rate !== 'ok') return this.#overRate(s, req, 'req', rate)
+    // A chunk of a file counts against the device's bytes of files a minute instead (limits.ts fileChunksPerDevicePerMin).
+    const chunk = FILE_CHUNK_OPS.has(req.op)
+    const rate = chunk ? mem.limiter.fileChunk(nowMs) : mem.limiter.request(nowMs)
+    if (rate !== 'ok') return this.#overRate(s, req, chunk ? 'file' : 'req', rate)
     if (s.inflight >= this.#lim.inflightMax) {
       this.#audit('limit.inflight', 'limit', s.deviceId, opByCode(req.op)?.name)
       return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
@@ -661,6 +676,9 @@ export class House {
       case 'channels.poll':
       case 'channels.seen':
         return this.#extWrite(s, line.name, req, body)
+      case 'channels.file': return this.#fileRead(s, body)
+      case 'channels.upload': return this.#upload(s, body)
+      case 'channels.upload-cancel': return this.#uploadCancel(s, body)
       case 'admit.renew': return this.#renew(s, body)
       case 'device.revoke-self':
         // Only lowers power: no proof needed. The registry's writer runs the revocation (spec 6.1 order).
@@ -694,7 +712,7 @@ export class House {
    * read is no gesture and leaves no audit line (house.ts `audited`); its first success subscribes the session to the
    * thin notice of its family.
    */
-  async #extRead(s: SessionRoute, op: ExtReadOp, body: Record<string, unknown>, scopes: readonly string[]): Promise<Served> {
+  async #extRead(s: SessionRoute, op: Exclude<ExtReadOp, 'channels.file'>, body: Record<string, unknown>, scopes: readonly string[]): Promise<Served> {
     const reads = this.#d.reads
     if (!reads) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
     const bad: Served = { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
@@ -756,7 +774,24 @@ export class House {
       const rate = mem.limiter.speech(this.#d.now())
       if (rate !== 'ok') return { status: RES_STATUS.limit, bytes: errorBody('slow-down'), audit: `limit:speech`, target, final: false, ...(rate === 'close' ? { closeSession: true as const } : {}) }
     }
+    // A speech's files: the ones uploaded under its own actId, whole, of this channel; tetherd gets their paths (never the
+    // device's words) and copies them as it does the app's. Missing or not whole: `0x06 unknown-file`, nothing sent.
+    let act: string | undefined
+    if (checked.files) {
+      const files = this.#d.files
+      if (!files) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+      act = toHex(req.actId!)
+      const sources = files.forSpeech(s.deviceId, act, target, checked.files)
+      if (!sources) return { status: RES_STATUS.notFound, bytes: errorBody('unknown-file'), audit: 'refused:unknown-file', target, final: false }
+      checked.args.files = sources
+    }
     const flight = writes.write(op, checked.args)
+    if (act !== undefined) {
+      const files = this.#d.files!
+      const speech = act
+      // Its temporary files go once tetherd answered (it copied them, or refused); a speech never sent keeps them for a resend.
+      void flight.settled.then((o) => files.settled(s.deviceId, speech, o.ok === false && o.error.why === 'limit'))
+    }
     const id = req.actId ? toHex(req.actId) : undefined
     const outcome = (o: WriteOutcome): Served => this.#written(op, o, target)
     if (id && req.actId) {
@@ -775,6 +810,71 @@ export class House {
     } catch (e) {
       return { ...outcome({ ok: false, error: e instanceof WriteError ? e : new WriteError('failed') }), final: false }
     }
+  }
+
+  /**
+   * `channels.file`: one chunk of a file of a line. The line is read from tetherd (one line of `history`, the pair of
+   * EXT_READS), its path taken from there, and the file given only by ./files.ts's rule (inside that channel's folder once
+   * resolved). Every refusal of where the file is (no line, no file at that index, a path outside, a link out, gone) is the
+   * same `0x06`. The first chunk of a file leaves an audit line with its size (never its name).
+   */
+  async #fileRead(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const reads = this.#d.reads
+    const files = this.#d.files
+    if (!reads || !files) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
+    const a = fileReadArgs(body)
+    if (typeof a === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const notFound: Served = { status: RES_STATUS.notFound, bytes: emptyBody() }
+    let answer: unknown
+    try { answer = await reads.read('channels.file', { channel: a.channel, before: a.seq + 1, limit: 1 }) } catch (e) {
+      if (!(e instanceof ReadError)) throw e
+      if (e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy') }
+      if (e.why === 'refused' && e.code === 'unknown-channel') return notFound
+      this.#d.log(`read channels.file: ${e.message}`)
+      return { status: RES_STATUS.failed, bytes: errorBody('failed') }
+    }
+    const path = linePathOf(answer, a.seq, a.file)
+    if (!path) return notFound
+    const c = await files.chunk(a.channel, path, a.offset)
+    if (c === 'not-found') return notFound
+    if (c === 'busy') return { status: RES_STATUS.limit, bytes: errorBody('busy') }
+    if (c === 'too-large') return { status: RES_STATUS.failed, bytes: errorBody('too-large') }
+    if (c === 'bad-request') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    if (a.offset === 0) this.#audit('channels.file', `ok:${c.size}`, s.deviceId, a.channel)
+    return { status: RES_STATUS.ok, bytes: resultBody('channels.file', c) }
+  }
+
+  /**
+   * `channels.upload`: one chunk of a file of a speech still to be said (./files.ts). A repeat changes nothing; an offset
+   * the portal is not at answers where it is (`received`), so a device that comes back goes on from there. The last chunk's
+   * audit line carries the file's size; the others are `ok` (the audit counts equal lines together).
+   */
+  async #upload(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const files = this.#d.files
+    if (!files) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const a = uploadArgs(body)
+    if (a === 'too-large') return { status: RES_STATUS.badRequest, bytes: errorBody('too-large') }
+    if (typeof a === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    const target = a.channel
+    const r = await files.upload(s.deviceId, a)
+    switch (r) {
+      case 'busy': return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', target, final: false }
+      case 'not-found': return { status: RES_STATUS.notFound, bytes: errorBody('unknown-channel'), target }
+      case 'bad-request': return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request'), target }
+      case 'secret-file': return { status: RES_STATUS.failed, bytes: errorBody('secret-file'), audit: 'refused:secret-file', target }
+      case 'failed': return { status: RES_STATUS.failed, bytes: errorBody('failed'), target, final: false }
+    }
+    return { status: RES_STATUS.ok, bytes: resultBody('channels.upload', r), target, ...(r.done ? { audit: `done:${a.size}` } : {}) }
+  }
+
+  /** `channels.upload-cancel`: the files of a speech still to be said go (one, or all). */
+  async #uploadCancel(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const files = this.#d.files
+    if (!files) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const a = cancelArgs(body)
+    if (typeof a === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+    await files.cancel(s.deviceId, a.act, a.file)
+    return { status: RES_STATUS.ok, bytes: resultBody('channels.upload-cancel', {}) }
   }
 
   /** The answer of a write's outcome: the line's projector on success, tetherd's code mapped by TALK_REFUSALS otherwise. */
@@ -945,9 +1045,9 @@ export class House {
    * The device went over its rate (src/remoted/limits.ts): the request is answered `limit` and leaves a line naming the
    * operation; a device that insists (`close`) loses the session with CLOSE(0x07). Its counters outlive the session.
    */
-  async #overRate(s: SessionRoute, req: Req, kind: 'req' | 'gesture', verdict: 'limit' | 'close'): Promise<void> {
+  async #overRate(s: SessionRoute, req: Req, kind: 'req' | 'gesture' | 'file', verdict: 'limit' | 'close'): Promise<void> {
     this.#audit(`limit.${kind}`, verdict, s.deviceId, opByCode(req.op)?.name)
-    if (verdict === 'limit') return this.#send(s, req.reqId, RES_STATUS.limit, emptyBody())
+    if (verdict === 'limit') return this.#send(s, req.reqId, RES_STATUS.limit, kind === 'file' ? errorBody('slow-down') : emptyBody())
     this.#sessionEffects(s, await s.session.close(CLOSE.limit, this.#d.now()))
   }
 
@@ -1027,6 +1127,7 @@ export class House {
       }
     }
     if (this.#pairing && !this.#isOver(this.#pairing.view.state)) jobs.push(this.#pairing.p.tick(nowMs).then((fx) => this.#pairEffects(fx)))
+    if (this.#d.files) jobs.push(this.#d.files.sweep(nowMs, this.#d.uploadIdleMs))
     if (this.#d.attention.takeChange()) jobs.push(this.#pushEvent(EVT.attentionChanged, this.#d.attention.items(), (r) => r.watching))
     const channels = this.#feeds.takeChannels(nowMs)
     if (channels) jobs.push(this.#pushEvent(EVT.channelsChanged, channels, (r) => r.follows.channels))

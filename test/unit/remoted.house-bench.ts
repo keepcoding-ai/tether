@@ -11,6 +11,7 @@ import type { Limits } from '../../src/remoted/limits.ts'
 import { audOf, RelayLink } from '../../src/remoted/relay.ts'
 import type { PipeReads } from '../../src/remoted/reads.ts'
 import type { PipeWrites } from '../../src/remoted/writes.ts'
+import type { PortalFiles } from '../../src/remoted/files.ts'
 import type { PresenceClock } from '../../src/remoted/uv.ts'
 import { ensureKeys } from '../../extensions/remote/daemon/keys.ts'
 import { FakeRelay, TestDevice, until, type DeviceSession } from './remoted.helpers.ts'
@@ -33,6 +34,8 @@ export interface HouseBenchOptions {
   /** How long a repeat of a write in flight waits for it (the write path's deadline). */
   writeTimeoutMs?: number
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
+  /** The files of a speech from afar (src/remoted/files.ts); absent, the file lines answer not-implemented. */
+  files?: PortalFiles
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -129,6 +132,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
       ...(o.reads ? { reads: o.reads } : {}), ...(o.noticeGapsMs ? { noticeGapsMs: o.noticeGapsMs } : {}),
       ...(o.writes ? { writes: o.writes } : {}), ...(o.writeTimeoutMs ? { writeTimeoutMs: o.writeTimeoutMs } : {}),
+      ...(o.files ? { files: o.files } : {}),
     })
     await house.init(devices, [])
     current = house
