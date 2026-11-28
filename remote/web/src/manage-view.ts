@@ -23,6 +23,8 @@ import {
   stopAgentQuestion, type DeskFacts, type ManageAct, type MenuLine, type PaneFacts,
 } from './manage-rules.ts'
 import type { WebMenu } from './menu.ts'
+import type { CreateFixed } from '../../../extensions/regency/create-rules.ts'
+import { CreateAfar } from './create-afar.ts'
 import { ask, deskForm, pick, watchFocus } from './sheet.ts'
 import { el } from './ui-lite.ts'
 
@@ -62,13 +64,17 @@ export class ManageUi {
   private readOnce = { procs: 0, ronda: 0 }
   readonly system: SystemViewHost
 
+  /** "+ Novo" from afar (create-afar.ts). */
+  readonly creator: CreateAfar
+
   constructor(d: ManageUiDeps) {
     this.d = d
     this.system = this.systemHost()
+    this.creator = new CreateAfar({ house: d.house, manager: d.manager, tier: d.tier, pane: d.pane, say: t => this.say(t) })
     watchFocus()
   }
 
-  dispose(): void { this.toast.dispose() }
+  dispose(): void { this.creator.dispose(); this.toast.dispose() }
 
   /** Whether any act shows: a device that may manage something, with the house's tree. */
   get active(): boolean {
@@ -160,15 +166,8 @@ export class ManageUi {
 
   renameRefused(): void { this.say(this.renameWhy || 'O nome ficou como estava.') }
 
-  /** "+ Nova mesa" in the heading of "Mesas": the name and the colour; the desk is born at the end of the queue. */
-  async create(restore: () => void): Promise<void> {
-    if (!this.d.manager.caps.desks) { restore(); return }
-    const draft = await deskForm(this.d.tier(), { title: 'Nova mesa', submit: 'Criar mesa', color: 'blue', withName: true, check: n => { const r = deskNameCheck(n); return r.ok ? undefined : r.why } })
-    if (!draft) { restore(); return }
-    const name = deskNameCheck(draft.name)
-    if (!name.ok) return
-    await this.run('desk:new', 'desks.create', { name: name.value, color: draft.color }, `Mesa ${name.value} criada.`)
-  }
+  /** "+ Novo" in the heading of "Mesas", a desk row's "+", the empty centre's "Criar canal": the app's card of steps. */
+  create(fixed: CreateFixed, restore: () => void, what?: 'channel'): void { void this.creator.open(fixed, restore, what) }
 
   // ---------------------------------------------------------------- the acts
 

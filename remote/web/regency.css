@@ -82,15 +82,20 @@
 .rg[data-readonly] .rg-cl { cursor: default; }
 
 /* ---------- managing from afar (RR5 5.4): the pane is the app's, less what has no road from here ----------
-   `data-manage` on the casing lists what this device may manage (its scopes): desks, agents, procs, destructive. What no
-   device may do from afar is not drawn: a new pane in a desk, "Criar canal", the immersion's switch, the shelf of the system
-   desks. */
-.rr[data-manage] .rg:not([data-readonly]) :is([data-action="row-new"], [data-action="create-channel"], .rg-mode, .rg-edge-sys, .rg-vazia-b, .rg-shelf) { display: none !important; }
-.rr[data-manage]:not([data-manage~="desks"]) .rg :is(.rg-new, [data-action="row-sleep"], [data-action="row-wake"]) { display: none !important; }
+   `data-manage` on the casing lists what this device may manage (its scopes): desks, agents, procs, destructive, channels.
+   What no device may do from afar is not drawn: the immersion's switch, the shelf of the system desks, a desk's empty
+   state's own button. "+ Novo" shows while it has a tile for this device; a desk row's "+" with a pane to make there;
+   "Criar canal" with the channels' scope. */
+.rr[data-manage] .rg:not([data-readonly]) :is(.rg-mode, .rg-edge-sys, .rg-vazia-b, .rg-shelf) { display: none !important; }
+.rr[data-manage]:not([data-manage~="desks"]):not([data-manage~="agents"]):not([data-manage~="channels"]) .rg .rg-new { display: none !important; }
+.rr[data-manage]:not([data-manage~="desks"]):not([data-manage~="agents"]) .rg [data-action="row-new"] { display: none !important; }
+.rr[data-manage]:not([data-manage~="channels"]) .rg [data-action="create-channel"] { display: none !important; }
+.rr[data-manage]:not([data-manage~="desks"]) .rg :is([data-action="row-sleep"], [data-action="row-wake"]) { display: none !important; }
 /* "Sistema" from afar is Processos (manage:procs) and Ronda (manage:agents): without either, no door to it. */
 .rr[data-manage]:not([data-manage~="procs"]):not([data-manage~="agents"]) .rg :is(.rg-reserved, .rg-srail) { display: none !important; }
-/* No "Novo processo" from afar yet, and the record of a process lives on the machine. */
-.rr .rg-sys :is([data-sys="proc-new"], [data-sys="log"]) { display: none !important; }
+/* "Novo processo" from afar is the device's with manage:procs; the record of a process lives on the machine. */
+.rr .rg-sys [data-sys="log"] { display: none !important; }
+.rr:not([data-manage~="procs"]) .rg-sys [data-sys="proc-new"] { display: none !important; }
 .rr .rg-sr.proc > .rg-sr-h { cursor: default; }
 /* TV: the quick view is the web's own card; "Sistema" is the rail at the right edge, always in view. */
 .rr .rg[data-tier="wide"]:not([data-readonly]) > .rg-qcol { display: none !important; }
@@ -112,14 +117,24 @@
 /* ---------- the question before an act (sheet.ts): a sheet from the bottom on the phone, a dialog elsewhere ----------
    It lives in the body, outside the casing, so it says its own sizes and its own second grey. A choice never runs from
    edge to edge outside the phone. */
-.rr-ask-veil { position: fixed; inset: 0; z-index: 1001; background: var(--backdrop, rgba(0, 0, 0, .45)); }
+/* A modal <dialog> (the page's top layer: it stacks over the card of "+ Novo"); its backdrop is the veil. */
+.rr-ask::backdrop { background: var(--backdrop, rgba(0, 0, 0, .45)); }
+.rr-ask:not([open]) { display: none; }
 .rr-ask { --rr-ask-dim: color-mix(in srgb, var(--fg) 72%, var(--bg-3));
-  position: fixed; z-index: 1002; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; overflow: auto;
+  position: fixed; margin: 0; max-width: none; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; overflow: auto;
   border: 1px solid var(--border); background: var(--bg-3); color: var(--fg); box-shadow: var(--shadow); font: 14px/1.45 var(--ui); }
-.rr-ask[data-form="dialog"] { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 18px 20px; border-radius: 12px; }
+.rr-ask[data-form="dialog"] { left: 50%; top: 50%; right: auto; bottom: auto; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 18px 20px; border-radius: 12px; }
 .rr-ask[data-form="dialog"][data-tier="tablet"] { font-size: 15px; }
 .rr-ask[data-form="dialog"][data-tier="wide"] { width: min(820px, calc(100vw - 96px)); padding: 30px 36px; border-radius: 16px; font-size: 22px; gap: 18px; }
-.rr-ask[data-form="sheet"] { left: 0; right: 0; bottom: 0; max-height: 88vh; padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; border-bottom: 0; font-size: 16px; }
+.rr-ask[data-form="sheet"] { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-height: 88vh; padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; border-bottom: 0; font-size: 16px; }
+/* The pickers (sheet.ts pickList, pickMany): the groups' headings, an agent's initial, the mark of a row of several. */
+.rr-ask-g { padding: 8px 12px 2px; font-size: .8em; font-weight: 600; color: var(--rr-ask-dim); }
+.rr-ask-mk { display: inline-grid; place-items: center; width: 1.6em; height: 1.6em; flex: none; border-radius: 50%; font-size: .85em; font-weight: 650;
+  background: var(--bg-2); color: var(--fg); border: 1px solid var(--border); }
+.rr-ask-box { width: 1.1em; height: 1.1em; flex: none; border-radius: 4px; border: 2px solid var(--border); box-sizing: border-box; }
+.rr-ask-ck[aria-checked="true"] .rr-ask-box { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 2px var(--bg-3); }
+.rr-ask-ck[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.rr-ask-c[disabled] { opacity: .55; cursor: default; }
 .rr-ask-grab { display: none; }
 .rr-ask[data-form="sheet"] .rr-ask-grab { display: block; flex: none; width: 40px; height: 4px; margin: 0 auto; border-radius: 2px; background: var(--border); }
 .rr-ask-t { margin: 0; font-size: 1.12em; font-weight: 650; line-height: 1.3; }
@@ -404,3 +419,21 @@
 .rr-menu .rr-mi-k { flex: none; font-size: .85em; color: color-mix(in srgb, var(--fg) 65%, transparent); }
 .rr-menu .rr-mh { padding: 6px 10px 2px; font-size: .82em; font-weight: 600; color: color-mix(in srgb, var(--fg) 70%, transparent); }
 .rr-menu .rr-msep { height: 1px; margin: 4px 6px; background: var(--border); }
+
+/* ---------- "+ Novo" and "Novo processo" from afar: the app's cards (dialog.rg-cr), in the web's four sizes ----------
+   They live in the page's top layer, outside the casing: the sizes are said here. Phone: a sheet of nearly the whole
+   screen, one step at a time (the app's own). Tablet: a dialog whose targets are 44 px (it is touched). Desk: the app's.
+   TV: the same dialog, grown for the sofa, its ring thick; the arrows walk it (box-keys.ts). */
+dialog.rg-cr[data-tier="mobile"]:not(.rg-np) { height: 92vh; height: 92dvh; max-height: 92dvh; }
+dialog.rg-cr[data-tier="tablet"] { width: 540px; font-size: 14px; }
+.rg-cr[data-tier="tablet"] :is(.rg-cr-btn, .rg-cr-val, .rg-cr-in, .rg-cr-opt, .rg-cr-ck, .rg-np-en, .rg-np-add) { min-height: 44px; }
+.rg-cr[data-tier="tablet"] .rg-cr-ib { width: 44px; height: 44px; }
+.rg-cr[data-tier="tablet"] .rg-cr-in input, .rg-cr[data-tier="tablet"] .rg-np-en { font-size: 14px; }
+.rg-cr[data-tier="tablet"] .rg-cr-hue { width: 44px; height: 44px; }
+dialog.rg-cr[data-tier="wide"] { zoom: 1.6; }
+.rg-cr[data-tier="wide"] :is(button, input):focus { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* The process form from afar: the line of what is going to run, and the line of the biometrics, before the system asks. */
+.rg-np-run { display: flex; flex-direction: column; gap: 4px; margin: 6px 14px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); font-size: 12px; }
+.rg-np-run code { font-family: var(--mono, monospace); overflow-wrap: anywhere; }
+.rg-np-run b { font-weight: 600; }
+.rg-cr[data-tier="mobile"] .rg-np-run { font-size: 14px; }

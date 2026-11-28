@@ -25,6 +25,7 @@ import { remoteFiles, type RemoteFiles } from './files.ts'
 import type { ChannelHost } from '../../../extensions/channels/renderer/host.ts'
 import type { HistoryPage, MembersAnswer } from '../../../extensions/channels/renderer/view-model.ts'
 import { regencyModelOf, stateCounts, type AgentRef, type RegencyInput, type RegencyModel, type StateCounts, type Target } from '../../../extensions/regency/model.ts'
+import type { CreateFixed } from '../../../extensions/regency/create-rules.ts'
 import type { RegencyHost, TreeQuery } from '../../../extensions/regency/renderer/pane.ts'
 import type { SystemViewHost } from '../../../extensions/regency/renderer/system-view.ts'
 import { systemModelOf } from '../../../extensions/regency/system-rules.ts'
@@ -556,8 +557,8 @@ export interface RemoteManageParts {
   rowMenu(target: Target, anchor: HTMLElement, at?: { x: number; y: number }): void
   sleepDesk(deskId: string, wake: boolean): void
   renameRefused(what: 'desk' | 'pane'): void
-  /** "+ Nova mesa": a desk's name and colour (the app's "+ Novo" card has no road from afar). */
-  create(restore: () => void): void
+  /** "+ Novo", a desk row's "+", "Criar canal": the app's card of steps, over the portal's ops (create-afar.ts). */
+  create(fixed: CreateFixed, restore: () => void, what?: 'channel'): void
   system: SystemViewHost
 }
 
@@ -631,8 +632,8 @@ export function remoteRegencyHost(house: RemoteHouse, parts: RemoteRegencyParts)
     ...(parts.width ? { tierWidth: () => parts.width!() } : {}),
     gone: () => {},
     immersionKey: () => '',
-    // Only a desk is made from afar: the heading's "+" (a desk row's "+" and "Criar canal" have no road and are not drawn).
-    create: (fixed, restore, what) => { if (manage && fixed.deskId === undefined && fixed.forAgent === undefined && what === undefined) manage.create(restore); else restore() },
+    // "+ Novo" from afar: the card of steps ("Dar uma mesa nova" to an agent is the machine's: it moves a pane).
+    create: (fixed, restore, what) => { if (manage && fixed.forAgent === undefined) manage.create(fixed, restore, what); else restore() },
     system: manage?.system ?? noSystem(),
   }
 }

@@ -41,6 +41,22 @@ export interface CreateViewHost {
   /** The tier the Regency is drawn in ('mobile' makes the card a sheet). */
   tier(): string
   run(state: CreateState): Promise<CreateRunEnd>
+  /** The card asked from afar (the remote web client): what it may make and from what. Absent: the app's card, whole. */
+  afar?: CreateAfar
+}
+
+/**
+ * The card from afar: only the tiles the device's scopes allow, "Mesa nova…" only when it may make a desk, the working
+ * folder only from the list the tether knows (an opaque value and its label: no system picker, no typed path), and none of
+ * what lives on the machine's screen ("Ir até a guia depois de criar", the browser's address and agent, the note's place).
+ */
+export interface CreateAfar {
+  tiles: readonly CreateWhat[]
+  newDesk: boolean
+  /** "Entrar num canal" for a new agent. */
+  joinChannel: boolean
+  folders(): Promise<readonly { value: string; label: string; recent: boolean }[]>
+  folderLabel(value: string): string | undefined
 }
 
 /** What the E2E reads of the card. */
@@ -253,6 +269,7 @@ export class CreateCard {
 
   /** The working folder: the window's projects, the recent folders, then the system's picker. A typed path is taken as is. */
   private async chooseFolder(): Promise<void> {
+    if (this.host.afar) { await this.chooseKnownFolder(this.host.afar); return }
     const PICK = '\u0000pick'
     const projects = this.host.projects()
     const recent = await this.host.recentFolders().catch(() => [] as string[])
@@ -270,6 +287,17 @@ export class CreateCard {
     const path = got === PICK ? await this.host.pickFolder(this.state.draft.cwd) : got
     if (!this.dialog) return
     if (path) this.patch({ cwd: path })
+    this.render()
+    this.focusField('cwd')
+  }
+
+  /** From afar: the folders the tether knows, projects then recent ones, by their label. */
+  private async chooseKnownFolder(afar: CreateAfar): Promise<void> {
+    const known = await afar.folders().catch(() => [])
+    const rows: PickItem<string>[] = known.map(f => ({ value: f.value, label: f.label, icon: f.recent ? 'clock-counter-clockwise' : 'folder', group: f.recent ? 'Recentes' : 'Projetos' }))
+    const got = await this.picked(this.host.pickList<string>({ title: 'Pasta de trabalho', placeholder: 'Nome do projeto', emptyText: 'O tether não conhece nenhuma pasta ainda', items: rows }))
+    if (!this.dialog) return
+    if (got !== undefined) this.patch({ cwd: got })
     this.render()
     this.focusField('cwd')
   }
@@ -608,9 +636,12 @@ export class CreateCard {
     box.setAttribute('role', 'group')
     box.setAttribute('aria-label', 'O que criar')
     const engines = this.engineMarks()
+    const allowed = this.host.afar?.tiles
     for (const g of groups) {
+      const tiles = CREATE_TILES.filter(x => x.group === g.key && (allowed === undefined || allowed.includes(x.what)))
+      if (tiles.length === 0) continue
       box.append(el('div', 'rg-cr-tgrp', g.label))
-      for (const tile of CREATE_TILES.filter(x => x.group === g.key)) {
+      for (const tile of tiles) {
         const meta = TILE_ICON[tile.what]!
         const b = el('button', 'rg-cr-tile')
         b.type = 'button'
@@ -652,7 +683,7 @@ export class CreateCard {
 
   private paintWhere(body: HTMLElement): void {
     const s = this.state
-    const choices = deskChoices(this.host.desks(), this.host.owners(), s.fixed.deskId)
+    const choices = deskChoices(this.host.desks(), this.host.owners(), s.fixed.deskId).filter(c => !c.isNew || this.host.afar?.newDesk !== false)
     const list = el('div', 'rg-cr-list')
     for (const c of choices) {
       const dot = el('span', 'rg-dot')
@@ -671,6 +702,7 @@ export class CreateCard {
       }
       list.append(this.radio('rg-cr-desk', 'desk', c.id, s.draft.deskId === c.id, content))
     }
+    if (choices.length === 0) list.append(el('p', 'rg-cr-note', 'Nenhuma mesa desperta: desperte uma mesa antes de criar nela.'))
     body.append(this.field('desk', 'Em qual mesa?', list))
     if (s.draft.deskId === NEW_DESK) this.paintNewDesk(body)
   }
@@ -720,7 +752,7 @@ export class CreateCard {
         body.append(this.field('what', 'Qual agente', who))
         this.paintFolder(body)
         body.append(this.field('name', 'Nome (opcional)', this.textInput('name', d.name ?? '', 'Nome da guia', this.defaultName() || 'o nome do perfil')))
-        this.paintJoin(body)
+        if (this.host.afar?.joinChannel !== false) this.paintJoin(body)
         this.paintGo(body)
         return
       }
@@ -737,6 +769,8 @@ export class CreateCard {
       }
       case 'note': {
         this.paintFolder(body)
+        // From afar the note goes where the machine's "+ Novo" puts it by default (the place is chosen at the machine).
+        if (this.host.afar) return
         const list = el('div', 'rg-cr-list')
         const place = d.name ?? 'project'
         for (const p of NOTE_PLACES) list.append(this.radio('rg-cr-place', 'place', p.id, place === p.id, [el('span', 'rg-cr-on', p.label), el('small', '', p.tip)], { tip: p.tip }))
@@ -745,6 +779,8 @@ export class CreateCard {
         return
       }
       case 'browser': {
+        // From afar the tab is the person's and opens blank: the page is chosen at the machine.
+        if (this.host.afar) { body.append(el('p', 'rg-cr-note', 'A aba abre na mesa, sua e em branco: a página se escolhe na máquina.')); return }
         const list = el('div', 'rg-cr-list')
         list.append(this.radio('rg-cr-for', 'for', '', d.browserFor === undefined, [glyph('globe-simple', 'Você'), el('span', 'rg-cr-on', 'Para você')]))
         for (const a of this.host.agents()) {
@@ -799,6 +835,13 @@ export class CreateCard {
 
   private paintFolder(body: HTMLElement): void {
     const cwd = this.state.draft.cwd ?? ''
+    const afar = this.host.afar
+    // From afar the value is the tether's id of the folder: its label is what shows, never a path.
+    if (afar) {
+      const label = cwd ? afar.folderLabel(cwd) ?? 'Escolher pasta…' : 'Escolher pasta…'
+      body.append(this.field('cwd', 'Pasta de trabalho', this.valueButton('folder', 'folder', label, undefined, 'Escolher a pasta: projetos e recentes')))
+      return
+    }
     const name = cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd : 'Escolher pasta…'
     body.append(this.field('cwd', 'Pasta de trabalho', this.valueButton('folder', 'folder', name, cwd || undefined, 'Escolher a pasta: projetos, recentes ou outra')))
   }
@@ -821,6 +864,8 @@ export class CreateCard {
 
   /** "Ir até a guia depois de criar", unticked: by default the person stays on the Regency and the new row glows. */
   private paintGo(body: HTMLElement): void {
+    // From afar there is no tab to go to: the person stays where she is and the new row shows when the tree comes.
+    if (this.host.afar) return
     const desk = this.deskName()
     body.append(this.check('go', this.state.draft.goAfter === true, 'Ir até a guia depois de criar', { tip: desk ? `Leva você até a guia nova, em ${desk}` : 'Leva você até a guia nova' }))
   }

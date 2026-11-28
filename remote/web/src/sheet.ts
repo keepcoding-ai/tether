@@ -48,9 +48,9 @@ export function openSheet<T>(tier: Tier, title: string, build: (body: HTMLElemen
   return new Promise(resolve => {
     const active = document.activeElement
     const opener = active instanceof HTMLElement && active !== document.body && !active.closest('#ctx-menu') ? active : lastHeld
-    const veil = el('div', 'rr-ask-veil')
-    const box = el('div', 'rr-ask')
-    box.setAttribute('role', 'dialog')
+    // A modal <dialog>: it lives in the page's top layer, so it stacks over another modal box (the card of "+ Novo" asks
+    // its pickers here) and leaves the rest of the page inert while it is open. Its backdrop is the veil.
+    const box = el('dialog', 'rr-ask')
     box.setAttribute('aria-modal', 'true')
     box.dataset.form = tier === 'mobile' ? 'sheet' : 'dialog'
     box.dataset.tier = tier
@@ -63,13 +63,19 @@ export function openSheet<T>(tier: Tier, title: string, build: (body: HTMLElemen
     const done = (v: T | undefined): void => {
       if (settled) return
       settled = true
-      veil.remove()
+      if (box.open) box.close()
       box.remove()
       backTo(opener)?.focus({ preventScroll: true })
       resolve(v)
     }
     const first = build(body, done)
-    veil.addEventListener('click', () => done(undefined))
+    // A press on the backdrop (outside the box's own rectangle) is a cancel; Esc is the box's own key, below.
+    box.addEventListener('click', ev => {
+      if (ev.target !== box) return
+      const r = box.getBoundingClientRect()
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) done(undefined)
+    })
+    box.addEventListener('cancel', ev => { ev.preventDefault(); done(undefined) })
     box.addEventListener('keydown', ev => {
       if (BACK.has(ev.key) || (ev.key === 'Backspace' && !editable(ev.target))) { ev.preventDefault(); ev.stopPropagation(); done(undefined); return }
       if (ev.key !== 'Tab') { ev.stopPropagation(); return }
@@ -81,7 +87,8 @@ export function openSheet<T>(tier: Tier, title: string, build: (body: HTMLElemen
       ev.stopPropagation()
       all[next]!.focus()
     })
-    document.body.append(veil, box)
+    document.body.append(box)
+    box.showModal()
     ;(first ?? focusables(box)[0])?.focus()
   })
 }

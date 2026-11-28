@@ -551,7 +551,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     if (on && el2.dataset.readonly !== undefined) delete el2.dataset.readonly
     else if (!on && el2.dataset.readonly === undefined) el2.dataset.readonly = ''
     const caps = o.manage?.caps
-    const flags = !on || !caps ? '' : [caps.desks ? 'desks' : '', caps.agents ? 'agents' : '', caps.procs ? 'procs' : '', caps.destructive ? 'destructive' : ''].filter(Boolean).join(' ')
+    const flags = !on || !caps ? '' : [caps.desks ? 'desks' : '', caps.agents ? 'agents' : '', caps.procs ? 'procs' : '', caps.destructive ? 'destructive' : '', caps.channels ? 'channels' : ''].filter(Boolean).join(' ')
     if ((shell.dataset.manage ?? '') !== flags) { if (flags) shell.dataset.manage = flags; else delete shell.dataset.manage }
     // What the channel's view may manage came (or changed): its open views read again and paint their gestures.
     const afar = caps ? JSON.stringify(channelAfarOf(caps) ?? null) : 'null'
@@ -617,7 +617,7 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
           rowMenu: (t, anchor, at) => manage.rowMenu(t, anchor, at),
           sleepDesk: (id, wake) => manage.sleepDesk(id, wake),
           renameRefused: () => manage.renameRefused(),
-          create: restore => { void manage.create(restore) },
+          create: (fixed, restore, what) => manage.create(fixed, restore, what),
           system: manage.system,
         },
       } : {}),
@@ -632,14 +632,6 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     })
     stage.replaceChildren(p.element)
     p.setShown(true)
-    // From afar the heading's "+" makes a desk (its name and colour), the one thing of "+ Novo" with a road here.
-    const newBtn = p.element.querySelector<HTMLElement>('.rg-new')
-    if (manage && newBtn) {
-      newBtn.title = 'Nova mesa: o nome e a cor; ela entra no fim da fila'
-      newBtn.setAttribute('aria-label', 'Nova mesa')
-      const word = newBtn.querySelector(':scope > span:last-child')
-      if (word) word.textContent = 'Nova mesa'
-    }
     // The "⋯" of a process: the view's own menu is about its record (on the machine); from afar it is "Esquecer…".
     const onSysMore = (ev: MouseEvent): void => {
       // "Sistema" opened (its door, the edge's, a section's tab): what it shows is read again.
