@@ -5,10 +5,21 @@
 //   house.key   { v:1, role:'house',  pkcs8, pub }
 //   relay.key   { v:1, role:'relay',  pkcs8, pub, cert }
 //   ticket.key  { v:1, role:'ticket', keys: [{ pkcs8, pub, cert }] }   newest last; the others live until their certificate ends
+//   vapid.key   { v:1, role:'vapid',  pkcs8, pub }   K_V, Web Push only (RFC 8292; M-11: never K_H), no certificate
 // pkcs8 in base64url, pub (65 bytes) and cert (179 bytes) in hex. Pure: crypto.subtle only.
 import { fromB64url, fromHex, roleKey, type Bytes, type KeyRole, type RoleKey } from '../remote/index.ts'
+import { importVapidKey, type VapidKey } from '../remote/webpush.ts'
 
-export const KEY_FILES = { house: 'house.key', relay: 'relay.key', ticket: 'ticket.key' } as const
+export const KEY_FILES = { house: 'house.key', relay: 'relay.key', ticket: 'ticket.key', vapid: 'vapid.key' } as const
+export interface VapidKeyFile { v: 1; role: 'vapid'; pkcs8: string; pub: string }
+
+/** K_V from its file, the private half non-extractable; throws with a short reason (never key material) when malformed. */
+export async function loadVapidKey(text: string): Promise<VapidKey> {
+  const k = JSON.parse(text) as Partial<VapidKeyFile>
+  if (k.v !== 1 || k.role !== 'vapid' || !isStr(k.pkcs8) || !isStr(k.pub)) throw new Error('vapid.key malformado')
+  const der = fromB64url(k.pkcs8)
+  try { return await importVapidKey(der, fromHex(k.pub)) } finally { der.fill(0) }
+}
 
 export interface KeyEntry { pkcs8: string; pub: string; cert?: string }
 export interface HouseKeyFile { v: 1; role: 'house'; pkcs8: string; pub: string }

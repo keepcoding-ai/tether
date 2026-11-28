@@ -6,7 +6,8 @@ import { buildHouseAuth, relyingParty, toHex, type RelyingParty } from '../../sr
 import { AttentionView } from '../../src/remoted/attention.ts'
 import { DEFAULT_SCOPES, House } from '../../src/remoted/house.ts'
 import type { PortalAsk, PortalDevice, PortalNote } from '../../src/remoted/ipc.ts'
-import { loadKeys } from '../../src/remoted/keyfiles.ts'
+import { loadKeys, loadVapidKey } from '../../src/remoted/keyfiles.ts'
+import { PortalPush, type PushSend } from '../../src/remoted/push.ts'
 import type { Limits } from '../../src/remoted/limits.ts'
 import { audOf, RelayLink } from '../../src/remoted/relay.ts'
 import type { PipeReads } from '../../src/remoted/reads.ts'
@@ -36,6 +37,10 @@ export interface HouseBenchOptions {
   noticeGapsMs?: Partial<{ channels: number; regency: number }>
   /** The files of a speech from afar (src/remoted/files.ts); absent, the file lines answer not-implemented. */
   files?: PortalFiles
+  /** Web Push (src/remoted/push.ts) with this sender instead of fetch; absent, the push lines answer not-implemented. */
+  push?: { send: PushSend; benchOrigin?: string; now?: () => number }
+  /** The waiting list the house reads (a test feeds it slots); absent, an empty one. */
+  attention?: AttentionView
 }
 
 export interface PairedDevice { device: TestDevice; fresh: DeviceSession }
@@ -58,6 +63,8 @@ export interface HouseBench {
   notices: string[]
   /** The audit lines among them. */
   audits(): Extract<PortalNote, { note: 'audit' }>[]
+  /** The house's Web Push (with `push`), the same one across restarts. */
+  push: PortalPush | undefined
   /** A normal session of the paired device (admission + handshake). */
   connect(d?: TestDevice): Promise<DeviceSession>
   /** Pairs one more device through the house. */
@@ -107,9 +114,30 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
         const d = registry.get(a.deviceId)
         if (!d?.credential) throw new Error('no credential')
         d.credential = { ...d.credential, signCount: a.signCount }
+        return
+      }
+      case 'push-sub': {
+        const d = registry.get(a.deviceId)
+        if (!d || d.state !== 'active') throw new Error('device not active')
+        d.push = { ...a.sub }
+        return
+      }
+      case 'push-drop': {
+        const d = registry.get(a.deviceId)
+        if (d) delete d.push
       }
     }
   }
+  const vapid = o.push ? await loadVapidKey(texts.vapid!) : undefined
+  let pushNow: House | undefined
+  const push = o.push && vapid
+    ? new PortalPush({
+      key: vapid, now: o.push.now ?? o.now ?? Date.now, send: o.push.send, log: () => {},
+      ...(o.push.benchOrigin ? { benchOrigin: o.push.benchOrigin } : {}),
+      audit: (act, result, deviceId, target) => { notes.push({ note: 'audit', act, result, ...(deviceId ? { deviceId } : {}), ...(target ? { target } : {}) }) },
+      gone: (deviceId) => pushNow?.pushGone(deviceId),
+    })
+    : undefined
   let current: House | undefined
   const onNote = (n: PortalNote): void => {
     notes.push(n)
@@ -127,7 +155,8 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
   let tick: NodeJS.Timeout | undefined
   const up = async (devices: PortalDevice[]): Promise<House> => {
     const house = new House({
-      keys, aud, houseName: 'bench', attention: new AttentionView(), log: () => {}, now: o.now ?? Date.now, ask: answer,
+      keys, aud, houseName: 'bench', attention: o.attention ?? new AttentionView(), log: () => {}, now: o.now ?? Date.now, ask: answer,
+      ...(push ? { push } : {}),
       send: (f) => link?.send(f), note: onNote, notice: (t) => { notices.push(t) },
       ...(o.limits ? { limits: o.limits } : {}), ...(o.renewDenyAfterMs ? { renewDenyAfterMs: o.renewDenyAfterMs } : {}), ...(rp ? { rp } : {}), ...(o.presenceClock ? { presenceClock: o.presenceClock } : {}),
       ...(o.reads ? { reads: o.reads } : {}), ...(o.noticeGapsMs ? { noticeGapsMs: o.noticeGapsMs } : {}),
@@ -136,6 +165,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
     })
     await house.init(devices, [])
     current = house
+    pushNow = house
     const auths = relay.houseAuths
     link = new RelayLink({
       url: relay.url, log: () => {},
@@ -150,7 +180,7 @@ export async function startHouseBench(o: HouseBenchOptions = {}): Promise<HouseB
 
   const bench: HouseBench = {
     house: await up([]),
-    relay, rp, registry, asks, notes, notices,
+    relay, rp, registry, asks, notes, notices, push,
     device: undefined as unknown as TestDevice,
     fresh: undefined as unknown as DeviceSession,
     audits: () => notes.filter((n): n is Extract<PortalNote, { note: 'audit' }> => n.note === 'audit'),

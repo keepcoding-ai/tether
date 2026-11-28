@@ -20,29 +20,51 @@ export class AttentionView {
   readonly #since = new Map<string, string>()
   #dirty = false
   #lastKey = ''
+  /** The slots that began to wait since the last `takeEntered` (a push notice each, step 4.4). At most one per slot. */
+  readonly #entered = new Set<string>()
   readonly #now: () => number
 
   constructor(now: () => number = Date.now) { this.#now = now }
 
+  /** The list as the pipe gives it at start: who already waits did not begin to wait now, so it makes no notice. */
   reset(slots: readonly SlotState[]): void {
     this.#slots.clear()
-    for (const s of slots) this.#apply(s)
+    for (const s of slots) this.#apply(s, false)
     this.#dirty = true
   }
 
-  state(slot: SlotState): void { this.#apply(slot); this.#dirty = true }
+  state(slot: SlotState): void { this.#apply(slot, true); this.#dirty = true }
 
   removed(slotId: string): void {
     this.#slots.delete(slotId)
     this.#since.delete(slotId)
+    this.#entered.delete(slotId)
     this.#dirty = true
   }
 
-  #apply(slot: SlotState): void {
+  #apply(slot: SlotState, live: boolean): void {
     this.#slots.set(slot.slotId, slot)
     if (slot.attention === 'waiting') {
-      if (!this.#since.has(slot.slotId)) this.#since.set(slot.slotId, new Date(this.#now()).toISOString())
-    } else this.#since.delete(slot.slotId)
+      if (!this.#since.has(slot.slotId)) {
+        this.#since.set(slot.slotId, new Date(this.#now()).toISOString())
+        if (live) this.#entered.add(slot.slotId)
+      }
+    } else {
+      this.#since.delete(slot.slotId)
+      this.#entered.delete(slot.slotId)
+    }
+  }
+
+  /** The slots that began to wait since the last call and still wait, projected (id and name, as the list shows them). */
+  takeEntered(): AttentionItem[] {
+    const out: AttentionItem[] = []
+    for (const id of this.#entered) {
+      const s = this.#slots.get(id)
+      const it = s ? projectWaiting(s, this.#since.get(id) ?? new Date(this.#now()).toISOString()) : undefined
+      if (it) out.push(it)
+    }
+    this.#entered.clear()
+    return out
   }
 
   items(): { items: AttentionItem[]; more: number } {

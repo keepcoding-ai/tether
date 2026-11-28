@@ -22,8 +22,10 @@ import {
   type PresenceContext, type Presence, type RelyingParty, type ResStatus, type RoleKey, type Session, type SessionEffect,
 } from '../remote/index.ts'
 import {
-  emptyBody, errorBody, eventBody, PAGE_LINES_MAX, READ_BODY_MAX, regencyChanged, resultBody, type EventSource, type MarksSource, type RegencyChanged,
+  emptyBody, errorBody, eventBody, PAGE_LINES_MAX, pushNotice, READ_BODY_MAX, regencyChanged, resultBody, type EventSource, type MarksSource, type RegencyChanged,
 } from '../remote/projection.ts'
+import type { PushKind } from '../remote/webpush.ts'
+import type { PortalPush } from './push.ts'
 import type { AttentionView } from './attention.ts'
 import { isTalkRefusal, TALK_REFUSALS, talkArgs, type TalkOp } from '../remote/talk.ts'
 import { EXT_READS, FRESH_PAIR_REGISTER_MS, gate, gateEvent, type ExtReadOp, type ExtWriteOp } from './gate.ts'
@@ -103,7 +105,17 @@ export interface HouseDeps {
   files?: PortalFiles
   /** Bench: a shorter idle time before an abandoned upload goes. */
   uploadIdleMs?: number
+  /** Web Push (./push.ts, step 4.4). Absent: the push lines answer `not-implemented` and no notice is sent. */
+  push?: PortalPush
 }
+
+/** The scope a device needs to be told anything (the push lines'), and the one a channel's notice also needs (its name). */
+const PUSH_SCOPE = opByName('attention.push-on')!.scope
+const CHANNELS_SCOPE = opByName('channels.page')!.scope
+/** How long the person's name in the channels (what a line's `to` names her by) is kept before it is read again. */
+const MODERATOR_TTL_MS = 5 * 60_000
+const norm = (s: string): string => s.trim().toLowerCase()
+const recOf = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {})
 
 /** The ops of the chunks of a file: counted by the device's bytes of files a minute, not its requests. */
 const FILE_CHUNK_OPS: ReadonlySet<number> = new Set([opByName('channels.file')!.code, opByName('channels.upload')!.code])
@@ -135,6 +147,8 @@ interface SessionRoute {
   lastReqMs: number
   inflight: number
   watching: boolean
+  /** The page is on the person's screen (session.visible; true until it says otherwise): no push goes to its device. */
+  visible: boolean
   /** Subscribed to channels.changed / regency.changed: set by the first read of that family this session served. */
   follows: { channels: boolean; regency: boolean }
   /** The counter of the last presence challenge of this session, and the one pending (spec 7.4 point 6). */
@@ -197,6 +211,110 @@ export class House {
   extEvent(ext: string, name: string, payload: unknown): void {
     if (ext === EXT_READS['channels.marks'].ext) this.#marks?.invalidate()
     this.#feeds.extEvent(ext, name, payload)
+    if (ext === EXT_READS['channels.marks'].ext && (name === 'line' || name === 'poll') && this.#d.push && this.#d.push.devices().length > 0) {
+      void this.#channelNotice(name, payload).catch((e: Error) => this.#d.log(`push: ${e.message}`))
+    }
+  }
+
+  // ---- Web Push (step 4.4) -------------------------------------------------------------------------------------
+
+  /** The person's name in the channels, as tetherd's last marks or page said it (kept MODERATOR_TTL_MS). */
+  #moderator: { name: string; atMs: number } | undefined
+
+  #sawModerator(answer: unknown): void {
+    const name = recOf(recOf(answer).moderator).name
+    if (typeof name === 'string' && name.trim() !== '') this.#moderator = { name, atMs: this.#d.now() }
+  }
+
+  async #moderatorName(): Promise<string | undefined> {
+    const m = this.#moderator
+    if (m && this.#d.now() - m.atMs < MODERATOR_TTL_MS) return m.name
+    if (!this.#marks) return m?.name
+    try { this.#sawModerator(await this.#marks.get()) } catch { /* the last one known, if any */ }
+    return this.#moderator?.name
+  }
+
+  /**
+   * A line or a poll of a channel, from tetherd's events: a notice when a speech of an agent is addressed to the person (her
+   * name in `to`, by the rule of the channels' marks) or a poll calls her (`user` among those called). Nothing of the line
+   * goes on but who spoke and the channel's name.
+   */
+  async #channelNotice(event: 'line' | 'poll', payload: unknown): Promise<void> {
+    const p = recOf(payload)
+    const line = recOf(p.line)
+    const from = recOf(line.from)
+    if (from.id === 'user' || from.role === 'moderator' || from.role === 'system') return
+    let kind: PushKind
+    if (event === 'poll') {
+      if (line.kind !== 'poll') return
+      const to = recOf(line.poll).to
+      if (!Array.isArray(to) || !to.some((x) => recOf(x).id === 'user')) return
+      kind = 'poll'
+    } else {
+      if (line.kind !== 'message' || !Array.isArray(line.to) || line.to.length === 0) return
+      const me = await this.#moderatorName()
+      if (me === undefined || !line.to.some((n) => typeof n === 'string' && norm(n) === norm(me))) return
+      kind = 'talk'
+    }
+    const notice = pushNotice({ kind, name: from.name, channelId: typeof p.channelId === 'string' ? p.channelId : undefined, room: p.room })
+    if (notice) this.#d.push?.notify(notice, this.#pushTargets([PUSH_SCOPE, CHANNELS_SCOPE]))
+  }
+
+  /**
+   * The devices a notice may go to: subscribed, active, holding the scopes (`attention`, and `channels` for a channel's
+   * notice: its name is a channel's), not being revoked, and with no session that is live and on the person's screen.
+   */
+  #pushTargets(scopes: readonly string[]): string[] {
+    const push = this.#d.push
+    if (!push) return []
+    const out: string[] = []
+    for (const id of push.devices()) {
+      const dv = this.#devices.get(id)
+      if (!dv || dv.state !== 'active' || !scopes.every((sc) => dv.scopes.includes(sc))) continue
+      const mem = this.#mem.get(id)
+      if (mem?.revoking) continue
+      if (mem && [...mem.sessions].some((s) => s.visible && s.session.state === 'open')) continue
+      out.push(id)
+    }
+    return out
+  }
+
+  /** The push service said a subscription is gone (404/410): the registry's writer forgets it too. */
+  pushGone(deviceId: string): void {
+    const dv = this.#devices.get(deviceId)
+    if (dv) delete dv.push
+    void this.#d.ask({ ask: 'push-drop', deviceId, why: 'gone' }).catch((e: Error) => this.#d.log(`push: the registry did not drop a subscription (${e.message})`))
+  }
+
+  /** attention.push-on: the subscription checked (M-11), written by the registry's writer, then kept here. */
+  async #pushOn(s: SessionRoute, body: Record<string, unknown>): Promise<Served> {
+    const push = this.#d.push
+    if (!push) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const v = await push.check(body)
+    if (!v.ok) return { status: RES_STATUS.badRequest, bytes: errorBody(v.why === 'keys' || v.why === 'malformed' ? 'bad-request' : 'push-service'), audit: `refused:${v.why}` }
+    const row = { ...v.sub, at: new Date(this.#d.now()).toISOString() }
+    try { await this.#d.ask({ ask: 'push-sub', deviceId: s.deviceId, sub: row }) } catch (e) {
+      this.#d.log(`push: the registry refused a subscription (${(e as Error).message})`)
+      return { status: RES_STATUS.failed, bytes: errorBody('failed'), final: false }
+    }
+    push.set(s.deviceId, row)
+    const dv = this.#devices.get(s.deviceId)
+    if (dv) dv.push = row
+    return { status: RES_STATUS.ok, bytes: resultBody('attention.push-on', { on: push.has(s.deviceId) }) }
+  }
+
+  /** attention.push-off: the subscription goes, here and in the registry. */
+  async #pushOff(s: SessionRoute): Promise<Served> {
+    const push = this.#d.push
+    if (!push) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    try { await this.#d.ask({ ask: 'push-drop', deviceId: s.deviceId, why: 'off' }) } catch (e) {
+      this.#d.log(`push: the registry did not drop a subscription (${(e as Error).message})`)
+      return { status: RES_STATUS.failed, bytes: errorBody('failed'), final: false }
+    }
+    push.set(s.deviceId, undefined)
+    const dv = this.#devices.get(s.deviceId)
+    if (dv) delete dv.push
+    return { status: RES_STATUS.ok, bytes: resultBody('attention.push-off', { on: false }) }
   }
 
   /** A slot's state changed or it went: the Regency a device sees with the app closed changed too. */
@@ -229,7 +347,10 @@ export class House {
 
   async init(devices: readonly PortalDevice[], deny: readonly DenyRow[]): Promise<void> {
     this.#fingerprint = houseFingerprint(await houseIdOf(this.#d.keys.kH.pub))
-    for (const dv of devices) this.#devices.set(dv.deviceId, dv)
+    for (const dv of devices) {
+      this.#devices.set(dv.deviceId, dv)
+      if (dv.state === 'active') this.#d.push?.set(dv.deviceId, dv.push)
+    }
     for (const r of deny) this.#addDeny(r.ticketId, r.exp)
     // What a previous portal left of uploads: this one holds none of them.
     await this.#d.files?.sweepDisk()
@@ -246,9 +367,13 @@ export class House {
 
   // ---- registry (from the extension) -------------------------------------------------------------------------
 
-  upsertDevice(dv: PortalDevice): void { this.#devices.set(dv.deviceId, dv) }
+  upsertDevice(dv: PortalDevice): void {
+    this.#devices.set(dv.deviceId, dv)
+    this.#d.push?.set(dv.deviceId, dv.state === 'active' ? dv.push : undefined)
+  }
 
   forgetDevice(deviceId: string): void {
+    this.#d.push?.forget(deviceId)
     this.#devices.delete(deviceId)
     this.#closeDevice(deviceId, CLOSE.revoked)
     this.#mem.delete(deviceId)
@@ -258,7 +383,9 @@ export class House {
   /** Spec 6.1, after the registry was written: close the live sessions with CLOSE(0x04), deny every live ticket. */
   async revoke(deviceId: string, deny: readonly DenyRow[]): Promise<void> {
     const dv = this.#devices.get(deviceId)
-    if (dv) dv.state = 'revoked'
+    if (dv) { dv.state = 'revoked'; delete dv.push }
+    // A revoked device is told nothing more, and what waited for it is dropped (the registry dropped its row too).
+    this.#d.push?.forget(deviceId)
     const mem = this.#mem.get(deviceId)
     if (mem) mem.revoking = true
     await this.#closeDevice(deviceId, CLOSE.revoked)
@@ -480,7 +607,7 @@ export class House {
 
   #adopt(route: number, session: Session, deviceId: string, freshPair: boolean): void {
     const nowMs = this.#d.now()
-    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false, follows: { channels: false, regency: false }, uvCtr: 0 }
+    const s: SessionRoute = { kind: 'session', route, session, deviceId, freshPair, openedMs: nowMs, lastReqMs: nowMs, inflight: 0, watching: false, visible: true, follows: { channels: false, regency: false }, uvCtr: 0 }
     this.#routes.set(route, s)
     this.#memOf(deviceId).sessions.add(s)
     this.#noteSessions()
@@ -666,6 +793,17 @@ export class House {
       case 'attention.watch':
         if (!s.watching) { s.watching = true; this.#noteSessions() }
         return ok(resultBody('attention.watch', this.#d.attention.items()))
+      case 'session.visible':
+        if (typeof body.visible !== 'boolean') return { status: RES_STATUS.badRequest, bytes: errorBody('bad-request') }
+        s.visible = body.visible
+        return ok(resultBody('session.visible', {}))
+      case 'attention.push-key': {
+        const push = this.#d.push
+        if (!push) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented') }
+        return ok(resultBody('attention.push-key', { key: push.publicKey, on: push.has(s.deviceId) }))
+      }
+      case 'attention.push-on': return this.#pushOn(s, body)
+      case 'attention.push-off': return this.#pushOff(s)
       case 'channels.marks':
       case 'channels.page':
       case 'regency.tree':
@@ -720,9 +858,12 @@ export class House {
     let bytes: Bytes
     try {
       switch (op) {
-        case 'channels.marks':
-          bytes = resultBody(op, (await this.#marks!.get()) as MarksSource)
+        case 'channels.marks': {
+          const marks = await this.#marks!.get()
+          this.#sawModerator(marks)
+          bytes = resultBody(op, marks as MarksSource)
           break
+        }
         case 'channels.page': {
           const { channel, before } = body
           const limit = body.limit ?? PAGE_LINES_MAX
@@ -730,7 +871,9 @@ export class House {
           if (before !== undefined && !count(before, 1, Number.MAX_SAFE_INTEGER)) return bad
           if (!count(limit, 1, PAGE_LINES_MAX)) return bad
           const at = before !== undefined ? { before } : {}
-          bytes = resultBody(op, { answer: await reads.read(op, { channel, limit, ...at }), limit, ...at, home: this.#d.userHome })
+          const answer = await reads.read(op, { channel, limit, ...at })
+          this.#sawModerator(answer)
+          bytes = resultBody(op, { answer, limit, ...at, home: this.#d.userHome })
           break
         }
         case 'regency.tree': {
@@ -1129,6 +1272,15 @@ export class House {
     if (this.#pairing && !this.#isOver(this.#pairing.view.state)) jobs.push(this.#pairing.p.tick(nowMs).then((fx) => this.#pairEffects(fx)))
     if (this.#d.files) jobs.push(this.#d.files.sweep(nowMs, this.#d.uploadIdleMs))
     if (this.#d.attention.takeChange()) jobs.push(this.#pushEvent(EVT.attentionChanged, this.#d.attention.items(), (r) => r.watching))
+    // Who began to wait since the last tick: a notice each, to the devices with no session on the screen (step 4.4).
+    const entered = this.#d.attention.takeEntered()
+    if (entered.length > 0 && this.#d.push) {
+      const targets = this.#pushTargets([PUSH_SCOPE])
+      for (const it of entered) {
+        const n = pushNotice({ kind: 'waiting', name: it.name, slotId: it.id })
+        if (n && targets.length > 0) this.#d.push.notify(n, targets)
+      }
+    }
     const channels = this.#feeds.takeChannels(nowMs)
     if (channels) jobs.push(this.#pushEvent(EVT.channelsChanged, channels, (r) => r.follows.channels))
     const regency = this.#feeds.takeRegency(nowMs)

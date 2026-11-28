@@ -9,10 +9,11 @@
 // the env by the NAMES of its variables only. The args of either do not go out at all: their mask (src/core/redact-args.ts)
 // lives outside this pure module, and a device has no use for them yet. Text is hostile: names are sanitized and capped.
 // Pure: no node:*, no DOM; the PWA imports the types of what it receives from here.
-import { utf8, type Bytes } from './bytes.ts'
+import { b64url, utf8, type Bytes } from './bytes.ts'
 import { PRESENCE, type Presence } from './constants.ts'
 import { sanitizeDeclaredName } from './content.ts'
 import { knownScopes, type EvtName, type OpName, type ScopeFamily } from './scopes.ts'
+import { noticeBody, PUSH_BODY_MAX, PUSH_TITLE_MAX, type PushKind, type PushNotice } from './webpush.ts'
 
 // ---- shapes a device receives ------------------------------------------------------------------------------------
 
@@ -97,7 +98,11 @@ export const TALK_ERROR_CODES = [
   'secret-file', 'too-many', 'unknown-file', 'copy-failed',
 ] as const
 /** The error codes a body may carry; nothing else of a failure goes out. `too-large`: a read whose body passes READ_BODY_MAX. */
-export const ERROR_CODES = ['unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large', ...TALK_ERROR_CODES] as const
+export const ERROR_CODES = [
+  'unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large', ...TALK_ERROR_CODES,
+  // Web Push (step 4.4): the subscription's endpoint is not of a push service the portal posts to (M-11).
+  'push-service',
+] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
 // ---- sources (what the portal holds; structural, so the pipe's types fit without being imported) -----------------
@@ -883,6 +888,40 @@ export function regencyChanged(s: RegencyChanged): RegencyChanged {
   return opt<RegencyChanged>({ live }, { sig: typeof s.sig === 'string' && SIG_RE.test(s.sig) ? s.sig : undefined, asOf: live ? undefined : int(s.asOf) })
 }
 
+// ---- Web Push (step 4.4)
+
+/** The house's VAPID public key (base64url, the browser's `applicationServerKey`) and whether this device is subscribed. */
+export interface PushKey { key: string; on: boolean }
+export function pushKey(s: { key: Uint8Array; on: boolean }): PushKey {
+  return { key: b64url(s.key), on: s.on === true }
+}
+/** A name for a notice: sanitized, and never a path (a name that is one keeps only its last part). */
+const noticeName = (v: unknown, max: number): string => {
+  const n = line(v, 200)
+  const last = n.split(/[\\/]/).filter(p => p !== '').pop() ?? ''
+  return last.slice(0, max)
+}
+
+/**
+ * The one notice a push carries (src/remote/webpush.ts PushNotice), built here like every other body that leaves for a
+ * device: the agent's name as the title (sanitized, never a path; R-9 / M-11: a notice is an easy screen to forge, so it
+ * holds no word the house did not choose but the names), a fixed phrase with at most the channel's name, a tag per agent
+ * or channel, and the query of the place to open. Undefined when the ids do not have the shape of an id.
+ */
+export function pushNotice(s: { kind: PushKind; name: unknown; slotId?: string; channelId?: string; room?: unknown }): PushNotice | undefined {
+  const title = noticeName(s.name, PUSH_TITLE_MAX) || (s.kind === 'waiting' ? 'Um agente' : 'Alguém')
+  if (s.kind === 'waiting') {
+    if (typeof s.slotId !== 'string' || !ID_RE.test(s.slotId)) return undefined
+    return { kind: 'waiting', title, body: noticeBody('waiting'), tag: `a:${s.slotId}`, url: '?tab=waiting' }
+  }
+  if (typeof s.channelId !== 'string' || !ID_RE.test(s.channelId)) return undefined
+  const room = noticeName(s.room, 40) || 'canal'
+  return { kind: s.kind, title, body: noticeBody(s.kind, room).slice(0, PUSH_BODY_MAX), tag: `c:${s.channelId}`, url: `?c=${s.channelId}` }
+}
+
+/** Whether this device is subscribed, after push-on / push-off. */
+export function pushState(s: { on: boolean }): { on: boolean } { return { on: s.on === true } }
+
 const empty = (_: Record<string, never>): Record<string, never> => ({})
 /** The projector of an op that has no handler yet: its source is `never`, so no result of it can be built. */
 const unbuilt = (src: never): never => src
@@ -897,8 +936,12 @@ export const RESULTS = {
   'device.revoke-self': empty,
   'session.lock': presenceState,
   'house.key-rotate.ack': unbuilt,
+  'session.visible': empty,
   'attention.list': attentionList,
   'attention.watch': attentionList,
+  'attention.push-key': pushKey,
+  'attention.push-on': pushState,
+  'attention.push-off': pushState,
   'channels.marks': channelsMarks,
   'channels.page': channelsPage,
   'channels.say': said,

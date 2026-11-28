@@ -1,6 +1,6 @@
 // The remote extension's pure rules: who may ask what (E-7, A-2), the registry of devices (<home>/remote/devices.json) and
 // its transitions, the deny list it implies, and the projections that leave the extension. No I/O.
-import { LIVE_DOING, usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PortalDevice, type TicketRow } from '../../src/remoted/ipc.ts'
+import { LIVE_DOING, usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PortalDevice, type PushSubRow, type TicketRow } from '../../src/remoted/ipc.ts'
 
 export const EXT_ID = 'remote'
 
@@ -55,6 +55,19 @@ export interface DeviceEntry {
   /** The presence credential (WebAuthn), registered once, in the pairing session. Absent: the device only reads. */
   credential?: CredentialRow
   registeredAt?: string
+  /** Its Web Push subscription (step 4.4). Gone at revocation, at `push-off` and when its push service says 404/410. */
+  push?: PushSubRow
+}
+
+/**
+ * A subscription row by its shape: an endpoint that parses (at most 1024 characters; which hosts the portal POSTs to is
+ * its rule, checked again before each send), a base64url P-256 point and a 16-octet secret, an ISO time.
+ */
+export function isPushSub(p: unknown): p is PushSubRow {
+  const x = p as PushSubRow
+  if (typeof x !== 'object' || x === null || typeof x.endpoint !== 'string' || x.endpoint.length > 1024) return false
+  try { new URL(x.endpoint) } catch { return false }
+  return /^[A-Za-z0-9_-]{87}$/.test(String(x.p256dh)) && /^[A-Za-z0-9_-]{22}$/.test(String(x.auth)) && typeof x.at === 'string' && !Number.isNaN(Date.parse(x.at))
 }
 
 export interface RegistryFile { v: 1; devices: DeviceEntry[] }
@@ -94,8 +107,10 @@ export function parseRegistry(text: string | undefined): { devices: DeviceEntry[
       && Array.isArray(d.tickets) && d.tickets.every(isTicket) && Array.isArray(d.usedKeyIds) && Array.isArray(d.denied)
       && Number.isInteger(d.maxVerUsed) && typeof d.createdAt === 'string'
       && (d.credential === undefined || isCredential(d.credential))
-    if (ok) devices.push(d as DeviceEntry)
-    else dropped++
+    if (!ok) { dropped++; continue }
+    // A subscription that does not parse is let go, not the device: the device turns its notices on again.
+    if (d.push !== undefined && !isPushSub(d.push)) delete d.push
+    devices.push(d as DeviceEntry)
   }
   return { devices, dropped }
 }
@@ -109,6 +124,8 @@ export function toPortalDevice(d: DeviceEntry): PortalDevice {
   return {
     deviceId: d.deviceId, pubD: d.pubD, state: d.state, maxVerUsed: d.maxVerUsed, scopes: [...d.scopes], tickets: d.tickets.map((t) => ({ ...t })),
     usedKeyIds: [...d.usedKeyIds], denied: d.denied.map((t) => ({ ...t })), ...(d.credential ? { credential: { ...d.credential } } : {}),
+    // A revoked device sends nothing: its subscription never reaches the portal (and the revocation drops it anyway).
+    ...(d.push && d.state !== 'revoked' ? { push: { ...d.push } } : {}),
   }
 }
 

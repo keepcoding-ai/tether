@@ -43,8 +43,12 @@ export const OP_CODES = {
   'device.revoke-self': 0x0006,
   'session.lock': 0x0007,
   'house.key-rotate.ack': 0x0008,
+  'session.visible': 0x0009,
   'attention.list': 0x0100,
   'attention.watch': 0x0101,
+  'attention.push-key': 0x0102,
+  'attention.push-on': 0x0103,
+  'attention.push-off': 0x0104,
   'channels.marks': 0x0200,
   'channels.page': 0x0201,
   'channels.say': 0x0202,
@@ -89,6 +93,17 @@ export const OP_TABLE = {
   'house.key-rotate.ack': { scope: 'session', presence: 'unlocked', mutates: true, gesture: false, allowedWithoutCredential: true, pipe: [] },
   'attention.list': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
   'attention.watch': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
+  // Web Push (step 4.4, fio-spec 15). Whether the page is on the person's screen now: the portal does not push to a device
+  // that has a session live and visible. A hint kept in the session's memory only (like attention.watch), so no state of
+  // the house changes and no actId; any session may say it, the locked one too (the person is in front of it all the same).
+  'session.visible': { scope: 'session', presence: 'none', mutates: false, gesture: false, body: ['visible'], pipe: [] },
+  // The house's VAPID public key (K_V, RFC 8292), which the browser needs to subscribe, and whether this device is subscribed.
+  'attention.push-key': { scope: 'attention', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: [] },
+  // The device's subscription (PushSubscription.toJSON): kept by the registry's writer, one per device. The endpoint comes
+  // from outside: the portal takes only a public push service of the list (src/remote/webpush.ts pushEndpointCheck, M-11).
+  'attention.push-on': { scope: 'attention', presence: 'unlocked', mutates: true, gesture: true, body: ['endpoint', 'p256dh', 'auth'], pipe: [] },
+  // The device turns its notices off: the subscription goes.
+  'attention.push-off': { scope: 'attention', presence: 'unlocked', mutates: true, gesture: true, body: [], pipe: [] },
   // The three reads of an extension (step 3.4a): each reaches the pipe as the ONE `ext-request` its pair names in
   // src/remoted/reach.ts EXT_READS (a closed list by op), never as a request the device spells.
   // The channels' marks as tetherd computes them (ext `channels`, `marks`).

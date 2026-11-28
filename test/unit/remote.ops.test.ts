@@ -31,8 +31,12 @@ describe('remote operations registry', () => {
       [0x0006, 'device.revoke-self', 'session', 'none', true, true],
       [0x0007, 'session.lock', 'session', 'none', true, true],
       [0x0008, 'house.key-rotate.ack', 'session', 'unlocked', false, true],
+      [0x0009, 'session.visible', 'session', 'none', false, false],
       [0x0100, 'attention.list', 'attention', 'unlocked', false, false],
       [0x0101, 'attention.watch', 'attention', 'unlocked', false, false],
+      [0x0102, 'attention.push-key', 'attention', 'unlocked', false, false],
+      [0x0103, 'attention.push-on', 'attention', 'unlocked', true, true],
+      [0x0104, 'attention.push-off', 'attention', 'unlocked', true, true],
       [0x0200, 'channels.marks', 'channels', 'unlocked', false, false],
       [0x0201, 'channels.page', 'channels', 'unlocked', false, false],
       [0x0202, 'channels.say', 'channels', 'unlocked', true, true],
@@ -50,7 +54,7 @@ describe('remote operations registry', () => {
   })
 
   test('39: an op without a line has no entry; codes and names are unique; every line is 16 bits and inside its range', () => {
-    assert.equal(opByCode(0x0009), undefined)
+    assert.equal(opByCode(0x000a), undefined)
     assert.equal(opByCode(0x02ff), undefined)
     assert.equal(opByCode(0x0601)?.name, 'device.revoke')
     assert.equal(opByName('attention.watch')?.code, 0x0101)
@@ -67,7 +71,7 @@ describe('remote operations registry', () => {
 
   test('only lines triggered by the person are gestures; the one exception to E-8 is declared on its line', () => {
     assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), [
-      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel', 'device.revoke',
+      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'attention.push-on', 'attention.push-off', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel', 'device.revoke',
     ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])
     for (const l of OPS) if (l.gesture) assert.equal(l.mutates, true, `${l.name}: a gesture changes state`)

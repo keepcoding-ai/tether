@@ -25,7 +25,7 @@ import {
   type SessionEnded,
 } from '../../../src/remoted/ipc.ts'
 import {
-  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, isCredential, originAllowed, PAIR_ID_RE, parseConfig,
+  denyList, deviceView, DEVICES_MAX, digitsOk, findDevice, isCredential, isPushSub, originAllowed, PAIR_ID_RE, parseConfig,
   parseRegistry, pruneRegistry, renewDevice, sanitizeLive, serializeRegistry, toPortalDevice, webUrlAllowed, type DeviceEntry, type RemoteConfig,
   type RemoteRequest,
 } from '../rules.ts'
@@ -155,11 +155,18 @@ export class RemoteService {
       house: await this.#d.io.tryReadText(join(this.#dir, KEY_FILES.house)),
       relay: await this.#d.io.tryReadText(join(this.#dir, KEY_FILES.relay)),
       ticket: await this.#d.io.tryReadText(join(this.#dir, KEY_FILES.ticket)),
+      vapid: await this.#d.io.tryReadText(join(this.#dir, KEY_FILES.vapid)),
     }, Math.floor(this.#now / 1000))
     if (keys.house) await this.#write(KEY_FILES.house, keys.house)
     if (keys.relay) await this.#write(KEY_FILES.relay, keys.relay)
     if (keys.ticket) await this.#write(KEY_FILES.ticket, keys.ticket)
+    if (keys.vapid) await this.#write(KEY_FILES.vapid, keys.vapid)
     if (keys.house) { this.#devices = []; await this.#saveRegistry() } // a new identity: no device of the old one can connect
+    else if (keys.vapid && this.#devices.some((d) => d.push)) {
+      // A new K_V: every subscription was made for the old one, and the push services refuse it now; the devices subscribe again.
+      for (const d of this.#devices) delete d.push
+      await this.#saveRegistry()
+    }
     const cred = newPortalCredential()
     setPortalCredential(this.#d.home, cred)
     this.#portalState = { kind: 'starting' }
@@ -285,6 +292,18 @@ export class RemoteService {
       await this.#saveRegistry()
       return
     }
+    if (a.ask === 'push-sub') {
+      // Only an active device keeps a subscription; the portal checked the endpoint and the keys, this checks the row's shape.
+      if (!d || d.state !== 'active') throw new Error('device not active')
+      if (!isPushSub(a.sub)) throw new Error('subscription malformed')
+      d.push = { endpoint: a.sub.endpoint, p256dh: a.sub.p256dh, auth: a.sub.auth, at: a.sub.at }
+      await this.#saveRegistry()
+      return
+    }
+    if (a.ask === 'push-drop') {
+      if (d?.push) { delete d.push; await this.#saveRegistry() }
+      return
+    }
     if (a.ask === 'sign-count') {
       if (!d || d.state === 'revoked' || !d.credential) throw new Error('no credential')
       if (!Number.isInteger(a.signCount) || a.signCount < 0 || a.signCount > 0xffffffff) throw new Error('sign count out of range')
@@ -332,6 +351,8 @@ export class RemoteService {
     if (d.state === 'revoked') return
     d.state = 'revoked'
     d.revokedAt = new Date(this.#now).toISOString()
+    // A revoked device is told nothing more: its subscription goes with the same write.
+    delete d.push
     await this.#saveRegistry()
     this.#audit('device.revoke', `by:${by}`, d.deviceId)
     this.#portal?.send({ t: 'revoke', deviceId: d.deviceId, deny: d.tickets.map((t) => ({ ticketId: t.ticketId, exp: t.exp })) })

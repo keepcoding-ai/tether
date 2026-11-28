@@ -22,8 +22,10 @@ import { buildHouseAuth, relayUrlAllowed, selfTest, type RelyingParty } from '..
 import { AttentionView } from './attention.ts'
 import { House, PortalError } from './house.ts'
 import { PORTAL_EXIT, webRelyingParty, type FromPortal, type PortalAsk, type ToPortal } from './ipc.ts'
-import { KEY_FILES, loadKeys } from './keyfiles.ts'
+import { KEY_FILES, loadKeys, loadVapidKey } from './keyfiles.ts'
 import { makeNotice } from './notice.ts'
+import { PortalPush } from './push.ts'
+import { benchPushOrigin } from '../remote/webpush.ts'
 import { pipeReads } from './reads.ts'
 import { pipeWrites } from './writes.ts'
 import { PortalFiles } from './files.ts'
@@ -105,12 +107,14 @@ async function main(): Promise<void> {
 
   await selfTest()
   let keys
+  let vapid
   try {
     keys = await loadKeys({
       house: await readFile(join(remoteDir, KEY_FILES.house), 'utf8'),
       relay: await readFile(join(remoteDir, KEY_FILES.relay), 'utf8'),
       ticket: await readFile(join(remoteDir, KEY_FILES.ticket), 'utf8'),
     })
+    vapid = await loadVapidKey(await readFile(join(remoteDir, KEY_FILES.vapid), 'utf8'))
   } catch (e) { return leave(PORTAL_EXIT.keys, `house keys unreadable (${(e as Error).message})`) }
 
   const pipe = process.env.TETHER_PIPE ?? pipePath(home, userInfo().username)
@@ -143,7 +147,18 @@ async function main(): Promise<void> {
   const channelsGap = knob('TETHER_TEST_REMOTE_CHANNELS_GAP_MS')
   const regencyGap = knob('TETHER_TEST_REMOTE_REGENCY_GAP_MS')
   const uploadIdleMs = knob('TETHER_TEST_REMOTE_UPLOAD_IDLE_MS')
+  // Web Push (./push.ts): the portal dials the devices' push services itself, never through the relay. On the bench it dials
+  // only the fake service of TETHER_TEST_REMOTE_PUSH_ORIGIN (http://localhost:<port>), so no test reaches a real one.
+  let pushHouse: House | undefined
+  const push = new PortalPush({
+    key: vapid, now: Date.now, log,
+    ...(bench ? { benchOnly: true } : {}),
+    ...(bench && benchPushOrigin(process.env.TETHER_TEST_REMOTE_PUSH_ORIGIN) ? { benchOrigin: benchPushOrigin(process.env.TETHER_TEST_REMOTE_PUSH_ORIGIN)! } : {}),
+    audit: (act, result, deviceId, target) => send({ t: 'note', note: 'audit', act, result, ...(deviceId ? { deviceId } : {}), ...(target ? { target } : {}) }),
+    gone: (deviceId) => pushHouse?.pushGone(deviceId),
+  })
   const house = new House({
+    push,
     keys, aud, houseName: init.houseName, attention, ask, log, now: Date.now, rp: rpOf(init.webUrl),
     // The class `ext-read` of PIPE_REACH: the only paths from a device to tetherd's extensions, the reads (./reads.ts) and,
     // apart, with slots of their own, the person's speech (./writes.ts).
@@ -163,6 +178,7 @@ async function main(): Promise<void> {
     ...(renewDenyAfterMs !== undefined ? { renewDenyAfterMs } : {}),
   })
   feed = house
+  pushHouse = house
   await house.init(init.devices, init.deny)
   // The address changed while no portal was up: said now, as a `web` message says it to a portal already up.
   if (init.webChanged) house.setRelyingParty(rpOf(init.webUrl))

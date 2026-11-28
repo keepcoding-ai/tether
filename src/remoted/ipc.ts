@@ -21,7 +21,16 @@ export interface PortalDevice {
   denied?: DenyRow[]
   /** The presence credential registered in the pairing session (spec 7.4 point 1). Absent: the device only reads (E-8). */
   credential?: CredentialRow
+  /** Its Web Push subscription (step 4.4), when it turned the notices on. */
+  push?: PushSubRow
 }
+
+/**
+ * A Web Push subscription as the registry keeps it (one per device): the endpoint the device's browser gave (checked by
+ * src/remote/webpush.ts pushEndpointCheck when taken and again before every send), its `p256dh` and `auth` (base64url),
+ * and when it was taken. Never in a log, an audit line or a view: the endpoint is the device's address at its push service.
+ */
+export interface PushSubRow { endpoint: string; p256dh: string; auth: string; at: string }
 
 /**
  * A WebAuthn credential as the registry keeps it: the id (base64url, the device keeps it too), the uncompressed P-256 key
@@ -83,6 +92,10 @@ export type PortalAsk =
   | { ask: 'credential'; deviceId: string; credential: CredentialRow }
   /** An assertion verified with a new signature counter: written before the answer goes (one device at a time). */
   | { ask: 'sign-count'; deviceId: string; signCount: number }
+  /** attention.push-on with a checked subscription: keep it (it replaces the device's previous one); refused when not active. */
+  | { ask: 'push-sub'; deviceId: string; sub: PushSubRow }
+  /** The subscription goes: the device turned it off, or its push service said it is gone (404/410). */
+  | { ask: 'push-drop'; deviceId: string; why: 'off' | 'gone' }
 
 export type PortalNote =
   | { note: 'acked'; deviceId: string }
