@@ -1,7 +1,8 @@
 // The moderator's requests (contract 5.2) over the extension seam of the pipe (N1): the channel's pane asks, the daemon answers.
 // A thin shell over the fan-out (fanout.ts): every refusal of the rules comes back as the request's error with the same code
 // as the verbs (`not-owner`, `closed`, `unknown-channel`...). Reading (`list`, `members`, `history`) is open to every client;
-// the gestures and the speech are the person's, so only the `app` client makes them (`not-moderator` otherwise).
+// the speech (say, react, vote, poll, seen) is the person's, from the `app` or from afar (`remote`); managing the channel is the `app`'s
+// alone. Any other client is refused with `not-moderator`.
 // Memory: one timer for every channel (`seen`), cleared on dispose.
 import { slotIsLive } from '../../../app/shared/agent-info.ts'
 import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
@@ -158,6 +159,12 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
   void ready.then((c) => { channels = c }, () => {})
 
   const live = async (): Promise<Channels> => channels ?? ready
+  // Two gates. `person`: the person talking (say, react, vote, open a poll, mark seen), from the app or from afar (`remote`).
+  // `moderator`: the person managing the channel (create, join, remove, mute, close, reopen, close any poll): the app alone.
+  // Every `person` request is a pair of EXT_WRITES (src/remoted/reach.ts); test/unit/ext.channels-person.test.ts keeps both in step.
+  const person = (ctx: ExtRequestContext): void => {
+    if (ctx.client !== 'app' && ctx.client !== 'remote') throw refuse('not-moderator', 'só a pessoa (no app ou de longe) fala e age como moderadora')
+  }
   const moderator = (ctx: ExtRequestContext): void => {
     if (ctx.client !== 'app') throw refuse('not-moderator', 'só o app fala e age como moderador')
   }
@@ -210,7 +217,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
     // The person opens a poll (as the moderator): the same rules as an agent's `poll`. `to` are agent ids and `user` (herself, who then
     // votes by the card); `timeoutMs` the time from now. Every refusal comes back as the error code; the answer says who does not hear now.
     ['poll', async (c, a, ctx) => {
-      moderator(ctx)
+      person(ctx)
       const ch = channelOf(c, a)
       const question = text(a, 'question')
       const options = names(a, 'options')
@@ -224,7 +231,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
 
     // The person votes (she must be called): the same rules as an agent's `vote`; a vote or a change takes the poll in the answer.
     ['vote', async (c, a, ctx) => {
-      moderator(ctx)
+      person(ctx)
       const ch = channelOf(c, a)
       const poll = int(a, 'poll')
       if (poll === undefined) throw refuse('bad-request', 'o argumento poll é um inteiro')
@@ -248,7 +255,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
 
     // The person reacts (as the moderator): the same rules as an agent's `react`, every refusal comes back as the request's error code.
     ['react', async (c, a, ctx) => {
-      moderator(ctx)
+      person(ctx)
       const ch = channelOf(c, a)
       const seq = int(a, 'seq')
       if (seq === undefined) throw refuse('bad-request', 'o argumento seq é um inteiro')
@@ -258,7 +265,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
     }],
 
     ['say', async (c, a, ctx) => {
-      moderator(ctx)
+      person(ctx)
       const ch = channelOf(c, a)
       const to = names(a, 'to')
       const reply = int(a, 'reply')
@@ -335,7 +342,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
 
     // The person saw up to `seq`: raised in memory now, written once after a delay (one timer for every channel).
     ['seen', async (c, a, ctx) => {
-      moderator(ctx)
+      person(ctx)
       const ch = channelOf(c, a)
       const seq = int(a, 'seq')
       if (seq === undefined) throw refuse('bad-request', 'o argumento seq é um inteiro')

@@ -160,7 +160,7 @@ describe('each pair of EXT_READS only reads, on the real daemon halves', () => {
     await new Promise((r) => setTimeout(r, 20))
     await store.flush()
     assert.deepEqual(await snapshot(home), before, 'the record on disk is the same byte for byte')
-    for (const w of ['say', 'seen', 'react', 'close'])
+    for (const w of ['close', 'create', 'poll-close'])
       await assert.rejects(handlers.get(w)!({ channel: id, text: 'x', seq: 1, reaction: 'agree' }, remote), (e: unknown) => (e as { code?: string }).code === 'not-moderator', `${w} refuses remote`)
     for (const d of disposables) d.dispose()
   })
