@@ -1174,9 +1174,10 @@ function isLiveSlot(s: SlotState): boolean {
 
 /**
  * Closing a desk. An empty desk just closes. With panes, the app's dialog asks: move them to the neighbour
- * desk (safe, default), or stop what runs and close the panes (their slots stay under "Slots fechados").
+ * desk (safe, default), or stop what runs and close the panes (their slots stay under "Slots fechados"). `decided`: the
+ * answer already given elsewhere (a gesture from afar, confirmed on the device), so no dialog comes forward.
  */
-async function closeDesk(id: string): Promise<void> {
+async function closeDesk(id: string, decided?: 'move' | 'stop'): Promise<void> {
   if (desks.desks.length <= 1 || desks.isSystem(id)) return
   // The desk's pads go with it: their panes are the desk's panes for this question (same dialog, same answers).
   const deskPads = [...framePads].filter(p => p.deskId === id)
@@ -1187,7 +1188,7 @@ async function closeDesk(id: string): Promise<void> {
   if (panes.length > 0) {
     const neighbour = neighbourDesk(desks.desks, id)!
     const states = panes.map(p => slots.get(p.id)).filter((s): s is SlotState => s !== undefined)
-    const answer = await askDialog(closeDeskSituation(deskName(id), states, deskName(neighbour)))
+    const answer = decided ? { choice: decided } : await askDialog(closeDeskSituation(deskName(id), states, deskName(neighbour)))
     if (answer.choice === 'move') {
       // Frame by frame, so the split layouts travel along; whatever is left goes pane by pane.
       for (const frameId of [...(desks.desk(id)?.frameIds ?? [])]) desks.moveFrame(id, frameId, neighbour)
@@ -5653,6 +5654,18 @@ function activateRendererExtensions(): void {
         reveal: deskId => revealDesk(deskId),
         rename: (deskId, name) => renameDeskTo(deskId, name),
         create: spec => createDeskStaying(spec),
+        recolor: (deskId, color) => {
+          if (!desks.desks.some(d => d.id === deskId)) return false
+          desks.recolor(deskId, readDeskColor(color))
+          return true
+        },
+        close: async (deskId, opts) => {
+          if (!desks.desks.some(d => d.id === deskId)) return 'no-desk'
+          if (desks.desks.length <= 1) return 'last-desk'
+          if (desks.activeDeskId === deskId) return 'in-view'
+          await closeDesk(deskId, opts.panes)
+          return desks.desks.some(d => d.id === deskId) ? 'refused' : 'closed'
+        },
       },
       create: {
         items: () => createItemsOf(chooserItems(profiles, { empty: true }), recentProfiles),

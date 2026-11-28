@@ -687,6 +687,14 @@ export interface TetherUi {
      * `name` and `color` when given. Returns its id.
      */
     create(spec?: { after?: string; name?: string; color?: HueName; stay?: true }): string
+    /** A queue desk's colour, as the pill's "Cor…" sets it. False for a system desk or an unknown id. */
+    recolor(deskId: string, color: HueName): boolean
+    /**
+     * "Fechar mesa…" with the answer already given (a gesture confirmed elsewhere), so no dialog: its panes go to the
+     * neighbour desk (`move`) or stop and close (`stop`). The desk in view is never closed ('in-view': closing it would switch
+     * the person's desk), nor the last one ('last-desk'). 'refused': the desk is still there after the close.
+     */
+    close(deskId: string, opts: { panes: 'move' | 'stop' }): Promise<'closed' | 'no-desk' | 'last-desk' | 'in-view' | 'refused'>
   }
   /**
    * Making panes in a desk the person is not looking at ("+ Novo" of a manager): the same rows and the same resolution as

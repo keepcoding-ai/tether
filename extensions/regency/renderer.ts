@@ -32,6 +32,7 @@ import { RegencyPane, type RegencyHost, type TreeQuery } from './renderer/pane.t
 import { RegencyTab } from './renderer/tab.ts'
 import { targetOf } from './renderer/columns.ts'
 import { TreePublisher } from './renderer/publish.ts'
+import { remoteActs } from './renderer/remote-acts.ts'
 import { TREE_REQ, type PublishAnswer } from './publish-rules.ts'
 
 export { manifest }
@@ -696,10 +697,24 @@ export function activate(ui: TetherUi): Disposable[] {
     else p.openSystemColumn(section ? section as SystemModel['sections'][number]['id'] : undefined)
   })
 
+  /** The gestures asked from afar (RR5 5.1): the last few said on the machine, for the E2E. */
+  const remoteSaid: string[] = []
+  ui.test.expose('remoteSaid', () => [...remoteSaid])
+
   schedule()
   publisher.start()
   return [
     { dispose: () => publisher.dispose() },
+    // The gestures only the app knows, asked from afar through tetherd (RR5 5.1): done with the app's rules, no dialog, the
+    // desk in view unchanged; the Regency's brief notice says it was done from afar when the Regency is in view.
+    remoteActs(ui, {
+      owners: ownerBoard,
+      notice: text => {
+        remoteSaid.push(text)
+        if (remoteSaid.length > 20) remoteSaid.shift()
+        if (visible()) showToast(text)
+      },
+    }),
     // The person's key or the palette: only the Regency in sight changes (hidden, it would change out of her view).
     ui.commands.registerCommand(CMD.immersion, () => { if (visible()) livePane()?.toggleMode() }),
     // "Regência: Novo…" from the palette: the person asked for the Regency's card, so it comes to view first.
