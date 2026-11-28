@@ -176,6 +176,24 @@ describe('the bridge of acts: what tetherd confers alone', () => {
     assert.equal(b.bridge.pending, 0)
   })
 
+  test("a new desk is answered once tetherd's map shows it (the next act on it is not unknown), bounded", async () => {
+    const listeners = new Set<() => void>()
+    let map: DeskMap = { desks: [...MAP.desks], drawer: [] }
+    const b = bench({ map: () => map, mapChanged: (l) => { listeners.add(l); return { dispose: () => listeners.delete(l) } }, mapWaitMs: 300 })
+    let answered = false
+    const p = b.bridge.act({ act: 'desks.create', name: 'Nova' }, REMOTE).then((r) => { answered = true; return r })
+    await appAnswers(b, { ok: true, deskId: 'desk-9' })
+    await new Promise((r) => setTimeout(r, 30))
+    assert.equal(answered, false, 'waits for the map')
+    map = { desks: [...MAP.desks, { id: 'desk-9', name: 'Nova', kind: 'queue', panes: [] }], drawer: [] }
+    for (const l of listeners) l()
+    assert.deepEqual(await p, { state: 'done', deskId: 'desk-9' })
+    assert.equal(listeners.size, 0, 'the watch goes')
+    const q = b.bridge.act({ act: 'desks.create', name: 'Outra' }, REMOTE)
+    await appAnswers(b, { ok: true, deskId: 'desk-10' })
+    assert.deepEqual(await q, { state: 'done', deskId: 'desk-10' }, 'a map that never shows it does not hold the answer past the bound')
+  })
+
   test('waking a pane is the slot\'s start, by tetherd alone, app or not; live already; unconfirmed asks the pane', async () => {
     const b = bench({ status: { s_3: 'unconfirmed' } })
     b.setLive(false)

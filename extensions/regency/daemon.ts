@@ -152,7 +152,13 @@ export interface ActBridgeDeps {
   bridgeMs?: number
   /** The bench: a `test` connection may ask and answer too. */
   bench?: boolean
+  /** The map changed (api.desks.onDidChange): an act's answer waits for the map to show what it made. */
+  mapChanged?: (listener: () => void) => IDisposable
+  mapWaitMs?: number
 }
+
+/** How long an answer waits for tetherd's map to show what the act made. */
+export const MAP_WAIT_MS = 3_000
 
 interface Waiting { target: string; claimed: boolean; done: (a: Record<string, unknown> | AppActCode) => void; timer: ReturnType<typeof setTimeout> }
 
@@ -189,7 +195,29 @@ export class ActBridge {
     if (typeof answer === 'string') refuseAct(answer, 'o app não fez o ato')
     const r = answer as Record<string, unknown>
     if (r.ok !== true) refuseAct((APP_ANSWER_CODES as readonly unknown[]).includes(r.code) ? (r.code as AppActCode) : 'refused', 'o app recusou o ato')
-    return appActAnswer(r)
+    const out = appActAnswer(r)
+    await this.#mapShows(a, out)
+    return out
+  }
+
+  /**
+   * What an act made (a new desk, a pane on another desk, a reopened session) is answered once tetherd's own map shows it,
+   * so the very next act on it is not refused as unknown; bounded by MAP_WAIT_MS (the map comes from the app, a moment after).
+   */
+  async #mapShows(a: AppAct, out: AppActAnswer): Promise<void> {
+    const hasPane = (deskId: string, paneId: string): boolean => this.#d.map()?.desks.some((d) => d.id === deskId && d.panes.some((p) => p.id === paneId)) === true
+    const shown: (() => boolean) | undefined =
+      a.act === 'desks.create' && out.deskId ? () => this.#d.map()?.desks.some((d) => d.id === out.deskId) === true
+      : a.act === 'panes.move' ? () => hasPane(a.to, a.paneId)
+      : a.act === 'closed.reopen' ? () => hasPane(a.deskId, a.slotId)
+      : undefined
+    const watch = this.#d.mapChanged
+    if (!shown || shown() || !watch) return
+    await new Promise<void>((resolve) => {
+      const end = (): void => { clearTimeout(timer); sub.dispose(); resolve() }
+      const sub = watch(() => { if (shown()) end() })
+      const timer = setTimeout(end, this.#d.mapWaitMs ?? MAP_WAIT_MS)
+    })
   }
 
   /** `act.take { ask }`: the app claims an act; only a claimed act may be done. A claim of an act not waiting is refused. */
@@ -328,6 +356,7 @@ export function activateWith(api: TetherDaemon, extra: TreeKeeperDeps = {}, acts
     slots: api.slots,
     app: () => keeper.liveApp(),
     emit: (name, payload) => api.events.emit(name, payload),
+    mapChanged: (listener) => api.desks.onDidChange(() => listener()),
     bench,
     ...actsExtra,
   })
