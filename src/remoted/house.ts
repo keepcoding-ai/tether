@@ -50,7 +50,8 @@ const CHANNEL_ID = /^[\w.:-]{1,64}$/
  * an answer the act cache must not keep for its actId (nothing was sent, or the outcome is not known yet; a write keeps
  * its real outcome itself, #extWrite).
  */
-interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean; final?: false; closeSession?: true }
+/** `late`: the device was answered by the deadline, and this is the act's real outcome when it comes (an audit `late:<result>`). */
+interface Served { status: ResStatus; bytes: Bytes; audit?: string; target?: string; lockout?: boolean; final?: false; closeSession?: true; late?: Promise<string> }
 /** An act done, as the act cache keeps it: its op too, so its actId never answers for another op. */
 interface DoneAct { op: number; status: ResStatus; body: Bytes }
 type ProofVerdict = { ok: true; purpose: UvPurposeName } | { ok: false; status: ResStatus; audit: string; lockout?: boolean }
@@ -775,6 +776,8 @@ export class House {
     if (status === RES_STATUS.ok && line.gesture) mem.presence.gesture(this.#d.now())
     if (line.mutates && req.actId && served.final !== false && !UNCACHED_ACT_OPS.has(req.op)) mem.acts.put(req.actId, { op: req.op, status, body: bytes }, this.#d.now())
     if (audited(line)) this.#audit(line.name, served.audit ?? statusName(status), s.deviceId, served.target)
+    // Chained after the line above, so `late:<result>` always follows the `timeout` it corrects.
+    if (served.late && audited(line)) void served.late.then((r) => this.#audit(line.name, `late:${r}`, s.deviceId, served.target))
     await this.#send(s, req.reqId, status, bytes)
     // The fifth invalid proof (spec 7.4 point 6): the answer goes, then every session of the device.
     if (served.lockout) await this.#closeDevice(s.deviceId, CLOSE.limit)
@@ -957,7 +960,12 @@ export class House {
     try {
       return { ...outcome({ ok: true, result: await flight.answer }), final: false }
     } catch (e) {
-      return { ...outcome({ ok: false, error: e instanceof WriteError ? e : new WriteError('failed') }), final: false }
+      const error = e instanceof WriteError ? e : new WriteError('failed')
+      // Past the deadline the act may still happen: its real outcome gets its own audit line when it comes (RR4 B-3, M-10).
+      const late = error.why === 'timeout'
+        ? flight.settled.then((o) => { const sv = outcome(o); return sv.audit ?? statusName(sv.status) }, () => statusName(RES_STATUS.failed))
+        : undefined
+      return { ...outcome({ ok: false, error }), final: false, ...(late ? { late } : {}) }
     }
   }
 

@@ -359,6 +359,30 @@ describe('the five writes through a real House', () => {
     reconnected.leg.close()
   })
 
+  test('RR4 B-3: a write whose outcome comes past the deadline audits `timeout`, then `late:<result>`, without the text', async () => {
+    w.reset()
+    w.hold(true)
+    const from = bench.audits().length
+    const talk = () => bench.audits().slice(from).filter((l) => l.act.startsWith('channels.'))
+    assert.deepEqual(await send(OP.say, { channel: 'c_1', text: `atrasada ${MARKER}` }), { status: RES_STATUS.failed, body: { error: 'timeout' } })
+    assert.deepEqual(talk().map((l) => [l.act, l.result, l.target]), [['channels.say', 'timeout', 'c_1']])
+    w.held.shift()!()
+    await until(() => bench.audits().slice(from).some((l) => l.result.startsWith('late:')) || undefined, 2_000, 'the late line')
+    // A late refusal keeps its code too.
+    w.answer(async () => { throw new DaemonError('closed' as never, `recusado ${MARKER}`) })
+    assert.equal((await send(OP.react, { channel: 'c_1', seq: 1, reaction: '👍' })).status, RES_STATUS.failed)
+    w.held.shift()!()
+    await until(() => bench.audits().slice(from).filter((l) => l.result.startsWith('late:')).length === 2 || undefined, 2_000, 'the second late line')
+    w.hold(false)
+    const lines = talk()
+    assert.deepEqual(lines.map((l) => [l.act, l.result, l.target, l.deviceId]), [
+      ['channels.say', 'timeout', 'c_1', deviceId()], ['channels.say', 'late:ok', 'c_1', deviceId()],
+      ['channels.react', 'timeout', 'c_1', deviceId()], ['channels.react', 'late:refused:closed', 'c_1', deviceId()],
+    ])
+    assert.equal(has(lines) || JSON.stringify(lines).includes('atrasada'), false, 'never the text')
+    await until(() => writes.late === 0 || undefined, 2_000, 'nothing late')
+  })
+
   test('RR4 B-2: 1 100 "seen" of the same device never push a speech out of the cache: its resend is a replay, one speech at tetherd', async () => {
     w.reset()
     const speech = actId()
