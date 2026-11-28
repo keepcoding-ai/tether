@@ -922,6 +922,16 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await page.click(`${row} [data-action="row-menu"]`, { timeout: 5_000 })
     await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
   }
+  /**
+   * Each step starts at its own place, whatever the one before left: no menu nor question open, "Sistema" closed, and on the
+   * phone the "Mesas" tab.
+   */
+  const toTree = async (): Promise<void> => {
+    for (let i = 0; i < 3 && (await page.locator('#ctx-menu, .rr-ask').count()) > 0; i++) { await page.keyboard.press('Escape'); await sleep(150) }
+    if (await page.isVisible('.rg-sys-back')) await page.click('.rg-sys-back')
+    if (await page.isVisible('.rg-tab[data-tab="tether"]')) await page.click('.rg-tab[data-tab="tether"]')
+    await page.waitForSelector('.rg-tree [data-key]', { state: 'visible', timeout: 10_000 })
+  }
   const menuRow = (label: string): Promise<void> => page.locator('#ctx-menu .rr-mi', { hasText: label }).first().click({ timeout: 5_000 })
   const notice = (): Promise<string> => page.evaluate(() => document.querySelector('.rg-toast:not([hidden]) .rg-toast-t')?.textContent ?? '')
 
@@ -961,6 +971,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   })
 
   test('RR5 gerir 2. a 390: renomear a mesa na própria linha', async () => {
+    await toTree()
     await rowMenu(deskRow('desk-obra'))
     await menuRow('Renomear')
     await page.waitForSelector('.rg-rename', { timeout: 5_000 })
@@ -975,6 +986,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     const recipe = { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: home }
     assert.equal((await cli.request({ t: 'proc-start', name: PROC, recipe } as never)).proc!.status, 'running')
     await cli.request({ t: 'proc-use', name: PROC, duration: '30m', purpose: 'rodando a bateria', by: { slotId: memberId } } as never)
+    await toTree()
     await page.click('.rg-sys-open')
     const row = `.rg-sr.proc[data-proc="${PROC}"]`
     await page.waitForSelector(`${row} [data-sys="stop"]`, { timeout: 15_000 })
@@ -1000,7 +1012,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
 
   test('RR5 gerir 4. a 390: fechar uma guia com a prova deste ato (a frase da biometria antes; a guia sai da mesa)', async () => {
     const before = (await credentials())[0]!.signCount
-    await page.click('.rg-tab[data-tab="tether"]').catch(() => undefined)
+    await toTree()
     await rowMenu('.rg-tree [data-target="pane:p-web"]')
     await menuRow('Fechar guia')
     await page.waitForSelector('.rr-ask', { timeout: 5_000 })
@@ -1020,11 +1032,15 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     lease.skewMs = STALE_MS + 5_000
     lease.expire?.()
     await page.waitForSelector('.rr[data-link="closed"]', { timeout: 15_000 })
+    await toTree()
     await rowMenu(deskRow('desk-obra'))
     await menuRow('Hibernar mesa')
-    // conferente works on that desk: the question first, then the house's answer.
-    await page.click('.rr-ask [data-choice="hibernate"]', { timeout: 5_000 })
-    await eventually(async () => /O tether não está aberto na máquina/.test(await notice()) || undefined, 10_000, 'the sentence of no-app')
+    // The app's question comes only while an agent of that desk works (the tree says whether its slot still runs): answered
+    // when it comes, then the house's answer.
+    await eventually(async () => {
+      if (await page.isVisible('.rr-ask [data-choice="hibernate"]')) await tap('.rr-ask [data-choice="hibernate"]')
+      return /O tether não está aberto na máquina/.test(await notice()) || undefined
+    }, 10_000, 'the sentence of no-app')
     assert.doesNotMatch(await notice(), /no-app/)
     await rr5shot('390-app-fechado')
     lease.skewMs = 0
@@ -1036,6 +1052,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   test('RR5 gerir 6. a 1440: o menu no ponto do botão direito; Esc fecha e devolve o teclado à linha', async () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.waitForSelector('.rr[data-tier="desktop"]', { timeout: 10_000 })
+    await toTree()
+    // The bench's agent (its slot id, made in before()): the row is the one the tree draws for it.
     const row = `.rg-tree [data-target="agent:${memberId}"]`
     await page.click(row, { button: 'right' })
     await page.waitForSelector('#ctx-menu[data-form="point"]', { timeout: 5_000 })
@@ -1050,6 +1068,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   test('RR5 gerir 7. a 2560: OK numa linha abre o menu, as setas andam nele, Voltar fecha', async () => {
     await page.setViewportSize({ width: 2560, height: 1440 })
     await page.waitForSelector('.rr[data-tier="wide"]', { timeout: 10_000 })
+    await toTree()
     await page.focus(deskRow('desk-migr'))
     await page.keyboard.press('ArrowDown')
     const at = await eventually(held, 5_000, 'a row of the tree')

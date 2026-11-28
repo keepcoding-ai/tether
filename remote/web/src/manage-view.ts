@@ -29,8 +29,10 @@ import { el } from './ui-lite.ts'
 /** "Segurar" from afar is the app's: 15 minutes, said as the person's (extensions/processes/proc-rules.ts). */
 const HOLD_DURATION = '15m'
 const HOLD_PURPOSE = 'segurado pela pessoa'
-/** The readings of "Sistema" are this old at most while it is on screen (its clock ticks every 30 s). */
-const SYSTEM_STALE_MS = 15_000
+/** The readings of "Sistema" are this old at most while it is on screen (its clock ticks every 30 s too). */
+const SYSTEM_FRESH_MS = 10_000
+/** A reading that did not come is asked again no sooner than this (a paint asks the model many times). */
+const SYSTEM_RETRY_MS = 2_000
 
 export interface ManageUiDeps {
   house: RemoteHouse
@@ -368,15 +370,35 @@ export class ManageUi {
     await this.d.manager.readProcs()
   }
 
+  /** "Sistema" is on screen now (its column, or the TV's rail). */
+  private systemShown(): boolean {
+    const v = this.d.pane()?.element.querySelector('.rg-sys')
+    return v instanceof HTMLElement && v.getClientRects().length > 0
+  }
+
+  /**
+   * "Sistema" came on screen (its door, a tab): what it shows is read again now (there is no event of processes, and the
+   * list read while it was away may be old).
+   */
+  refreshSystem(): void {
+    const m = this.d.manager
+    const now = this.d.now()
+    this.readOnce = { procs: now, ronda: now }
+    void m.readProcs()
+    void m.readRonda(this.agentsAlive().map(a => a.id))
+  }
+
   private systemModel(): SystemModel {
     const m = this.d.manager
     const now = this.d.now()
     const caps = m.caps
-    // First look: read once; the view's clock (tick) reads again while it is on screen.
-    if (caps.procs && m.procs() === undefined && now - this.readOnce.procs > SYSTEM_STALE_MS) { this.readOnce.procs = now; void m.readProcs() }
+    // Read when never read, and again while it is on screen once what was read is old (its clock ticks too).
+    const shown = this.systemShown()
+    const procsOld = m.procs() === undefined || (shown && now - this.readOnce.procs > SYSTEM_FRESH_MS)
+    if (caps.procs && procsOld && now - this.readOnce.procs > SYSTEM_RETRY_MS) { this.readOnce.procs = now; void m.readProcs() }
     const agents = this.agentsAlive()
     const unknown = agents.filter(a => m.ronda(a.id) === undefined).map(a => a.id)
-    if (caps.agents && unknown.length > 0 && now - this.readOnce.ronda > SYSTEM_STALE_MS) { this.readOnce.ronda = now; void m.readRonda(unknown) }
+    if (caps.agents && unknown.length > 0 && now - this.readOnce.ronda > SYSTEM_RETRY_MS) { this.readOnce.ronda = now; void m.readRonda(unknown) }
     const model = systemModelOf({
       now,
       procs: (m.procs() ?? []).map(procInput),

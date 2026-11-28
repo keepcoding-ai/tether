@@ -634,6 +634,11 @@ export function mountRegency(root: HTMLElement, o: RegencyOptions): RemoteRegenc
     }
     // The "⋯" of a process: the view's own menu is about its record (on the machine); from afar it is "Esquecer…".
     const onSysMore = (ev: MouseEvent): void => {
+      // "Sistema" opened (its door, the edge's, a section's tab): what it shows is read again.
+      if (manage && ev.target instanceof Element && ev.target.closest('.rg-sys-open, [data-action="system"], [data-action="manage-system"], [data-action^="sys:"], .rg-sys-tab')) {
+        manage.refreshSystem()
+        return
+      }
       const b = ev.target instanceof Element ? ev.target.closest<HTMLElement>('.rg-sr.proc [data-sys="more"]') : null
       const name = b?.closest<HTMLElement>('.rg-sr.proc')?.dataset.proc
       if (!b || !name || !manage) return
