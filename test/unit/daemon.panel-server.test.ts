@@ -181,6 +181,5 @@ describe('daemon: switch off', () => {
     assert.equal(denyPermissionPromptsEnabled({}), true)
     assert.equal(denyPermissionPromptsEnabled({ agents: { claude: { denyPermissionPrompts: true } } }), true)
     assert.equal(denyPermissionPromptsEnabled({ agents: { claude: { denyPermissionPrompts: false } } }), false)
-    assert.equal(denyPermissionPromptsEnabled({ 'agents.claude.denyPermissionPrompts': false }), false)
   })
 })

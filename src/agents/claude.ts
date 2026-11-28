@@ -82,8 +82,8 @@ export async function ensureSettingsFile(home: string, exec: Executor = agentExe
   const key = `${file}|${denyPermissionPrompts}`
   let content = settingsContent.get(key)
   if (content === undefined) {
-    content = JSON.stringify(hookSettings(defaultHookPath(), defaultStatusLinePath()), null, 2) + '\n'
-    settingsContent.set(file, content)
+    content = JSON.stringify(hookSettings(defaultHookPath(), defaultStatusLinePath(), denyPermissionPrompts), null, 2) + '\n'
+    settingsContent.set(key, content)
   }
   return exec.run('ensureSettingsFile', [file, content])
 }
