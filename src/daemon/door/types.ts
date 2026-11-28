@@ -166,6 +166,11 @@ export interface DeliveryMessage {
    */
   reactions?: string
   /**
+   * The speech came from a device of the person (the pipe's client is `remote`), written by the extension from the record,
+   * never by who wrote the body: the `from_afar="true"` attribute inside, `de longe` in the header when typed.
+   */
+  fromAfar?: boolean
+  /**
    * A poll, written by the extension from its record, never by who wrote the body. On a `request` (the poll asked of the
    * addressee): `poll` is its type, `options` the numbered options, `closes` the deadline. On the result `notice` (to its
    * author): `poll` is the poll's ref, `closedBy` why it closed, `tally` the counts. Inside, the attributes `poll`, `options`,

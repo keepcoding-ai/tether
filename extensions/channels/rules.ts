@@ -111,6 +111,8 @@ export interface Line {
   result?: PollResult
   /** Only on a message: its files, copied into the channel's folder (attachments.ts); `body` may then be ''. */
   files?: LineFile[]
+  /** Only on the person's message or poll said from a device (the pipe's client is `remote`): written by the tether, never from a body. */
+  afar?: true
 }
 
 /** One file of a speech, as the line keeps it: the name shown, its absolute path in the channel's folder, its size and type. */
@@ -191,6 +193,8 @@ export interface OpenPoll extends PollSpec {
    * coming back never asks again), and what still waits in the queue is cancelled when the poll closes.
    */
   asked?: Record<Who, string>
+  /** The poll was opened from a device: its request to each agent carries the mark. */
+  afar?: true
 }
 
 /** Options as the request carries them: `1 ok | 2 não ok`. */

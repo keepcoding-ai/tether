@@ -34,6 +34,7 @@ export function terminalHeader(msg: DeliveryMessage, origin: string, id: string)
     `de ${field(msg.from.name) || field(msg.from.id)} (${field(msg.from.role)})${to ? ` → ${to}` : ''}`,
     (msg.ref && field(msg.ref)) || field(id),
   ]
+  if (msg.fromAfar === true) parts.splice(parts.length - 1, 0, 'de longe')
   const reactions = msg.reactions ? field(msg.reactions, REACTIONS_MAX) : ''
   if (reactions) parts.push(`reações às suas falas: ${reactions}`)
   const p = msg.poll

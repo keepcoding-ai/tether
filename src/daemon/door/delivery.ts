@@ -107,6 +107,7 @@ export function checkMessage(raw: unknown): DeliveryMessage {
     ...(m.to && m.to.length ? { to: [...m.to] } : {}),
     ...(m.ref ? { ref: m.ref } : {}),
     ...(m.reactions ? { reactions: m.reactions } : {}),
+    ...(m.fromAfar === true ? { fromAfar: true } : {}),
     ...(poll ? { poll } : {}),
   }
 }

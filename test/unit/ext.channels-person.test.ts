@@ -57,7 +57,17 @@ describe('channels requests: the person talks from afar', () => {
     assert.equal(seq, 4, 'say, react, vote and poll reach the fan-out (seen only marks)')
     for (let i = 0; i < b.calls.length; i += 2) {
       assert.equal(b.calls[i]!.who, USER)
-      assert.deepEqual(b.calls[i + 1], b.calls[i], b.calls[i]!.verb)
+      // From afar the speech and the poll carry the mark of origin, written by the tether from the pipe's client; the rest is the app's.
+      const remote = b.calls[i + 1]!
+      const marked = remote.verb === 'say' || remote.verb === 'poll'
+      const args = remote.args.map((a) => {
+        if (!marked || typeof a !== 'object' || a === null || !('fromAfar' in a)) return a
+        assert.equal((a as { fromAfar: unknown }).fromAfar, true, remote.verb)
+        const { fromAfar: _drop, ...rest } = a as Record<string, unknown>
+        return rest
+      })
+      assert.deepEqual({ ...remote, args }, b.calls[i], b.calls[i]!.verb)
+      if (marked) assert.ok(remote.args.some((a) => typeof a === 'object' && a !== null && 'fromAfar' in a), `${remote.verb}: marked`)
     }
     b.done()
   })

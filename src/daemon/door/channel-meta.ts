@@ -69,6 +69,7 @@ export function deliveryMeta(msg: DeliveryMessage, origin: string, id: string): 
   })
   const reactions = msg.reactions ? oneLine(msg.reactions, REACTIONS_MAX) : ''
   if (reactions) meta.reactions = reactions
+  if (msg.fromAfar === true) meta.from_afar = 'true'
   if (msg.poll) {
     const p = msg.poll
     const fields: Array<[string, string | undefined, number]> = [

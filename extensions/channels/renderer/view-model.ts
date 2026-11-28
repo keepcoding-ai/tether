@@ -128,6 +128,8 @@ export interface SayRow {
   replyTo?: number
   /** The speech's files, in order: images are thumbnails, the others cards (the pane draws them). */
   files?: ViewFile[]
+  /** Said from a device ("de longe"). */
+  afar?: true
   /** The id of the author ('user' for the person). */
   authorId: string
   /** The same author, to the same people, right after: no header. */
@@ -151,6 +153,8 @@ export interface PollRow {
   mine: boolean
   authorId: string
   question: string
+  /** Opened from a device ("de longe"). */
+  afar?: true
 }
 export type Row = SayRow | PollRow | NoticeRow | DayRow | UnseenRow
 
@@ -235,6 +239,7 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
         role: ROLE_TEXT[mine ? 'moderator' : l.from.role === 'owner' ? 'owner' : 'member'],
         crown: !mine && (l.from.role === 'owner' || (opts.ownerId !== undefined && l.from.id === opts.ownerId)),
         mine, authorId: mine ? 'user' : l.from.id, question: l.poll.question,
+        ...(l.afar ? { afar: true as const } : {}),
       })
       prev = undefined
       continue
@@ -255,8 +260,9 @@ export function rowsOf(lines: readonly Line[], opts: RowsOptions = {}): Row[] {
       mine, to, body: l.body,
       ...(l.replyTo !== undefined ? { replyTo: l.replyTo } : {}),
       ...(l.files?.length ? { files: l.files.map(viewFile) } : {}),
+      ...(l.afar ? { afar: true as const } : {}),
       authorId: mine ? 'user' : l.from.id,
-      continued: prev !== undefined && prev.authorId === (mine ? 'user' : l.from.id) && prev.to.map(t => t.name).join('\u0000') === toKey,
+      continued: prev !== undefined && prev.afar === (l.afar ? true : undefined) && prev.authorId === (mine ? 'user' : l.from.id) && prev.to.map(t => t.name).join('\u0000') === toKey,
     }
     rows.push(row)
     prev = row

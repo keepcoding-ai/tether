@@ -80,6 +80,8 @@ export interface PollInput {
   to?: readonly Who[]
   /** The deadline from now, in ms (1 min to 24 h); absent: 10 min. */
   timeoutMs?: number
+  /** The poll was opened from a device (the pipe's client is `remote`). */
+  fromAfar?: boolean
 }
 
 export interface VoteInput {
@@ -123,7 +125,7 @@ export interface SayInput {
   replyTo?: number
   /** Files the speech carries (at most ATTACH_MAX_PER_SAY): copied into the channel's folder; with files the body may be ''. */
   files?: readonly FileSource[]
-  /** The files came from a device (the portal's uploads): their copies get the mark of origin. */
+  /** The speech came from a device (the pipe's client is `remote`): the line is marked, the agents' delivery too, and the copies of its files. */
   fromAfar?: boolean
 }
 
@@ -310,6 +312,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     }
     if (line.to?.length) msg.to = line.to
     if (line.replyTo !== undefined) msg.inReplyTo = `${ch.name}#${line.replyTo}`
+    if (line.afar) msg.fromAfar = true
     return msg
   }
   const noticeOf = (ch: Channel, body: string, ref?: number): DeliveryMessage =>
@@ -530,6 +533,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     from: { name: p.author.name, id: p.author.id, role: deliveryRoleOf(roleIn(p.author.id, ch) ?? 'member') },
     body: withVoteHint(p.question, ch.name, p.seq, api.delivery.routeOf(agent), api.delivery.hasTools(agent)),
     poll: { poll: p.type, options: numberedOptions(p.options), closes: clockText(p.closesAt, clock.now()) },
+    ...(p.afar ? { fromAfar: true } : {}),
   })
   /**
    * Hands the request of the open poll `p` to each of `agents` still owed it and running, then writes who got it (`asked`)
@@ -792,6 +796,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
           ...(files.length ? { files } : {}),
           kind: 'message', from: { id: who, name: nameOf(who), role }, body: input.body,
           ...(input.to?.length ? { to: [...input.to] } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+          ...(input.fromAfar === true ? { afar: true as const } : {}),
         })
         const receipts = await fanout(ch, line, who === USER ? undefined : who)
         return { ok: true as const, line, receipts }
@@ -866,8 +871,8 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (called.length === 0) return fail('nobody-called')
         recent.push(now)
         const spec = { ...kind, question, to: called.map(personOf), closesAt: new Date(now + timeout).toISOString() }
-        const line = await store.append(id, { kind: 'poll', from: { id: who, name: nameOf(who), role: roleIn(who, ch)! }, body: '', poll: spec })
-        const poll: OpenPoll = { ...spec, seq: line.seq, author: personOf(who), votes: {} }
+        const line = await store.append(id, { kind: 'poll', from: { id: who, name: nameOf(who), role: roleIn(who, ch)! }, body: '', poll: spec, ...(input.fromAfar === true ? { afar: true as const } : {}) })
+        const poll: OpenPoll = { ...spec, seq: line.seq, author: personOf(who), votes: {}, ...(input.fromAfar === true ? { afar: true as const } : {}) }
         await store.openPoll(id, poll)
         pollEvent(ch, line, poll)
         arm()

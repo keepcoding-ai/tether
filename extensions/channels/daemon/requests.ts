@@ -225,6 +225,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const timeoutMs = int(a, 'timeoutMs')
       const r = done(await c.poll(USER, ch.id, {
         question, ...(options?.length ? { options } : {}), ...(to ? { to } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(ctx.client === 'remote' ? { fromAfar: true } : {}),
       }))
       return { seq: r.line.seq, poll: openView(r.poll), closesAt: r.poll.closesAt, deaf: r.deaf.map((d) => ({ id: d.id, name: d.name, why: d.why })) }
     }],
@@ -277,7 +278,7 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       if (ctx.client === 'remote' && files.length > 0 && !(await onlyRemoteUploads(c.store.filesDir(ch.id), files)))
         throw refuse('bad-request', 'de longe, só vão arquivos enviados para este canal')
       const body = text(a, 'text', files.length > 0)
-      const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}), ...(files.length && ctx.client === 'remote' ? { fromAfar: true } : {}) })
+      const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}), ...(ctx.client === 'remote' ? { fromAfar: true } : {}) })
       if (!r.ok && r.file !== undefined) throw refuse(r.error, (({ lead, rest }) => `${lead} ${rest}`)(refusalText(r.error as FileRefusal, r.file)))
       const said = done(r)
       return { line: said.line, receipts: said.receipts }

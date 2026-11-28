@@ -1750,7 +1750,7 @@ export function createChannelViews(host: ChannelHost) {
             dest.append(n)
           })
         }
-        who.append(...em, this.agentName(r.authorId, 'ch-author', r.name), ...(role ? [role] : []), dest, el('time', '', r.time))
+        who.append(...em, this.agentName(r.authorId, 'ch-author', r.name), ...(role ? [role] : []), ...(r.afar ? [el('span', 'ch-role mute ch-afar', 'de longe')] : []), dest, el('time', '', r.time))
         e.append(who)
       } else e.title = r.time
       if (r.body.trim() !== '' || !r.files?.length) e.append(this.speech(r.body))
@@ -1788,7 +1788,7 @@ export function createChannelViews(host: ChannelHost) {
       hueStyle(e, r.hue)
       e.tabIndex = -1
       const who = el('div', 'ch-who')
-      who.append(...this.authorLead(r), this.agentName(r.authorId, 'ch-author', r.name), ...(r.role ? [el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role)] : []), el('time', '', r.time))
+      who.append(...this.authorLead(r), this.agentName(r.authorId, 'ch-author', r.name), ...(r.role ? [el('span', `ch-role${r.mine ? ' mod' : ''}`, r.role)] : []), ...(r.afar ? [el('span', 'ch-role mute ch-afar', 'de longe')] : []), el('time', '', r.time))
       e.append(who)
       const card = this.cardFor(r.seq)
       if (card) { e.append(this.pollCardEl(card)); this.nameRow(e, card) }

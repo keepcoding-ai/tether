@@ -327,6 +327,24 @@ describe('channels fan-out (H2)', () => {
     await doorApi.slots.forget(q)
   })
 
+  test('a speech from a device is marked on the line and on the delivery, and a local one is not', async () => {
+    const q = await running('fora-longe')
+    const id = await channel(owner, 'longe')
+    await addMember(id, q)
+    const base = (await inbox(q)).length
+    const far = await ch.say(USER, id, { body: 'de longe, do celular', fromAfar: true })
+    assert.ok(far.ok)
+    assert.equal(far.line.afar, true)
+    // The first line waits alone (a second one would merge into a notice): it is the one whose delivery is read.
+    const farMsg = (await inbox(q)).slice(base).find((m) => m.kind === 'message' && m.body.includes('de longe, do celular'))
+    assert.equal(farMsg?.fromAfar, true)
+    assert.equal(farMsg?.from.role, 'moderator', 'the role is still the person\'s')
+    const near = await ch.say(USER, id, { body: 'daqui do app' })
+    assert.ok(near.ok)
+    assert.equal(near.line.afar, undefined)
+    await doorApi.slots.forget(q)
+  })
+
   test('a member that does not run is away and gets one notice on its return', async () => {
     const d = (await doorApi.slots.create({ kind: 'claude', cwd: home, name: 'fora-parado', start: false })).slotId
     const id = await channel(owner, 'parado')

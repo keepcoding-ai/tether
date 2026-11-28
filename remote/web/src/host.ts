@@ -66,6 +66,8 @@ export interface PageLine {
   poll?: Line['poll']
   /** Name, size and type only: the path never leaves the house. */
   files?: { name: string; size: number; type: string }[]
+  /** Said from a device ("de longe"); the house writes it, never the body. */
+  afar?: true
 }
 
 /** `channels.page`. `before`: the cursor of the page before this one (absent: the channel starts here). */
@@ -356,7 +358,7 @@ function lineOf(l: PageLine, channelId: string, files: RemoteFiles): Line {
   return {
     seq: l.seq, at: l.at, kind: l.kind, from: l.from, body: l.cut ? `${l.body}…` : l.body,
     ...(l.to ? { to: l.to } : {}), ...(l.replyTo !== undefined ? { replyTo: l.replyTo } : {}), ...(l.event ? { event: l.event } : {}),
-    ...(l.poll ? { poll: l.poll } : {}),
+    ...(l.poll ? { poll: l.poll } : {}), ...(l.afar ? { afar: true as const } : {}),
     // The path stays in the house: a reference to the line and the index stands for it (step 4.3), and the files ask by it.
     ...(l.files?.length ? {
       files: l.files.map((f, i) => {
