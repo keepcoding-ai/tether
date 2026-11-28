@@ -119,6 +119,12 @@ const recOf = (v: unknown): Record<string, unknown> => (v && typeof v === 'objec
 
 /** The ops of the chunks of a file: counted by the device's bytes of files a minute, not its requests. */
 const FILE_CHUNK_OPS: ReadonlySet<number> = new Set([opByName('channels.file')!.code, opByName('channels.upload')!.code])
+/**
+ * Writes the screen sends by itself, idempotent by the state they leave (`seen` only goes up; a chunk answers where the file
+ * is; a cancel lets go of what is there): their answers stay out of the actId cache (RR4 B-2), so they never push out the
+ * act of a speech within the device's resend window.
+ */
+const UNCACHED_ACT_OPS: ReadonlySet<number> = new Set(['channels.seen', 'channels.upload', 'channels.upload-cancel'].map((n) => opByName(n)!.code))
 
 interface DeviceMem {
   acts: ActCache<DoneAct>
@@ -767,7 +773,7 @@ export class House {
     const { status, bytes } = served
     // Only an accepted gesture of the person resets the idle clock (E-11), never a refused one nor a read.
     if (status === RES_STATUS.ok && line.gesture) mem.presence.gesture(this.#d.now())
-    if (line.mutates && req.actId && served.final !== false) mem.acts.put(req.actId, { op: req.op, status, body: bytes }, this.#d.now())
+    if (line.mutates && req.actId && served.final !== false && !UNCACHED_ACT_OPS.has(req.op)) mem.acts.put(req.actId, { op: req.op, status, body: bytes }, this.#d.now())
     if (audited(line)) this.#audit(line.name, served.audit ?? statusName(status), s.deviceId, served.target)
     await this.#send(s, req.reqId, status, bytes)
     // The fifth invalid proof (spec 7.4 point 6): the answer goes, then every session of the device.
@@ -942,7 +948,7 @@ export class House {
       const kept = flight.settled.then((o): DoneAct => {
         const sv = outcome(o)
         // `limit`: never sent, so nothing to keep; any other outcome is the act's, whatever the device was told.
-        if (!(o.ok === false && o.error.why === 'limit')) mem.acts.put(actId, { op: req.op, status: sv.status, body: sv.bytes }, this.#d.now())
+        if (!(o.ok === false && o.error.why === 'limit') && !UNCACHED_ACT_OPS.has(req.op)) mem.acts.put(actId, { op: req.op, status: sv.status, body: sv.bytes }, this.#d.now())
         return { op: req.op, status: sv.status, body: sv.bytes }
       })
       mem.pending.set(id, kept)

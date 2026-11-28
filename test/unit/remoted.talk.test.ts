@@ -359,6 +359,24 @@ describe('the five writes through a real House', () => {
     reconnected.leg.close()
   })
 
+  test('RR4 B-2: 1 100 "seen" of the same device never push a speech out of the cache: its resend is a replay, one speech at tetherd', async () => {
+    w.reset()
+    const speech = actId()
+    // The device never heard this answer (the route was cut): it will resend under the same actId.
+    const first = await send(OP.say, { channel: 'c_1', text: 'sem resposta' }, speech)
+    assert.equal(first.status, RES_STATUS.ok)
+    for (let i = 0; i < 1_100; i++) assert.equal((await send(OP.seen, { channel: 'c_1', seq: i + 1 })).status, RES_STATUS.ok)
+    const from = bench.audits().length
+    assert.deepEqual(await send(OP.say, { channel: 'c_1', text: 'sem resposta' }, speech), first, 'the same answer')
+    assert.equal(bench.audits().slice(from).at(-1)!.result, 'replay')
+    assert.equal(w.calls.filter((c) => c.name === 'say').length, 1, 'one speech at tetherd')
+    // A "seen" is idempotent by the state it leaves: a repeat of one goes to tetherd again, and changes nothing there.
+    const seen = actId()
+    await send(OP.seen, { channel: 'c_1', seq: 5 }, seen)
+    assert.equal((await send(OP.seen, { channel: 'c_1', seq: 5 }, seen)).status, RES_STATUS.ok)
+    assert.equal(w.calls.filter((c) => c.name === 'seen').length, 1_102)
+  })
+
   test('busy: the writes in flight at their ceiling refuse the next one before the pipe', async () => {
     w.reset()
     w.hold(true)
