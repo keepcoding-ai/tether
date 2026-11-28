@@ -10,7 +10,14 @@ export { pauseAction }
 
 /** What the model needs of a slot. `idleSince` (ISO: idle since) and `endedAt` (ISO: process ended) are absent on older daemons. */
 export type SessionSlot = Pick<SlotState, 'slotId' | 'cwd' | 'status'> &
-  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn' | 'kind' | 'binding'>> & { idleSince?: string; endedAt?: string; busySince?: string; memoryMB?: number }
+  Partial<Pick<SlotState, 'name' | 'title' | 'attention' | 'turn' | 'kind' | 'binding' | 'want'>> & { idleSince?: string; endedAt?: string; busySince?: string; memoryMB?: number }
+
+/**
+ * Stopped while it was meant to run (want 'run': a crash, the agent's own exit, a boot that did not relaunch it): the session
+ * was interrupted, not ended. It lives in "Sem guia" with "Reabrir", never in "Encerradas".
+ */
+export const isInterrupted = (s: SessionSlot): boolean => s.want === 'run' && (s.status === 'exited' || s.status === 'unconfirmed')
+export const INTERRUPTED_TEXT = 'interrompida'
 
 export type TurnState = 'attention' | 'busy' | 'idle' | 'ended'
 
@@ -114,8 +121,10 @@ export interface SessionRow {
   slotId: string
   name: string
   state: TurnState
-  /** Live and with no tab showing it (an ended session is never "sem guia"; it is just closed). */
+  /** Live (or interrupted) and with no tab showing it (an ended session is never "sem guia"; it is just closed). */
   noTab: boolean
+  /** Stopped while meant to run (isInterrupted): state 'ended', but shown in "Sem guia" with "Reabrir". */
+  interrupted: boolean
   /** Short line: "trabalhando agora", "pede atenção", "ocioso há 2 h", "encerrada ontem". */
   text: string
   /** Working set of the session's process tree, formatted ("420 MB"); empty when unknown or ended. */
@@ -175,12 +184,14 @@ export function sessionRows(slots: Iterable<SessionSlot>, hasTab: (slotId: strin
     const state = turnState(slot)
     const idle = isIdleForCleanup(slot, now, hasTab)
     const held = state === 'ended' ? undefined : heldOf(slot.slotId)
+    const interrupted = isInterrupted(slot)
     const row: SessionRow = {
       slotId: slot.slotId,
       name: displayName(slot),
       state,
-      noTab: state !== 'ended' && !hasTab(slot.slotId),
-      text: rowText(slot, state, now),
+      noTab: (state !== 'ended' || interrupted) && !hasTab(slot.slotId),
+      interrupted,
+      text: interrupted ? INTERRUPTED_TEXT : rowText(slot, state, now),
       memory: state === 'ended' ? '' : formatMemory(slot.memoryMB),
       cleanup: idle && !held,
       ...(held ? { held } : {}),
@@ -300,7 +311,7 @@ export function sessionsSummary(slots: Iterable<SessionSlot>, hasTab: (slotId: s
   let noTabMB = 0
   for (const s of slots) {
     if (!isLive(s)) {
-      if (!hasTab(s.slotId)) ended++
+      if (!hasTab(s.slotId)) { if (isInterrupted(s)) noTab++; else ended++ }
       continue
     }
     if (s.attention) attention++
@@ -430,8 +441,13 @@ function skipWhy(s: SessionSlot | undefined): string | undefined {
 
 // ---------- the rows' actions: where a session goes, and the right-click menus ----------
 
-/** The two groups of rows that have a tab-less session. */
-export type RowGroup = 'free' | 'ended'
+/** The groups of rows that have a tab-less session ('interrupted': a "Sem guia" row stopped while meant to run). */
+export type RowGroup = 'free' | 'interrupted' | 'ended'
+
+/** The group a tab-less row is drawn in: "Sem guia" ('free' or 'interrupted') or "Encerradas". */
+export function rowGroupOf(r: Pick<SessionRow, 'state' | 'interrupted'>): RowGroup {
+  return r.interrupted ? 'interrupted' : r.state === 'ended' ? 'ended' : 'free'
+}
 
 /** What a row's menu items do (main.ts maps each to a function). */
 export type RowAction = 'peek' | 'open-here' | 'open-other' | 'stop' | 'reopen' | 'reopen-here' | 'reopen-other' | 'forget' | 'rename'
@@ -454,6 +470,15 @@ export function rowMenuPlan(group: RowGroup): RowMenuItem[] {
       { action: 'open-here', label: 'Abrir nesta mesa' },
       { action: 'open-other', label: 'Abrir em outra mesa', submenu: true },
       { action: 'rename', label: 'Renomear…', sepBefore: true },
+      { action: 'stop', label: 'Encerrar…', danger: true, sepBefore: true },
+    ]
+  }
+  // Interrupted: revived as an ended one is; "Encerrar" records the end (it moves to "Encerradas").
+  if (group === 'interrupted') {
+    return [
+      { action: 'reopen', label: 'Reabrir' },
+      { action: 'reopen-here', label: 'Reabrir nesta mesa' },
+      { action: 'reopen-other', label: 'Reabrir em outra mesa', submenu: true },
       { action: 'stop', label: 'Encerrar…', danger: true, sepBefore: true },
     ]
   }
