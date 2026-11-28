@@ -252,9 +252,8 @@ describe('remote web client, skeleton end to end (RR1.5)', () => {
   test('first visit: the pairing screen, served under a CSP that only lets the page talk to its relay', async () => {
     await view('pair')
     const csp = await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content')
-    assert.match(csp ?? '', /default-src 'none'; script-src 'self'; style-src 'self';/)
-    assert.match(csp ?? '', new RegExp(`connect-src ${relayUrl.replace(/[/.]/g, '\\$&')};`))
-    assert.match(csp ?? '', /require-trusted-types-for 'script'/)
+    // The whole policy, strict: workers and the manifest only from the origin itself, the one Trusted Types policy of the service worker.
+    assert.equal(csp, `default-src 'none'; script-src 'self'; worker-src 'self'; manifest-src 'self'; style-src 'self'; img-src 'self'; connect-src ${relayUrl}; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types tether-sw`)
     await shot('parear-390')
   })
 
@@ -334,11 +333,14 @@ describe('remote web client, skeleton end to end (RR1.5)', () => {
     await page.emulateMedia({ colorScheme: null })
   })
 
-  test('reloading the page reconnects without pairing again: admission with the stored ticket, the list again', async () => {
+  test('reloading the page reconnects without pairing again: admission with the stored ticket, straight to the Regency', async () => {
     const admitsBefore = spy.count('device', 'up', 0x02)
     await page.reload()
-    await page.waitForSelector(`.waiting-item[data-id="${slotA}"]`, { timeout: 20_000 })
-    assert.equal(await page.getAttribute('#app', 'data-view'), 'list')
+    // The device only reads (no offer is open after a reload): the screen after the admission is the Regency, not the list.
+    // (This bench has no Regency keeper, so the casing stays "lendo a casa…": the session is up, the house is not read.)
+    await view('regency')
+    await page.waitForSelector('.rr:not([data-link="offline"])', { timeout: 20_000 })
+    assert.equal(await page.locator('[data-screen="pair"], #pair-code').count(), 0, 'no pairing screen')
     assert.equal(spy.count('device', 'up', 0x02), admitsBefore + 1, 'one D_ADMIT, no D_PAIR')
     const state = await page.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((res, rej) => { const q = indexedDB.open('tether-remote'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error) })
@@ -351,11 +353,13 @@ describe('remote web client, skeleton end to end (RR1.5)', () => {
 
   test('the portal goes off: the page says the tether is offline, and comes back by itself when it is on again', async () => {
     await ext(cli, 'remote.off')
-    await view('offline', 10_000)
-    assert.equal(await page.textContent('h1'), 'Seu tether está offline')
+    await page.waitForSelector('.rr[data-link="offline"] .rr-off', { timeout: 20_000 })
+    assert.match((await page.textContent('.rr-off'))!, /Seu tether está offline/)
     await shot('offline-390')
     await ext(app, 'remote.on', { relayUrl: `${relayUrl}/v1/house` })
-    await page.waitForSelector(`.waiting-item[data-id="${slotA}"]`, { timeout: 60_000 })
+    // By itself: nobody taps "Tentar agora".
+    await view('regency', 60_000)
+    await page.waitForSelector('.rr:not([data-link="offline"])', { timeout: 5_000 })
   })
 
   test('the spy between the page and the relay: no frame in clear carries the canary, the device name, deviceId or pub_D', () => {

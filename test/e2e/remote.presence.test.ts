@@ -123,6 +123,11 @@ describe('remote web client, presence end to end (RR2.4c)', () => {
     const id = all[0]?.credentialId
     return id ? btoa(String.fromCharCode(...id)) : undefined
   })
+  /** Until the Regency is on screen and live; the person taps "Destrancar" whenever the machine asks for it. */
+  const toRegency = (what: string): Promise<boolean> => eventually(async () => {
+    if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock', { timeout: 1_500 }).catch(() => undefined)
+    return (await page.isVisible('#app[data-view="regency"] .rr')) || undefined
+  }, 45_000, what)
   /** At each width: nothing overflows, the action button keeps 44 px and is not stretched past a reading width. */
   const fits = async (wd: number, button: string): Promise<void> => {
     const scrollW = await page.evaluate(() => document.documentElement.scrollWidth)
@@ -238,24 +243,23 @@ describe('remote web client, presence end to end (RR2.4c)', () => {
   test('the registration on the pairing session: "protegido", the credential id kept, and an unlock with a real proof', async () => {
     const before = (await credentials()).length
     await page.click('#guard-protect')
-    await page.waitForSelector('.guard-state[data-guard="protected"]', { timeout: 30_000 })
+    // The unlock follows the registration; when the machine asks for it again, the panel offers "Destrancar".
+    // Unlocked, the screen is the Regency (the list with its "protegido" line is only the lock's company, for a moment).
+    await toRegency('the Regency after the registration and the unlock')
+    // "Protegido" is now read from the machine's own record of the device (the line under the house's name is gone with the list).
+    const [dev] = ((await ext(app, 'device.list')).devices as { state: string; biometrics: boolean }[]).filter((d) => d.state !== 'revoked')
+    assert.equal(dev?.biometrics, true, 'the machine knows this device as protected by biometrics')
     const kept = await storedCredentialId()
     assert.ok(kept, 'the credential id is in the house record')
     const creds = await credentials()
     assert.equal(creds.length, before + 1, 'one credential was created on the platform authenticator')
     const cred = creds.find((c) => c.credentialId === kept)
     assert.ok(cred, 'the stored id is the authenticator\'s credential')
-    // The unlock follows the registration; when the machine asks for it again, the panel offers "Destrancar".
-    await eventually(async () => {
-      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock')
-      return (await page.isVisible('.empty-title')) || undefined
-    }, 30_000, 'the list after the unlock')
     const signed = (await credentials()).find((c) => c.credentialId === kept)!
     // The virtual authenticator counts every ceremony: 1 for the registration, one more for each assertion.
     assert.ok(signed.signCount >= 2, `an assertion was made after the registration (signCount ${signed.signCount})`)
     assert.equal(await page.isVisible('[data-panel="guard"]'), false, 'the offer is over')
-    const b = await page.locator('.guard-state').boundingBox()
-    assert.ok(b && b.x + b.width <= 390 - 16 + 0.5, 'the state line keeps the gutter')
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth) <= 390, 'no horizontal scroll at 390 px')
     await shot('protegido-390')
     await page.setViewportSize({ width: 1440, height: 900 })
     await new Promise((r) => setTimeout(r, 150))
@@ -266,11 +270,14 @@ describe('remote web client, presence end to end (RR2.4c)', () => {
   test('reloading: the device still reads as protected (nothing re-registers)', async () => {
     const n = (await credentials()).length
     await page.reload()
-    await page.waitForSelector('.guard-state[data-guard="protected"]', { timeout: 20_000 })
-    await eventually(async () => {
-      if (await page.isVisible('[data-panel="lock"] #unlock:not([disabled])')) await page.click('#unlock')
-      return (await page.isVisible('.empty-title')) || undefined
-    }, 30_000, 'the list after the reload')
+    // The portal remembers the unlock per device, not per session (a reconnection neither unlocks nor locks): within the
+    // idle window the reload goes straight to the Regency; if the machine asks again, "Destrancar" is tapped.
+    await toRegency('the Regency after the reload')
+    // "Still protected" is read from the machine's record and from the key kept here, since the line under the house's name is gone.
+    const [dev] = ((await ext(app, 'device.list')).devices as { state: string; biometrics: boolean }[]).filter((d) => d.state !== 'revoked')
+    assert.equal(dev?.biometrics, true, 'the machine still knows this device as protected')
+    assert.ok(await storedCredentialId(), 'the credential id is still in the house record')
+    assert.equal(await page.isVisible('[data-panel="guard"]'), false, 'no new offer: nothing re-registers')
     assert.equal((await credentials()).length, n)
   })
 })
