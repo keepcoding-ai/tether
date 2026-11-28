@@ -119,6 +119,11 @@ export function panelHostEnabled(settings: Record<string, unknown>, env: NodeJS.
   return treeValueAt(settings, 'daemon.panelHost') !== false
 }
 
+/** `agents.claude.denyPermissionPrompts` in settings.json: tether refuses Claude's permission cards for the person. Default on. */
+export function denyPermissionPromptsEnabled(settings: Record<string, unknown>): boolean {
+  return treeValueAt(settings, 'agents.claude.denyPermissionPrompts') !== false
+}
+
 export interface DaemonOptions {
   home: string
   pipe: string
@@ -1753,7 +1758,7 @@ class DaemonImpl implements Daemon {
     else {
       const adapter = this.adapterOf(meta.agent)
       if (!adapter) throw new RequestError('agent-unavailable', `o agente ${meta.agent} não está disponível`)
-      plan = await adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile, exec: this.executor })
+      plan = await adapter.plan({ slot: meta, home: this.home, resume, extraArgs: defaultAgentArgs(meta.agent), profile, exec: this.executor, denyPermissionPrompts: denyPermissionPromptsEnabled(this.userSettings.get()) })
     }
     plan = withTabEnv(plan, meta)
     return this.transformPlan ? await this.transformPlan(plan, meta, this.stateOf(slot)) : plan

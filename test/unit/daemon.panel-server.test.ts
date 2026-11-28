@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { panelHostEnabled, startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { denyPermissionPromptsEnabled, panelHostEnabled, startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { readUserSettings } from '../../src/core/user-settings-sync.ts'
 import { HostClient } from '../../src/procd/client.ts'
 import { ProcHost } from '../../src/procd/host.ts'
@@ -175,5 +175,12 @@ describe('daemon: switch off', () => {
       await daemon.close()
       await removeHome(home)
     }
+  })
+
+  test('agents.claude.denyPermissionPrompts: default on, off only when false', () => {
+    assert.equal(denyPermissionPromptsEnabled({}), true)
+    assert.equal(denyPermissionPromptsEnabled({ agents: { claude: { denyPermissionPrompts: true } } }), true)
+    assert.equal(denyPermissionPromptsEnabled({ agents: { claude: { denyPermissionPrompts: false } } }), false)
+    assert.equal(denyPermissionPromptsEnabled({ 'agents.claude.denyPermissionPrompts': false }), false)
   })
 })

@@ -401,6 +401,41 @@ describe('status line', () => {
     assert.equal('statusLine' in (hookSettings('C:\\x\\hook.mjs', null) as object), false)
   })
 
+  test('PermissionRequest hook: present by default and when on, absent when off', () => {
+    const hooks = (o: object) => (o as { hooks: Record<string, unknown> }).hooks
+    assert.deepEqual(hooks(hookSettings('C:/x/hook.mjs', null)).PermissionRequest, [{ matcher: '*', hooks: [{ type: 'command', command: 'node "C:/x/hook.mjs" PermissionRequest' }] }])
+    assert.ok(hooks(hookSettings('C:/x/hook.mjs', null, true)).PermissionRequest)
+    assert.equal('PermissionRequest' in hooks(hookSettings('C:/x/hook.mjs', null, false)), false)
+  })
+
+  test('the settings file of a launch follows denyPermissionPrompts', async () => {
+    process.env.CLAUDE_CONFIG_DIR = configs.make()
+    const read = async (denyPermissionPrompts?: boolean) => {
+      const home = homes.make()
+      const plan = await claudeAdapter.plan({ slot: { ...slot, cwd: configs.make() }, home, extraArgs: [], ...(denyPermissionPrompts === undefined ? {} : { denyPermissionPrompts }) })
+      return JSON.parse(readFileSync(plan.args[1]!, 'utf8')).hooks as Record<string, unknown>
+    }
+    assert.ok((await read()).PermissionRequest)
+    assert.ok((await read(true)).PermissionRequest)
+    assert.equal('PermissionRequest' in (await read(false)), false)
+  })
+
+  test('the hook script answers deny with the message on PermissionRequest', () => {
+    const home = homes.make()
+    const r = spawnSync(process.execPath, [HOOK, 'PermissionRequest'], {
+      input: JSON.stringify({ hook_event_name: 'PermissionRequest', session_id: 's1', tool_name: 'Bash', tool_input: { command: 'rm -rf /tmp/x' }, agent_id: 'a1', agent_type: 'general-purpose' }),
+      env: { ...process.env, TETHER_HOME: home, TETHER_SLOT_ID: 'slot-1' },
+      encoding: 'utf8',
+    })
+    assert.equal(r.status, 0)
+    const out = JSON.parse(r.stdout)
+    assert.equal(out.hookSpecificOutput.hookEventName, 'PermissionRequest')
+    assert.equal(out.hookSpecificOutput.decision.behavior, 'deny')
+    assert.equal('interrupt' in out.hookSpecificOutput.decision, false)
+    assert.match(out.hookSpecificOutput.decision.message, /^Recusado pelo tether no lugar da pessoa: este pedido de permissão ficaria esperando alguém responder\. Não reescreva o mesmo comando de outro jeito\./)
+    assert.match(readFileSync(join(home, 'tether.log'), 'utf8'), /denied permission prompt: tool=Bash agent=general-purpose\/a1 "rm -rf \/tmp\/x"/)
+  })
+
   test('the default settings file points at the real script', async () => {
     const home = homes.make()
     process.env.CLAUDE_CONFIG_DIR = configs.make()

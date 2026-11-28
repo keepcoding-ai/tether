@@ -36,7 +36,7 @@ function defaultStatusLinePath(): string {
  * copy being present and current, and on bash quoting of a Windows path, for a failure mode that is worse (every
  * event lost) than the one it avoids.
  */
-export function hookSettings(hookPath: string = defaultHookPath(), statusLinePath: string | null = defaultStatusLinePath()): object {
+export function hookSettings(hookPath: string = defaultHookPath(), statusLinePath: string | null = defaultStatusLinePath(), denyPermissionPrompts = true): object {
   const script = hookPath.replace(/\\/g, '/')
   const hook = (event: 'SessionStart' | 'SessionEnd' | 'Stop' | 'Notification' | 'UserPromptSubmit' | 'SubagentStart' | 'SubagentStop') => [
     { hooks: [{ type: 'command', command: `node "${script}" ${event}` }] },
@@ -62,6 +62,8 @@ export function hookSettings(hookPath: string = defaultHookPath(), statusLinePat
       SubagentStop: hook('SubagentStop'),
     },
   }
+  // Setting `agents.claude.denyPermissionPrompts` (default on): tether answers every permission card with a refusal, so no pane waits on a person.
+  if (denyPermissionPrompts) (settings.hooks as Record<string, unknown>).PermissionRequest = [{ matcher: '*', hooks: [{ type: 'command', command: `node "${script}" PermissionRequest` }] }]
   // Model (loud when it is Fable), effort and cwd. Left out (null) only by callers that want hooks alone.
   if (statusLinePath !== null) settings.statusLine = { type: 'command', command: `node "${statusLinePath.replace(/\\/g, '/')}"` }
   return settings
@@ -75,9 +77,10 @@ const settingsContent = new Map<string, string>()
  * returns its path: <home>/claude-settings.json, always with our status line. `--settings` wins over the user's own
  * statusLine, so claude-statusline.mjs chains the user's command after ours (see there).
  */
-export async function ensureSettingsFile(home: string, exec: Executor = agentExecutor()): Promise<string> {
+export async function ensureSettingsFile(home: string, exec: Executor = agentExecutor(), denyPermissionPrompts = true): Promise<string> {
   const file = join(home, 'claude-settings.json')
-  let content = settingsContent.get(file)
+  const key = `${file}|${denyPermissionPrompts}`
+  let content = settingsContent.get(key)
   if (content === undefined) {
     content = JSON.stringify(hookSettings(defaultHookPath(), defaultStatusLinePath()), null, 2) + '\n'
     settingsContent.set(file, content)
@@ -122,7 +125,7 @@ async function plan(input: PlanInput): Promise<LaunchPlan> {
   const { slot, home, resume, extraArgs, profile } = input
   const cwd = await canonicalDir(resume ? resume.cwd : slot.cwd)
   const ex = input.exec ?? agentExecutor()
-  const settings = await ensureSettingsFile(home, ex)
+  const settings = await ensureSettingsFile(home, ex, input.denyPermissionPrompts !== false)
   const args = ['--settings', settings]
   // Profile args first (the baseline), the slot's own args, then this launch's: a repeated option takes its last value.
   const own = [...(profile?.args ?? []), ...slot.args, ...extraArgs]
