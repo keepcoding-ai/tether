@@ -61,6 +61,8 @@ export function isSlotMeta(x: unknown): x is SlotMeta {
   if (x.profileArgs !== undefined && !(Array.isArray(x.profileArgs) && x.profileArgs.every((a) => typeof a === 'string'))) return false
   if (x.profileEnv !== undefined && !(isObject(x.profileEnv) && Object.values(x.profileEnv).every((v) => typeof v === 'string'))) return false
   if (x.endedAt !== undefined && typeof x.endedAt !== 'string') return false
+  if (x.want !== undefined && x.want !== 'run' && x.want !== 'asleep' && x.want !== 'suspended' && x.want !== 'ended') return false
+  if (x.bootTries !== undefined && !(typeof x.bootTries === 'number' && Number.isInteger(x.bootTries) && x.bootTries >= 0)) return false
   return true
 }
 

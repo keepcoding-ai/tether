@@ -124,6 +124,7 @@ import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
 import { ALLOW_SUSPEND_LABEL, canSuspendNow, DEFAULT_SUSPEND, isBusyTurn, NO_SUSPEND_LABEL, normalizeSuspend, SUSPEND_SWEEP_MS, SuspendBook, sweepSuspend, type SuspendCandidate, type SuspendOutcome, type SuspendSettings } from './suspend.ts'
+import { appStartsPane, reconcileLayoutWants, wantMark, type WantMark } from './slot-want.ts'
 import { watchOverlays } from './overlay-freeze.ts'
 
 const COMPONENT = TERMINAL_COMPONENT
@@ -1240,7 +1241,10 @@ async function hibernatePanes(ids: string[], where: string, before?: () => void,
   // A suspended pane that is hibernated is hibernated from now on: it waits for an explicit wake.
   for (const s of states) { asleepPanes.add(s.slotId); suspended.hibernated(s.slotId) }
   scheduleSave()
-  await Promise.all(states.filter(isLiveSlot).map(s => window.tether.request({ t: 'stop', slotId: s.slotId })))
+  // The slot keeps the intent (want 'asleep'): a live one through its stop, a stopped one (suspended, ended) through set-want.
+  await Promise.all(states.map(s => isLiveSlot(s)
+    ? window.tether.request({ t: 'stop', slotId: s.slotId, why: 'hibernate' })
+    : s.want === 'asleep' ? undefined : window.tether.request({ t: 'set-want', slotId: s.slotId, want: 'asleep' })))
   for (const s of states) { panels.get(s.slotId)?.render(); tabs.get(s.slotId)?.render() }
   refreshSessions()
 }
@@ -2629,13 +2633,40 @@ async function startSlot(slotId: string, choice?: 'resume' | 'new'): Promise<Wak
   return answer
 }
 
-/** Starts every open panel whose slot is exited (the daemon queues agents beyond 3 at once). Unconfirmed ones wait for the user. */
+/**
+ * Starts every open panel whose LEGACY slot (no `want`) is exited and neither hibernated nor suspended (the daemon queues agents
+ * beyond 3 at once). A slot with an intent is the daemon's: it relaunched it at boot. Unconfirmed ones wait for the user.
+ */
 function autoStartPanels(): void {
   for (const panel of allPanels()) {
-    if (asleepPanes.has(panel.id)) continue // a hibernated pane stays asleep until it is woken
-    if (suspended.has(panel.id)) continue // a suspended pane comes up when it is used
     const slot = slots.get(panel.id)
-    if (slot && effectiveStatus(slot) === 'exited') void startSlot(slot.slotId)
+    if (appStartsPane(slot, asleepPanes.has(panel.id), suspended.has(panel.id), slot !== undefined && effectiveStatus(slot) === 'exited')) void startSlot(panel.id)
+  }
+}
+
+/** The slot's intent, as a state brought it, on the pane's marks (slot-want.ts): the daemon's `want` is the source. */
+function applyWantMark(slotId: string, mark: WantMark | undefined): void {
+  if (mark === 'asleep') {
+    applySuspend(slotId, suspended.hibernated(slotId))
+    if (!asleepPanes.has(slotId)) { asleepPanes.add(slotId); scheduleSave(); renderSlot(slotId) }
+  } else if (mark === 'suspended') {
+    if (asleepPanes.delete(slotId)) scheduleSave()
+    applySuspend(slotId, suspended.suspend(slotId))
+  } else if (mark === 'awake') {
+    if (asleepPanes.delete(slotId)) { scheduleSave(); renderSlot(slotId) }
+    applySuspend(slotId, suspended.unsuspended(slotId))
+  }
+}
+
+/** The layout's hibernated/suspended marks reconciled with the slots' intents; a legacy mark goes to the slot once (`set-want`). */
+function loadWantMarks(layoutAsleep: readonly string[] | undefined, layoutSuspended: readonly string[] | undefined): void {
+  const r = reconcileLayoutWants(slots, layoutAsleep ?? [], layoutSuspended ?? [])
+  asleepPanes = r.asleep
+  suspended.load([...r.suspended], () => true)
+  for (const m of r.migrate) {
+    void window.tether.request({ t: 'set-want', slotId: m.slotId, want: m.want }).then(reply => {
+      if (reply.t === 'ok' && reply.slot) applyState(reply.slot)
+    })
   }
 }
 
@@ -2685,6 +2716,7 @@ function applyState(slot: SlotState): void {
     }
   }
   applySuspend(slot.slotId, suspended.stateChanged(before, slot))
+  applyWantMark(slot.slotId, wantMark(before, slot))
   const panel = findPanel(slot.slotId)
   if (panel) {
     const title = panelTitle(slot)
@@ -2800,8 +2832,7 @@ async function restoreLayout(): Promise<void> {
   const { layout, orphaned } = planRestore(result?.layout ?? null, new Set(slots.keys()), id => paneTypes.isSlotless(id))
   if (layout) {
     layoutFile = layout
-    asleepPanes = new Set((layout.asleepPanes ?? []).filter(id => slots.has(id)))
-    suspended.load(layout.suspendedPanes, id => slots.has(id) && !asleepPanes.has(id))
+    loadWantMarks(layout.asleepPanes, layout.suspendedPanes)
     suspended.loadNoSuspend(layout.noSuspendPanes, id => slots.has(id))
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
@@ -2815,6 +2846,7 @@ async function restoreLayout(): Promise<void> {
     else if (result?.from === 3) await window.tether.backupLayout(3)
   } else {
     layoutFile = emptyLayout()
+    loadWantMarks(undefined, undefined)
   }
   // Only what the person does from here on is saved; a slot missing from the daemon's list is not a change of theirs.
   if (orphaned.length) console.warn('painéis sem slot no tetherd, fora da tela até a próxima ação:', orphaned)
@@ -2968,7 +3000,7 @@ async function suspendNowPanes(ids: string[]): Promise<void> {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
   await window.tether.saveLayout(layoutJSON())
   door.layoutSaved()
-  await Promise.all(ids.map(id => window.tether.request({ t: 'stop', slotId: id })))
+  await Promise.all(ids.map(id => window.tether.request({ t: 'stop', slotId: id, why: 'suspend' })))
   for (const id of ids) renderSlot(id)
   refreshSessions()
 }

@@ -12,7 +12,7 @@ import { icon, KIND_ICON, type IconName } from './icons.ts'
 import { identityOf, markOf } from './agent-identity.ts'
 import { emblemOfPanel } from './tab-emblems.ts'
 import { canResume, entryText, entryTone, hasBatch, orderedEntries, summaryText } from './pause-rules.ts'
-import { bulkCloseAction, OPEN_ELSEWHERE_LABEL, pauseAction, rowMenuPlan, sessionRows, sessionsCounter, sessionsSummary, type RowGroup, type SessionRow } from './sessions-rules.ts'
+import { bulkCloseAction, OPEN_ELSEWHERE_LABEL, pauseAction, rowGroupOf, rowMenuPlan, sessionRows, sessionsCounter, sessionsSummary, type RowGroup, type SessionRow } from './sessions-rules.ts'
 import { placeEntries, type MenuSpec, type PlaceHost } from './place-menu.ts'
 
 export interface SessionsMenuHost extends PlaceHost {
@@ -174,9 +174,9 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
     await stopSession(slotId)
   }
   const freeRows = (rows: readonly SessionRow[]): SessionRow[] => rows.filter(r => r.noTab)
-  const endedRows = (rows: readonly SessionRow[]): SessionRow[] => rows.filter(r => r.state === 'ended' && !host.hasTab(r.slotId))
+  const endedRows = (rows: readonly SessionRow[]): SessionRow[] => rows.filter(r => rowGroupOf(r) === 'ended' && !host.hasTab(r.slotId))
 
-  function sessionRow(r: SessionRow, group: 'free' | 'ended'): HTMLElement {
+  function sessionRow(r: SessionRow, group: RowGroup): HTMLElement {
     const row = el('div', `sx-row ${group} ${r.state}`)
     row.dataset.slot = r.slotId
     const led = el('span', 'led')
@@ -203,6 +203,14 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       acts.append(stop)
     } else {
       acts.append(splitOpen(r.slotId, 'Reabrir', 'arrow-clockwise', 'Reabrir: a sessão volta a viver em "Sem guia" e abre no cartão', 'revive'))
+    }
+    if (group === 'interrupted') {
+      // Stopped while meant to run: "Encerrar" records the end, so it goes to "Encerradas".
+      const stop = iconButton('ic stop', 'x', 'Encerrar a sessão')
+      stop.title = 'Encerrar: a sessão interrompida vai para Encerradas'
+      stop.disabled = busy.has(r.slotId)
+      stop.addEventListener('click', ev => { ev.stopPropagation(); void stopByHand(r.slotId) })
+      acts.append(stop)
     }
     if (group === 'ended' && askingForget === r.slotId) {
       acts.replaceChildren()
@@ -434,7 +442,7 @@ export function createSessionsMenu(host: SessionsMenuHost): SessionsMenu {
       const wrap = el('div', 'sx-actions'); wrap.append(bulkBtn)
       if (bulk.hint) { const hint = el('div', 'sx-hint', bulk.hint); hint.id = 'sessions-bulk-hint'; wrap.append(hint); wrap.classList.add('with-hint') }
       const body = el('div', 'sx-rows')
-      body.append(...free.map(r => sessionRow(r, 'free')))
+      body.append(...free.map(r => sessionRow(r, rowGroupOf(r))))
       sec.append(wrap, body)
       list.append(sec)
     }

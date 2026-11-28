@@ -16,7 +16,7 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { DeliveryMessage, DeliveryReceipt, DoorDelivery, DoorSlots } from '../../src/daemon/door/types.ts'
 import type { DeskMap } from '../../src/daemon/protocol.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
-import { removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
+import { Recorder, removeHome, sleep, tempHome, uniquePipe, waitUntil } from './daemon.helpers.ts'
 
 const FAKE_AGENT = String.raw`
 const fs = require('node:fs')
@@ -145,6 +145,23 @@ describe('agent door: a suspended pane resumes for what comes from outside', () 
     await stopping
     const state = await awake
     assert.equal(state?.status, 'running')
+    await slots.forget(id)
+  })
+
+  test('an agent without a pane, suspended in its slot (want suspended), resumes for a delivery', async () => {
+    const id = await running('sem-guia')
+    await slots.setHeld(id, { ext: 'probe', by: 'owner-slot' })
+    await sendMap(id, {}) // no desk marks it: only the slot's intent says suspended
+    const rec = await Recorder.connect(daemon.pipe)
+    try {
+      assert.equal((await rec.client.request({ t: 'stop', slotId: id, why: 'suspend' })).slot!.want, 'suspended')
+    } finally { rec.close() }
+    await waitUntil(() => slots.get(id)?.status === 'exited', 15_000, 'stopped')
+    assert.equal(door.suspend.isSuspended(id), true)
+    const r = await delivery.deliver(id, msg('acorda sem guia'))
+    await waitUntil(() => slots.get(id)?.status === 'running', 30_000, 'resumed by the delivery')
+    await waitUntil(() => receiptOf(r.id)?.state === 'typed', 30_000, 'delivered once the agent is up')
+    assert.equal(door.suspend.isSuspended(id), false, 'running again: want is run')
     await slots.forget(id)
   })
 
