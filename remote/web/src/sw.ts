@@ -10,7 +10,7 @@
 // keys; this file never sees one). What passes parsePushNotice is shown, and nothing is kept: no key of a session, no
 // record of the house, no cache write. A tap opens (or brings forward) the app at the place the notice names, by its query.
 import { cacheName, CACHE_PREFIX, shellKey } from './shell-cache.ts'
-import { parsePushNotice } from '../../../src/remote/webpush.ts'
+import { parsePushNotice, PUSH_TITLE } from '../../../src/remote/webpush.ts'
 
 declare const __SHELL_FILES__: readonly string[]
 declare const __SHELL_VERSION__: string
@@ -74,8 +74,9 @@ sw.addEventListener('push', e => {
   let raw: unknown
   try { raw = e.data?.json() } catch { raw = undefined }
   const n = parsePushNotice(raw)
-  // A push must show something (userVisibleOnly): one that does not parse says only that the tether called.
-  const title = n?.title ?? 'Tether'
+  // A push must show something (userVisibleOnly): one that does not parse says only that the tether called. What parses
+  // holds only the house's fixed words (no name, no text: the screen may be locked), so nothing here can name anyone.
+  const title = n?.title ?? PUSH_TITLE
   const body = n?.body ?? 'Há algo para você no tether.'
   e.waitUntil(sw.registration.showNotification(title, {
     body, tag: n?.tag ?? 'tether', icon: at('icons/icon-192.png'), badge: at('icons/icon-192.png'), data: { url: placeOf(n?.url) }, renotify: true,

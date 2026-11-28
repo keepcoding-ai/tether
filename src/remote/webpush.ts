@@ -9,7 +9,8 @@
 // credential; a bench origin is accepted only where the caller passes it (src/remoted/main.ts, bench only).
 //
 // What a notice carries (PushNotice) is also here: the portal builds it, the service worker reads it. Never the text of a
-// speech, a question or a terminal, never a path: a name, a fixed phrase, a tag and the query of the place to open.
+// speech, a question or a terminal, never a path nor a name: a fixed title, a fixed phrase, an opaque tag and the query
+// of the place to open.
 import { b64url, concat, copy, fail, fromB64url, u32, utf8, utf8Decode, WireError, type Bytes } from './bytes.ts'
 import { ecdhBits, generateEphemeral, hkdf, validatePoint, type Ephemeral } from './crypto.ts'
 
@@ -122,7 +123,7 @@ async function pushIkm(ecdh: Bytes, auth: Uint8Array, uaPublic: Uint8Array, asPu
  * Encrypts one push message for a subscription (RFC 8291): a fresh application-server key pair and a fresh salt for each
  * message (both may be given, for the RFC's vector), the device's public key (`p256dh`) and its auth secret, one record of
  * aes128gcm with the server's public key as key id. `padTo` pads the plaintext to a multiple of that many octets so the
- * push service does not learn the length of a name.
+ * push service does not learn the length of what it carries.
  */
 export async function webPushEncrypt(o: {
   uaPublic: Uint8Array; auth: Uint8Array; plaintext: Uint8Array; padTo?: number
@@ -296,36 +297,48 @@ export type PushKind = 'waiting' | 'talk' | 'poll'
 export const PUSH_KINDS: readonly PushKind[] = ['waiting', 'talk', 'poll']
 
 /**
- * What one push carries, and what the service worker shows. `title`: a name (an agent's, sanitized); `body`: a fixed
- * phrase with at most a channel's name; `tag`: one per agent or channel, so a new notice replaces the old one; `url`: the
- * query of the place to open (`?c=<channel>` or `?tab=waiting`), never a path or a host.
+ * What one push carries, and what the service worker shows. A notice is read on a locked screen, by whoever holds the
+ * phone, and names are text agents choose (a tab's, a channel's): so no name and no text goes, only words the house
+ * chose. `title`: always PUSH_TITLE; `body`: the fixed phrase of its kind; `tag`: one per agent or channel, so a new
+ * notice replaces the old one, opaque (noticeTag); `url`: the query of the place to open (`?c=<channel>` or
+ * `?tab=waiting`), never a path or a host.
  */
 export interface PushNotice { kind: PushKind; title: string; body: string; tag: string; url: string }
 
-export const PUSH_TITLE_MAX = 64
-export const PUSH_BODY_MAX = 120
-/** `a:<slot id>` for an agent, `c:<channel id>` for a channel. */
-const TAG_RE = /^[ac]:[\w.:-]{1,64}$/
+export const PUSH_TITLE = 'tether'
+/** The phrase of each kind: the only words of a notice besides PUSH_TITLE. */
+export const PUSH_BODIES: Readonly<Record<PushKind, string>> = {
+  waiting: 'Um agente espera você',
+  talk: 'Falaram com você num canal',
+  poll: 'Uma enquete chama você',
+}
+/** `a:` for an agent, `c:` for a channel, then 16 hex digits (noticeTag). */
+const TAG_RE = /^[ac]:[0-9a-f]{16}$/
 const URL_RE = /^\?(?:c=[A-Za-z0-9_.:-]{1,80}|tab=waiting)$/
 
-/** The phrase of each kind (the only words of a notice besides the names). */
-export function noticeBody(kind: PushKind, channel?: string): string {
-  if (kind === 'waiting') return 'espera você'
-  return kind === 'talk' ? `falou com você em #${channel ?? ''}` : `abriu uma enquete em #${channel ?? ''}`
+/**
+ * The tag of an agent's (`a`) or a channel's (`c`) notices: FNV-1a 64 of the id, in hex. It only has to stay the same for
+ * one id and differ between ids, and say nothing legible; it is no secret (the notice's `url` carries the id itself, and
+ * neither leaves the encrypted body but on the device).
+ */
+export function noticeTag(of: 'a' | 'c', id: string): string {
+  let h = 0xcbf29ce484222325n
+  for (const b of utf8(id)) h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn
+  return `${of}:${h.toString(16).padStart(16, '0')}`
 }
 
 /**
- * Reads a notice as the service worker gets it: whatever does not have the shape is dropped (null). The service worker
- * shows only what passes; it keeps nothing of it.
+ * Reads a notice as the service worker gets it: whatever does not have the shape is dropped (null), and a title or a body
+ * that is not the house's own words for that kind does not have it. The service worker shows only what passes; it keeps
+ * nothing of it.
  */
 export function parsePushNotice(raw: unknown): PushNotice | null {
   if (typeof raw !== 'object' || raw === null) return null
   const n = raw as Record<string, unknown>
   const { kind, title, body, tag, url } = n
   if (typeof kind !== 'string' || !(PUSH_KINDS as readonly string[]).includes(kind)) return null
-  if (typeof title !== 'string' || title === '' || title.length > PUSH_TITLE_MAX) return null
-  if (typeof body !== 'string' || body.length > PUSH_BODY_MAX) return null
-  if (typeof tag !== 'string' || !TAG_RE.test(tag)) return null
-  if (typeof url !== 'string' || !URL_RE.test(url)) return null
+  if (title !== PUSH_TITLE || body !== PUSH_BODIES[kind as PushKind]) return null
+  if (typeof tag !== 'string' || !TAG_RE.test(tag) || tag[0] !== (kind === 'waiting' ? 'a' : 'c')) return null
+  if (typeof url !== 'string' || !URL_RE.test(url) || (kind === 'waiting') !== (url === '?tab=waiting')) return null
   return { kind: kind as PushKind, title, body, tag, url }
 }

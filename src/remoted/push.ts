@@ -28,7 +28,7 @@ export const PUSH_QUEUE_MAX = 32
 export const PUSH_TIMEOUT_MS = 5_000
 /** How long the push service keeps a notice for a device that is offline: a notice older than this says nothing anymore. */
 export const PUSH_TTL_S = 3_600
-/** The plaintext is padded to a multiple of this, so the service does not learn the length of a name. */
+/** The plaintext is padded to a multiple of this, so the service does not tell one kind of notice from another by length. */
 const PAD_TO = 256
 
 /** One POST, as the sender makes it: the status the service answered. Throws on a network failure or the deadline. */

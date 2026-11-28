@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { b64url, concat, fromB64url, utf8, utf8Decode } from '../../src/remote/bytes.ts'
 import { generateEphemeral } from '../../src/remote/crypto.ts'
 import {
-  aes128gcmDecrypt, aes128gcmEncrypt, benchPushOrigin, checkPushSubscription, importEcdhPrivate, importVapidKey, noticeBody, parsePushNotice,
+  aes128gcmDecrypt, aes128gcmEncrypt, benchPushOrigin, checkPushSubscription, importEcdhPrivate, importVapidKey, noticeTag, parsePushNotice, PUSH_BODIES, PUSH_TITLE,
   pushEndpointCheck, PUSH_ENDPOINT_MAX, vapidAuthorization, verifyVapid, webPushDecrypt, webPushEncrypt, type VapidKey,
 } from '../../src/remote/webpush.ts'
 
@@ -179,16 +179,34 @@ describe('the endpoint (M-11)', () => {
 })
 
 describe('the notice', () => {
-  test('fixed phrases, and the service worker reads only the shape', () => {
-    assert.equal(noticeBody('waiting'), 'espera você')
-    assert.equal(noticeBody('talk', 'obra'), 'falou com você em #obra')
-    assert.equal(noticeBody('poll', 'obra'), 'abriu uma enquete em #obra')
-    const n = { kind: 'talk', title: 'conferente', body: 'falou com você em #obra', tag: 'c:c_abc', url: '?c=c_abc' }
+  test('a fixed title and three fixed phrases (B-6), and the service worker shows nothing else', () => {
+    assert.equal(PUSH_TITLE, 'tether')
+    assert.deepEqual(PUSH_BODIES, { waiting: 'Um agente espera você', talk: 'Falaram com você num canal', poll: 'Uma enquete chama você' })
+    const n = { kind: 'talk', title: 'tether', body: 'Falaram com você num canal', tag: noticeTag('c', 'c_abc'), url: '?c=c_abc' }
     assert.deepEqual(parsePushNotice(n), n)
-    assert.deepEqual(parsePushNotice({ ...n, kind: 'waiting', tag: 'a:s1', url: '?tab=waiting' }), { ...n, kind: 'waiting', tag: 'a:s1', url: '?tab=waiting' })
+    const w = { kind: 'waiting', title: 'tether', body: 'Um agente espera você', tag: noticeTag('a', 's1'), url: '?tab=waiting' }
+    assert.deepEqual(parsePushNotice(w), w)
+    const p = { ...n, kind: 'poll', body: 'Uma enquete chama você' }
+    assert.deepEqual(parsePushNotice(p), p)
     for (const bad of [
-      null, 'x', { ...n, kind: 'other' }, { ...n, title: '' }, { ...n, title: 'x'.repeat(65) }, { ...n, body: 'x'.repeat(121) },
-      { ...n, tag: 'x:1' }, { ...n, url: 'https://evil.example/' }, { ...n, url: '/elsewhere' }, { ...n, url: '?c=a&x=1' }, { ...n, url: '//evil.example' },
+      null, 'x', { ...n, kind: 'other' },
+      // Any word not the house's own: a name as the title, a phrase of another kind, a name in the phrase.
+      { ...n, title: 'conferente' }, { ...n, title: 'Banco: confirme o código' }, { ...n, title: '' }, { ...n, body: 'Um agente espera você' },
+      { ...n, body: 'falou com você em #ligue-0800' }, { ...n, body: '' }, { ...w, body: 'Falaram com você num canal' },
+      // A tag that is not opaque, or of the other kind; a place of the other kind.
+      { ...n, tag: 'c:c_abc' }, { ...n, tag: 'x:1' }, { ...n, tag: noticeTag('a', 's1') }, { ...w, tag: noticeTag('c', 'c_abc') }, { ...w, url: '?c=c_abc' }, { ...n, url: '?tab=waiting' },
+      { ...n, url: 'https://evil.example/' }, { ...n, url: '/elsewhere' }, { ...n, url: '?c=a&x=1' }, { ...n, url: '//evil.example' },
     ]) assert.equal(parsePushNotice(bad), null, JSON.stringify(bad))
+  })
+
+  test('the tag is the same for one id, differs between ids, and says nothing legible of the id', () => {
+    assert.match(noticeTag('a', 's_1'), /^a:[0-9a-f]{16}$/)
+    assert.match(noticeTag('c', 'c_obra'), /^c:[0-9a-f]{16}$/)
+    assert.equal(noticeTag('c', 'c_obra'), noticeTag('c', 'c_obra'))
+    assert.notEqual(noticeTag('c', 'c_obra'), noticeTag('c', 'c_obrb'))
+    assert.equal(noticeTag('c', 'demissao-fulano').includes('demissao'), false)
+    // FNV-1a 64 of the empty string and of "a" (the published offset basis and its first value).
+    assert.equal(noticeTag('a', ''), 'a:cbf29ce484222325')
+    assert.equal(noticeTag('a', 'a'), 'a:af63dc4c8601ec8c')
   })
 })

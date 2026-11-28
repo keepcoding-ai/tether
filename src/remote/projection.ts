@@ -13,7 +13,7 @@ import { b64url, utf8, type Bytes } from './bytes.ts'
 import { PRESENCE, type Presence } from './constants.ts'
 import { sanitizeDeclaredName } from './content.ts'
 import { knownScopes, type EvtName, type OpName, type ScopeFamily } from './scopes.ts'
-import { noticeBody, PUSH_BODY_MAX, PUSH_TITLE_MAX, type PushKind, type PushNotice } from './webpush.ts'
+import { noticeTag, PUSH_BODIES, PUSH_TITLE, type PushKind, type PushNotice } from './webpush.ts'
 
 // ---- shapes a device receives ------------------------------------------------------------------------------------
 
@@ -895,28 +895,20 @@ export interface PushKey { key: string; on: boolean }
 export function pushKey(s: { key: Uint8Array; on: boolean }): PushKey {
   return { key: b64url(s.key), on: s.on === true }
 }
-/** A name for a notice: sanitized, and never a path (a name that is one keeps only its last part). */
-const noticeName = (v: unknown, max: number): string => {
-  const n = line(v, 200)
-  const last = n.split(/[\\/]/).filter(p => p !== '').pop() ?? ''
-  return last.slice(0, max)
-}
-
 /**
  * The one notice a push carries (src/remote/webpush.ts PushNotice), built here like every other body that leaves for a
- * device: the agent's name as the title (sanitized, never a path; R-9 / M-11: a notice is an easy screen to forge, so it
- * holds no word the house did not choose but the names), a fixed phrase with at most the channel's name, a tag per agent
- * or channel, and the query of the place to open. Undefined when the ids do not have the shape of an id.
+ * device. It goes to a locked screen, so it holds only the house's own words (RR4 gate B-6; R-9 / M-11: a notice is an
+ * easy screen to forge): the fixed title, the fixed phrase of its kind, an opaque tag per agent or channel, and the query
+ * of the place to open. No agent's name, no channel's name, no text. Undefined when the id does not have the shape of one.
  */
-export function pushNotice(s: { kind: PushKind; name: unknown; slotId?: string; channelId?: string; room?: unknown }): PushNotice | undefined {
-  const title = noticeName(s.name, PUSH_TITLE_MAX) || (s.kind === 'waiting' ? 'Um agente' : 'Alguém')
+export function pushNotice(s: { kind: PushKind; slotId?: string; channelId?: string }): PushNotice | undefined {
+  const base = { kind: s.kind, title: PUSH_TITLE, body: PUSH_BODIES[s.kind] }
   if (s.kind === 'waiting') {
     if (typeof s.slotId !== 'string' || !ID_RE.test(s.slotId)) return undefined
-    return { kind: 'waiting', title, body: noticeBody('waiting'), tag: `a:${s.slotId}`, url: '?tab=waiting' }
+    return { ...base, tag: noticeTag('a', s.slotId), url: '?tab=waiting' }
   }
   if (typeof s.channelId !== 'string' || !ID_RE.test(s.channelId)) return undefined
-  const room = noticeName(s.room, 40) || 'canal'
-  return { kind: s.kind, title, body: noticeBody(s.kind, room).slice(0, PUSH_BODY_MAX), tag: `c:${s.channelId}`, url: `?c=${s.channelId}` }
+  return { ...base, tag: noticeTag('c', s.channelId), url: `?c=${s.channelId}` }
 }
 
 /** Whether this device is subscribed, after push-on / push-off. */

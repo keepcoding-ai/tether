@@ -58,6 +58,8 @@ describe('the service worker shows notices and keeps nothing', () => {
     assert.match(src, /addEventListener\('push'/)
     assert.match(src, /addEventListener\('notificationclick'/)
     assert.match(src, /parsePushNotice\(raw\)/)
+    // B-6: a notice that does not parse falls back to the house's fixed title too.
+    assert.match(src, /n\?\.title \?\? PUSH_TITLE\b/)
     assert.match(src, /\^\\\?\(\?:c=\[A-Za-z0-9_\.:-\]\{1,80\}\|tab=waiting\)\$/)
     assert.doesNotMatch(src, /localStorage|indexedDB|postMessage|importScripts|fetch\([^)]*data/)
   })

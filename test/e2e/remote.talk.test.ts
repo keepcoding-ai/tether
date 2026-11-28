@@ -25,7 +25,7 @@ import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { createServer as createHttpServer, type Server } from 'node:http'
 import { b64url, decodeOuter, OP_CODES, RES_STATUS, toHex, WS_SUBPROTOCOL, type Bytes } from '../../src/remote/index.ts'
 import { EVT } from '../../src/remote/scopes.ts'
-import { verifyVapid, webPushDecrypt, type PushNotice } from '../../src/remote/webpush.ts'
+import { noticeTag, verifyVapid, webPushDecrypt, type PushNotice } from '../../src/remote/webpush.ts'
 import { removeHome, uniquePipe } from '../unit/daemon.helpers.ts'
 import { actId, ORIGIN, present, registerAndUnlock, type SoftAuthenticator } from '../unit/remoted.authenticator.ts'
 import { benchHome, TestDevice, until, type DeviceSession, type FakeRelay } from '../unit/remoted.helpers.ts'
@@ -468,7 +468,7 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     assert.equal((await history()).last, before, 'no refusal wrote a line')
   })
 
-  test('push (RR4 4.4): the device subscribes; an agent that waits and a speech to the person each make a notice, with the name and no text; 410 drops it', async () => {
+  test('push (RR4 4.4): the device subscribes; an agent that waits and a speech to the person each make a notice, with no name and no text; 410 drops it', async () => {
     const MARKER = `canary${toHex(actId())}`
     const key = await s.request(OP.pushKey)
     assert.equal(key.status, RES_STATUS.ok)
@@ -491,13 +491,15 @@ describe('remote talk end to end (RR4.2a): the person speaks, reacts, votes, ope
     assert.equal(first.vapid.ok && b64url(first.vapid.pub), key.body.key, 'signed with K_V, the key the device subscribed with')
     assert.equal(first.encoding, 'aes128gcm')
     assert.equal(first.path, '/push/telefone')
-    assert.deepEqual(first.notice, { kind: 'waiting', title: 'conferente', body: 'espera você', tag: `a:${memberId}`, url: '?tab=waiting' })
+    // B-6: the house's words only; no agent's name (this one is "conferente") on a locked screen.
+    assert.deepEqual(first.notice, { kind: 'waiting', title: 'tether', body: 'Um agente espera você', tag: noticeTag('a', memberId), url: '?tab=waiting' })
     assert.deepEqual(first.headers.filter((h) => !['host', 'connection', 'content-length', 'accept', 'accept-encoding', 'accept-language', 'sec-fetch-mode', 'user-agent'].includes(h)), ['authorization', 'content-encoding', 'content-type', 'ttl', 'urgency'], 'no header that names the house')
 
     // A speech of the agent addressed to the person.
     await agent('say', { canal: channelId, text: `Preciso de você: ${MARKER}`, to: ['usuário'] })
     const talk = await until(() => pushService.got.find((g) => g.notice?.kind === 'talk'), 15_000, 'the notice of the speech')
-    assert.deepEqual(talk.notice, { kind: 'talk', title: 'conferente', body: 'falou com você em #obra', tag: `c:${channelId}`, url: `?c=${channelId}` })
+    assert.deepEqual(talk.notice, { kind: 'talk', title: 'tether', body: 'Falaram com você num canal', tag: noticeTag('c', channelId), url: `?c=${channelId}` })
+    assert.equal(pushService.got.some((g) => /conferente|obra/.test(g.text)), false, 'no name of the agent nor of the channel')
     // A speech to everyone makes none.
     const n = pushService.got.length
     await agent('say', { canal: channelId, text: 'Para todos.' })

@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { b64url, OP_CODES, RES_STATUS, toHex, type Bytes } from '../../src/remote/index.ts'
 import { utf8Decode } from '../../src/remote/bytes.ts'
-import { importVapidKey, verifyVapid, webPushDecrypt, type PushNotice } from '../../src/remote/webpush.ts'
+import { importVapidKey, noticeTag, PUSH_BODIES, PUSH_TITLE, verifyVapid, webPushDecrypt, type PushNotice } from '../../src/remote/webpush.ts'
 import { AttentionView } from '../../src/remoted/attention.ts'
 import { PortalPush, PUSH_DEVICE_HOUR_MAX, PUSH_GAP_MS, PUSH_QUEUE_MAX, type PushSend } from '../../src/remoted/push.ts'
 import type { PushSubRow } from '../../src/remoted/ipc.ts'
@@ -58,7 +58,8 @@ async function vapidKey() {
   return importVapidKey(new Uint8Array(await crypto.subtle.exportKey('pkcs8', k.privateKey)), new Uint8Array(await crypto.subtle.exportKey('raw', k.publicKey)))
 }
 
-const NOTICE = (tag = 'a:s1'): PushNotice => ({ kind: 'waiting', title: 'conferente', body: 'espera você', tag, url: '?tab=waiting' })
+/** A notice of who waits; `id` stands for the slot (one tag per id). */
+const NOTICE = (id = 's1'): PushNotice => ({ kind: 'waiting', title: PUSH_TITLE, body: PUSH_BODIES.waiting, tag: noticeTag('a', id), url: '?tab=waiting' })
 
 describe('PortalPush: the pace and the answers of the push service', () => {
   test('one notice per device and tag every 30 s; another tag goes; after the gap it goes again', async () => {
@@ -235,22 +236,21 @@ describe('the house tells a device whose app is closed', () => {
     assert.equal(JSON.stringify(bench.notes).includes(b.endpoint), false, 'no note carries the endpoint')
   })
 
-  test('an agent begins to wait: no notice while the session is on the screen; one when it is not, with the name and no text', async () => {
+  test('an agent begins to wait: no notice while the session is on the screen; one when it is not, with no name and no text', async () => {
     attention.state({ slotId: 's_1', name: 'conferente', kind: 'agent', attention: 'waiting' } as never)
     await new Promise((r) => setTimeout(r, 300))
     assert.equal((await opened()).length, 0, 'the session is visible')
     assert.equal((await bench.fresh.request(OP.visible, { visible: 'no' })).status, RES_STATUS.badRequest)
     assert.equal((await bench.fresh.request(OP.visible, { visible: false })).status, RES_STATUS.ok)
-    attention.state({ slotId: 's_2', name: 'C:\\Users\\x\\obra', kind: 'agent', attention: 'waiting' } as never)
+    attention.state({ slotId: 's_2', name: 'Banco: confirme o código', kind: 'agent', attention: 'waiting' } as never)
     attention.state({ slotId: 's_3', name: 'revisor', kind: 'agent', attention: 'waiting' } as never)
     await until(() => f.sent.length >= 2 || undefined, 5_000, 'two notices')
     const got = await opened()
-    assert.deepEqual(got.map((n) => n.tag).sort(), ['a:s_2', 'a:s_3'])
-    const s2 = got.find((n) => n.tag === 'a:s_2')!
-    assert.equal(s2.kind, 'waiting')
-    assert.equal(s2.body, 'espera você')
-    assert.equal(s2.url, '?tab=waiting')
-    assert.equal(s2.title, 'obra', 'never a path: a name that is one keeps its last part')
+    assert.deepEqual(got.map((n) => n.tag).sort(), [noticeTag('a', 's_2'), noticeTag('a', 's_3')].sort())
+    const s2 = got.find((n) => n.tag === noticeTag('a', 's_2'))!
+    // B-6: the locked screen shows only the house's words; an agent's name never reaches it.
+    assert.deepEqual(s2, { kind: 'waiting', title: 'tether', body: 'Um agente espera você', tag: noticeTag('a', 's_2'), url: '?tab=waiting' })
+    assert.equal(JSON.stringify(got).includes('Banco') || JSON.stringify(got).includes('revisor'), false, 'no name of an agent')
     assert.ok(bench.audits().filter((a) => a.act === 'push.send' && a.result === 'ok' && a.target === 'waiting' && a.deviceId === deviceId()).length >= 2)
     // Who already waited does not wait again by staying.
     attention.state({ slotId: 's_3', name: 'revisor', kind: 'agent', attention: 'waiting' } as never)
@@ -274,10 +274,11 @@ describe('the house tells a device whose app is closed', () => {
     await new Promise((r) => setTimeout(r, 200))
     const got = (await opened(from)).sort((x, y) => (x.kind < y.kind ? 1 : -1))
     assert.deepEqual(got, [
-      { kind: 'talk', title: 'conferente', body: 'falou com você em #obra', tag: 'c:c_obra', url: '?c=c_obra' },
-      { kind: 'poll', title: 'conferente', body: 'abriu uma enquete em #vota', tag: 'c:c_vota', url: '?c=c_vota' },
+      { kind: 'talk', title: 'tether', body: 'Falaram com você num canal', tag: noticeTag('c', 'c_obra'), url: '?c=c_obra' },
+      { kind: 'poll', title: 'tether', body: 'Uma enquete chama você', tag: noticeTag('c', 'c_vota'), url: '?c=c_vota' },
     ])
     assert.equal(has(got), false, 'no text of a line in a notice')
+    assert.doesNotMatch(got.map((n) => `${n.title} ${n.body} ${n.tag}`).join(' '), /conferente|obra|vota|#/, 'what is shown names no agent and no channel')
     assert.equal(has(bench.notes), false, 'nor in a note')
   })
 

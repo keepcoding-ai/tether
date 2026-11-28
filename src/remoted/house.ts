@@ -109,7 +109,7 @@ export interface HouseDeps {
   push?: PortalPush
 }
 
-/** The scope a device needs to be told anything (the push lines'), and the one a channel's notice also needs (its name). */
+/** The scope a device needs to be told anything (the push lines'), and the one a channel's notice also needs (it says a channel calls her and opens one). */
 const PUSH_SCOPE = opByName('attention.push-on')!.scope
 const CHANNELS_SCOPE = opByName('channels.page')!.scope
 /** How long the person's name in the channels (what a line's `to` names her by) is kept before it is read again. */
@@ -237,7 +237,7 @@ export class House {
   /**
    * A line or a poll of a channel, from tetherd's events: a notice when a speech of an agent is addressed to the person (her
    * name in `to`, by the rule of the channels' marks) or a poll calls her (`user` among those called). Nothing of the line
-   * goes on but who spoke and the channel's name.
+   * goes on but the channel's id (the notice's opaque tag and the place it opens).
    */
   async #channelNotice(event: 'line' | 'poll', payload: unknown): Promise<void> {
     const p = recOf(payload)
@@ -256,13 +256,13 @@ export class House {
       if (me === undefined || !line.to.some((n) => typeof n === 'string' && norm(n) === norm(me))) return
       kind = 'talk'
     }
-    const notice = pushNotice({ kind, name: from.name, channelId: typeof p.channelId === 'string' ? p.channelId : undefined, room: p.room })
+    const notice = pushNotice({ kind, channelId: typeof p.channelId === 'string' ? p.channelId : undefined })
     if (notice) this.#d.push?.notify(notice, this.#pushTargets([PUSH_SCOPE, CHANNELS_SCOPE]))
   }
 
   /**
    * The devices a notice may go to: subscribed, active, holding the scopes (`attention`, and `channels` for a channel's
-   * notice: its name is a channel's), not being revoked, and with no session that is live and on the person's screen.
+   * notice: it tells of a channel and opens one), not being revoked, and with no session that is live and on the person's screen.
    */
   #pushTargets(scopes: readonly string[]): string[] {
     const push = this.#d.push
@@ -1277,7 +1277,7 @@ export class House {
     if (entered.length > 0 && this.#d.push) {
       const targets = this.#pushTargets([PUSH_SCOPE])
       for (const it of entered) {
-        const n = pushNotice({ kind: 'waiting', name: it.name, slotId: it.id })
+        const n = pushNotice({ kind: 'waiting', slotId: it.id })
         if (n && targets.length > 0) this.#d.push.notify(n, targets)
       }
     }
