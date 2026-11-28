@@ -92,6 +92,8 @@ export function mountTalkView(o: TalkViewOptions): { dispose(): void } {
     const heldKey = held ? `${held.closest<HTMLElement>('.rr-out-i')?.dataset.id ?? ''}:${held.dataset.act ?? ''}` : undefined
     strip.replaceChildren(...items.map(itemEl))
     strip.hidden = items.length === 0
+    // The newest speech is the one at the foot, next to the box: the strip shows it.
+    strip.scrollTop = strip.scrollHeight
     if (heldKey) {
       const [id, act] = heldKey.split(':')
       const again = strip.querySelector<HTMLElement>(`.rr-out-i[data-id="${CSS.escape(id ?? '')}"] [data-act="${CSS.escape(act ?? '')}"]`)

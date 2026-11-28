@@ -5,8 +5,10 @@
 //   &ficha=<pane id>                  the reading card of a pane (p6 is the one that waits)
 //   &canal=<id>                       the channel in the centre (obra, extra, migra)
 //   &tema=claro | escuro              (default: the system's)
+//   &fala=1                           the device converses (the box, the speeches on their way, "Trancar")
 // `data-ready` on <html> says the screen settled (what a capture waits for).
 import { mountRegency } from '../../src/regency.ts'
+import { createTalker, type Talker } from '../../src/talk.ts'
 import { fakeHouse } from './fake.ts'
 
 const q = new URLSearchParams(location.hash.slice(1))
@@ -17,7 +19,28 @@ if (theme === 'claro') document.documentElement.dataset.theme = 'light'
 if (theme === 'escuro') document.documentElement.dataset.theme = 'dark'
 
 const state = q.get('estado')
-const screen = mountRegency(root, { houseName: 'Máquina de casa', onRetry: () => { screen.retryIn(0) } })
+
+/**
+ * `&fala=1`: the device converses. The talker goes over a made-up session that takes every act, and its storage (memory)
+ * starts with two speeches on their way in #obra: one still "enviando" (the session answers it later), one "não enviada".
+ */
+function benchTalker(): Talker {
+  const mem = new Map<string, string>()
+  const store = { get: (k: string) => mem.get(k) ?? null, set: (k: string, v: string) => { mem.set(k, v) }, remove: (k: string) => { mem.delete(k) } }
+  const at = Date.now() - 20_000
+  mem.set('tether.remote.v1.bench.outbox', JSON.stringify({ v: 1, items: [
+    { id: 'a'.repeat(32), channel: 'obra', text: 'Fica a de cima: é a que o time já usa.', to: ['conferente'], at, state: 'failed', why: 'slow-down' },
+    { id: 'b'.repeat(32), channel: 'obra', text: 'E mandem a ata depois, por favor.', to: [], at: Date.now(), state: 'sending' },
+  ] }))
+  mem.set('tether.remote.v1.bench.drafts', JSON.stringify({ v: 1, drafts: { obra: 'Rascunho que sobreviveu ao recarregar' } }))
+  const t = createTalker({ houseId: 'bench', store })
+  // A session that never answers the speech "enviando" (it stays so for the capture) and takes every other act.
+  t.attach({ ended: undefined, request: (op: number) => op === 0x0202 ? new Promise(() => {}) : Promise.resolve({ status: 0, body: { changed: true, seq: 1 } }) })
+  return t
+}
+
+const talk = q.get('fala') === '1' ? benchTalker() : undefined
+const screen = mountRegency(root, { houseName: 'Máquina de casa', onRetry: () => { screen.retryIn(0) }, ...(talk ? { talk, onLock: () => {} } : {}) })
 
 const settle = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms))
 const click = (selector: string): boolean => {

@@ -3,7 +3,7 @@
 // across a re-reading of the tree, and the arrows that stay a text field's.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Direction, type Item, type KeyPlace } from '../../remote/web/src/focus-rules.ts'
+import { caretAtEdge, firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, okDoes, takesArrow, type Direction, type Item, type KeyPlace } from '../../remote/web/src/focus-rules.ts'
 
 const box = (key: string, left: number, top: number, w: number, h: number): Item => ({ key, rect: { left, top, right: left + w, bottom: top + h } })
 
@@ -128,5 +128,39 @@ describe('whose arrow it is', () => {
     assert.equal(takesArrow(place({ item: true, treeRow: true })), false)
     assert.equal(takesArrow(place({ item: true })), true)
     assert.equal(takesArrow(place({ nowhere: true })), true, 'the first arrow brings the focus in, on any tier')
+  })
+
+  test('on the TV a field of the speaking box lets the arrow go at its edge (the remote has nothing else); elsewhere never', () => {
+    assert.equal(takesArrow(place({ editable: true, item: true, tv: true, edge: true })), true)
+    assert.equal(takesArrow(place({ editable: true, item: true, tv: false, edge: true })), false)
+    assert.equal(takesArrow(place({ editable: true, item: false, tv: true, edge: true })), false, 'a field that is not on the walk keeps its keys')
+  })
+})
+
+describe('the open channel on the TV', () => {
+  test('its items go by what they show, never by their node', () => {
+    assert.equal(itemKeyOf('msg', { id: '42' }), 'msg:42')
+    assert.equal(itemKeyOf('opt', { id: '7:2' }), 'opt:7:2')
+    assert.equal(itemKeyOf('say', { id: 'field' }), 'say:field')
+    assert.equal(itemKeyOf('out', {}), undefined)
+  })
+
+  test('the caret: Up leaves on the first line, Down on the last; a one-line field or a list always; sideways never', () => {
+    const area = (value: string, at: number) => ({ kind: 'area' as const, value, start: at, end: at })
+    assert.equal(caretAtEdge(area('um\ndois', 1), 'up'), true)
+    assert.equal(caretAtEdge(area('um\ndois', 5), 'up'), false)
+    assert.equal(caretAtEdge(area('um\ndois', 1), 'down'), false)
+    assert.equal(caretAtEdge(area('um\ndois', 5), 'down'), true)
+    assert.equal(caretAtEdge({ kind: 'text', value: 'x', start: 0, end: 0 }, 'down'), true)
+    assert.equal(caretAtEdge({ kind: 'select', value: '', start: 0, end: 0 }, 'up'), true)
+    assert.equal(caretAtEdge(area('', 0), 'left'), false)
+  })
+
+  test('OK: a speech or a card opens its menu, a field keeps its own Enter, anything else is clicked', () => {
+    assert.equal(okDoes('msg', false), 'menu')
+    assert.equal(okDoes('card', false), 'menu')
+    assert.equal(okDoes('say', true), 'own')
+    assert.equal(okDoes('opt', false), 'click')
+    assert.equal(okDoes('lock', false), 'click')
   })
 })

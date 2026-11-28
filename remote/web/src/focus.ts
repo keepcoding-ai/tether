@@ -7,36 +7,82 @@
 // The pane paints its rows again on every change of the house: the focus is held by the item's key, never by its node, and
 // given back after each paint when the repaint took it away.
 import type { Tier } from '../../../extensions/regency/renderer/layout-rules.ts'
-import { BACK_KEYS, DIRECTIONS, firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, takesArrow, type Item } from './focus-rules.ts'
+import {
+  BACK_KEYS, caretAtEdge, DIRECTIONS, firstFocusOf, initialKeyOf, itemKeyOf, keptKeyOf, neighbourOf, okDoes, takesArrow,
+  type Direction, type Item, type Place,
+} from './focus-rules.ts'
 import { el } from './ui-lite.ts'
 
-/** Where the items live, and the name of each place (the prefix of its key). */
-const PLACES = [
+/** Where the items of the Regency live, and the name of each place (the prefix of its key). Every tier walks them. */
+const PLACES: readonly (readonly [Place, string])[] = [
   ['wait', '.rg-waiting [data-target]'],
   ['conv', '.rg-convs .rg-conv[data-target]'],
   ['toggle', '.rg-convs .rg-tg[data-action]'],
   ['chip', '.rg-chips .rg-chip[data-filter]'],
   ['tree', '.rg-tree [data-key]'],
-] as const
+]
 
-type Place = (typeof PLACES)[number][0]
+/**
+ * The open channel's items, walked on the TV only (elsewhere the view keeps its own keys: the arrows walk its speeches, a
+ * mouse or a finger does the rest): the speeches and the polls' cards, the votes, "Ver anteriores", the speaking box, the
+ * poll form, the reason of a vote, the speeches on their way and "Trancar".
+ */
+const TV_PLACES: readonly (readonly [Place, string])[] = [
+  ['msg', '.ch-msgs > .ch-msg[data-seq]'],
+  ['card', '.ch-msgs > .ch-prow[data-seq]'],
+  ['opt', '.ch-msgs .ch-prow button.ch-opt[data-n]'],
+  ['older', '.ch-msgs > .ch-older'],
+  ['reason', '.ch-msgs .ch-reason :is(input, button)'],
+  ['say', '.ch-say :is(textarea.ch-field, select.ch-dsel, button.ch-pollbtn, button.ch-send)'],
+  ['form', '.ch-pf :is(input, button)'],
+  ['out', '.rr-out .rr-out-b[data-act]'],
+  ['lock', '.rr-top .rr-lock'],
+]
 
 const ITEM_SELECTOR = PLACES.map(p => p[1]).join(', ')
+const TV_SELECTOR = [...PLACES, ...TV_PLACES].map(p => p[1]).join(', ')
 
 function placeOf(e: HTMLElement): Place | undefined {
-  for (const [place, sel] of PLACES) if (e.matches(sel)) return place
+  for (const [place, sel] of [...PLACES, ...TV_PLACES]) if (e.matches(sel)) return place
   return undefined
+}
+
+/** The name an item of the open channel goes by (stable across a repaint of the conversation or of the box). */
+function channelId(place: Place, e: HTMLElement): string | undefined {
+  const d = e.dataset
+  switch (place) {
+    case 'msg': case 'card': return d.seq
+    case 'opt': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.n ?? ''}`
+    case 'older': case 'lock': return place
+    case 'reason': return `${e.closest<HTMLElement>('.ch-prow')?.dataset.seq ?? ''}:${d.key ?? e.tagName}`
+    case 'say': return e.classList.contains('ch-field') ? 'field' : e.classList.contains('ch-dsel') ? 'to' : e.classList.contains('ch-send') ? 'send' : 'poll'
+    case 'out': return `${e.closest<HTMLElement>('.rr-out-i')?.dataset.id ?? ''}:${d.act ?? ''}`
+    case 'form': {
+      const form = e.closest('.ch-pf')
+      const same = form ? [...form.querySelectorAll<HTMLElement>(e.tagName)] : []
+      return `${e.tagName}:${d.kind ?? d.dl ?? d.who ?? same.indexOf(e)}`
+    }
+    default: return undefined
+  }
 }
 
 function keyOf(e: HTMLElement): string | undefined {
   const place = placeOf(e)
   if (!place) return undefined
   const d = e.dataset
-  return itemKeyOf(place, { key: d.key, target: d.target, filter: d.filter, action: d.action })
+  return itemKeyOf(place, { key: d.key, target: d.target, filter: d.filter, action: d.action, id: channelId(place, e) })
 }
 
 const editable = (e: Element | null): boolean =>
   e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e instanceof HTMLSelectElement || (e instanceof HTMLElement && e.isContentEditable)
+
+/** Whether the caret of a field cannot go `dir` (a field that is not one says no). */
+function atEdge(e: Element | null, dir: Direction): boolean {
+  if (e instanceof HTMLTextAreaElement) return caretAtEdge({ kind: 'area', value: e.value, start: e.selectionStart, end: e.selectionEnd }, dir)
+  if (e instanceof HTMLInputElement) return caretAtEdge({ kind: 'text', value: e.value, start: e.selectionStart ?? 0, end: e.selectionEnd ?? 0 }, dir)
+  if (e instanceof HTMLSelectElement) return caretAtEdge({ kind: 'select', value: '', start: 0, end: 0 }, dir)
+  return false
+}
 
 /** The strip of the TV's keys, at the top: what the remote does here. */
 export function keysStrip(): HTMLElement {
@@ -75,8 +121,9 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
 
   const paintOn = (): void => { if (on) shell.dataset.keys = 'on'; else delete shell.dataset.keys }
 
-  const items = (): HTMLElement[] => [...shell.querySelectorAll<HTMLElement>(ITEM_SELECTOR)]
-    .filter(e => !e.closest('[hidden], .rr-card') && e.getClientRects().length > 0)
+  const selector = (): string => (deps.tier() === 'wide' ? TV_SELECTOR : ITEM_SELECTOR)
+  const items = (): HTMLElement[] => [...shell.querySelectorAll<HTMLElement>(selector())]
+    .filter(e => !e.closest('[hidden], .rr-card') && !(e as HTMLButtonElement).disabled && e.getClientRects().length > 0)
 
   const keyed = (): { key: string; el: HTMLElement }[] => {
     const out: { key: string; el: HTMLElement }[] = []
@@ -98,7 +145,7 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
   /** The keyboard sits on a filter chip (what the first paint gave it, before the house arrived). */
   const heldIsChip = (): boolean => { const a = document.activeElement; return a instanceof HTMLElement && shell.contains(a) && a.matches('.rg-chips .rg-chip[data-filter]') }
 
-  const isItem = (e: Element | null): e is HTMLElement => e instanceof HTMLElement && shell.contains(e) && e.matches(ITEM_SELECTOR) && !e.closest('.rr-card')
+  const isItem = (e: Element | null): e is HTMLElement => e instanceof HTMLElement && shell.contains(e) && e.matches(selector()) && !e.closest('.rr-card')
 
   // On the document, in the capture phase: an arrow pressed while nobody holds the keyboard reaches the body, not the shell,
   // and the pane's own keys (the tree's) must not run first on the TV.
@@ -112,7 +159,7 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
       const item = isItem(t)
       const take = takesArrow({
         editable: editable(t), item, treeRow: item && t.matches('.rg-tree [data-key]'), nowhere: nobody(), inCard,
-        tv: deps.tier() === 'wide', modified: ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey,
+        tv: deps.tier() === 'wide', modified: ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey, edge: atEdge(t, dir),
       })
       if (!take) return
       const all = keyed()
@@ -135,11 +182,16 @@ export function mountSpatialFocus(shell: HTMLElement, deps: SpatialFocusDeps): S
       if (to) focusEl(to.el)
       return
     }
-    // The remote's OK on an item: what a click does (the tree's own Enter would go to the tab, which the web has not).
+    // The remote's OK on an item: what a click does (the tree's own Enter would go to the tab, which the web has not); on a
+    // speech or a poll's card, its menu (what a right click opens); a field keeps its own Enter.
     if (ev.key === 'Enter' && deps.tier() === 'wide' && isItem(t) && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
+      const does = okDoes(placeOf(t) ?? 'tree', editable(t))
+      if (does === 'own') return
       ev.preventDefault()
       ev.stopPropagation()
-      t.click()
+      if (does === 'click') { t.click(); return }
+      const r = t.getBoundingClientRect()
+      t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 24, clientY: r.top + Math.min(32, r.height / 2) }))
     }
   }
 

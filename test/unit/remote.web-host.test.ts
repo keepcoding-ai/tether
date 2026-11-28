@@ -5,7 +5,7 @@ import { describe, test } from 'node:test'
 import type { HistoryPage, MembersAnswer } from '../../extensions/channels/renderer/view-model.ts'
 import { fakeHouse } from '../../remote/web/bench/page/fake.ts'
 import {
-  RemoteHouse, SourceRefused, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource,
+  RemoteHouse, SourceRefused, emblemOf, remoteChannelHost, remoteRegencyHost, sealSays, type PageAnswer, type PageLine, type RemoteNotice, type RemoteSource, type RemoteTalk,
 } from '../../remote/web/src/host.ts'
 
 const tick = (): Promise<void> => new Promise(done => setTimeout(done, 0))
@@ -231,6 +231,41 @@ describe('the channel view over the house', () => {
     assert.equal(host.agent('nobody'), undefined)
     assert.deepEqual(await host.files.look(['a.png']), [{ path: 'a.png', missing: false }])
     assert.equal(host.files.pathOf(undefined as never), '')
+  })
+
+  test('a device that converses: the four gestures and "seen" go to its talker, managing is still refused, a page confirms', async () => {
+    const house = new RemoteHouse(fakeHouse())
+    const did: unknown[][] = []
+    const talk: RemoteTalk = {
+      say: async (...a) => { did.push(['say', ...a]) },
+      react: async (...a) => { did.push(['react', ...a]); return { changed: true } },
+      vote: async (...a) => { did.push(['vote', ...a]); return { poll: undefined } },
+      poll: async (...a) => { did.push(['poll', ...a]); return { seq: 1 } },
+      seen: (...a) => { did.push(['seen', ...a]) },
+      confirmed: (...a) => { did.push(['confirmed', ...a]) },
+    }
+    const menus: number[] = []
+    const host = remoteChannelHost(house, { quick: () => {}, menu: x => menus.push(x) }, talk)
+    house.start()
+    await settle()
+    assert.deepEqual([host.readOnly, host.talkOnly], [false, true])
+    await host.request('say', { channel: 'obra', text: 'oi', to: ['conferente', 3] })
+    assert.deepEqual(await host.request('react', { channel: 'obra', seq: 4, reaction: 'agree', remove: true }), { changed: true })
+    await host.request('vote', { channel: 'obra', poll: 6, vote: 2, reason: 'não' })
+    await host.request('poll', { channel: 'obra', question: 'Sobe?', options: ['a', 'b'], to: ['p1', 'user'], timeoutMs: 600_000 })
+    host.marks.viewed('obra', 12)
+    for (const name of ['close', 'reopen', 'mute', 'join', 'poll-close', 'seen']) await assert.rejects(host.request(name, { channel: 'obra' }), `${name} is not a gesture of this device`)
+    await host.request<HistoryPage>('history', { channel: 'obra' })
+    host.menu(5, 6, [])
+    assert.deepEqual(did.slice(0, 5), [
+      ['say', 'obra', 'oi', ['conferente']],
+      ['react', 'obra', 4, 'agree', true],
+      ['vote', 'obra', 6, 2, 'não'],
+      ['poll', 'obra', { question: 'Sobe?', options: ['a', 'b'], to: ['p1', 'user'], timeoutMs: 600_000 }],
+      ['seen', 'obra', 12],
+    ])
+    assert.equal(did[5]![0], 'confirmed', 'the newest page confirms what landed up to its last line')
+    assert.deepEqual(menus, [5])
   })
 
   test('the `stale` event of the view is the house\'s thin notice', async () => {

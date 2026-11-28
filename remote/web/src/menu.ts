@@ -80,7 +80,7 @@ export function createMenu(deps: WebMenuDeps): WebMenu {
       else if (ev.key === 'ArrowUp') { ev.preventDefault(); go(at < 0 ? -1 : at - 1) }
       else if (ev.key === 'Home') { ev.preventDefault(); go(0) }
       else if (ev.key === 'End') { ev.preventDefault(); go(-1) }
-      else if (ev.key === 'Escape' || ev.key === 'Tab' || ev.key === 'GoBack' || ev.key === 'BrowserBack') { ev.preventDefault(); ev.stopPropagation(); close() }
+      else if (ev.key === 'Escape' || ev.key === 'Tab' || ev.key === 'GoBack' || ev.key === 'BrowserBack' || ev.key === 'Backspace') { ev.preventDefault(); ev.stopPropagation(); close() }
       else return
       ev.stopPropagation()
     })

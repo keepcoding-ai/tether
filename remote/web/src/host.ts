@@ -357,7 +357,7 @@ function lineOf(l: PageLine): Line {
 export interface RemoteActs {
   /** The reading card of a pane or an agent, by its pane id. */
   quick(paneId: string): void
-  /** A floating menu at page coordinates (a speech's reactions, a poll's votes): the web's own, while the device converses. */
+  /** A floating menu at page coordinates (a speech's reactions and "Copiar", a poll's votes): the web's own. */
   menu?(x: number, y: number, entries: ContextMenuEntry[]): void
 }
 
@@ -485,7 +485,8 @@ export function remoteChannelHost(house: RemoteHouse, acts: RemoteActs, talk?: R
     // Only an address of the web opens, in another tab, with no way back to this page; a place of the app has no door here.
     follow: target => { if (target.kind === 'external' && /^https?:\/\//i.test(target.url)) window.open(target.url, '_blank', 'noopener,noreferrer') },
     linkMenu: () => {},
-    menu: (x, y, entries) => { if (talk) acts.menu?.(x, y, entries) },
+    // The rows are the view's: a device that only reads gets "Copiar" alone (the "⋯" of a speech is never a dead button).
+    menu: (x, y, entries) => { acts.menu?.(x, y, entries) },
     ask: () => Promise.reject(readOnlyError()),
     run: async () => undefined,
     peek: paneId => acts.quick(paneId),

@@ -59,19 +59,29 @@ export interface ItemFacts {
   filter?: string
   /** `data-action` of a toggle ("Encerrados"). */
   action?: string
+  /**
+   * The name of an item of the open channel, as the page tells it (only the TV walks them): a speech or a poll's card by its
+   * seq, an option by its card and number, a part of the speaking box, a button of a speech on its way, "Trancar".
+   */
+  id?: string
 }
+
+/** The places of the Regency (every tier walks them) and of the open channel (the TV's, where nothing else reaches them). */
+export type Place = 'wait' | 'conv' | 'tree' | 'chip' | 'toggle' | ChannelPlace
+export type ChannelPlace = 'msg' | 'card' | 'opt' | 'older' | 'say' | 'out' | 'lock' | 'form' | 'reason'
 
 /**
  * The stable name of an item: what it shows of the house, never the node (the tree is painted again on every change). The
  * same channel in "Esperam você" and in the list are two items: the prefix of the place keeps them apart.
  */
-export function itemKeyOf(place: 'wait' | 'conv' | 'tree' | 'chip' | 'toggle', f: ItemFacts): string | undefined {
+export function itemKeyOf(place: Place, f: ItemFacts): string | undefined {
   switch (place) {
     case 'tree': return f.key ? `tree:${f.key}` : undefined
     case 'wait': return f.target ? `wait:${f.target}` : undefined
     case 'conv': return f.target ? `conv:${f.target}` : undefined
     case 'chip': return f.filter ? `chip:${f.filter}` : undefined
     case 'toggle': return f.action ? `toggle:${f.action}` : undefined
+    default: return f.id ? `${place}:${f.id}` : undefined
   }
 }
 
@@ -123,18 +133,44 @@ export interface KeyPlace {
   tv: boolean
   /** A modifier was held (Alt, Ctrl, Meta, Shift): the arrow belongs to the browser or to a shortcut. */
   modified: boolean
+  /**
+   * In a field, the caret cannot go that way (Up on its first line, Down on its last; a one-line field or a list of choices
+   * always): on the TV the arrow leaves the field, the remote has nothing else to leave it with.
+   */
+  edge?: boolean
 }
 
 /**
- * Whether the arrow is ours. Never a text field's (the caret moves there), never the card's, never with a modifier. On the
- * TV, every item walks the screen, the tree's rows too (the board has no folds to open sideways). Elsewhere the tree keeps
- * its own keys (left folds, right opens) and the other items walk; from nowhere, the first arrow brings the focus in.
+ * Whether the arrow is ours. Never a text field's while its caret can move that way, never the card's, never with a
+ * modifier. On the TV, every item walks the screen, the tree's rows too (the board has no folds to open sideways), and a
+ * field of the speaking box or of the poll form lets go at its edge. Elsewhere the tree keeps its own keys (left folds,
+ * right opens) and the other items walk; from nowhere, the first arrow brings the focus in.
  */
 export function takesArrow(p: KeyPlace): boolean {
-  if (p.editable || p.inCard || p.modified) return false
+  if (p.inCard || p.modified) return false
+  if (p.editable) return p.tv && p.item && p.edge === true
   if (p.nowhere) return true
   if (!p.item) return false
   return p.tv || !p.treeRow
+}
+
+/** What a field of the page tells of its caret, for `edge`. */
+export interface Caret { kind: 'text' | 'area' | 'select'; value: string; start: number; end: number }
+
+/** Whether the caret cannot go that way: Up on the first line of a text area, Down on its last; a one-line field or a list always. */
+export function caretAtEdge(c: Caret, dir: Direction): boolean {
+  if (dir === 'left' || dir === 'right') return false
+  if (c.kind !== 'area') return true
+  return dir === 'up' ? !c.value.slice(0, c.start).includes('\n') : !c.value.slice(c.end).includes('\n')
+}
+
+/**
+ * What the remote's OK does on an item: a speech or a poll's card opens its menu (react, vote, copy: what a right click
+ * opens); a field keeps its own Enter (the box sends, the form opens the poll); anything else is clicked.
+ */
+export function okDoes(place: Place, editable: boolean): 'menu' | 'click' | 'own' {
+  if (editable) return 'own'
+  return place === 'msg' || place === 'card' ? 'menu' : 'click'
 }
 
 /** The keys that close the card or go up a level: Esc, and the remote's Back (TVs send one of these names; never in a field). */
