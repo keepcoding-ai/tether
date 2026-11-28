@@ -128,7 +128,8 @@ describe('pipeReads: the one place of the portal that sends ext-request', () => 
 
   test("no other file of the portal names ext-request: the class has one door", async () => {
     for (const f of await readdir(join(ROOT, 'src', 'remoted'))) {
-      if (!f.endsWith('.ts') || f === 'reads.ts' || f === 'gate.ts') continue
+      // reach.ts classifies ext-request (the table tetherd enforces too); it sends nothing.
+      if (!f.endsWith('.ts') || f === 'reads.ts' || f === 'gate.ts' || f === 'reach.ts') continue
       const src = (await readFile(join(ROOT, 'src', 'remoted', f), 'utf8')).replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
       assert.equal(/ext-request/.test(src), false, `${f} names ext-request`)
     }

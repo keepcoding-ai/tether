@@ -32,6 +32,7 @@ import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
 import { clientProof, daemonProof, discardKeyFile, fillKeyFile, folderIsPrivate, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
 import { isPortalCredential } from './handshake.ts'
+import { PIPE_REACH, remoteMayRequest, remoteMaySend } from '../remoted/reach.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -2011,6 +2012,7 @@ class DaemonImpl implements Daemon {
       if (typeof id === 'number') this.send(client, { t: 'error', id, code: 'auth-required', message: 'identifique-se primeiro (hello)' })
       return
     }
+    if (client.kind === 'remote' && !this.withinRemoteReach(client, msg)) return
     if (msg.t === 'input') {
       const arrive = msg.probe ? stamp() : 0 // line received: the first daemon stamp
       const slot = typeof msg.slotId === 'string' ? this.slotMap.get(msg.slotId) : undefined
@@ -2039,6 +2041,23 @@ class DaemonImpl implements Daemon {
     }
     this.send(client, reply)
     if (client.closeAfterReply) client.socket.end()
+  }
+
+  /**
+   * The portal's reach (RR3 gate B-8), checked here and not only in the portal: a `remote` client sends only a type that
+   * PIPE_REACH does not mark `never`, and `ext-request` only as a pair of the remote's reach (src/remoted/reach.ts, the
+   * table the portal sends by). A refusal answers `door-denied` to a request, drops a keystroke, keeps the connection,
+   * and logs the type alone: never the extension, the name nor the arguments the client sent.
+   */
+  private withinRemoteReach(client: Client, msg: Partial<ClientMessage>): boolean {
+    const t = (msg as { t?: unknown }).t
+    const typeOk = remoteMaySend(t)
+    if (typeOk && (t !== 'ext-request' || remoteMayRequest((msg as { ext?: unknown }).ext, (msg as { name?: unknown }).name))) return true
+    const what = typeOk ? 'an ext-request outside its reach' : typeof t === 'string' && Object.hasOwn(PIPE_REACH, t) ? t : 'a message of unknown type'
+    this.log(`remote client: ${what} refused`)
+    const id = (msg as { id?: unknown }).id
+    if (typeof id === 'number') this.send(client, { t: 'error', id, code: 'door-denied', message: 'fora do alcance do portal remoto' })
+    return false
   }
 
   /** `auth`: the first step of the handshake (pipe-key.ts). Answers before the hello; never twice for a greeted client. */
