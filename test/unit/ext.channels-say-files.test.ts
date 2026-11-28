@@ -4,12 +4,15 @@
 // closed channel takes none; and the view of a speech's files: an image is a thumbnail, any other file a card, in order.
 // No daemon, no LLM: a fake delivery records what the members were handed. Every folder is a fresh temp home.
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { ATTACH_MAX_PER_SAY } from '../../extensions/channels/attachments.ts'
 import { createChannels, type Channels, type ChannelsApi } from '../../extensions/channels/daemon/fanout.ts'
+import { REMOTE_UPLOAD_DIR } from '../../extensions/channels/daemon/files.ts'
+import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
 import { openStore } from '../../extensions/channels/daemon/store.ts'
+import { UPLOAD_DIR } from '../../src/remoted/files.ts'
 import type { VerbDeps } from '../../extensions/channels/daemon/verbs/common.ts'
 import { sayVerb } from '../../extensions/channels/daemon/verbs/say.ts'
 import { INSTRUCTIONS, FILES_TEXT } from '../../extensions/channels/daemon/verbs.ts'
@@ -117,6 +120,70 @@ describe('say with files: the agent road', () => {
     assert.ok('files' in props)
     assert.deepEqual((sayVerb.input as { required: string[] }).required, ['canal'])
     assert.ok(INSTRUCTIONS.includes(FILES_TEXT) && FILES_TEXT.includes('anexos:'))
+  })
+})
+
+describe('say with files from afar (RR4 B-1, M-1): only the portal\'s uploads for this channel', () => {
+  let home: string
+  let ch: Channels
+  const handlers = new Map<string, (args: unknown, ctx: unknown) => Promise<unknown>>()
+  const none = { dispose: () => {} }
+  const READY = `${'a'.repeat(32)}-0-${'b'.repeat(8)}.ready`
+
+  before(async () => {
+    home = tempHome()
+    const api = {
+      slots: { get: () => undefined, onState: () => none, userTypedAt: () => undefined },
+      delivery: { deliver: async () => ({ id: 'r', slotId: 'x', state: 'inside', at: '' }), pending: () => [], cancel: () => false, routeOf: () => 'inside', hasTools: () => false, onDidDeliver: () => none },
+      attention: { seen: () => {} }, events: { emit: () => {} }, settings: { get: () => undefined }, log: () => {},
+    } as unknown as ChannelsApi
+    ch = createChannels(api, await openStore(fsIo, home))
+    const reqApi = { requests: { handle: (name: string, fn: (args: unknown, ctx: unknown) => Promise<unknown>) => { handlers.set(name, fn); return none } } }
+    registerChannelRequests(reqApi as never, Promise.resolve(ch), 1)
+  })
+  after(async () => { ch?.dispose(); await removeHome(home) })
+
+  const staged = (id: string, name: string, body = 'x'): string => {
+    const dir = join(home, 'channels', id, 'files', REMOTE_UPLOAD_DIR)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, name), body)
+    return join(dir, name)
+  }
+  const sayAs = (client: string, channel: string, files: Array<{ path: string; name?: string }>) => handlers.get('say')!({ channel, text: 'segue', files }, { client })
+  const badRequest = (e: unknown): boolean => (e as { code?: string }).code === 'bad-request'
+
+  test('a remote say that names any other path is refused bad-request and copies nothing; the app keeps free paths', async () => {
+    assert.equal(REMOTE_UPLOAD_DIR, UPLOAD_DIR, "the portal's staging folder")
+    const a = await ch.create(USER, { name: 'longe-a' })
+    const b = await ch.create(USER, { name: 'longe-b' })
+    assert.ok(a.ok && b.ok)
+    const key = join(home, 'remote', 'house.key')
+    mkdirSync(join(home, 'remote'), { recursive: true })
+    writeFileSync(key, 'isca-nao-e-chave')
+    const loose = join(home, 'channels', a.channel.id, 'files', REMOTE_UPLOAD_DIR, 'livre.txt')
+    staged(a.channel.id, 'livre.txt')
+    const other = staged(b.channel.id, READY)
+    const sneaky = join(home, 'channels', a.channel.id, 'files', REMOTE_UPLOAD_DIR, '..', '..', '..', '..', 'remote', 'house.key')
+    const linked = join(home, 'channels', a.channel.id, 'files', REMOTE_UPLOAD_DIR, `${'c'.repeat(32)}-1-${'d'.repeat(8)}.ready`)
+    linkSync(key, linked)
+    for (const path of [key, loose, other, sneaky, linked])
+      await assert.rejects(sayAs('remote', a.channel.id, [{ path, name: 'foto.png' }]), badRequest, path)
+    const filesOf = (id: string) => readdirSync(join(home, 'channels', id, 'files')).filter((f) => f !== REMOTE_UPLOAD_DIR)
+    assert.deepEqual(filesOf(a.channel.id), [], 'nothing copied into the channel')
+    // The app is the person on this machine: her paths stay free.
+    const said = await sayAs('app', a.channel.id, [{ path: loose, name: 'livre.txt' }]) as { line: Line }
+    assert.equal(said.line.files?.[0]?.name, 'livre.txt')
+  })
+
+  test('a remote say with its own channel\'s upload copies it under the inert name, with the Internet zone on Windows', async () => {
+    const a = await ch.create(USER, { name: 'longe-c' })
+    assert.ok(a.ok)
+    const up = staged(a.channel.id, READY, '[InternetShortcut]\r\nURL=https://x\r\n')
+    const said = await sayAs('remote', a.channel.id, [{ path: up, name: 'leia-isto.url' }]) as { line: Line }
+    const f = said.line.files![0]!
+    assert.equal(f.name, 'leia-isto.url.download')
+    assert.equal(f.path, join(home, 'channels', a.channel.id, 'files', 'leia-isto.url.download'))
+    if (process.platform === 'win32') assert.match(readFileSync(`${f.path}:Zone.Identifier`, 'utf8'), /ZoneId=3/)
   })
 })
 

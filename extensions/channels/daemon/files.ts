@@ -3,8 +3,8 @@
 // The copy is the system's (copyFile with COPYFILE_EXCL): nothing of the file passes through this process's memory, and the
 // exclusive flag makes the unique name race-free. Nothing here opens a file to read its content.
 import { constants } from 'node:fs'
-import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { copyFile, lstat, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { ATTACH_MAX_PER_SAY, baseName, fileRefusal, mimeOf, numberedName, safeFileName, type FileRefusal, type FileSource, type LineFile } from '../attachments.ts'
 
 export type { FileSource }
@@ -72,6 +72,30 @@ export function parseSources(v: unknown): FileSource[] | 'bad-request' | 'too-ma
     out.push({ path, ...(typeof name === 'string' ? { name } : {}) })
   }
   return out
+}
+
+/** The portal's staging folder inside a channel's `files` (src/remoted/files.ts UPLOAD_DIR) and the name of a whole upload there. */
+export const REMOTE_UPLOAD_DIR = '.remote-upload'
+const REMOTE_READY_RE = /^[0-9a-f]{32}-[0-3]-[0-9a-f]{8}\.ready$/
+
+/**
+ * Whether every source is a whole upload the portal wrote for THIS channel (RR4 B-1): once every link is resolved, a regular
+ * file with one link, directly inside `<files>/.remote-upload/`, named `<act>-<i>-<dev8>.ready`. The portal is not trusted
+ * (RR3 B-8): a `remote` that names any other path (a key, another channel's file) gets nothing copied.
+ */
+export async function onlyRemoteUploads(filesDir: string, sources: readonly FileSource[]): Promise<boolean> {
+  let staging: string
+  try { staging = await realpath(join(filesDir, REMOTE_UPLOAD_DIR)) } catch { return sources.length === 0 }
+  if (staging !== join(await realpath(filesDir).catch(() => ''), REMOTE_UPLOAD_DIR)) return false
+  for (const s of sources) {
+    try {
+      const real = await realpath(s.path)
+      if (dirname(real) !== staging || !REMOTE_READY_RE.test(basename(real))) return false
+      const st = await lstat(real)
+      if (!st.isFile() || st.nlink !== 1) return false
+    } catch { return false }
+  }
+  return true
 }
 
 /**

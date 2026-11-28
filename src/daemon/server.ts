@@ -2070,9 +2070,15 @@ class DaemonImpl implements Daemon {
     return { t: 'ok', id: req.id, auth: { nonce: daemon, proof: daemonProof(key, req.nonce, daemon) } }
   }
 
-  /** The hello's proof, once per connection; a refusal closes the connection after its reply. */
+  /**
+   * The hello's proof, once per connection; a refusal closes the connection after its reply. The first hello fixes who the
+   * client is (RR4 B-1): another one is refused and logged, so a `remote` never relabels itself `app` past its reach.
+   */
   private async checkHello(client: Client, req: Extract<Request, { t: 'hello' }>): Promise<void> {
-    if (client.greeted) return
+    if (client.greeted) {
+      this.log(`client refused: a second hello (${client.kind ?? 'unlabelled'})`)
+      throw new RequestError('bad-request', 'conexão já identificada')
+    }
     const challenge = client.challenge
     client.challenge = undefined
     if (req.proof === undefined || !challenge) {

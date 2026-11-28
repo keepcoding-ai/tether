@@ -80,6 +80,22 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
     assert.equal(lines.some((l) => l.includes(MARKER) || /create|mute|poll-close|tree\.publish|device\.revoke/.test(l)), false, 'the log names no extension, request nor argument')
   })
 
+  test('RR4 B-1: a second hello never relabels the portal; it is refused and logged, and the reach still holds', async () => {
+    const from = logs.length
+    calls.length = 0
+    for (const client of ['app', 'cli', 'remote'] as const)
+      await assert.rejects(remote.request({ t: 'hello', v: 3, client } as never), (e: unknown) => e instanceof DaemonError && e.code === 'bad-request', client)
+    await assert.rejects(remote.request({ t: 'ext-request', ext: 'channels', name: 'create', args: { name: MARKER } }), denied, 'still remote after the hellos')
+    await assert.rejects(remote.request({ t: 'shutdown' } as never), denied, 'a never type is still refused')
+    assert.deepEqual(calls, [], 'no handler ran')
+    await remote.request({ t: 'ext-request', ext: 'regency', name: 'tree.read' })
+    assert.deepEqual(calls, [{ ext: 'regency', name: 'tree.read', client: 'remote' }], 'the connection is still the portal')
+    assert.equal(logs.slice(from).filter((l) => l === 'client refused: a second hello (remote)').length, 3, logs.slice(from).join('\n'))
+    const app = await DaemonClient.open(pipe, 'app', { home })
+    await assert.rejects(app.request({ t: 'hello', v: 3, client: 'remote' } as never), (e: unknown) => e instanceof DaemonError && e.code === 'bad-request', 'nor does an app relabel')
+    app.close()
+  })
+
   test('every pair of the reach passes and reaches its handler as remote', async () => {
     calls.length = 0
     for (const p of REMOTE_EXT_PAIRS) assert.deepEqual((await remote.request({ t: 'ext-request', ext: p.ext, name: p.name, args: {} })).result, { ext: p.ext, name: p.name })

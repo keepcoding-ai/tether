@@ -13,7 +13,7 @@ import type { ErrorCode } from '../../../src/daemon/protocol.ts'
 import { REACTION_WINDOW, sumReactions, USER, type Channel, type ChannelId, type Line, type OpenPoll, type PollResult, type ReactionTally } from '../rules.ts'
 import { refusalText, type FileRefusal } from '../attachments.ts'
 import type { Channels, Outcome } from './fanout.ts'
-import { parseSources } from './files.ts'
+import { onlyRemoteUploads, parseSources } from './files.ts'
 import { allMarks, pendingOf } from './marks.ts'
 import { PAGE } from './store.ts'
 
@@ -273,6 +273,9 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
       const files = parseSources(a.files)
       if (files === 'bad-request') throw refuse('bad-request', 'o argumento files é uma lista de { path, name? } com caminhos absolutos')
       if (files === 'too-many') throw refuse('too-many', refusalText('too-many', '', { accepted: 0, tried: (a.files as unknown[]).length }).rest)
+      // From afar a path is never free (RR4 B-1): only the portal's whole uploads for this very channel are copied.
+      if (ctx.client === 'remote' && files.length > 0 && !(await onlyRemoteUploads(c.store.filesDir(ch.id), files)))
+        throw refuse('bad-request', 'de longe, só vão arquivos enviados para este canal')
       const body = text(a, 'text', files.length > 0)
       const r = await c.say(USER, ch.id, { body, ...(to ? { to } : {}), ...(reply !== undefined ? { replyTo: reply } : {}), ...(files.length ? { files } : {}), ...(files.length && ctx.client === 'remote' ? { fromAfar: true } : {}) })
       if (!r.ok && r.file !== undefined) throw refuse(r.error, (({ lead, rest }) => `${lead} ${rest}`)(refusalText(r.error as FileRefusal, r.file)))
