@@ -207,6 +207,22 @@ test('remote acts: the app does from afar what only it knows, with no screen on 
     await until('its agent stopped', async () => ((await cli.request({ t: 'list' })).slots ?? []).find((x) => x.slotId === bancada)?.status !== 'running')
     assert.equal(await active(), first)
 
+    // ---- 6b. "+ Novo" from afar (RR5 5.3): a note the app makes in a known folder, an agent tetherd makes; nothing forward ----
+    console.log('step 6b')
+    const options = await ok(OP['create.options'], {})
+    const folder = (options.folders as { id: string; label: string }[]).find((f) => f.label === 'conferente')
+    assert.ok(folder, JSON.stringify(options.folders))
+    assert.equal(JSON.stringify(options).includes(home), false, 'no path reaches the device')
+    const note = await ok(OP['create.note'], { deskId: second, folder: folder.id })
+    assert.equal(note.state, 'done')
+    assert.match(String(note.paneId), /^[\w.:-]+$/)
+    await until('the note on that desk', async () => (await deskOf(String(note.paneId))) === second)
+    assert.equal(await active(), first, 'created behind, the desk in view unchanged')
+    const born = await ok(OP['create.agent'], { engine: 'claude', deskId: second, folder: folder.id, name: 'nascido de longe' })
+    await until('the agent born with its pane on that desk', async () => (await deskOf(String(born.slotId))) === second, 60_000)
+    assert.equal(await active(), first)
+    assert.deepEqual(await call(OP['create.note'], { deskId: second, folder: '0123456789abcdef' }), { status: RES_STATUS.notFound, body: { error: 'unknown-folder' } })
+
     // ---- 7. the audit, and what the machine said ----
     console.log('step 7')
     const said = await page.evaluate(() => window.__tether.ext.regency.remoteSaid())
@@ -227,6 +243,11 @@ test('remote acts: the app does from afar what only it knows, with no screen on 
     assert.ok(has('owners.give', 'ok', third))
     assert.ok(has('owners.revoke', 'ok', third))
     assert.ok(has('panes.close', 'ok', bancada))
+    await untilSync(() => { lines = read(); return has('create.agent', 'ok', second) || undefined }, 10_000, 'the creation in the audit')
+    assert.ok(has('create.note', 'ok', second))
+    assert.ok(has('create.note', 'refused:unknown-folder', second))
+    const secondName = (await desks()).find((d) => d.id === second)?.name
+    assert.ok(said.includes(`Feito de longe: nota criada na mesa ${secondName}.`), JSON.stringify(said))
     const text = JSON.stringify(lines)
     for (const t of ['Obra nova', 'Obra da casa']) assert.equal(text.includes(t), false, `${t}: never in the audit`)
 
