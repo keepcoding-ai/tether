@@ -210,7 +210,7 @@ describe('for-agents: the verbs of the owner (X3)', () => {
   }
 
   test('the table: every verb of 3.1 is registered with both exits, an English description and a Portuguese help', () => {
-    const names = ['list', 'open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'hibernate', 'wake', 'give', 'revoke']
+    const names = ['list', 'open', 'send', 'interrupt', 'read-screen', 'last-answer', 'answer', 'command', 'type', 'keys', 'close', 'restart', 'hibernate', 'suspend', 'wake', 'give', 'revoke']
     assert.deepEqual(AGENT_VERBS.map((v) => v.name), names)
     for (const exit of ['mcp', 'cli'] as const) {
       const listed = door.verbs.list(exit).filter((v) => v.verb.ns === 'agents').map((v) => v.verb.name)

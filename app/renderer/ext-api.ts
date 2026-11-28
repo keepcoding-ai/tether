@@ -630,6 +630,13 @@ export interface TetherUi {
      */
     hibernate(paneId: string): Promise<'asleep' | 'already' | 'no-pane'>
     /**
+     * "Suspender guia" for the pane of a slot, as an extension acting for an owner, with no question: the same suspension the
+     * sweep does (the process stops, the pane stays in place and resumes on use). Resolves with 'suspended', 'already',
+     * 'no-pane' (no pane of that slot in the window) or 'cannot' (a shell, a hibernated pane, or an agent that cannot resume
+     * its session in place).
+     */
+    suspend(paneId: string): Promise<'suspended' | 'already' | 'no-pane' | 'cannot'>
+    /**
      * Rows this extension puts in the menu of ANY pane, before the menu's floor ("Copiar link do painel", the close), or, with
      * `place: 'top'`, as the menu's first group (in a manager's menu, after its "Focar guia" and "Fechar guia"). The provider
      * gets the pane and returns its rows (none: an empty list); it runs each time the menu opens. Headings and submenus are

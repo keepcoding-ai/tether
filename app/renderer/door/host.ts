@@ -41,6 +41,8 @@ export interface DoorPort extends Omit<PaneRequestPort, 'resendMap'> {
    * 'already' when it sleeps already; 'no-pane' when the slot has no pane in the window. Absent: 'no-pane'.
    */
   hibernate?(slotId: string): Promise<PaneSleep>
+  /** "Suspender guia" with no question (an owner asked through the door). Absent: 'no-pane'. */
+  suspend?(slotId: string): Promise<PaneSuspend>
   /**
    * "Hibernar mesa" with no question and no switch of the visible desk, leaving `spare` as they are. With a spared pane in it
    * the desk is not marked asleep: only its other panes sleep. `panes`: the ones put to sleep. Absent: 'no-desk'.
@@ -55,6 +57,7 @@ export type DeskWake = 'woke' | 'already' | 'no-desk'
 
 /** What hibernating a pane from an extension did. */
 export type PaneSleep = 'asleep' | 'already' | 'no-pane'
+export type PaneSuspend = 'suspended' | 'already' | 'no-pane' | 'cannot'
 
 export class DoorHost {
   private readonly mapSender: DeskMapSender | undefined
@@ -256,6 +259,11 @@ export class DoorHost {
   /** Hibernates the pane of a slot with no question (an owner asked through the door). */
   hibernate(paneId: string): Promise<PaneSleep> {
     return this.port?.hibernate ? this.port.hibernate(paneId) : Promise.resolve('no-pane')
+  }
+
+  /** Suspends the pane of a slot with no question (an owner asked through the door). */
+  suspend(paneId: string): Promise<PaneSuspend> {
+    return this.port?.suspend ? this.port.suspend(paneId) : Promise.resolve('no-pane')
   }
 
   /** Hibernates a desk with no question, sparing `spare` (an owner asked through the door). */

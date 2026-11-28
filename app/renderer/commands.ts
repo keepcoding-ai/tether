@@ -32,6 +32,8 @@ export interface CommandContext {
   keybindings?: boolean
   /** The active pane is a slot (a terminal or an agent): whether the person marked it unread (`SlotState.attentionHeld`). Absent for any other pane. */
   unread?: boolean
+  /** The active pane is an agent slot: whether the person marked it "Não suspender". Absent for a shell or any other pane. */
+  noSuspend?: boolean
   /** How many pads the side bars have (F10). */
   pads?: number
   /** The current pad: the open one most recently opened or focused. */

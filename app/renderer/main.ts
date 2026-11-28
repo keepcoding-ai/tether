@@ -119,11 +119,11 @@ import { chordOn, contributeKeybindings, formatKeys, keybindingEntries, keyTable
 import { associateLinksFailedSituation, associateLinksSituation, closedTabSituation, linksAssociatedSituation, missingTabSituation } from './situations.ts'
 import { noteUrl, parseTetherUrl, tabUrl } from '../shared/tether-url.ts'
 import { markKeyboardTab, pulseTab, tabCell } from './tab-marks.ts'
-import { closeDeskSituation, closePanelSituation, hibernateSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation, unseenFailedSituation } from './situations.ts'
+import { closeDeskSituation, closePanelSituation, hibernateSituation, suspendSituation, folderName, moveFailedSituation, NO_PROFILE, restartFailedSituation, quitAllSituation, relaunchFailedSituation, reloadAllSituation, switchProfileFailedSituation, switchProfileSituation, switchProfileUnconfirmedSituation, unseenFailedSituation } from './situations.ts'
 import { choiceToRemember, rememberedClose } from '../shared/dialog.ts'
 import { loadTerminalFonts, TerminalThemeDialog, terminalFontsLoaded } from './terminal-theme.ts'
 import { restartDaemonSituation, trayFirstCloseSituation } from './tray-situations.ts'
-import { DEFAULT_SUSPEND, normalizeSuspend, SUSPEND_SWEEP_MS, SuspendBook, sweepSuspend, type SuspendCandidate, type SuspendOutcome, type SuspendSettings } from './suspend.ts'
+import { ALLOW_SUSPEND_LABEL, canSuspendNow, DEFAULT_SUSPEND, isBusyTurn, NO_SUSPEND_LABEL, normalizeSuspend, SUSPEND_SWEEP_MS, SuspendBook, sweepSuspend, type SuspendCandidate, type SuspendOutcome, type SuspendSettings } from './suspend.ts'
 import { watchOverlays } from './overlay-freeze.ts'
 
 const COMPONENT = TERMINAL_COMPONENT
@@ -167,6 +167,14 @@ const door = new DoorHost({
     if (asleepPanes.has(slotId)) return 'already'
     await hibernatePanes([slotId], `da guia "${panelTitle(s)}"`, undefined, false)
     return 'asleep'
+  },
+  suspend: async slotId => {
+    const s = slots.get(slotId)
+    if (!s || !findPanel(slotId)) return 'no-pane'
+    if (suspended.has(slotId)) return 'already'
+    if (!canSuspendNow(s, asleepPanes.has(slotId), false, suspended.isNoSuspend(slotId))) return 'cannot'
+    await suspendPane(slotId, false)
+    return 'suspended'
   },
   hibernateDesk: (deskId, spare) => hibernateDeskFor(deskId, spare),
   wakeDesk: async (deskId, spare) => {
@@ -344,7 +352,7 @@ function commandContext(): CommandContext {
   const pad = sidebars?.current()
   const activeSlot = activeId ? slots.get(activeId) : undefined
   return {
-    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, peekOpen: !!peekCard?.isOpen, focus, ...(keybindings ? { keybindings } : {}),
+    pane: !!activeId, ...(type ? { paneType: type.id } : {}), flags, ...(activeSlot ? { unread: !!activeSlot.attentionHeld } : {}), ...(activeSlot && activeSlot.kind !== 'shell' ? { noSuspend: suspended.isNoSuspend(activeSlot.slotId) } : {}), desks: desks.desks.length, drawerOpen: drawer.isOpen, peekOpen: !!peekCard?.isOpen, focus, ...(keybindings ? { keybindings } : {}),
     pads: padRegistry.all().length, ...(pad ? { pad, padMoved: sidebars!.isMoved(pad) } : {}),
   }
 }
@@ -394,6 +402,7 @@ const host: PanelHost = {
   getSlot: id => slots.get(id),
   isAsleep: id => asleepPanes.has(id),
   isSuspended: id => suspended.has(id) || suspended.isResuming(id),
+  isNoSuspend: id => suspended.isNoSuspend(id),
   takeInput: (id, data) => suspendInput(id, data),
   onUse: id => suspendUse(id),
   attentionOf: id => ({ level: paneAttention(id), lines: attentionLines(slots.get(id)?.attention, seals.messages(id), slots.get(id)?.attentionHeld) }),
@@ -818,9 +827,10 @@ function layoutJSON(): Layout {
   // The system desks: the file's entries stay (an undeclared one keeps its data), the declared ones are replaced by what is mounted.
   let file: Layout = { ...layoutFile, systemDesks: layoutFile.systemDesks ?? {} }
   for (const [id, content] of Object.entries(live.systemDesks)) { const pads = sidebars?.deskPads(id); file = withSystemDesk(file, id, pads ? { ...content, pads } : content) }
-  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, suspendedPanes: _suspended, ...rest } = file
+  const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, suspendedPanes: _suspended, noSuspendPanes: _noSuspend, ...rest } = file
   const suspendedIds = suspended.toLayout()?.filter(id => slots.has(id))
-  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes], ...(suspendedIds?.length ? { suspendedPanes: suspendedIds } : {}) }
+  const noSuspendIds = suspended.noSuspendToLayout()?.filter(id => slots.has(id))
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes], ...(suspendedIds?.length ? { suspendedPanes: suspendedIds } : {}), ...(noSuspendIds?.length ? { noSuspendPanes: noSuspendIds } : {}) }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars
@@ -1283,6 +1293,20 @@ function loadDeskSlept(saved: string[] | undefined, keep: (id: string) => boolea
   const seeded = new Set<string>()
   for (const d of desks.desks) if (d.asleep) for (const p of deskPanes(d.id)) if (asleepPanes.has(p.id) && keep(p.id)) seeded.add(p.id)
   return seeded
+}
+
+/** "Suspender guia": a running agent that resumes its session in place, not hibernated or suspended already. */
+function suspendMenuEntry(slotId: string): MenuEntry[] {
+  if (!canSuspendNow(slots.get(slotId), asleepPanes.has(slotId), suspended.has(slotId), suspended.isNoSuspend(slotId))) return []
+  return [{ icon: 'leaf', label: 'Suspender guia', run: () => { void suspendPane(slotId) } }]
+}
+
+/** "Não suspender" / "Permitir suspender": the mark that keeps an agent pane out of the suspension (a shell is never suspended). */
+function noSuspendMenuEntry(slotId: string): MenuEntry[] {
+  const s = slots.get(slotId)
+  if (!s || s.kind === 'shell') return []
+  const on = suspended.isNoSuspend(slotId)
+  return [{ icon: 'push-pin', label: on ? ALLOW_SUSPEND_LABEL : NO_SUSPEND_LABEL, checked: on, run: () => setNoSuspend(slotId, !on) }]
 }
 
 /** "Hibernar guia": a live pane that is not restarting or stopping. */
@@ -2778,6 +2802,7 @@ async function restoreLayout(): Promise<void> {
     layoutFile = layout
     asleepPanes = new Set((layout.asleepPanes ?? []).filter(id => slots.has(id)))
     suspended.load(layout.suspendedPanes, id => slots.has(id) && !asleepPanes.has(id))
+    suspended.loadNoSuspend(layout.noSuspendPanes, id => slots.has(id))
     // The geometry painted at startup had every pane of the file; only when the daemon does not list some is the
     // desk rebuilt from the pruned JSON (the same loss-proof path: grid refused → frames side by side, frame
     // refused → panes one by one). Nothing is attached yet, so the rebuild loses nothing.
@@ -2818,6 +2843,7 @@ function paintGeometry(): Promise<ReturnType<typeof migrateLayout>> {
     const result = migrateLayout(raw)
     if (result && !layoutRestored) asleepPanes = new Set(result.layout.asleepPanes ?? [])
     if (result && !layoutRestored) suspended.load(result.layout.suspendedPanes, id => !asleepPanes.has(id))
+    if (result && !layoutRestored) suspended.loadNoSuspend(result.layout.noSuspendPanes, () => true)
     if (result && !layoutRestored) { desks.load(result.layout); drawer.load(drawerOf(result.layout)); sidebars?.load(result.layout.sidebars, deskPadsOf(result.layout)) }
     if (result && !layoutRestored) deskSleptPanes = loadDeskSlept(result.layout.deskSleptPanes, () => true)
     return result
@@ -2899,6 +2925,13 @@ function applySuspend(slotId: string, o: SuspendOutcome): void {
   if (o.flush) window.tether.notice({ t: 'input', slotId, data: o.flush })
 }
 
+/** "Não suspender" on or off for an agent pane; marking a suspended pane resumes it. */
+function setNoSuspend(slotId: string, on: boolean): void {
+  const s = slots.get(slotId)
+  if (!s || s.kind === 'shell') return
+  applySuspend(slotId, suspended.setNoSuspend(slotId, on))
+}
+
 /** The person's input to a pane: true when it is held (the pane is suspended or resuming) and goes once the agent is up. */
 function suspendInput(slotId: string, data: string): boolean {
   paneUse.set(slotId, Date.now())
@@ -2926,6 +2959,33 @@ function focusedPaneIds(): Set<string> {
   return ids
 }
 
+/**
+ * Suspends panes now: the map says "suspended" before the processes stop, so whatever needs a pane from now on resumes it.
+ * Shared by the sweep and the manual suspension, so the state, the seal and the resume are the same.
+ */
+async function suspendNowPanes(ids: string[]): Promise<void> {
+  for (const id of ids) suspended.suspendNow(id)
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
+  await window.tether.saveLayout(layoutJSON())
+  door.layoutSaved()
+  await Promise.all(ids.map(id => window.tether.request({ t: 'stop', slotId: id })))
+  for (const id of ids) renderSlot(id)
+  refreshSessions()
+}
+
+/**
+ * "Suspender guia" by hand, the alternative to hibernating: the pane stays in place and comes back on use. A mid-turn agent is
+ * only stopped after the person confirms (`ask: false`: an owner asked through the door and decided).
+ */
+async function suspendPane(slotId: string, ask = true): Promise<void> {
+  const s = slots.get(slotId)
+  if (!s || !canSuspendNow(s, asleepPanes.has(slotId), suspended.has(slotId), suspended.isNoSuspend(slotId))) return
+  if (ask && isBusyTurn(s) && (await askDialog(suspendSituation(`da guia "${panelTitle(s)}"`, [s]))).choice !== 'suspend') return
+  const now = slots.get(slotId)
+  if (!now || !canSuspendNow(now, asleepPanes.has(slotId), suspended.has(slotId), suspended.isNoSuspend(slotId))) return // changed while the dialog was open
+  await suspendNowPanes([slotId])
+}
+
 /** ONE sweep for every pane: suspends the idle agents nobody uses (never a timer per pane: dozens of agents must scale). */
 async function sweepIdlePanes(): Promise<void> {
   if (!layoutRestored || !suspendSettings.enabled) return
@@ -2936,18 +2996,10 @@ async function sweepIdlePanes(): Promise<void> {
   for (const panel of allPanels()) {
     const slot = slots.get(panel.id)
     if (!slot) continue
-    candidates.push({ slot, lastUse: paneUse.get(panel.id), focused: focused.has(panel.id), asleep: asleepPanes.has(panel.id), suspended: suspended.has(panel.id) })
+    candidates.push({ slot, lastUse: paneUse.get(panel.id), focused: focused.has(panel.id), asleep: asleepPanes.has(panel.id), suspended: suspended.has(panel.id), noSuspend: suspended.isNoSuspend(panel.id) })
   }
   const ids = sweepSuspend(candidates, suspendSettings, now, appStart)
-  if (ids.length === 0) return
-  for (const id of ids) suspended.suspend(id)
-  // The map says "suspended" before the processes stop: whatever needs a pane from now on resumes it.
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
-  await window.tether.saveLayout(layoutJSON())
-  door.layoutSaved()
-  await Promise.all(ids.map(id => window.tether.request({ t: 'stop', slotId: id })))
-  for (const id of ids) renderSlot(id)
-  refreshSessions()
+  if (ids.length > 0) await suspendNowPanes(ids)
 }
 
 async function readSuspendSettings(): Promise<void> {
@@ -3780,6 +3832,8 @@ function slotMenuEntries(slot: SlotState): MenuEntry[] {
     { icon: 'pencil-simple', label: 'Renomear…', run: () => tabs.get(slotId)?.startRename() },
     { icon: 'sliders-horizontal', label: 'Trocar perfil…', standalone: true, run: () => { void switchProfile(slotId) } },
     ...restartMenuEntry(slotId),
+    ...suspendMenuEntry(slotId),
+    ...noSuspendMenuEntry(slotId),
     ...hibernateMenuEntry(slotId),
     ...unreadMenuEntry(slotId),
     SEP,
@@ -4394,6 +4448,8 @@ const commandHost: CommandHost = {
     showContextMenu(Math.round(innerWidth / 2) - 120, 80, [{ heading: 'Guias hibernadas' }, ...items])
   },
   toggleUnread: id => { const s = slots.get(id); if (s) void setUnread(id, !s.attentionHeld) },
+  suspendPane: id => { void suspendPane(id) },
+  toggleNoSuspend: id => setNoSuspend(id, !suspended.isNoSuspend(id)),
   hibernatePane: id => { const s = slots.get(id); if (s && (isLiveSlot(s) || suspended.has(id))) void hibernatePanes([id], `da guia "${panelTitle(s)}"`) },
   toggleDetails: id => { if (slots.has(id)) togglePaneDetails(id) },
   copyLink: id => copyPaneLink(id),
@@ -5547,6 +5603,7 @@ function activateRendererExtensions(): void {
         rename: (paneId, name) => renamePaneTo(paneId, name),
         closeGuide: (paneId, opts) => door.closeGuide(paneId, opts?.process),
         hibernate: paneId => door.hibernate(paneId),
+        suspend: paneId => door.suspend(paneId),
         tabMenu: (provider, opts) => add(door.paneMenu(id, provider, opts)),
       },
       desks: {

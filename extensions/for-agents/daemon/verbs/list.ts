@@ -7,11 +7,11 @@ import { ok, me, offOf, optFlag, optString, paneName, paneTypeOf, targetOf, type
 
 type Relation = 'command' | 'see' | 'self'
 
-/** Whether the app's desk map shows the pane asleep (in a desk or in the drawer). */
-function asleepIn(deps: VerbDeps, paneId: string): boolean {
+/** What the app's desk map says of the pane (in a desk or in the drawer): hibernated (`asleep`) or suspended to save resources. */
+export function sleepMarkOf(deps: VerbDeps, paneId: string): { asleep: boolean; suspended: boolean; noSuspend: boolean } {
   const map = deps.api.desks.map()
   const hit = map?.desks.flatMap((d) => d.panes).find((p) => p.id === paneId) ?? map?.drawer.find((p) => p.id === paneId)
-  return hit?.asleep === true
+  return { asleep: hit?.asleep === true, suspended: hit?.suspended === true, noSuspend: hit?.noSuspend === true }
 }
 
 function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string, unknown> | undefined {
@@ -43,7 +43,10 @@ function paneEntry(deps: VerbDeps, owner: string, paneId: string): Record<string
   // 'waiting' is a permission card; telling a question from it takes the screen (`read-screen` says which).
   if (asks) entry.asks = asks === 'waiting' ? 'permission' : 'done'
   // The sleep is the app's: it publishes it in the desk map (`asleep` on the pane).
-  if (asleepIn(deps, paneId)) entry.asleep = true
+  const mark = sleepMarkOf(deps, paneId)
+  if (mark.asleep) entry.asleep = true
+  else if (mark.suspended) entry.suspended = true
+  if (mark.noSuspend) entry.noSuspend = true
   if (last) entry.last = last
   return entry
 }
@@ -77,7 +80,7 @@ export const listVerb: VerbDef = {
       .map(([id]) => paneEntry(deps, owner, id)).filter(keep)
     // The owner's own pane, "de si", is in `ownedPanes` already (its owner is itself).
     const total = desks.reduce((n, d) => n + d.panes.length, 0) + panes.length
-    const line = (e: Record<string, unknown>): string => `  - ${e.name} (${e.kind ?? e.type}, ${e.asleep ? 'hibernada' : e.turn === 'busy' ? 'em turno' : 'parada'})`
+    const line = (e: Record<string, unknown>): string => `  - ${e.name} (${e.kind ?? e.type}, ${e.asleep ? 'hibernada' : e.suspended ? 'suspensa' : e.turn === 'busy' ? 'em turno' : 'parada'})`
     const lines = [
       ...desks.flatMap((d) => [`Mesa "${d.name}"${'asleep' in d ? ' (hibernada)' : ''}:`, ...(d.panes.length === 0 ? ['  sem guias'] : d.panes.map(line))]),
       ...(panes.length > 0 ? ['Guias fora de mesas:', ...panes.map(line)] : []),

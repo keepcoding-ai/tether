@@ -27,7 +27,7 @@ import { IS_MAC, paneShortcutOf, shortcutHint } from './shortcuts.ts'
 import { folderName } from './situations.ts'
 import { slotTitle } from '../shared/agent-info.ts'
 import { loadingStage, type PaneHint } from './loading.ts'
-import { RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
+import { isMouseMotion, NO_SUSPEND_TIP, RESUMING_LABEL, SUSPENDED_LABEL, SUSPENDED_TIP } from './suspend.ts'
 import { applyAppearance, loadTerminalFonts, TerminalAddons, terminalFontsLoaded, type TerminalRenderer } from './terminal-theme.ts'
 import { mountTabEmblem, setTabLetter } from './tab-emblems.ts'
 import { letterOf } from './agent-identity-rules.ts'
@@ -234,6 +234,8 @@ export interface PanelHost {
   isAsleep?(slotId: string): boolean
   /** The app stopped the pane's idle agent to save resources (suspend.ts): it keeps its screen and resumes when used. */
   isSuspended?(slotId: string): boolean
+  /** The person marked the pane "Não suspender": the tab wears a discreet pin. */
+  isNoSuspend?(slotId: string): boolean
   /** The person's input before it goes to the pane: true when the host holds it (a suspended pane resuming). */
   takeInput?(slotId: string, data: string): boolean
   /** A click or a scroll in the pane's terminal (use of the pane; resumes a suspended one). */
@@ -526,6 +528,13 @@ export class TerminalPanel implements IContentRenderer {
     }
     this.term.onData(data => {
       if (!this.slotId) return
+      // Mouse movement with no button (a program with mouse mode on gets one report per pointer move) is not use of the
+      // pane: it never resumes a suspended pane, is dropped while suspended or resuming (it must not reach the agent when it
+      // returns), and while the agent is up it goes through without renewing the pane's last use.
+      if (isMouseMotion(data)) {
+        if (!this.host.isSuspended?.(this.slotId)) window.tether.notice({ t: 'input', slotId: this.slotId, data })
+        return
+      }
       if (this.host.takeInput?.(this.slotId, data)) return
       perfKey(this.slotId)
       if (PROBE) window.tether.notice({ t: 'input', slotId: this.slotId, data, probe: startProbe(++probeSeq) }) // renderer-send stamp
@@ -977,6 +986,7 @@ export class SlotTab implements ITabRenderer {
   private readonly dot: HTMLElement
   private readonly unsafe: HTMLElement
   private readonly ronda: HTMLElement
+  private readonly pin: HTMLElement
   private readonly attn: HTMLElement
   /** The eye while the pane's terminal is lent to the peek card. */
   private readonly spied: HTMLElement
@@ -992,11 +1002,12 @@ export class SlotTab implements ITabRenderer {
     this.dot = document.createElement('span'); this.dot.className = 'dot'; this.dot.append(icon('circle-fill'))
     this.unsafe = unsafeBadge(false)
     this.ronda = document.createElement('span'); this.ronda.className = 'ronda-mark'; this.ronda.hidden = true; this.ronda.append(icon('timer'))
+    this.pin = document.createElement('span'); this.pin.className = 'pin-mark'; this.pin.hidden = true; this.pin.title = NO_SUSPEND_TIP; this.pin.append(icon('push-pin'))
     this.attn = document.createElement('span'); this.attn.className = 'attn'
     this.attn.addEventListener('click', () => { if (this.api) this.host.onSealClick?.(this.api.id) })
     this.spied = document.createElement('span'); this.spied.className = 'peek-mark'; this.spied.hidden = true; this.spied.append(icon('eye'))
     const h = createTabHeader({
-      emblems: [this.attn, this.unsafe, this.ronda, this.spied], dot: this.dot,
+      emblems: [this.attn, this.unsafe, this.ronda, this.pin, this.spied], dot: this.dot,
       close: { label: 'Fechar painel', onClose: () => { if (this.api) this.onClose(this.api.id) } },
       onMenu: ev => { if (this.api) this.host.onTabMenu(this.api.id, ev) },
       onDblClick: () => this.startRename(),
@@ -1047,6 +1058,8 @@ export class SlotTab implements ITabRenderer {
     if (this.dot.title !== dotTip) this.dot.title = dotTip
     if (this.unsafe.hidden !== !s?.unsafe) this.unsafe.hidden = !s?.unsafe
     if (this.ronda.hidden !== !s?.ronda) this.ronda.hidden = !s?.ronda
+    const pinned = !!s && s.kind !== 'shell' && !!this.host.isNoSuspend?.(this.api.id)
+    if (this.pin.hidden !== !pinned) this.pin.hidden = !pinned
     if (s?.ronda) setAttr(this.ronda, 'title', rondaTooltip(s.ronda).replace(/\nClique para desligar\.$/, ''))
     const lentTip = this.host.lentTip?.(this.api.id)
     if (this.spied.hidden !== !lentTip) this.spied.hidden = !lentTip

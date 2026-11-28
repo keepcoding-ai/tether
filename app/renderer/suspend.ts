@@ -18,6 +18,11 @@ export const SUSPENDED_LABEL = 'Suspensa'
 export const SUSPENDED_TIP = 'Suspensa para economizar recursos — retoma ao usar'
 export const RESUMING_LABEL = 'Retomando…'
 
+/** The "Não suspender" mark: the menu's pair of labels, the palette's pair of titles and the tab's tip. */
+export const NO_SUSPEND_LABEL = 'Não suspender'
+export const ALLOW_SUSPEND_LABEL = 'Permitir suspender'
+export const NO_SUSPEND_TIP = 'Não suspende'
+
 /** One pane as the sweep sees it. */
 export interface SuspendCandidate {
   slot: SlotState
@@ -29,6 +34,8 @@ export interface SuspendCandidate {
   asleep: boolean
   /** Already suspended. */
   suspended: boolean
+  /** The person marked the pane "Não suspender" (layout `noSuspendPanes`). */
+  noSuspend?: boolean
 }
 
 /**
@@ -38,7 +45,7 @@ export interface SuspendCandidate {
  * that does not have the focus. `appStart` stands in for an unknown last use (the app just opened).
  */
 export function shouldSuspend(c: SuspendCandidate, settings: SuspendSettings, now: number, appStart: number): boolean {
-  if (!settings.enabled || c.focused || c.asleep || c.suspended) return false
+  if (!settings.enabled || c.focused || c.asleep || c.suspended || c.noSuspend) return false
   const s = c.slot
   if (s.kind === 'shell' || s.status !== 'running' || s.restarting || s.stopping || s.canRestart !== true) return false
   if (s.turn === 'busy' || (s.background ?? 0) > 0) return false
@@ -48,6 +55,20 @@ export function shouldSuspend(c: SuspendCandidate, settings: SuspendSettings, no
   if (!Number.isFinite(idleSince) || now - idleSince < limit) return false
   return now - (c.lastUse ?? appStart) >= limit
 }
+
+/**
+ * Whether the person (or an owner agent) may suspend this pane by hand, as the alternative to hibernating it: an agent that
+ * is up and resumes its session in place (the sweep's own conditions on the slot), not hibernated, not suspended already.
+ * Idle time, focus and a busy turn do not matter here: a busy turn is only asked about (see `isBusyTurn`). A pane marked
+ * "Não suspender" (`noSuspend`) is never suspended, by the sweep or by hand.
+ */
+export function canSuspendNow(slot: SlotState | undefined, asleep: boolean, suspended: boolean, noSuspend = false): boolean {
+  if (!slot || asleep || suspended || noSuspend) return false
+  return slot.kind !== 'shell' && slot.status === 'running' && !slot.restarting && !slot.stopping && slot.canRestart === true
+}
+
+/** The agent is mid-turn (or has background subagents): stopping it now cuts the work. */
+export const isBusyTurn = (s: SlotState): boolean => s.turn === 'busy' || (s.background ?? 0) > 0
 
 /** The panes to suspend in this sweep. */
 export function sweepSuspend(candidates: Iterable<SuspendCandidate>, settings: SuspendSettings, now: number, appStart: number): string[] {
@@ -86,6 +107,28 @@ export class ResumeInput {
   drop(slotId: string): void { this.held.delete(slotId) }
 }
 
+/**
+ * Terminal mouse reports that are only movement (the pointer hovering, or dragging with a button already down): SGR
+ * `CSI < b ; x ; y M|m` and X10 `CSI M b x y`, with the motion bit (32) in `b` and not the wheel bit (64). A program that
+ * turns the mouse mode on (Claude Code) gets one per pointer move; they are not use of the pane (they neither resume it
+ * nor renew its last use) and are dropped while the pane is suspended. Clicks, the wheel, keys and paste are not motion.
+ */
+const SGR_REPORT = /^\x1b\[<(\d+);\d+;\d+[Mm]/
+const motionCode = (b: number): boolean => (b & 32) !== 0 && (b & 64) === 0
+export function isMouseMotion(data: string): boolean {
+  let i = 0
+  if (!data) return false
+  while (i < data.length) {
+    const rest = data.slice(i)
+    const sgr = SGR_REPORT.exec(rest)
+    if (sgr) { if (!motionCode(Number(sgr[1]))) return false; i += sgr[0].length; continue }
+    // X10: ESC [ M, then button, column and row, each a character of code value + 32.
+    if (rest.startsWith('\x1b[M') && rest.length >= 6) { if (!motionCode(rest.charCodeAt(3) - 32)) return false; i += 6; continue }
+    return false
+  }
+  return true
+}
+
 /** What the panes' suspension asks of main.ts after an event. */
 export interface SuspendOutcome {
   /** The set of suspended panes changed: the layout (and the desk map) must be saved. */
@@ -106,6 +149,8 @@ const NOTHING: SuspendOutcome = { changed: false }
  */
 export class SuspendBook {
   private suspended = new Set<string>()
+  /** Panes the person marked "Não suspender" (layout `noSuspendPanes`): the sweep and the manual suspension skip them. */
+  private noSuspend = new Set<string>()
   /** Panes whose resume this app started and whose agent is not up yet: the person's input waits meanwhile. */
   private readonly resuming = new Set<string>()
   private readonly input = new ResumeInput()
@@ -118,6 +163,26 @@ export class SuspendBook {
   /** For the layout file; undefined when none is suspended (the key stays out). */
   toLayout(): string[] | undefined { return this.suspended.size ? [...this.suspended] : undefined }
 
+  /** From the layout file: the ids marked "Não suspender" that still have a pane. */
+  loadNoSuspend(ids: readonly string[] | undefined, keep: (id: string) => boolean): void {
+    this.noSuspend = new Set((ids ?? []).filter(keep))
+  }
+
+  /** For the layout file; undefined when none is marked. */
+  noSuspendToLayout(): string[] | undefined { return this.noSuspend.size ? [...this.noSuspend] : undefined }
+
+  isNoSuspend(id: string): boolean { return this.noSuspend.has(id) }
+
+  /** Marks or unmarks "Não suspender". Marking a suspended pane resumes it (the mark is saved either way). */
+  setNoSuspend(id: string, on: boolean): SuspendOutcome {
+    if (on === this.noSuspend.has(id)) return NOTHING
+    if (!on) { this.noSuspend.delete(id); return { changed: true } }
+    this.noSuspend.add(id)
+    if (!this.suspended.has(id) || this.resuming.has(id)) return { changed: true }
+    this.resuming.add(id)
+    return { changed: true, resume: true }
+  }
+
   has(id: string): boolean { return this.suspended.has(id) }
   isResuming(id: string): boolean { return this.resuming.has(id) }
   get size(): number { return this.suspended.size }
@@ -128,6 +193,9 @@ export class SuspendBook {
     this.suspended.add(id)
     return { changed: true }
   }
+
+  /** A manual suspension (the menu, the palette or an owner's `agents suspend`): the same state the sweep sets. */
+  suspendNow(id: string): SuspendOutcome { return this.suspend(id) }
 
   /** The pane was hibernated: it is asleep now, not suspended. */
   hibernated(id: string): SuspendOutcome {
@@ -178,6 +246,7 @@ export class SuspendBook {
   forget(id: string): SuspendOutcome {
     this.resuming.delete(id)
     this.input.drop(id)
-    return { changed: this.suspended.delete(id) }
+    const unmarked = this.noSuspend.delete(id)
+    return { changed: this.suspended.delete(id) || unmarked }
   }
 }

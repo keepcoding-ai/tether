@@ -49,7 +49,12 @@ export function deskMapOf(layout: Layout, typeOf: PaneTypeOf, nameOf: (systemDes
   // A suspended pane (layout `suspendedPanes`) too: whatever needs it from outside resumes it first.
   const asleep = new Set(layout.asleepPanes ?? [])
   const suspended = new Set(layout.suspendedPanes ?? [])
-  const mark = (panes: DeskMapPane[]): DeskMapPane[] => panes.map(p => (asleep.has(p.id) ? { ...p, asleep: true as const } : suspended.has(p.id) ? { ...p, suspended: true as const } : p))
+  // A pane marked "Não suspender" (layout `noSuspendPanes`) says so too, whatever else it is.
+  const noSuspend = new Set(layout.noSuspendPanes ?? [])
+  const mark = (panes: DeskMapPane[]): DeskMapPane[] => panes.map(p => {
+    const q = asleep.has(p.id) ? { ...p, asleep: true as const } : suspended.has(p.id) ? { ...p, suspended: true as const } : p
+    return noSuspend.has(p.id) ? { ...q, noSuspend: true as const } : q
+  })
   const desks: DeskMapDesk[] = layout.desks.map(d => ({
     id: d.id,
     name: d.name || d.id,
