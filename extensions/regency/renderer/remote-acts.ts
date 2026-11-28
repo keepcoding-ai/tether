@@ -13,7 +13,7 @@ import type { IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
 import type { OwnerBoard } from '../../for-agents/renderer/owner-board.ts'
 import type { Ownership } from '../../for-agents/rules.ts'
 import {
-  ACT_TAKE, APP_ACT_DONE, APP_ACT_EVENT, parseAppAct, type AppAct, type AppActCode, type AppActDoneArgs, type AppActEvent,
+  ACT_TAKE, APP_ACT_DONE, APP_ACT_EVENT, parseAppAct, seenMatches, type AppAct, type AppActCode, type AppActDoneArgs, type AppActEvent,
 } from '../../../src/remote/app-acts.ts'
 import { folderId } from '../../../src/remote/create.ts'
 
@@ -72,6 +72,13 @@ export function remoteActRunner(ui: RemoteActsUi, deps: RemoteActsDeps): (a: App
   })
 
   return async (a: AppAct): Promise<Outcome> => {
+    // What destroys or changes who holds a desk or a pane names the desk as the device saw it (RR5 M-1): a desk of that id
+    // under another name now is not the one the person confirmed, and nothing is done.
+    if ('seen' in a) {
+      const desk = ui.desks.list().find(d => d.id === a.deskId)
+      if (!desk) return no('unknown-desk')
+      if (!seenMatches(a, desk.name)) return no('stale')
+    }
     switch (a.act) {
       case 'desks.hibernate': {
         const r = await ui.desks.hibernate(a.deskId)

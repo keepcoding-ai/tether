@@ -78,10 +78,27 @@ export function deskTokens(color: DeskHue): DeskTokens {
   return { fill: `var(--x-${hue})`, foreground: `var(--x-${hue}-foreground)`, text: `var(--x-${hue}-text)` }
 }
 
-/** `desk-N` with the smallest N not in use. */
-export function nextDeskId(desks: readonly DeskInfo[]): string {
-  const used = new Set(desks.map(d => d.id))
-  for (let i = 1; ; i++) if (!used.has(`desk-${i}`)) return `desk-${i}`
+/** The N of a `desk-N` id; 0 for any other id. */
+export function deskIdNumber(id: string): number {
+  const m = /^desk-([1-9]\d{0,8})$/.exec(id)
+  return m ? Number(m[1]) : 0
+}
+
+/**
+ * The desk counter: the highest N ever handed out as `desk-N`. It is kept in layout.json (`deskSeq`) and never goes below
+ * the highest N in use, so a file without it (or with a stale one) reads as the desks it has.
+ */
+export function deskSeqOf(desks: readonly { id: string }[], stored?: unknown): number {
+  const kept = typeof stored === 'number' && Number.isSafeInteger(stored) && stored > 0 ? stored : 0
+  return desks.reduce((n, d) => Math.max(n, deskIdNumber(d.id)), kept)
+}
+
+/**
+ * `desk-N` one above the counter: an id is never handed out twice, so a closed desk's id never comes back on a newer desk
+ * (an act confirmed for one desk, from afar, can never land on another that inherited its id).
+ */
+export function nextDeskId(desks: readonly DeskInfo[], seq = 0): string {
+  return `desk-${deskSeqOf(desks, seq) + 1}`
 }
 
 /** "Mesa N" with the smallest N not in use as a name. */
@@ -99,12 +116,15 @@ export function nextDeskColor(desks: readonly DeskInfo[]): DeskHue {
   return best
 }
 
-/** A new desk (id, name, colour) inserted before or after `relativeTo` (at the end when it is unknown). */
-export function insertDesk(desks: readonly DeskInfo[], relativeTo: string | undefined, side: 'before' | 'after'): { desks: DeskInfo[]; desk: DeskInfo } {
-  const desk: DeskInfo = { id: nextDeskId(desks), name: nextDeskName(desks), color: nextDeskColor(desks) }
+/**
+ * A new desk (id, name, colour) inserted before or after `relativeTo` (at the end when it is unknown); `seq` is the desk
+ * counter (deskSeqOf) and the answer carries the new one.
+ */
+export function insertDesk(desks: readonly DeskInfo[], relativeTo: string | undefined, side: 'before' | 'after', seq = 0): { desks: DeskInfo[]; desk: DeskInfo; seq: number } {
+  const desk: DeskInfo = { id: nextDeskId(desks, seq), name: nextDeskName(desks), color: nextDeskColor(desks) }
   const i = desks.findIndex(d => d.id === relativeTo)
   const at = i < 0 ? desks.length : side === 'before' ? i : i + 1
-  return { desks: [...desks.slice(0, at), desk, ...desks.slice(at)], desk }
+  return { desks: [...desks.slice(0, at), desk, ...desks.slice(at)], desk, seq: deskIdNumber(desk.id) }
 }
 
 /** A trimmed, length-limited name; undefined when nothing is left (the rename is refused). */

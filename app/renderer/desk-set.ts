@@ -9,7 +9,7 @@
 import type { AddPanelOptions, DockviewTheme, IDockviewPanel } from 'dockview-core'
 import type { Target } from './create.ts'
 import { Desk, type DeskHost, transferFrame, transferPanel } from './desk.ts'
-import { closeDesk, type DeskHue, type DeskInfo, insertDesk, moveDesk, readDeskColor, recolorDesk, renameDesk, setDeskAsleep, touchMru } from './desks.ts'
+import { closeDesk, deskSeqOf, type DeskHue, type DeskInfo, insertDesk, moveDesk, nextDeskId, readDeskColor, recolorDesk, renameDesk, setDeskAsleep, touchMru } from './desks.ts'
 import { emptyDesk, isSystemDeskId, queueDesks, resolveActiveDesk, type DeskLayout, type Layout, type SystemDeskLayout } from './layout.ts'
 
 export interface DeskSetHost {
@@ -31,7 +31,7 @@ interface Mounted { desk: Desk; layer: HTMLElement }
 export interface SystemDeskInfo { id: string; name: string; color?: DeskHue }
 
 /** The layout fields the set reads and writes: the queue, the active desk (a queue id or a declared system id) and the system desks. */
-export type DeskSetLayout = Pick<Layout, 'desks' | 'activeDesk'> & Partial<Pick<Layout, 'systemDesks'>>
+export type DeskSetLayout = Pick<Layout, 'desks' | 'activeDesk'> & Partial<Pick<Layout, 'systemDesks' | 'deskSeq'>>
 
 export class DeskSet {
   private readonly container: HTMLElement
@@ -49,6 +49,8 @@ export class DeskSet {
   private saved: Record<string, SystemDeskLayout> = {}
   /** A system desk the file left active that nobody declared yet: it opens as soon as it is declared (until the person switches). */
   private pendingActive: string | undefined
+  /** The highest N ever handed out as `desk-N` (desks.ts deskSeqOf): a new desk never takes a closed desk's id. */
+  private seq = 0
 
   constructor(container: HTMLElement, host: DeskSetHost, theme: DockviewTheme) {
     this.container = container
@@ -168,8 +170,9 @@ export class DeskSet {
    * `activate: false` it is mounted hidden and the visible desk stays.
    */
   create(side: 'before' | 'after', relativeTo = this.activeId, opts?: { activate?: boolean }): string {
-    const { desks, desk } = insertDesk(this.row, relativeTo, side)
+    const { desks, desk, seq } = insertDesk(this.row, relativeTo, side, this.seq)
     this.row = desks
+    this.seq = seq
     const m = this.mount(desk)
     m.desk.fromEmpty()
     if (opts?.activate === false) { this.paint(); this.host.onDesksChange() }
@@ -280,7 +283,7 @@ export class DeskSet {
   // ---------- persistence ----------
 
   /** The queue and the active desk; `systemDesks` holds the declared system desks only (the file's other entries are the caller's to keep). */
-  toJSON(): Pick<Layout, 'desks' | 'activeDesk' | 'systemDesks'> {
+  toJSON(): Pick<Layout, 'desks' | 'activeDesk' | 'systemDesks'> & { deskSeq: number } {
     const desks: DeskLayout[] = []
     for (const info of this.row) { const m = this.mounted.get(info.id); if (m) desks.push({ ...m.desk.toJSON(), ...info }) }
     const systemDesks: Layout['systemDesks'] = {}
@@ -290,7 +293,7 @@ export class DeskSet {
       const { frames, activeFrame } = m.desk.toJSON()
       systemDesks[id] = { frames, ...(activeFrame ? { activeFrame } : {}) }
     }
-    return { desks, activeDesk: this.activeId, systemDesks }
+    return { desks, activeDesk: this.activeId, systemDesks, deskSeq: deskSeqOf(this.row, this.seq) }
   }
 
   private disposeAll(): void {
@@ -314,6 +317,8 @@ export class DeskSet {
       this.row.push(info)
       this.mount(info).desk.fromJSON(d)
     }
+    // The counter survives the load (and an empty file's fresh desk): kept ids are never handed out again.
+    this.seq = deskSeqOf(this.row, Math.max(this.seq, deskSeqOf([], layout.deskSeq)))
     if (this.row.length === 0) { this.fromEmpty(); return }
     for (const info of this.system.values()) this.mountSystem(info)
     const active = resolveActiveDesk({ ...file, desks: queueDesks(file) }, new Set(this.system.keys()))
@@ -328,8 +333,10 @@ export class DeskSet {
   fromEmpty(): void {
     this.disposeAll()
     const d = emptyDesk()
-    const info: DeskInfo = { id: d.id, name: d.name, color: d.color }
+    // After a load that left no desk, the counter still holds: the fresh desk takes the next id, never an old one.
+    const info: DeskInfo = { id: this.seq > 0 ? nextDeskId([], this.seq) : d.id, name: d.name, color: d.color }
     this.row = [info]
+    this.seq = deskSeqOf(this.row, this.seq)
     this.mount(info).desk.fromEmpty()
     for (const sys of this.system.values()) this.mountSystem(sys)
     this.activeId = info.id

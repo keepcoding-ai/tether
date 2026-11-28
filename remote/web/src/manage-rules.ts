@@ -358,6 +358,7 @@ export function refusalWords(code: string): string {
     case 'busy': return 'Outro pedido espera a máquina agora. Tente de novo em instantes.'
     case 'slow-down': return 'Pedidos demais em seguida. Espere um pouco.'
     case 'unknown-desk': return 'Essa mesa não existe mais.'
+    case 'stale': return 'A mesa mudou; confira e tente de novo.'
     case 'unknown-pane': return 'A guia não está mais nessa mesa.'
     case 'unknown-slot': return 'Essa sessão não existe mais.'
     case 'unknown-agent': return 'Esse agente não existe mais.'

@@ -831,7 +831,7 @@ function layoutJSON(): Layout {
   const { asleepPanes: _asleep, deskSleptPanes: _deskSlept, suspendedPanes: _suspended, noSuspendPanes: _noSuspend, ...rest } = file
   const suspendedIds = suspended.toLayout()?.filter(id => slots.has(id))
   const noSuspendIds = suspended.noSuspendToLayout()?.filter(id => slots.has(id))
-  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes], ...(suspendedIds?.length ? { suspendedPanes: suspendedIds } : {}), ...(noSuspendIds?.length ? { noSuspendPanes: noSuspendIds } : {}) }
+  const out: Layout = { ...rest, v: 4, desks: deskList, activeDesk: live.activeDesk, deskSeq: live.deskSeq, drawer: drawer.toJSON(), sidebars: sidebars?.toJSON() ?? layoutFile.sidebars, workspace: workspaceState, ...(asleepPanes.size ? { asleepPanes: [...asleepPanes] } : {}), deskSleptPanes: [...deskSleptPanes], ...(suspendedIds?.length ? { suspendedPanes: suspendedIds } : {}), ...(noSuspendIds?.length ? { noSuspendPanes: noSuspendIds } : {}) }
   if (!sidebars) return out
   // The panel frames' records follow what is live now (panel label, desk, last change): written into the side bars before saving.
   const { meta: _stale, ...bars } = out.sidebars

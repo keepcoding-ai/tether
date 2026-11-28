@@ -145,19 +145,41 @@ describe('the bridge of acts: what tetherd confers alone', () => {
       [{ act: 'closed.reopen', slotId: 's_4', deskId: 'desk-2' }, 'not-closed'],
       [{ act: 'closed.reopen', slotId: 'nao_ha', deskId: 'desk-2' }, 'unknown-slot'],
       [{ act: 'closed.forget', slotId: 's_2' }, 'not-closed'],
-      [{ act: 'owners.give', deskId: 'desk-1', to: 'nao_ha' }, 'unknown-agent'],
-      [{ act: 'owners.give', deskId: 'desk-1', paneId: 'note-1', to: 'a_1' }, 'cannot'],
-      [{ act: 'owners.take', deskId: 'desk-2', paneId: 's_1' }, 'unknown-pane'],
+      [{ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'nao_ha' }, 'unknown-agent'],
+      [{ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', paneId: 'note-1', to: 'a_1' }, 'cannot'],
+      [{ act: 'owners.take', deskId: 'desk-2', seen: 'Casa', paneId: 's_1' }, 'unknown-pane'],
     ]
     for (const [args, c] of cases) await assert.rejects(b.bridge.act(args, REMOTE), code(c), JSON.stringify(args))
     assert.deepEqual(b.events, [], 'nothing reached the app')
+  })
+
+  test('RR5 M-1: an act that destroys or changes who holds names the desk it saw; another name under that id is stale', async () => {
+    // The device saw desk-2 as "Rascunhos"; on the machine it was closed and a new desk took the id as "Casa".
+    const b = bench()
+    for (const args of [
+      { act: 'desks.close', deskId: 'desk-2', seen: 'Rascunhos', panes: 'stop' },
+      { act: 'panes.close', deskId: 'desk-2', seen: 'Rascunhos', paneId: 's_2', process: 'stop' },
+      { act: 'owners.give', deskId: 'desk-2', seen: 'Rascunhos', to: 'a_1' },
+      { act: 'owners.give', deskId: 'desk-2', seen: 'Rascunhos', paneId: 's_2', to: 'a_1' },
+      { act: 'owners.revoke', deskId: 'desk-2', seen: 'Rascunhos' },
+      { act: 'owners.take', deskId: 'desk-2', seen: 'Rascunhos' },
+      { act: 'owners.return', deskId: 'desk-2', seen: 'Rascunhos' },
+    ]) await assert.rejects(b.bridge.act(args, REMOTE), code('stale'), JSON.stringify(args))
+    // Without the name the act is not of the list at all.
+    for (const args of [{ act: 'desks.close', deskId: 'desk-2', panes: 'stop' }, { act: 'owners.give', deskId: 'desk-2', to: 'a_1' }])
+      await assert.rejects(b.bridge.act(args, REMOTE), code('bad-request'), JSON.stringify(args))
+    assert.deepEqual(b.events, [], 'nothing reached the app')
+    // The name it has now passes on to the app.
+    const p = b.bridge.act({ act: 'desks.close', deskId: 'desk-2', seen: 'Casa', panes: 'stop' }, REMOTE)
+    await appAnswers(b, { ok: true })
+    assert.deepEqual(await p, { state: 'done' })
   })
 
   test('the person typing in a pane: with-user for what would take it from under her hands', async () => {
     const b = bench({ typing: ['s_1'] })
     for (const args of [
       { act: 'panes.hibernate', deskId: 'desk-1', paneId: 's_1' }, { act: 'panes.suspend', deskId: 'desk-1', paneId: 's_1' },
-      { act: 'panes.move', deskId: 'desk-1', paneId: 's_1', to: 'desk-2' }, { act: 'panes.close', deskId: 'desk-1', paneId: 's_1', process: 'keep' },
+      { act: 'panes.move', deskId: 'desk-1', paneId: 's_1', to: 'desk-2' }, { act: 'panes.close', deskId: 'desk-1', seen: 'Obra', paneId: 's_1', process: 'keep' },
     ]) await assert.rejects(b.bridge.act(args, REMOTE), code('with-user'), args.act)
     assert.deepEqual(b.events, [])
   })
@@ -165,7 +187,7 @@ describe('the bridge of acts: what tetherd confers alone', () => {
   test('one act at a time per target, and a ceiling of acts waiting', async () => {
     const b = bench({ ackMs: 400 })
     const first = b.bridge.act({ act: 'panes.hibernate', deskId: 'desk-1', paneId: 's_1' }, REMOTE)
-    await assert.rejects(b.bridge.act({ act: 'panes.close', deskId: 'desk-1', paneId: 's_1', process: 'keep' }, REMOTE), code('busy'), 'the same pane')
+    await assert.rejects(b.bridge.act({ act: 'panes.close', deskId: 'desk-1', seen: 'Obra', paneId: 's_1', process: 'keep' }, REMOTE), code('busy'), 'the same pane')
     const other = b.bridge.act({ act: 'desks.hibernate', deskId: 'desk-2' }, REMOTE)
     assert.equal(b.bridge.pending, 2, 'another target goes')
     const creates = Array.from({ length: APP_ACTS_PENDING_MAX - 2 }, () => b.bridge.act({ act: 'desks.create', name: 'Nova' }, REMOTE).catch(() => undefined))

@@ -4,7 +4,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SlotState } from '../../src/daemon/protocol.ts'
 import { trayModel } from '../../app/shared/tray.ts'
-import { cleanDeskName, closeDesk, cycleDesk, DESK_HUES, deskAt, deskTokens, type DeskInfo, OLD_PALETTE_HUES, readDeskColor, insertDesk, MAX_DESK_NAME, moveDesk, neighbourDesk, nextDeskColor, nextDeskId, nextDeskName, recolorDesk, renameDesk, touchMru } from '../../app/renderer/desks.ts'
+import { cleanDeskName, closeDesk, cycleDesk, DESK_HUES, deskAt, deskIdNumber, deskSeqOf, deskTokens, type DeskInfo, OLD_PALETTE_HUES, readDeskColor, insertDesk, MAX_DESK_NAME, moveDesk, neighbourDesk, nextDeskColor, nextDeskId, nextDeskName, recolorDesk, renameDesk, touchMru } from '../../app/renderer/desks.ts'
 import { shortcutHint, shortcutOf } from '../../app/renderer/shortcuts.ts'
 
 const SPREAD = ['blue', 'green', 'orange', 'red', 'purple', 'cyan', 'pink', 'sky', 'yellow', 'lime', 'teal', 'magenta'] as const
@@ -12,17 +12,36 @@ const row = (...ids: string[]): DeskInfo[] => ids.map((id, i) => ({ id, name: `M
 const ids = (desks: DeskInfo[]): string[] => desks.map(d => d.id)
 
 describe('desk model', () => {
-  test('new desk: next free id, name and least used colour, before or after the reference', () => {
+  test('new desk: next id above every one handed out, name and least used colour, before or after the reference', () => {
     const desks = row('desk-1', 'desk-3')
-    assert.equal(nextDeskId(desks), 'desk-2')
+    assert.equal(nextDeskId(desks), 'desk-4', 'a gap (a closed desk-2) is never filled')
     assert.equal(nextDeskName(desks), 'Mesa 3')
     assert.equal(nextDeskColor(desks), 'orange')
     const after = insertDesk(desks, 'desk-1', 'after')
-    assert.deepEqual(ids(after.desks), ['desk-1', 'desk-2', 'desk-3'])
-    assert.deepEqual(after.desk, { id: 'desk-2', name: 'Mesa 3', color: 'orange' })
-    assert.deepEqual(ids(insertDesk(desks, 'desk-1', 'before').desks), ['desk-2', 'desk-1', 'desk-3'])
-    assert.deepEqual(ids(insertDesk(desks, 'nope', 'before').desks), ['desk-1', 'desk-3', 'desk-2'], 'unknown reference: at the end')
-    assert.deepEqual(ids(insertDesk(desks, 'desk-3', 'after').desks), ['desk-1', 'desk-3', 'desk-2'])
+    assert.deepEqual(ids(after.desks), ['desk-1', 'desk-4', 'desk-3'])
+    assert.deepEqual(after.desk, { id: 'desk-4', name: 'Mesa 3', color: 'orange' })
+    assert.equal(after.seq, 4)
+    assert.deepEqual(ids(insertDesk(desks, 'desk-1', 'before').desks), ['desk-4', 'desk-1', 'desk-3'])
+    assert.deepEqual(ids(insertDesk(desks, 'nope', 'before').desks), ['desk-1', 'desk-3', 'desk-4'], 'unknown reference: at the end')
+    assert.deepEqual(ids(insertDesk(desks, 'desk-3', 'after').desks), ['desk-1', 'desk-3', 'desk-4'])
+  })
+
+  test('desk ids never come back (RR5 M-1): the counter outlives the desk that had the highest id', () => {
+    // Close desk-3 ("Rascunhos"), create a new one: it is desk-4, never desk-3 again.
+    let seq = deskSeqOf(row('desk-1', 'desk-2', 'desk-3'))
+    assert.equal(seq, 3)
+    const left = row('desk-1', 'desk-2')
+    const made = insertDesk(left, undefined, 'after', seq)
+    assert.equal(made.desk.id, 'desk-4')
+    seq = made.seq
+    // The counter as kept in layout.json: a file with it keeps it; a file without it (or a junk value) reads as its desks.
+    assert.equal(deskSeqOf(left, 7), 7)
+    assert.equal(deskSeqOf(row('desk-1', 'desk-9'), 7), 9, 'never below an id in use')
+    assert.equal(deskSeqOf(left), 2)
+    for (const junk of [-1, 0, 1.5, '9', null, Number.NaN]) assert.equal(deskSeqOf(left, junk), 2)
+    assert.equal(nextDeskId(left, seq), 'desk-5')
+    assert.equal(deskIdNumber('desk-12'), 12)
+    for (const other of ['sys-x', 'desk-0', 'desk-01', 'desk-', 'xdesk-3']) assert.equal(deskIdNumber(other), 0)
   })
 
   test('colours: the 12 hues are all used once before any repeats, starting blue (as the old first desk)', () => {

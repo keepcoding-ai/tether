@@ -189,19 +189,26 @@ test('remote acts: the app does from afar what only it knows, with no screen on 
       const o = r.objects?.desk[deskId]?.owner as { owner?: string } | undefined
       return o?.owner
     }
-    assert.equal((await call(OP['owners.give'], { deskId: third, to: conferente })).status, RES_STATUS.presenceRequired, 'giving power needs the window')
+    const seen = 'Obra da casa'
+    assert.equal((await call(OP['owners.give'], { deskId: third, seen, to: conferente })).status, RES_STATUS.presenceRequired, 'giving power needs the window')
     assert.equal((await present(s, auth, 'elevate')).status, RES_STATUS.ok)
-    assert.deepEqual(await ok(OP['owners.give'], { deskId: third, to: conferente }), { state: 'done' })
+    // RR5 M-1: the device still shows the desk under its old name; under that id the desk is now another: stale, nothing given.
+    assert.deepEqual(await call(OP['owners.give'], { deskId: third, seen: 'Obra nova', to: conferente }), { status: RES_STATUS.notFound, body: { error: 'stale' } })
+    assert.equal(await ownerOf(third), undefined, 'nothing was given')
+    assert.deepEqual(await ok(OP['owners.give'], { deskId: third, seen, to: conferente }), { state: 'done' })
     assert.equal(await ownerOf(third), conferente, 'the owner written by the app, for-agents\' own write')
-    assert.deepEqual(await ok(OP['owners.revoke'], { deskId: third }), { state: 'done' })
+    assert.deepEqual(await ok(OP['owners.revoke'], { deskId: third, seen }), { state: 'done' })
     assert.equal(await ownerOf(third), undefined, 'taken from the agent')
-    assert.deepEqual(await call(OP['owners.revoke'], { deskId: third }), { status: RES_STATUS.failed, body: { error: 'not-given' } })
+    assert.deepEqual(await call(OP['owners.revoke'], { deskId: third, seen }), { status: RES_STATUS.failed, body: { error: 'not-given' } })
 
     // ---- 6. close a pane: only with a proof of this very act ----
     console.log('step 6')
-    assert.equal((await call(OP['panes.close'], { deskId: third, paneId: bancada, process: 'stop' })).status, RES_STATUS.presenceRequired)
+    assert.equal((await call(OP['panes.close'], { deskId: third, seen, paneId: bancada, process: 'stop' })).status, RES_STATUS.presenceRequired)
     assert.ok((await panelIds()).includes(bancada), 'nothing was closed')
-    const closed = await act(s, auth, OP['panes.close'], { deskId: third, paneId: bancada, process: 'stop' })
+    // RR5 M-1: a proof of this very act, for the desk as it was seen before: stale, and the pane stays.
+    assert.deepEqual(await act(s, auth, OP['panes.close'], { deskId: third, seen: 'Obra nova', paneId: bancada, process: 'stop' }), { status: RES_STATUS.notFound, body: { error: 'stale' } })
+    assert.ok((await panelIds()).includes(bancada), 'nothing was closed on a stale desk')
+    const closed = await act(s, auth, OP['panes.close'], { deskId: third, seen, paneId: bancada, process: 'stop' })
     assert.deepEqual(closed, { status: RES_STATUS.ok, body: { state: 'done' } })
     await until('the pane gone', async () => !(await panelIds()).includes(bancada))
     await until('its agent stopped', async () => ((await cli.request({ t: 'list' })).slots ?? []).find((x) => x.slotId === bancada)?.status !== 'running')

@@ -256,24 +256,24 @@ export const OP_TABLE = {
   'desks.create': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'color'], pipe: ['ext-request'] },
   'desks.rename': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'name'], pipe: ['ext-request'] },
   'desks.color': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'color'], pipe: ['ext-request'] },
-  'desks.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'panes'], pipe: ['ext-request'] },
+  'desks.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'seen', 'panes'], pipe: ['ext-request'] },
   // A pane: hibernate, wake (the slot's start, which tetherd does alone), suspend, move to another desk; closing it is
   // destructive (the agent keeps running without a pane, or stops).
   'panes.hibernate': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'panes.wake': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'panes.suspend': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
   'panes.move': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId', 'to'], pipe: ['ext-request'] },
-  'panes.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'paneId', 'process'], pipe: ['ext-request'] },
+  'panes.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deskId', 'seen', 'paneId', 'process'], pipe: ['ext-request'] },
   // "Fechadas": a closed session reopened on a desk; forgetting it is destructive.
   'closed.reopen': { scope: 'manage:desks', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId', 'deskId'], pipe: ['ext-request'] },
   'closed.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['slotId'], pipe: ['ext-request'] },
   // The agents' ownership, the app's own writes (for-agents' gestures, never `object-set` from the portal). Giving a desk or a
   // pane to an agent, and giving the command back, widen an agent's power: the elevation window (7.3). Taking it away
   // ("Tirar a mesa de <nome>") and "Assumir o comando" only lower it: unlocked.
-  'owners.give': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'paneId', 'to'], pipe: ['ext-request'] },
-  'owners.revoke': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
-  'owners.take': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
-  'owners.return': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'paneId'], pipe: ['ext-request'] },
+  'owners.give': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'seen', 'paneId', 'to'], pipe: ['ext-request'] },
+  'owners.revoke': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'seen', 'paneId'], pipe: ['ext-request'] },
+  'owners.take': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['deskId', 'seen', 'paneId'], pipe: ['ext-request'] },
+  'owners.return': { scope: 'manage:agents', presence: 'window', mutates: true, gesture: true, body: ['deskId', 'seen', 'paneId'], pipe: ['ext-request'] },
   // "+ Novo" from afar (RR5 5.3; src/remote/create.ts). The choices: engines, profiles by name (never their env), queue desks
   // and the known folders by id and label (ext `regency`, `create.options`). An agent or a terminal born in a desk, which
   // tetherd creates alone (ext `regency`, `create`: it resolves the folder id, the profile's name and the desk itself); a note

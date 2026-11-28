@@ -244,6 +244,7 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     await page.keyboard.press('Control+Shift+N')
     const d = await createShell(page, root)
     const deskD = (await h.deskOf(page, d))!
+    assert.equal(deskD, 'desk-5', 'a closed desk\'s id (desk-2, desk-4) never comes back (RR5 M-1)')
     const pidD = (await pidsOf(page, [d]))[d]!
     await page.evaluate(id => window.__tether.closeDesk(id), deskD)
     await dlg.waitFor()
@@ -260,9 +261,10 @@ test('desks: create, switch by shortcut, hidden desk keeps output, move pane, cl
     await page.evaluate(() => window.__tether.recolorDesk('desk-3', 'purple'))
     await sleep(800) // debounced save
     const before = await h.desks(page)
-    const saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as { desks: { id: string; name: string; color: string }[]; activeDesk: string }
+    const saved = JSON.parse(readFileSync(join(home, 'layout.json'), 'utf8')) as { desks: { id: string; name: string; color: string }[]; activeDesk: string; deskSeq?: number }
     assert.deepEqual(saved.desks.map(x => [x.id, x.name, x.color]), before.map(x => [x.id, x.name, x.color]))
     assert.equal(saved.activeDesk, 'desk-1')
+    assert.equal(saved.deskSeq, 5, 'the desk counter is kept with the layout')
     await killElectron(app, root)
     app = undefined
     ;({ app, page } = await launch(home))

@@ -13,7 +13,7 @@ import { after, before, describe, test } from 'node:test'
 import { DaemonError } from '../../src/daemon/client.ts'
 import { OP_CODES, RES_STATUS, toHex, type Bytes } from '../../src/remote/index.ts'
 import { ERROR_CODES } from '../../src/remote/projection.ts'
-import { APP_ACT_FIELDS, APP_ACT_REFUSALS, appActArgs, DESK_NAME_MAX, parseAppAct, type AppActOp } from '../../src/remote/app-acts.ts'
+import { APP_ACT_FIELDS, APP_ACT_REFUSALS, appActArgs, DESK_NAME_MAX, parseAppAct, seenMatches, seenName, type AppActOp } from '../../src/remote/app-acts.ts'
 import { pipeWrites } from '../../src/remoted/writes.ts'
 import { act, actId, ORIGIN, present, registerAndUnlock, type SoftAuthenticator } from './remoted.authenticator.ts'
 import { startHouseBench, type HouseBench } from './remoted.house-bench.ts'
@@ -26,21 +26,39 @@ describe('appActArgs and parseAppAct: one closed list for the portal, tetherd an
   test('each op builds its act from the strict body: ids, the folded name, the defaults of the app\'s dialogs', () => {
     assert.deepEqual(appActArgs('desks.hibernate', { deskId: 'desk-2' }), { args: { act: 'desks.hibernate', deskId: 'desk-2' }, target: 'desk-2' })
     assert.deepEqual(appActArgs('desks.create', { name: '  Obra‮​  nova\n', color: 'teal' }), { args: { act: 'desks.create', name: 'Obra nova', color: 'teal' }, target: '' })
-    assert.deepEqual(appActArgs('desks.close', { deskId: 'desk-2' }), { args: { act: 'desks.close', panes: 'move', deskId: 'desk-2' }, target: 'desk-2' }, 'the safe answer of the dialog')
-    assert.deepEqual(appActArgs('panes.close', { deskId: 'desk-1', paneId: 's_1' }), { args: { act: 'panes.close', process: 'keep', deskId: 'desk-1', paneId: 's_1' }, target: 's_1' })
+    assert.deepEqual(appActArgs('desks.close', { deskId: 'desk-2', seen: 'Casa' }), { args: { act: 'desks.close', panes: 'move', deskId: 'desk-2', seen: 'Casa' }, target: 'desk-2' }, 'the safe answer of the dialog')
+    assert.deepEqual(appActArgs('panes.close', { deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }), { args: { act: 'panes.close', process: 'keep', deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }, target: 's_1' })
     assert.deepEqual(appActArgs('panes.move', { deskId: 'desk-1', paneId: 's_1', to: 'desk-2' }), { args: { act: 'panes.move', deskId: 'desk-1', paneId: 's_1', to: 'desk-2' }, target: 's_1' })
     assert.deepEqual(appActArgs('closed.reopen', { slotId: 's_9', deskId: 'desk-1' }), { args: { act: 'closed.reopen', slotId: 's_9', deskId: 'desk-1' }, target: 's_9' })
-    assert.deepEqual(appActArgs('owners.give', { deskId: 'desk-1', to: 'a_1' }), { args: { act: 'owners.give', deskId: 'desk-1', to: 'a_1' }, target: 'desk-1' }, 'a desk')
-    assert.deepEqual(appActArgs('owners.take', { deskId: 'desk-1', paneId: 's_1' }), { args: { act: 'owners.take', deskId: 'desk-1', paneId: 's_1' }, target: 's_1' }, 'a pane of that desk')
+    assert.deepEqual(appActArgs('owners.give', { deskId: 'desk-1', seen: 'Obra', to: 'a_1' }), { args: { act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'a_1' }, target: 'desk-1' }, 'a desk')
+    assert.deepEqual(appActArgs('owners.take', { deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }), { args: { act: 'owners.take', deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }, target: 's_1' }, 'a pane of that desk')
+    // The desk's name as the device saw it is folded as a name is (RR5 M-1).
+    assert.deepEqual(appActArgs('desks.close', { deskId: 'desk-2', seen: ' Casa\n' }), { args: { act: 'desks.close', panes: 'move', deskId: 'desk-2', seen: 'Casa' }, target: 'desk-2' })
+  })
+
+  test('RR5 M-1: the acts that destroy or change who holds a desk or a pane carry the desk\'s name as seen; without it, refused', () => {
+    for (const [op, body] of [
+      ['desks.close', { deskId: 'd' }], ['panes.close', { deskId: 'd', paneId: 'p' }], ['owners.give', { deskId: 'd', to: 'a' }],
+      ['owners.revoke', { deskId: 'd' }], ['owners.take', { deskId: 'd' }], ['owners.return', { deskId: 'd', paneId: 'p' }],
+    ] as const) {
+      assert.equal(appActArgs(op, body), 'bad-request', op)
+      assert.equal(parseAppAct({ act: op, ...body, ...(op === 'desks.close' ? { panes: 'move' } : op === 'panes.close' ? { process: 'keep' } : {}) }), undefined, op)
+    }
+    assert.equal(parseAppAct({ act: 'desks.hibernate', deskId: 'd', seen: 'x' }), undefined, 'not on the other acts')
+    assert.equal(seenName('  Ob‮ra  '), 'Obra')
+    assert.equal(seenMatches({ act: 'desks.close', deskId: 'd', seen: 'Obra', panes: 'move' }, ' Obra'), true)
+    assert.equal(seenMatches({ act: 'desks.close', deskId: 'd', seen: 'Obra', panes: 'move' }, 'Produção'), false)
+    assert.equal(seenMatches({ act: 'desks.close', deskId: 'd', seen: 'Obra', panes: 'move' }, undefined), false)
+    assert.equal(seenMatches({ act: 'desks.hibernate', deskId: 'd' }, 'qualquer'), true)
   })
 
   test('refused before the pipe: a missing id, a position, a title, a colour or a value outside the list, a name too long', () => {
     for (const deskId of [undefined, '', 0, 1, 'desk 1', '../x', 'd'.repeat(65), 'Mesa‮']) assert.equal(appActArgs('desks.hibernate', { deskId }), 'bad-request', String(deskId))
     assert.equal(appActArgs('desks.color', { deskId: 'd', color: '#ff0000' }), 'bad-request')
-    assert.equal(appActArgs('desks.close', { deskId: 'd', panes: 'forget' }), 'bad-request')
-    assert.equal(appActArgs('panes.close', { deskId: 'd', paneId: 'p', process: 'forget' }), 'bad-request')
+    assert.equal(appActArgs('desks.close', { deskId: 'd', seen: 'D', panes: 'forget' }), 'bad-request')
+    assert.equal(appActArgs('panes.close', { deskId: 'd', seen: 'D', paneId: 'p', process: 'forget' }), 'bad-request')
     assert.equal(appActArgs('panes.move', { deskId: 'd', paneId: 'p' }), 'bad-request', 'where to')
-    assert.equal(appActArgs('owners.give', { deskId: 'd' }), 'bad-request', 'to whom')
+    assert.equal(appActArgs('owners.give', { deskId: 'd', seen: 'D' }), 'bad-request', 'to whom')
     assert.equal(appActArgs('desks.create', { name: 'n'.repeat(DESK_NAME_MAX + 1) }), 'too-long')
     assert.equal(appActArgs('desks.rename', { deskId: 'd', name: '​ \n' }), 'bad-request', 'empty once folded')
     assert.equal(appActArgs('desks.rename', { deskId: 'd', name: 7 }), 'bad-request')
@@ -156,8 +174,9 @@ describe('the app acts through a real House', () => {
   })
 
   test("tetherd's and the app's refusals come back by their code, never the message: no-app 0x08, a stale id 0x06, busy 0x07", async () => {
-    const code = { 'desks.wake': 'no-app', 'desks.rename': 'unknown-desk', 'panes.hibernate': 'with-user', 'panes.suspend': 'busy', 'closed.reopen': 'not-closed', 'desks.color': 'door-denied' } as Record<string, string>
+    const code = { 'desks.wake': 'no-app', 'desks.rename': 'unknown-desk', 'panes.hibernate': 'with-user', 'panes.suspend': 'busy', 'closed.reopen': 'not-closed', 'desks.color': 'door-denied', 'owners.take': 'stale' } as Record<string, string>
     answer = async (m) => { throw new DaemonError(code[m.args.act as string] as never, `recusado ${MARKER}`) }
+    assert.deepEqual(await send(OP['owners.take'], { deskId: 'desk-3', seen: 'Rascunhos' }), { status: RES_STATUS.notFound, body: { error: 'stale' } }, 'RR5 M-1: the desk changed')
     assert.deepEqual(await send(OP['desks.wake'], { deskId: 'desk-2' }), { status: RES_STATUS.noApp, body: { error: 'no-app' } })
     assert.deepEqual(await send(OP['desks.rename'], { deskId: 'nao-ha', name: 'x' }), { status: RES_STATUS.notFound, body: { error: 'unknown-desk' } })
     assert.deepEqual(await send(OP['panes.hibernate'], { deskId: 'desk-1', paneId: 's_1' }), { status: RES_STATUS.failed, body: { error: 'with-user' } })
@@ -190,17 +209,17 @@ describe('the app acts through a real House', () => {
   test('what destroys needs a proof of this very act, before the pipe; giving power to an agent needs the window', async () => {
     answer = async () => ({ result: { state: 'done' } })
     sent.length = 0
-    for (const [op, body] of [[OP['panes.close'], { deskId: 'desk-1', paneId: 's_1' }], [OP['desks.close'], { deskId: 'desk-2' }], [OP['closed.forget'], { slotId: 's_9' }]] as const) {
+    for (const [op, body] of [[OP['panes.close'], { deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }], [OP['desks.close'], { deskId: 'desk-2', seen: 'Casa' }], [OP['closed.forget'], { slotId: 's_9' }]] as const) {
       assert.equal((await send(op, body)).status, RES_STATUS.presenceRequired, `${op}: no proof`)
       assert.equal((await act(s, auth, op, body, { proof: false })).status, RES_STATUS.presenceRequired)
     }
-    assert.equal((await send(OP['owners.give'], { deskId: 'desk-1', to: 'a_1' })).status, RES_STATUS.presenceRequired, 'no window')
+    assert.equal((await send(OP['owners.give'], { deskId: 'desk-1', seen: 'Obra', to: 'a_1' })).status, RES_STATUS.presenceRequired, 'no window')
     assert.deepEqual(sent, [], 'nothing reached the pipe')
-    assert.deepEqual(await act(s, auth, OP['panes.close'], { deskId: 'desk-1', paneId: 's_1', process: 'stop' }), { status: RES_STATUS.ok, body: { state: 'done' } })
-    assert.deepEqual((sent as Sent[]).map((m) => m.args), [{ act: 'panes.close', process: 'stop', deskId: 'desk-1', paneId: 's_1' }])
+    assert.deepEqual(await act(s, auth, OP['panes.close'], { deskId: 'desk-1', seen: 'Obra', paneId: 's_1', process: 'stop' }), { status: RES_STATUS.ok, body: { state: 'done' } })
+    assert.deepEqual((sent as Sent[]).map((m) => m.args), [{ act: 'panes.close', process: 'stop', deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }], 'the name seen goes inside the proven body')
     assert.equal((await present(s, auth, 'elevate')).status, RES_STATUS.ok)
-    assert.equal((await send(OP['owners.give'], { deskId: 'desk-1', paneId: 's_1', to: 'a_1' })).status, RES_STATUS.ok, 'with the window')
-    assert.equal((await send(OP['owners.revoke'], { deskId: 'desk-1', paneId: 's_1' })).status, RES_STATUS.ok)
+    assert.equal((await send(OP['owners.give'], { deskId: 'desk-1', seen: 'Obra', paneId: 's_1', to: 'a_1' })).status, RES_STATUS.ok, 'with the window')
+    assert.equal((await send(OP['owners.revoke'], { deskId: 'desk-1', seen: 'Obra', paneId: 's_1' })).status, RES_STATUS.ok)
     assert.deepEqual(bench.audits().slice(-4).filter((l) => l.act !== 'uv.assert').map((l) => [l.act, l.result, l.target]), [['panes.close', 'ok', 's_1'], ['owners.give', 'ok', 's_1'], ['owners.revoke', 'ok', 's_1']])
   })
 

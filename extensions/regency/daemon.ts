@@ -19,7 +19,7 @@ import type { TetherDaemon } from '../../src/daemon/ext-api.ts'
 import type { DeskMap, DeskMapDesk, DoorSlots, ExtRequestContext } from '../../src/daemon/door/types.ts'
 import type { ErrorCode } from '../../src/daemon/protocol.ts'
 import {
-  ACT_TAKE, APP_ACT_BRIDGE_MS, APP_ACT_DONE, APP_ACT_EVENT, APP_ACT_REQUEST, APP_ACTS_PENDING_MAX, APP_ANSWER_CODES, appActAnswer, appActTarget, parseAppAct,
+  ACT_TAKE, APP_ACT_BRIDGE_MS, APP_ACT_DONE, APP_ACT_EVENT, APP_ACT_REQUEST, APP_ACTS_PENDING_MAX, APP_ANSWER_CODES, appActAnswer, appActTarget, parseAppAct, seenMatches,
   type AppAct, type AppActAnswer, type AppActCode, type AppActEvent,
 } from '../../src/remote/app-acts.ts'
 import {
@@ -302,6 +302,9 @@ export class ActBridge {
   /** What tetherd confers alone, from its map and its slots; the app confers the rest with its own rules. */
   #confer(a: AppAct, map: DeskMap): void {
     const inMap = (id: string): boolean => map.desks.some((d) => d.panes.some((p) => p.id === id)) || map.drawer.some((p) => p.id === id)
+    // An act that destroys or changes who holds a desk or a pane names the desk as the device saw it (RR5 M-1): a desk of
+    // that id under another name is not the one the person confirmed.
+    if ('seen' in a && !seenMatches(a, this.#desk(map, a.deskId).name)) refuseAct('stale', 'a mesa mudou desde que o aparelho a viu')
     switch (a.act) {
       case 'desks.create': return
       case 'desks.hibernate': case 'desks.wake': case 'desks.rename': case 'desks.color': case 'desks.close':

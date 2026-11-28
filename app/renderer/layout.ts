@@ -93,6 +93,11 @@ export interface LayoutV4 extends Omit<LayoutV3, 'v'> {
   suspendedPanes?: string[]
   /** Panes the person marked "Não suspender" (slot ids): the sweep and the manual suspension skip them. Survives a restart. */
   noSuspendPanes?: string[]
+  /**
+   * Additive (no version bump): the highest N ever handed out as a desk's `desk-N` (app/renderer/desks.ts deskSeqOf). A
+   * closed desk's id never comes back. Absent = the highest N in use.
+   */
+  deskSeq?: number
 }
 
 export type Layout = LayoutV4

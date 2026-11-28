@@ -78,10 +78,25 @@ describe('the app does an act from afar with its own rules', () => {
     const f = fakeApp()
     const run = remoteActRunner(f.ui, { owners: f.board, notice: () => {} })
     assert.deepEqual(await run({ act: 'desks.hibernate', deskId: 'desk-1' }), { ok: false, code: 'in-view' })
-    assert.deepEqual(await run({ act: 'desks.close', deskId: 'desk-1', panes: 'move' }), { ok: false, code: 'in-view' })
+    assert.deepEqual(await run({ act: 'desks.close', deskId: 'desk-1', seen: 'Obra', panes: 'move' }), { ok: false, code: 'in-view' })
     assert.equal((await run({ act: 'desks.hibernate', deskId: 'desk-2' })).ok, true)
-    assert.deepEqual(await run({ act: 'desks.close', deskId: 'desk-2', panes: 'stop' }), { ok: true, state: 'done', said: 'mesa Casa fechada' })
+    assert.deepEqual(await run({ act: 'desks.close', deskId: 'desk-2', seen: 'Casa', panes: 'stop' }), { ok: true, state: 'done', said: 'mesa Casa fechada' })
     assert.deepEqual(f.calls.at(-1), ['close', 'desk-2', { panes: 'stop' }], 'the answer of the dialog comes in the act')
+  })
+
+  test('RR5 M-1: the desk is checked by the name the device saw; another desk under that id is stale and nothing is done', async () => {
+    const f = fakeApp()
+    const run = remoteActRunner(f.ui, { owners: f.board, notice: () => {}, ownerWaitMs: 50 })
+    for (const a of [
+      { act: 'desks.close', deskId: 'desk-2', seen: 'Rascunhos', panes: 'stop' },
+      { act: 'panes.close', deskId: 'desk-2', seen: 'Rascunhos', paneId: 's_2', process: 'stop' },
+      { act: 'owners.give', deskId: 'desk-2', seen: 'Rascunhos', to: 'a_1' },
+      { act: 'owners.revoke', deskId: 'desk-2', seen: 'Rascunhos' },
+      { act: 'owners.take', deskId: 'desk-2', seen: 'Rascunhos', paneId: 's_2' },
+      { act: 'owners.return', deskId: 'desk-2', seen: 'Rascunhos' },
+    ] as const) assert.deepEqual(await run(a), { ok: false, code: 'stale' }, a.act)
+    assert.deepEqual(await run({ act: 'desks.close', deskId: 'desk-7', seen: 'Casa', panes: 'stop' }), { ok: false, code: 'unknown-desk' })
+    assert.deepEqual(f.calls, [], 'nothing was done')
   })
 
   test('a new desk at the end of the queue, staying where the person is; rename and recolour; already when nothing changes', async () => {
@@ -103,7 +118,7 @@ describe('the app does an act from afar with its own rules', () => {
     assert.deepEqual(await run({ act: 'panes.suspend', deskId: 'desk-1', paneId: 's_1' }), { ok: false, code: 'cannot' })
     assert.deepEqual(await run({ act: 'panes.move', deskId: 'desk-1', paneId: 's_1', to: 'desk-1' }), { ok: false, code: 'same-desk' })
     assert.equal((await run({ act: 'panes.move', deskId: 'desk-1', paneId: 's_1', to: 'desk-2' })).ok, true)
-    assert.equal((await run({ act: 'panes.close', deskId: 'desk-1', paneId: 's_1', process: 'keep' })).ok, true)
+    assert.equal((await run({ act: 'panes.close', deskId: 'desk-1', seen: 'Obra', paneId: 's_1', process: 'keep' })).ok, true)
     assert.deepEqual(f.calls.at(-1), ['closeGuide', 's_1', { process: 'keep' }])
     assert.deepEqual(await run({ act: 'closed.reopen', slotId: 's_1', deskId: 'desk-2' }), { ok: false, code: 'not-closed' })
     assert.equal((await run({ act: 'closed.reopen', slotId: 's_9', deskId: 'desk-2' })).ok, true)
@@ -113,17 +128,17 @@ describe('the app does an act from afar with its own rules', () => {
   test("ownership through for-agents' commands: a live agent only, the board shows it; take back what was given; nothing to take back", async () => {
     const f = fakeApp()
     const run = remoteActRunner(f.ui, { owners: f.board, notice: () => {}, ownerWaitMs: 200 })
-    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', to: 'nao_ha' }), { ok: false, code: 'unknown-agent' })
-    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', paneId: 'note-1', to: 'a_1' }), { ok: false, code: 'cannot' })
-    assert.deepEqual(await run({ act: 'owners.revoke', deskId: 'desk-1' }), { ok: false, code: 'not-given' })
-    assert.deepEqual(await run({ act: 'owners.take', deskId: 'desk-1', paneId: 's_1' }), { ok: false, code: 'not-given' })
-    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', to: 'a_1' }), { ok: true, state: 'done', said: 'a mesa Obra dada a conferente' })
+    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'nao_ha' }), { ok: false, code: 'unknown-agent' })
+    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', paneId: 'note-1', to: 'a_1' }), { ok: false, code: 'cannot' })
+    assert.deepEqual(await run({ act: 'owners.revoke', deskId: 'desk-1', seen: 'Obra' }), { ok: false, code: 'not-given' })
+    assert.deepEqual(await run({ act: 'owners.take', deskId: 'desk-1', seen: 'Obra', paneId: 's_1' }), { ok: false, code: 'not-given' })
+    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'a_1' }), { ok: true, state: 'done', said: 'a mesa Obra dada a conferente' })
     assert.deepEqual(f.calls.at(-1), ['command', 'for-agents.give', { kind: 'desk', id: 'desk-1', to: 'a_1' }])
-    assert.equal((await run({ act: 'owners.give', deskId: 'desk-1', to: 'a_1' })).ok && 'already', 'already')
-    assert.equal((await run({ act: 'owners.take', deskId: 'desk-1', paneId: 's_1' })).ok, true, 'its desk commands it: the command can be taken')
-    assert.deepEqual(await run({ act: 'owners.revoke', deskId: 'desk-1' }), { ok: true, state: 'done', said: 'a mesa Obra tirada de conferente' })
+    assert.equal((await run({ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'a_1' })).ok && 'already', 'already')
+    assert.equal((await run({ act: 'owners.take', deskId: 'desk-1', seen: 'Obra', paneId: 's_1' })).ok, true, 'its desk commands it: the command can be taken')
+    assert.deepEqual(await run({ act: 'owners.revoke', deskId: 'desk-1', seen: 'Obra' }), { ok: true, state: 'done', said: 'a mesa Obra tirada de conferente' })
     f.board.setActive(false)
-    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', to: 'a_1' }), { ok: false, code: 'owners-off' })
+    assert.deepEqual(await run({ act: 'owners.give', deskId: 'desk-1', seen: 'Obra', to: 'a_1' }), { ok: false, code: 'owners-off' })
   })
 })
 

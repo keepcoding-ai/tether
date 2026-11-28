@@ -203,17 +203,17 @@ export class ManageUi {
         const next = neighbourOf(this.queue(), desk.id)
         const r = await ask(this.d.tier(), closeDeskQuestion(desk.name, panes, next?.name))
         if (!r) return
-        await this.run(t, 'desks.close', { deskId: desk.id, panes: r.choice === 'stop' ? 'stop' : 'move' }, `Mesa ${desk.name} fechada.`, { proof: 'act' })
+        await this.run(t, 'desks.close', { deskId: desk.id, seen: desk.name, panes: r.choice === 'stop' ? 'stop' : 'move' }, `Mesa ${desk.name} fechada.`, { proof: 'act' })
         return
       }
       case 'desk.give': {
         const to = await this.pickAgent(`Dar a mesa ${desk.name} a…`)
-        if (to) await this.run(t, 'owners.give', { deskId: desk.id, to }, `Mesa ${desk.name} dada a ${this.nameOf(to)}.`, { proof: 'window' })
+        if (to) await this.run(t, 'owners.give', { deskId: desk.id, seen: desk.name, to }, `Mesa ${desk.name} dada a ${this.nameOf(to)}.`, { proof: 'window' })
         return
       }
-      case 'desk.take': await this.run(t, 'owners.take', { deskId: desk.id }, 'Você assumiu o comando da mesa.'); return
-      case 'desk.return': await this.run(t, 'owners.return', { deskId: desk.id }, `Mesa devolvida a ${this.input().owners.desk[desk.id]?.name ?? 'o agente'}.`, { proof: 'window' }); return
-      case 'desk.revoke': await this.run(t, 'owners.revoke', { deskId: desk.id }, `A mesa ${desk.name} voltou para você.`); return
+      case 'desk.take': await this.run(t, 'owners.take', { deskId: desk.id, seen: desk.name }, 'Você assumiu o comando da mesa.'); return
+      case 'desk.return': await this.run(t, 'owners.return', { deskId: desk.id, seen: desk.name }, `Mesa devolvida a ${this.input().owners.desk[desk.id]?.name ?? 'o agente'}.`, { proof: 'window' }); return
+      case 'desk.revoke': await this.run(t, 'owners.revoke', { deskId: desk.id, seen: desk.name }, `A mesa ${desk.name} voltou para você.`); return
       default: return
     }
   }
@@ -221,6 +221,8 @@ export class ManageUi {
   private async paneAct(a: ManageAct, pane: Pane, desk: Desk, key: string, target: Target): Promise<void> {
     const t = `${target.kind}:${pane.id}`
     const where = { deskId: desk.id, paneId: pane.id }
+    // What closes a pane or changes who holds it names the desk as this screen shows it (tetherd and the app refuse `stale`).
+    const held = { ...where, seen: desk.name }
     const name = this.nameOf(pane.id)
     switch (a) {
       case 'pane.peek': this.d.quick(target); return
@@ -248,7 +250,7 @@ export class ManageUi {
       case 'pane.close': {
         const r = await ask(this.d.tier(), closePaneQuestion(this.paneFacts(pane, desk), this.engine(pane.id)))
         if (!r) return
-        await this.run(t, 'panes.close', { ...where, process: r.choice === 'stop' ? 'stop' : 'keep' }, `Guia ${name} fechada.`, { proof: 'act' })
+        await this.run(t, 'panes.close', { ...held, process: r.choice === 'stop' ? 'stop' : 'keep' }, `Guia ${name} fechada.`, { proof: 'act' })
         return
       }
       case 'agent.restart': await this.run(t, 'agents.restart', { slotId: pane.id }, `${name}: reiniciado.`); return
@@ -260,12 +262,12 @@ export class ManageUi {
       }
       case 'pane.give': {
         const to = await this.pickAgent(`Dar a guia ${pane.title} a…`)
-        if (to) await this.run(t, 'owners.give', { ...where, to }, `Guia ${pane.title} dada a ${this.nameOf(to)}.`, { proof: 'window' })
+        if (to) await this.run(t, 'owners.give', { ...held, to }, `Guia ${pane.title} dada a ${this.nameOf(to)}.`, { proof: 'window' })
         return
       }
-      case 'pane.take': await this.run(t, 'owners.take', where, 'Você assumiu o comando da guia.'); return
-      case 'pane.return': await this.run(t, 'owners.return', where, `Guia devolvida a ${this.input().owners.pane[pane.id]?.name ?? 'o agente'}.`, { proof: 'window' }); return
-      case 'pane.revoke': await this.run(t, 'owners.revoke', where, `A guia ${pane.title} voltou para a mesa.`); return
+      case 'pane.take': await this.run(t, 'owners.take', held, 'Você assumiu o comando da guia.'); return
+      case 'pane.return': await this.run(t, 'owners.return', held, `Guia devolvida a ${this.input().owners.pane[pane.id]?.name ?? 'o agente'}.`, { proof: 'window' }); return
+      case 'pane.revoke': await this.run(t, 'owners.revoke', held, `A guia ${pane.title} voltou para a mesa.`); return
       default: return
     }
   }

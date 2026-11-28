@@ -44,14 +44,14 @@ export type AppAct =
   | { act: 'desks.create'; name: string; color?: DeskColor }
   | { act: 'desks.rename'; deskId: string; name: string }
   | { act: 'desks.color'; deskId: string; color: DeskColor }
-  | { act: 'desks.close'; deskId: string; panes: 'move' | 'stop' }
+  | { act: 'desks.close'; deskId: string; seen: string; panes: 'move' | 'stop' }
   | { act: 'panes.hibernate' | 'panes.wake' | 'panes.suspend'; deskId: string; paneId: string }
   | { act: 'panes.move'; deskId: string; paneId: string; to: string }
-  | { act: 'panes.close'; deskId: string; paneId: string; process: 'keep' | 'stop' }
+  | { act: 'panes.close'; deskId: string; seen: string; paneId: string; process: 'keep' | 'stop' }
   | { act: 'closed.reopen'; slotId: string; deskId: string }
   | { act: 'closed.forget'; slotId: string }
-  | { act: 'owners.give'; deskId: string; paneId?: string; to: string }
-  | { act: 'owners.revoke' | 'owners.take' | 'owners.return'; deskId: string; paneId?: string }
+  | { act: 'owners.give'; deskId: string; seen: string; paneId?: string; to: string }
+  | { act: 'owners.revoke' | 'owners.take' | 'owners.return'; deskId: string; seen: string; paneId?: string }
   // "+ Novo" from afar (RR5 5.3): a note in a folder of the known list (src/remote/create.ts, by its id), a browser tab of the person's.
   | { act: 'create.note'; deskId: string; folder: string }
   | { act: 'create.browser'; deskId: string }
@@ -63,6 +63,10 @@ interface ActRule { readonly need: Readonly<Record<string, Field>>; readonly may
 /**
  * The closed list, field by field: total over the ops (a line of the table in these families without its rule does not
  * compile). `need` are required, `may` optional; any other field is refused.
+ *
+ * `seen` (RR5 M-1): on the acts that destroy or change who holds a desk or a pane, the desk's name as the device showed it,
+ * inside the body the proof signs. tetherd and the app refuse `stale` when the desk of that id is not called that now, so
+ * what the person confirmed ("Fechar a mesa Rascunhos") never lands on another desk under the same id.
  */
 export const APP_ACT_FIELDS = {
   'desks.hibernate': { need: { deskId: 'id' } },
@@ -70,18 +74,18 @@ export const APP_ACT_FIELDS = {
   'desks.create': { need: { name: 'name' }, may: { color: 'color' } },
   'desks.rename': { need: { deskId: 'id', name: 'name' } },
   'desks.color': { need: { deskId: 'id', color: 'color' } },
-  'desks.close': { need: { deskId: 'id', panes: ['move', 'stop'] } },
+  'desks.close': { need: { deskId: 'id', seen: 'name', panes: ['move', 'stop'] } },
   'panes.hibernate': { need: { deskId: 'id', paneId: 'id' } },
   'panes.wake': { need: { deskId: 'id', paneId: 'id' } },
   'panes.suspend': { need: { deskId: 'id', paneId: 'id' } },
   'panes.move': { need: { deskId: 'id', paneId: 'id', to: 'id' } },
-  'panes.close': { need: { deskId: 'id', paneId: 'id', process: ['keep', 'stop'] } },
+  'panes.close': { need: { deskId: 'id', seen: 'name', paneId: 'id', process: ['keep', 'stop'] } },
   'closed.reopen': { need: { slotId: 'id', deskId: 'id' } },
   'closed.forget': { need: { slotId: 'id' } },
-  'owners.give': { need: { deskId: 'id', to: 'id' }, may: { paneId: 'id' } },
-  'owners.revoke': { need: { deskId: 'id' }, may: { paneId: 'id' } },
-  'owners.take': { need: { deskId: 'id' }, may: { paneId: 'id' } },
-  'owners.return': { need: { deskId: 'id' }, may: { paneId: 'id' } },
+  'owners.give': { need: { deskId: 'id', seen: 'name', to: 'id' }, may: { paneId: 'id' } },
+  'owners.revoke': { need: { deskId: 'id', seen: 'name' }, may: { paneId: 'id' } },
+  'owners.take': { need: { deskId: 'id', seen: 'name' }, may: { paneId: 'id' } },
+  'owners.return': { need: { deskId: 'id', seen: 'name' }, may: { paneId: 'id' } },
   'create.note': { need: { deskId: 'id', folder: 'folder' } },
   'create.browser': { need: { deskId: 'id' } },
 } as const satisfies { readonly [K in AppActOp]: ActRule }
@@ -121,6 +125,18 @@ export function parseAppAct(v: unknown): AppAct | undefined {
     if (f === undefined || !fieldOk(f, val)) return undefined
   }
   return { ...o } as AppAct
+}
+
+/** A desk's name in the form `seen` carries (what the device showed, folded as the portal folds a name). */
+export const seenName = (name: string): string => sanitizeDeclaredName(name).slice(0, DESK_NAME_MAX)
+
+/**
+ * Whether the desk is still the one the device saw (RR5 M-1): an act without `seen` passes, one with it only when the desk
+ * of that id is called that now. tetherd (on its map) and the app (on its row) refuse `stale` otherwise.
+ */
+export function seenMatches(a: AppAct, deskName: string | undefined): boolean {
+  if (!('seen' in a)) return true
+  return deskName !== undefined && seenName(deskName) === a.seen
 }
 
 export type AppActRefusal = 'bad-request' | 'too-long'
@@ -193,6 +209,8 @@ export const APP_ACT_REFUSALS = {
   'unknown-agent': RES_STATUS.notFound,
   // A folder id that is not of the known list now (src/remote/create.ts), at tetherd or at the app.
   'unknown-folder': RES_STATUS.notFound,
+  // The desk of that id is not called what the device saw (`seen`): it changed since, nothing was done.
+  'stale': RES_STATUS.notFound,
   'busy': RES_STATUS.limit,
   'with-user': RES_STATUS.failed,
   'in-view': RES_STATUS.failed,
@@ -211,13 +229,13 @@ export const isAppActRefusal = (code: unknown): code is AppActCode => typeof cod
 
 /** The codes the app may answer with (tetherd's own, `no-app`, `busy`, `no-answer`, are not the app's to say). Any other: `refused`. */
 export const APP_ANSWER_CODES: readonly AppActCode[] = [
-  'unknown-desk', 'unknown-pane', 'unknown-slot', 'unknown-agent', 'unknown-folder', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
+  'unknown-desk', 'unknown-pane', 'unknown-slot', 'unknown-agent', 'unknown-folder', 'stale', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
   'not-given', 'cannot', 'owners-off', 'unconfirmed', 'refused',
 ]
 
 /** The codes this module adds to what a body may carry (the others are in the lists of src/remote/projection.ts already). */
 export const APP_ACT_ERROR_CODES = [
-  'no-app', 'unknown-desk', 'unknown-pane', 'unknown-agent', 'unknown-folder', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
+  'no-app', 'unknown-desk', 'unknown-pane', 'unknown-agent', 'unknown-folder', 'stale', 'with-user', 'in-view', 'last-desk', 'same-desk', 'not-closed',
   'not-given', 'cannot', 'owners-off', 'no-answer',
 ] as const
 
