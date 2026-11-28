@@ -25,6 +25,7 @@ import {
 import type { WebMenu } from './menu.ts'
 import type { CreateFixed } from '../../../extensions/regency/create-rules.ts'
 import { CreateAfar } from './create-afar.ts'
+import { NewProcAfar } from './new-proc-afar.ts'
 import { ask, deskForm, pick, watchFocus } from './sheet.ts'
 import { el } from './ui-lite.ts'
 
@@ -66,15 +67,18 @@ export class ManageUi {
 
   /** "+ Novo" from afar (create-afar.ts). */
   readonly creator: CreateAfar
+  /** "Novo processo" from afar (new-proc-afar.ts). */
+  readonly newProc: NewProcAfar
 
   constructor(d: ManageUiDeps) {
     this.d = d
-    this.system = this.systemHost()
     this.creator = new CreateAfar({ house: d.house, manager: d.manager, tier: d.tier, pane: d.pane, say: t => this.say(t) })
+    this.newProc = new NewProcAfar({ manager: d.manager, tier: d.tier, say: t => this.say(t) })
+    this.system = this.systemHost()
     watchFocus()
   }
 
-  dispose(): void { this.creator.dispose(); this.toast.dispose() }
+  dispose(): void { this.creator.dispose(); this.newProc.close(false); this.toast.dispose() }
 
   /** Whether any act shows: a device that may manage something, with the house's tree. */
   get active(): boolean {
@@ -472,7 +476,7 @@ export class ManageUi {
       setRonda: (id, change) => this.setRonda(id, change),
       offRonda: (id, force) => this.offRonda(id, force),
       editProfile: () => {},
-      newProcess: restore => restore(),
+      newProcess: restore => { void this.newProc.open(restore) },
       createHere: (_what, _cwd, restore) => restore(),
       togglePin: () => {},
       openScreen: () => {},

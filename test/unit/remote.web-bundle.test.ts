@@ -27,10 +27,12 @@ describe('the web bundle of the Regency', () => {
       'extensions/regency/renderer.ts', 'extensions/regency/renderer/tab.ts', 'extensions/channels/renderer.ts',
       'extensions/channels/renderer/local-panes.ts', 'extensions/channels/renderer/marks.ts', 'app/renderer/ext-api.ts', 'app/renderer/main.ts',
     ]) assert.ok(!has(b, local), `the bundle does not hold ${local}`)
+    // Of src/core, the one pure rule of what looks like a secret ("Novo processo" bars a secret before it goes), and nothing else.
+    assert.deepEqual(b.inputs.filter(p => /(^|[\\/])src[\\/]core[\\/]/.test(p)).map(p => p.replaceAll('\\', '/').replace(/^.*src\/core\//, '')), ['redact-args.ts'])
     for (const p of b.inputs) {
       assert.doesNotMatch(p, /(^|[\\/])node:/, p)
       assert.doesNotMatch(p, /node_modules[\\/](electron|dockview-core|monaco-editor|@xterm|node-pty|koffi)[\\/]/, p)
-      assert.doesNotMatch(p, /(^|[\\/])src[\\/](daemon|remoted|ptyd|agents|core|exec)[\\/]/, p)
+      assert.doesNotMatch(p, /(^|[\\/])src[\\/](daemon|remoted|ptyd|agents|exec)[\\/]/, p)
       assert.doesNotMatch(p, /(^|[\\/])app[\\/](main|preload)[\\/]/, p)
     }
   })

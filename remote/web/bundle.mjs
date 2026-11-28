@@ -33,7 +33,10 @@ const shellLite = {
 const FORBIDDEN_INPUT = [
   [/(^|[\\/])node:/, 'um módulo do Node'],
   [/src[\\/]remote[\\/]testing\.ts$/, 'src/remote/testing.ts (costura de teste)'],
-  [/(^|[\\/])src[\\/](daemon|remoted|ptyd|agents|core|exec)[\\/]/, 'código do daemon'],
+  [/(^|[\\/])src[\\/](daemon|remoted|ptyd|agents|exec)[\\/]/, 'código do daemon'],
+  // Of src/core only the one rule of what looks like a secret (redact-args.ts: pure, no import; the app's renderer reads it
+  // too): "Novo processo" from afar bars a secret by it before anything is sent. Any other module of core is refused.
+  [/(^|[\\/])src[\\/]core[\\/](?!redact-args\.ts$)/, 'código do daemon'],
   [/(^|[\\/])app[\\/](main|preload)[\\/]/, 'o processo principal do app'],
   [/(^|[\\/])app[\\/]renderer[\\/](svg-node|tab-emblems)\.ts$/, 'um módulo da casca do app que a web troca pelo seu'],
   [/node_modules[\\/](electron|dockview-core|monaco-editor|@xterm|node-pty|koffi|ws)[\\/]/, 'um pacote que não é do navegador'],
