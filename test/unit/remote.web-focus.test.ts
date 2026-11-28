@@ -30,6 +30,11 @@ describe('firstFocusOf', () => {
     assert.deepEqual(firstFocusOf(['chip:all', 'chip:waiting'], false), { settled: false })
     assert.deepEqual(firstFocusOf(['chip:all', 'conv:x', 'wait:a'], false), { settled: true, key: 'wait:a' })
   })
+  test('"Trancar" of the strip is the casing\'s, there from the first paint: it neither settles the decision nor takes the focus', () => {
+    assert.deepEqual(firstFocusOf(['lock:lock', 'chip:all'], false), { settled: false })
+    assert.deepEqual(firstFocusOf(['lock:lock', 'chip:all', 'conv:x', 'msg:4'], false), { settled: true, key: 'conv:x' })
+    assert.equal(initialKeyOf(['lock:lock', 'chip:all']), 'chip:all')
+  })
   test('the person already walked: her focus stays, the decision is closed', () => {
     assert.deepEqual(firstFocusOf(['chip:all', 'conv:x', 'wait:a'], true), { settled: true })
   })
