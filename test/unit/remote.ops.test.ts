@@ -47,6 +47,14 @@ describe('remote operations registry', () => {
       [0x0207, 'channels.file', 'channels', 'unlocked', false, false],
       [0x0208, 'channels.upload', 'channels', 'unlocked', false, true],
       [0x0209, 'channels.upload-cancel', 'channels', 'unlocked', true, true],
+      [0x020a, 'channels.create', 'channels', 'unlocked', true, true],
+      [0x020b, 'channels.join', 'channels', 'unlocked', true, true],
+      [0x020c, 'channels.remove', 'channels', 'unlocked', true, true],
+      [0x020d, 'channels.mute', 'channels', 'unlocked', true, true],
+      [0x020e, 'channels.unmute', 'channels', 'unlocked', true, true],
+      [0x020f, 'channels.close', 'manage:destructive', 'per-act', true, true],
+      [0x0210, 'channels.reopen', 'channels', 'unlocked', true, true],
+      [0x0211, 'channels.poll-close', 'channels', 'unlocked', true, true],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
       [0x0400, 'agents.stop', 'manage:agents', 'unlocked', true, true],
       [0x0401, 'agents.start', 'manage:agents', 'unlocked', true, true],
@@ -101,6 +109,8 @@ describe('remote operations registry', () => {
       assert.ok(Number.isInteger(l.code) && l.code > 0 && l.code <= 0xffff, l.name)
       const family = l.code >>> 8
       if (family === 4) assert.ok(l.scope.startsWith('manage:'), l.name)
+      // Closing a channel from afar destroys (RR5, fio-spec 18): the channels' range reuses manage:destructive for it alone.
+      else if (l.name === 'channels.close') assert.deepEqual([l.scope, l.presence], ['manage:destructive', 'per-act'])
       else assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
       // What destroys is manage:destructive with a proof per act, and only it (RR5 5.2).
       if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive', l.name)
@@ -111,6 +121,7 @@ describe('remote operations registry', () => {
   test('only lines triggered by the person are gestures; the one exception to E-8 is declared on its line', () => {
     assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), [
       'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'attention.push-on', 'attention.push-off', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel',
+      'channels.create', 'channels.join', 'channels.remove', 'channels.mute', 'channels.unmute', 'channels.close', 'channels.reopen', 'channels.poll-close',
       'agents.stop', 'agents.start', 'agents.restart', 'agents.rename', 'agents.forget', 'ronda.set', 'ronda.off',
       'procs.start', 'procs.stop', 'procs.stop-force', 'procs.restart', 'procs.restart-force', 'procs.use', 'procs.release', 'procs.forget', 'procs.forget-force',
       'desks.hibernate', 'desks.wake', 'desks.create', 'desks.rename', 'desks.color', 'desks.close',

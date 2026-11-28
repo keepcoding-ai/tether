@@ -28,8 +28,21 @@ export const POLL_TIMEOUT_MAX_MS = 24 * 3_600_000
 /** Who a poll calls (`to`): agent ids or `user` (herself). A channel shows at most 64 members on a page. */
 export const POLL_TO_MAX = 64
 
-/** The ops of this module. */
-export type TalkOp = 'channels.say' | 'channels.react' | 'channels.vote' | 'channels.poll' | 'channels.seen'
+/** A channel's name as the store takes it (extensions/channels/rules.ts isRoomName, ROOM_NAME_MAX). */
+export const ROOM_NAME_MAX = 40
+const ROOM_NAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+
+/** The person's speech in a channel (step 4.2a). */
+export type SpeechOp = 'channels.say' | 'channels.react' | 'channels.vote' | 'channels.poll' | 'channels.seen'
+/** The person managing a channel (RR5, fio-spec 18). */
+export type ChannelManageOp =
+  | 'channels.create' | 'channels.join' | 'channels.remove' | 'channels.mute' | 'channels.unmute' | 'channels.close' | 'channels.reopen'
+  | 'channels.poll-close'
+/** The ops of this module: every write of a channel that reaches tetherd as one pair of EXT_WRITES. */
+export type TalkOp = SpeechOp | ChannelManageOp
+export const CHANNEL_MANAGE_OPS: readonly ChannelManageOp[] = [
+  'channels.create', 'channels.join', 'channels.remove', 'channels.mute', 'channels.unmute', 'channels.close', 'channels.reopen', 'channels.poll-close',
+]
 
 /** Why a body is refused before the pipe: its shape (`bad-request`) or a field over its ceiling (`too-long`). */
 export type TalkRefusal = 'bad-request' | 'too-long'
@@ -73,6 +86,17 @@ const list = (v: unknown, max: number): unknown[] => (Array.isArray(v) && v.leng
  */
 export function talkArgs(op: TalkOp, b: Record<string, unknown>): TalkArgs | TalkRefusal {
   try {
+    // A new channel has no id yet: its target is none, and its name is folded as the app's card folds it (create-rules.ts
+    // channelNameOf: spaces cleaned, `#` dropped, lowercase), then must be a room name as written.
+    if (op === 'channels.create') {
+      if (typeof b.name !== 'string') refuse()
+      const raw = b.name as string
+      if (raw.length > ROOM_NAME_MAX + 8) refuse('too-long')
+      const name = sanitizeDeclaredName(raw).replace(/\s+/g, ' ').trim().replace(/^#+/, '').toLowerCase()
+      if (name.length > ROOM_NAME_MAX) refuse('too-long')
+      if (!ROOM_NAME_RE.test(name)) refuse()
+      return { channel: '', args: { name } }
+    }
     const channel = channelOf(b.channel)
     switch (op) {
       case 'channels.say': {
@@ -110,6 +134,20 @@ export function talkArgs(op: TalkOp, b: Record<string, unknown>): TalkArgs | Tal
       }
       case 'channels.seen':
         return { channel, args: { channel, seq: seqOf(b.seq) } }
+      // The agent by its id (a slot's), never a name: tetherd resolves it (`unknown-agent`).
+      case 'channels.join':
+      case 'channels.remove':
+      case 'channels.mute':
+      case 'channels.unmute': {
+        const agent = b.agent
+        if (typeof agent !== 'string' || !AGENT_RE.test(agent) || agent === 'user') refuse()
+        return { channel, args: { channel, agent } }
+      }
+      case 'channels.close':
+      case 'channels.reopen':
+        return { channel, args: { channel } }
+      case 'channels.poll-close':
+        return { channel, args: { channel, poll: seqOf(b.poll) } }
     }
   } catch (e) {
     if (e instanceof Refused) return e.why
@@ -147,6 +185,16 @@ export const TALK_REFUSALS = {
   'copy-failed': RES_STATUS.failed,
   'too-many': RES_STATUS.badRequest,
   'too-large': RES_STATUS.badRequest,
+  // Managing a channel (RR5, fio-spec 18): an agent the tether does not have; a name taken by an open channel or not a room
+  // name; a channel of a desk, which follows its desk and is not closed nor reopened by hand; one not closed to reopen; an
+  // agent not a member to remove or mute.
+  'unknown-agent': RES_STATUS.notFound,
+  'name-taken': RES_STATUS.failed,
+  'bad-name': RES_STATUS.badRequest,
+  exists: RES_STATUS.failed,
+  desk: RES_STATUS.failed,
+  'not-closed': RES_STATUS.failed,
+  'not-member': RES_STATUS.failed,
 } as const satisfies Partial<Record<ErrorCode, ResStatus>>
 export type TalkRefusalCode = keyof typeof TALK_REFUSALS
 

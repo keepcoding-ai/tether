@@ -1,5 +1,6 @@
 // The person talking from afar: `say`, `react`, `vote`, `poll` and `seen` take the `remote` client as they take `app` (gate
-// `person`), and everything that manages the channel stays with `app` alone (gate `moderator`). Any other client gets neither.
+// `person`), and so does managing the channel (gate `manager`, RR5), whose calls from afar carry the mark of origin. Any other
+// client gets neither.
 // The handlers run over a stub of the fan-out: what is proved is the gate and that the same call (the person, `USER`) is made.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
@@ -72,29 +73,46 @@ describe('channels requests: the person talks from afar', () => {
     b.done()
   })
 
-  test('remote is refused (not-moderator) at every request that manages the channel, and nothing reaches the fan-out', async () => {
+  test('remote manages the channel as the app does (gate `manager`, RR5): the same call, and from afar the mark on the system line', async () => {
     const b = bench()
-    for (const name of MANAGE) await assert.rejects(b.ask(name, 'remote'), code('not-moderator'), name)
-    assert.deepEqual(b.calls, [])
-    for (const name of MANAGE) await b.ask(name, 'app')
-    assert.equal(b.calls.length, MANAGE.length, 'the app still manages')
+    for (const name of MANAGE) {
+      await b.ask(name, 'app')
+      await b.ask(name, 'remote')
+    }
+    assert.equal(b.calls.length, MANAGE.length * 2)
+    for (let i = 0; i < b.calls.length; i += 2) {
+      const app = b.calls[i]!
+      const remote = b.calls[i + 1]!
+      assert.equal(app.who, USER, app.verb)
+      assert.equal(remote.who, USER, remote.verb)
+      // The app's call carries no mark; the device's carries `fromAfar: true` (in the input of `create`, the last argument of the rest).
+      const flat = (args: unknown[]): unknown[] => args.flatMap((a) => (a && typeof a === 'object' ? [a] : []))
+      assert.equal(flat(app.args).some((a) => 'fromAfar' in (a as object)), false, `${app.verb}: no mark from the app`)
+      assert.equal(flat(remote.args).some((a) => (a as { fromAfar?: unknown }).fromAfar === true), true, `${remote.verb}: marked from afar`)
+      const strip = (args: unknown[]): unknown[] => args.map((a) => {
+        if (!a || typeof a !== 'object' || !('fromAfar' in a)) return a
+        const { fromAfar: _drop, ...rest } = a as Record<string, unknown>
+        return Object.keys(rest).length ? rest : undefined
+      })
+      assert.deepEqual(strip(remote.args), strip(app.args).map((a) => (a && typeof a === 'object' && Object.keys(a).length === 0 ? undefined : a)), remote.verb)
+    }
     b.done()
   })
 
-  test('cli and any other client are refused at the talking requests too', async () => {
+  test('cli and any other client are refused at the talking and the managing requests', async () => {
     const b = bench()
     for (const client of ['cli', 'test', 'portal'])
-      for (const name of PERSON) await assert.rejects(b.ask(name, client), code('not-moderator'), `${client} ${name}`)
+      for (const name of [...PERSON, ...MANAGE]) await assert.rejects(b.ask(name, client), code('not-moderator'), `${client} ${name}`)
     assert.deepEqual(b.calls, [])
     b.done()
   })
 
-  test("the talking requests are exactly the channels' pairs of EXT_WRITES (what the portal may send and tetherd lets through)", () => {
+  test("the talking and managing requests are exactly the channels' pairs of EXT_WRITES (what the portal may send and tetherd lets through)", () => {
     const pairs = Object.values(EXT_WRITES).filter((p) => p.ext === 'channels').map((p) => p.name).sort()
-    assert.deepEqual(pairs, [...PERSON].sort())
-    // Besides the channels' speech, only the Regency's bridge of acts (RR5 5.1) is a write pair.
-    assert.equal(Object.values(EXT_WRITES).every((p) => p.ext === 'channels' || (p.ext === 'regency' && p.name === 'act')), true)
-    for (const name of MANAGE) assert.equal(REMOTE_EXT_PAIRS.some((p) => p.ext === 'channels' && p.name === name), false, `${name}: never in the reach`)
+    assert.deepEqual(pairs, [...PERSON, ...MANAGE].sort())
+    // Besides the channels' pairs, only the Regency's writes (the bridge of acts, RR5 5.1; the creation, RR5 5.3) are write pairs.
+    assert.equal((Object.values(EXT_WRITES) as { ext: string; name: string }[]).every((p) => p.ext === 'channels' || (p.ext === 'regency' && (p.name === 'act' || p.name === 'create'))), true)
+    for (const name of MANAGE) assert.equal(REMOTE_EXT_PAIRS.some((p) => p.ext === 'channels' && p.name === name), true, `${name}: in the reach`)
   })
 
   test('every request the file registers is either talking or managing or a read: none escapes the lists', () => {

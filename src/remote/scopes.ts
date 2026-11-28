@@ -25,7 +25,8 @@ export type PresenceClass = 'none' | 'unlocked' | 'window' | 'per-act' | 'fresh-
 export const RANGE_SCOPES: Readonly<Record<number, readonly OpScope[]>> = {
   0x00: ['session'],
   0x01: ['attention'],
-  0x02: ['channels'],
+  // Closing a channel from afar destroys (RR5): it reuses manage:destructive, as the devices' range does.
+  0x02: ['channels', 'manage:destructive'],
   0x03: ['regency:read'],
   0x04: ['manage:agents', 'manage:desks', 'manage:procs', 'manage:destructive'],
   0x05: ['peek:terminal:read', 'peek:terminal:write', 'peek:browser'],
@@ -59,6 +60,15 @@ export const OP_CODES = {
   'channels.file': 0x0207,
   'channels.upload': 0x0208,
   'channels.upload-cancel': 0x0209,
+  // Managing a channel from afar (RR5, fio-spec 18): the person as she manages it in the app.
+  'channels.create': 0x020a,
+  'channels.join': 0x020b,
+  'channels.remove': 0x020c,
+  'channels.mute': 0x020d,
+  'channels.unmute': 0x020e,
+  'channels.close': 0x020f,
+  'channels.reopen': 0x0210,
+  'channels.poll-close': 0x0211,
   'regency.tree': 0x0300,
   // Management (RR5 5.2, fio-spec 16): direct acts on tetherd, each one pipe message of its own.
   'agents.stop': 0x0400,
@@ -176,6 +186,19 @@ export const OP_TABLE = {
   'channels.upload': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: false, body: ['channel', 'act', 'file', 'name', 'size', 'offset', 'data'], pipe: [] },
   // The person gives up a file (or all) of a speech still to be said: its temporary files go.
   'channels.upload-cancel': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['act', 'file'], pipe: [] },
+  // Managing a channel from afar (RR5, fio-spec 18): each line reaches the pipe as the ONE `ext-request` its pair names in
+  // EXT_WRITES, the person managing (extensions/channels/daemon/requests.ts gate `manager`, which takes `app` and `remote`),
+  // and from afar the system line that says who did it carries the mark "(de longe)". The light acts are of the channels'
+  // scope, unlocked; closing a channel ends it for every member, so it is `manage:destructive` with a proof per act.
+  // Reopening only gives back what closing took, as `owners.revoke` only lowers: unlocked. Agents and the channel by id.
+  'channels.create': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['name'], pipe: ['ext-request'] },
+  'channels.join': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'agent'], pipe: ['ext-request'] },
+  'channels.remove': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'agent'], pipe: ['ext-request'] },
+  'channels.mute': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'agent'], pipe: ['ext-request'] },
+  'channels.unmute': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'agent'], pipe: ['ext-request'] },
+  'channels.close': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['channel'], pipe: ['ext-request'] },
+  'channels.reopen': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel'], pipe: ['ext-request'] },
+  'channels.poll-close': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['channel', 'poll'], pipe: ['ext-request'] },
   // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`).
   'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
   // Management from afar (RR5 5.2, fio-spec 16). Each line sends tetherd the ONE pipe message of its `pipe`, built by

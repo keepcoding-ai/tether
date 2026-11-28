@@ -110,7 +110,7 @@ describe('pipeWrites: the write path of the portal, apart from the reads', () =>
   test('a name outside the list is refused before the pipe', async () => {
     let calls = 0
     const writes = pipeWrites(async () => { calls++; return {} })
-    for (const op of ['channels.marks', 'channels.create', 'say', '__proto__', 'constructor']) {
+    for (const op of ['channels.marks', 'channels.leave', 'say', '__proto__', 'constructor']) {
       const f = writes.write(op as ExtWriteOp, {})
       await assert.rejects(f.answer, (e: unknown) => e instanceof WriteError && e.why === 'refused')
       assert.deepEqual(await f.settled, { ok: false, error: new WriteError('refused', 'no-pair') })

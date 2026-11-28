@@ -137,7 +137,7 @@ describe('pipeReads: the one place of the portal that sends ext-request', () => 
 })
 
 describe('each pair of EXT_READS only reads, on the real daemon halves', () => {
-  test('channels: marks and history as the `remote` client change nothing on disk; the writes refuse that client', async () => {
+  test('channels: marks and history as the `remote` client change nothing on disk; the writes refuse any other client', async () => {
     const home = await newHome()
     const store = await openStore(fsIo, home, { now: () => new Date(ISO) })
     const made = await store.create({ name: 'obra', owner: { kind: 'user' }, createdBy: USER })
@@ -160,8 +160,9 @@ describe('each pair of EXT_READS only reads, on the real daemon halves', () => {
     await new Promise((r) => setTimeout(r, 20))
     await store.flush()
     assert.deepEqual(await snapshot(home), before, 'the record on disk is the same byte for byte')
+    // Since RR5 the person manages the channel from afar too (gate `manager`); a client that is neither the app nor the device does not.
     for (const w of ['close', 'create', 'poll-close'])
-      await assert.rejects(handlers.get(w)!({ channel: id, text: 'x', seq: 1, reaction: 'agree' }, remote), (e: unknown) => (e as { code?: string }).code === 'not-moderator', `${w} refuses remote`)
+      await assert.rejects(handlers.get(w)!({ channel: id, text: 'x', seq: 1, reaction: 'agree' }, { client: 'cli' }), (e: unknown) => (e as { code?: string }).code === 'not-moderator', `${w} refuses cli`)
     for (const d of disposables) d.dispose()
   })
 

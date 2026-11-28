@@ -111,7 +111,11 @@ export interface Line {
   result?: PollResult
   /** Only on a message: its files, copied into the channel's folder (attachments.ts); `body` may then be ''. */
   files?: LineFile[]
-  /** Only on the person's message or poll said from a device (the pipe's client is `remote`): written by the tether, never from a body. */
+  /**
+   * Only on the person's message or poll said from a device (the pipe's client is `remote`), or on the system line of her
+   * managing the channel from one (create, join, remove, mute, unmute, close, reopen, a poll's close): written by the
+   * tether, never from a body.
+   */
   afar?: true
 }
 

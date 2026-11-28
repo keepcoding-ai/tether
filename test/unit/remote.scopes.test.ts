@@ -27,7 +27,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 // ---- compile-time totality: each of these lines must be a type error ------------------------------------------------
 
 /** A request type added to the protocol (a name more than OP_CODES has today). */
-type MoreOps = OpName | 'channels.create'
+type MoreOps = OpName | 'channels.archive'
 type MorePipe = PipeType | 'new-request'
 const { 'device.revoke': _dropped, ...tableWithoutOne } = OP_TABLE
 const typeChecks = (): void => {
@@ -161,7 +161,10 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     assert.deepEqual([...Object.keys(EXT_READS), ...Object.keys(EXT_WRITES)].sort(), emitters, 'one pair per line that emits ext-request, and no pair without one')
     assert.deepEqual(Object.keys(EXT_READS).filter(k => Object.hasOwn(EXT_WRITES, k)), [])
     assert.deepEqual(Object.keys(EXT_READS).sort(), ['channels.file', 'channels.marks', 'channels.page', 'regency.tree'])
-    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).sort(), ['channels.poll', 'channels.react', 'channels.say', 'channels.seen', 'channels.vote'])
+    assert.deepEqual(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).sort(), [
+      'channels.close', 'channels.create', 'channels.join', 'channels.mute', 'channels.poll', 'channels.poll-close', 'channels.react',
+      'channels.remove', 'channels.reopen', 'channels.say', 'channels.seen', 'channels.unmute', 'channels.vote',
+    ])
     // RR5 5.1: the rest are the gestures the app does, all of them the one pair `regency/act`.
     assert.deepEqual(Object.keys(EXT_WRITES).filter(n => !n.startsWith('channels.')).sort(), Object.keys(APP_ACT_FIELDS).sort())
   })
@@ -190,11 +193,13 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     for (const name of Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.'))) {
       const l = OPS.find(x => x.name === name)!
       assert.equal(l.mutates, true, `${name}: a write`)
-      assert.equal(l.scope, 'channels', name)
-      assert.equal(l.presence, 'unlocked', `${name}: fio-spec 7.3, talk needs the session unlocked`)
+      // Closing a channel ends it for every member (RR5, fio-spec 18): destructive, with a proof per act.
+      const closes = name === 'channels.close'
+      assert.equal(l.scope, closes ? 'manage:destructive' : 'channels', name)
+      assert.equal(l.presence, closes ? 'per-act' : 'unlocked', `${name}: fio-spec 7.3, talk needs the session unlocked`)
       assert.equal(l.code >>> 8, 0x02, `${name}: in the range of the channels`)
       assert.deepEqual(l.pipe, ['ext-request'], `${name}: a write emits nothing but its pair`)
-      assert.ok(Array.isArray(l.body) && l.body.includes('channel'), `${name}: a strict body naming its channel`)
+      assert.ok(Array.isArray(l.body) && (l.body.includes('channel') || name === 'channels.create'), `${name}: a strict body naming its channel`)
       // Step 4.3: only a speech carries files (indexes of its own uploads, never paths).
       assert.equal(l.body!.includes('files'), name === 'channels.say', `${name}: files on the speech alone`)
       assert.notEqual(RESULT_OF[name]!.name, 'unbuilt', `${name}: a projector that can be called`)
@@ -202,6 +207,8 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     }
     assert.deepEqual(Object.fromEntries(Object.keys(EXT_WRITES).filter(n => n.startsWith('channels.')).map(n => [n, OP_CODES[n as OpName]])), {
       'channels.say': 0x0202, 'channels.react': 0x0203, 'channels.vote': 0x0204, 'channels.poll': 0x0205, 'channels.seen': 0x0206,
+      'channels.create': 0x020a, 'channels.join': 0x020b, 'channels.remove': 0x020c, 'channels.mute': 0x020d, 'channels.unmute': 0x020e,
+      'channels.close': 0x020f, 'channels.reopen': 0x0210, 'channels.poll-close': 0x0211,
     })
   })
 
@@ -230,24 +237,20 @@ describe("the class 'ext-read': a read of an extension, listed by name", () => {
     for (const w of writes) assert.equal(named.has(w), false, `${w} writes: never a read pair`)
   })
 
-  test("the write pairs are the person's speech and the Regency's one bridge of acts; nothing that manages a channel or publishes", () => {
-    assert.deepEqual(Object.fromEntries(Object.entries(EXT_WRITES).filter(([n]) => n.startsWith('channels.'))), {
-      'channels.say': { ext: 'channels', name: 'say' },
-      'channels.react': { ext: 'channels', name: 'react' },
-      'channels.vote': { ext: 'channels', name: 'vote' },
-      'channels.poll': { ext: 'channels', name: 'poll' },
-      'channels.seen': { ext: 'channels', name: 'seen' },
-    })
+  test("the write pairs are the person's speech, her managing a channel and the Regency's writes; never leave nor publish", () => {
+    const channels = ['say', 'react', 'vote', 'poll', 'seen', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'poll-close']
+    assert.deepEqual(Object.fromEntries(Object.entries(EXT_WRITES).filter(([n]) => n.startsWith('channels.'))),
+      Object.fromEntries(channels.map(n => [`channels.${n}`, { ext: 'channels', name: n }])))
     const named = new Set<string>(Object.values(EXT_WRITES).map(p => `${p.ext} ${p.name}`))
-    for (const w of ['poll-close', 'create', 'join', 'remove', 'mute', 'unmute', 'close', 'reopen', 'leave'])
-      assert.equal(named.has(`channels ${w}`), false, `${w} manages: never a pair`)
+    // `leave` is an agent's own (the person removes), never a pair.
+    assert.equal(named.has('channels leave'), false)
     assert.deepEqual([...named].filter(n => n.startsWith('regency ') || n.startsWith('remote ')), ['regency act'], 'the bridge alone, never tree.publish nor a remote request')
   })
 
   test('a request outside the lists has no pair, whatever its name', () => {
     for (const name of ['say', 'channels.say', 'device.revoke', 'session.info', 'ext-request', '__proto__', 'constructor', 'toString', 'hasOwnProperty', ''])
       assert.equal(extReadOf(name), undefined, name)
-    for (const name of ['say', 'channels.marks', 'channels.poll-close', 'channels.create', 'device.revoke', '__proto__', 'constructor', 'toString', ''])
+    for (const name of ['say', 'channels.marks', 'channels.leave', 'channels.archive', 'device.revoke', '__proto__', 'constructor', 'toString', ''])
       assert.equal(extWriteOf(name), undefined, name)
     for (const [op, pair] of Object.entries(EXT_READS)) assert.equal(extReadOf(op), pair)
     for (const [op, pair] of Object.entries(EXT_WRITES)) assert.equal(extWriteOf(op), pair)

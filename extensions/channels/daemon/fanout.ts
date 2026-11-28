@@ -137,10 +137,18 @@ export interface ReactInput {
   remove?: boolean
 }
 
+/**
+ * The person managed the channel from a device (the pipe's client is `remote`, RR5): the system line that says who did it
+ * carries the mark (`afar`, and "(de longe)" in its text). Written by the tether from the pipe's client, never from a body.
+ */
+export interface FromAfar { fromAfar?: boolean }
+/** What a system line of the person's management from a device says after who did it. */
+export const AFAR_MARK = ' (de longe)'
+
 export interface Channels {
   readonly store: ChannelStore
   /** A common channel. An agent creator joins as its member and owner; the person creates a channel she owns. */
-  create(who: Who, input: { name: string; title?: string }): Promise<Outcome<{ channel: Channel; line: Line }>>
+  create(who: Who, input: { name: string; title?: string } & FromAfar): Promise<Outcome<{ channel: Channel; line: Line }>>
   /** A line from a member (role `member`, the owner too) or the moderator (`who: 'user'`). Delivered to every member but the speaker. */
   say(who: Who, id: ChannelId, input: SayInput): Promise<Outcome<{ line: Line; receipts: Record<AgentId, LineReceipt> }> & { file?: string }>
   /**
@@ -161,18 +169,18 @@ export interface Channels {
    */
   vote(who: Who, id: ChannelId, input: VoteInput): Promise<Outcome<{ changed: boolean; option: number; poll: OpenPoll; line?: Line; closed?: PollClosed }>>
   /** Its author or the person closes an open poll before its time. */
-  pollClose(who: Who, id: ChannelId, poll: number): Promise<Outcome<PollClosed>>
+  pollClose(who: Who, id: ChannelId, poll: number, opts?: FromAfar): Promise<Outcome<PollClosed>>
   /** The one clock of the polls: armed or not, and for when (ms since the epoch). For tests and diagnosis. */
   pollClock(): { armed: boolean; at?: number }
   /** `agent` absent: `who` joins itself. `already: true` (and no line) when it was a member. */
-  join(who: Who, id: ChannelId, agent?: AgentId): Promise<Outcome<{ channel: Channel; already: boolean; line?: Line }>>
+  join(who: Who, id: ChannelId, agent?: AgentId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; already: boolean; line?: Line }>>
   leave(agent: AgentId, id: ChannelId): Promise<Outcome<{ channel: Channel; line: Line }>>
-  remove(who: Who, id: ChannelId, agent: AgentId): Promise<Outcome<{ channel: Channel; line: Line }>>
+  remove(who: Who, id: ChannelId, agent: AgentId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; line: Line }>>
   /** `changed: false` (and no line) when it was muted already. */
-  mute(who: Who, id: ChannelId, agent: AgentId): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
-  unmute(who: Who, id: ChannelId, agent: AgentId): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
-  close(who: Who, id: ChannelId): Promise<Outcome<{ channel: Channel; line: Line }>>
-  reopen(who: Who, id: ChannelId): Promise<Outcome<{ channel: Channel; line: Line }>>
+  mute(who: Who, id: ChannelId, agent: AgentId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
+  unmute(who: Who, id: ChannelId, agent: AgentId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; changed: boolean; line?: Line }>>
+  close(who: Who, id: ChannelId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; line: Line }>>
+  reopen(who: Who, id: ChannelId, opts?: FromAfar): Promise<Outcome<{ channel: Channel; line: Line }>>
   /** The pane was forgotten: it leaves every channel (the reverse index). Wired to `onSlot('removed')`. */
   forgotten(agent: AgentId, name?: string): Promise<void>
   /** The process runs again: one notice per channel with what it missed. Wired to `onSlot('spawned')`. */
@@ -449,8 +457,14 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
     return written
   }
   const emitChannel = (ch: Channel): void => { api.events.emit('channel', { channel: ch } satisfies ChannelEvent) }
-  const notice = (ch: Channel, body: string, type: LineEventType, who?: AgentId, by?: Who): Promise<Line> =>
-    append(ch, { kind: 'notice', from: { ...SYSTEM_FROM }, body, event: { type, ...(who !== undefined ? { who } : {}), ...(by !== undefined ? { by } : {}) } })
+  /** The text of a system line of the person's management from a device: the first sentence says it was from afar. */
+  const afarText = (body: string): string => body.replace(/^([^\n]*?)(\.?)(\n|$)/, `$1${AFAR_MARK}$2$3`)
+  const notice = (ch: Channel, body: string, type: LineEventType, who?: AgentId, by?: Who, afar?: FromAfar): Promise<Line> =>
+    append(ch, {
+      kind: 'notice', from: { ...SYSTEM_FROM }, body: afar?.fromAfar === true ? afarText(body) : body,
+      event: { type, ...(who !== undefined ? { who } : {}), ...(by !== undefined ? { by } : {}) },
+      ...(afar?.fromAfar === true ? { afar: true as const } : {}),
+    })
   const ownerEnded = (ch: Channel, agent: AgentId, name: string): Promise<Line> => notice(ch, ownerEndedLine(ch.name, name, moderatorName()), 'owner-ended', agent)
 
   const isAgent = (id: AgentId): boolean => { const s = slotOf(id); return s !== undefined && s.kind !== 'shell' }
@@ -554,11 +568,13 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
    * Closes the open poll `p`: the result notice (a line delivered to no one), the index, the event; what of its requests still
    * waits in the queue is cancelled, and its author (an agent) gets the result, once. Inside the lane.
    */
-  async function closePoll(ch: Channel, p: OpenPoll, how: Pick<PollResult, 'by' | 'closer' | 'away'>): Promise<PollClosed> {
+  async function closePoll(ch: Channel, p: OpenPoll, how: Pick<PollResult, 'by' | 'closer' | 'away'>, afar?: FromAfar): Promise<PollClosed> {
     const result = pollResult(ch, p, how, missingWhy)
+    const text = pollResultText(ch.name, result)
     const line = await store.append(ch.id, {
-      kind: 'notice', from: { ...SYSTEM_FROM }, body: pollResultText(ch.name, result),
+      kind: 'notice', from: { ...SYSTEM_FROM }, body: afar?.fromAfar === true ? afarText(text) : text,
       event: { type: 'poll-close', ...(how.closer ? { by: how.closer.id } : {}) }, result,
+      ...(afar?.fromAfar === true ? { afar: true as const } : {}),
     })
     await store.closePoll(ch.id, p.seq, line.seq)
     pollEvent(ch, line)
@@ -772,7 +788,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       if (!made.ok) return made
       const ch = made.channel
       return lane(ch.id, async () => {
-        const line = await notice(ch, createdLine(ch.name, nameOf(who)), 'create', who === USER ? undefined : who, who)
+        const line = await notice(ch, createdLine(ch.name, nameOf(who)), 'create', who === USER ? undefined : who, who, input)
         emitChannel(ch)
         if (who !== USER) await tell(who, ch, createdNotice(ch.name, nameOf(who)), line)
         return { ok: true as const, channel: ch, line }
@@ -910,14 +926,14 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       })
     },
 
-    pollClose(who, id, seq) {
+    pollClose(who, id, seq, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
         const p = ch.polls?.[String(seq)]
         if (!p) return notOpen(id, seq)
         if (!mayClosePoll(who, p)) return fail('not-author')
-        const closed = await closePoll(ch, p, { by: 'author', closer: personOf(who) })
+        const closed = await closePoll(ch, p, { by: 'author', closer: personOf(who) }, opts)
         arm()
         return { ok: true as const, ...closed }
       })
@@ -925,7 +941,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
 
     pollClock: () => ({ armed: clockTimer !== undefined, ...(clockAt !== undefined ? { at: clockAt } : {}) }),
 
-    join(who, id, agent) {
+    join(who, id, agent, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -939,7 +955,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (!done.ok) return done
         if (done.already) return { ok: true as const, channel: ch, already: true }
         forgetMissed(target, id)
-        const line = await notice(ch, joinedLine(ch.name, nameOf(target)), 'join', target, who)
+        const line = await notice(ch, joinedLine(ch.name, nameOf(target)), 'join', target, who, opts)
         emitChannel(ch)
         const members = Object.keys(ch.members).filter((m) => m !== target).map(nameOf)
         const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target), api.delivery.hasTools(target), nameOf(target))
@@ -965,7 +981,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       })
     },
 
-    remove(who, id, agent) {
+    remove(who, id, agent, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -975,7 +991,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (!done.ok) return done
         cancelWaiting(agent, id)
         forgetMissed(agent, id)
-        const line = await notice(ch, removedLine(ch.name, name), 'remove', agent, who)
+        const line = await notice(ch, removedLine(ch.name, name), 'remove', agent, who, opts)
         if (done.endedOwner) await ownerEnded(ch, agent, name)
         emitChannel(ch)
         // The removed one is no longer a member: it gets its own notice apart from the fan-out.
@@ -986,7 +1002,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       })
     },
 
-    mute(who, id, agent) {
+    mute(who, id, agent, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -994,7 +1010,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         const done = await store.mute(id, agent, who)
         if (!done.ok) return done
         if (!done.changed) return { ok: true as const, channel: ch, changed: false }
-        const line = await notice(ch, mutedLine(ch.name, nameOf(agent), nameOf(who)), 'mute', agent, who)
+        const line = await notice(ch, mutedLine(ch.name, nameOf(agent), nameOf(who)), 'mute', agent, who, opts)
         emitChannel(ch)
         // P9: the line is in the conversation for everyone; the notice goes to the one muted.
         await tell(agent, ch, mutedNotice(ch.name, nameOf(who)), line)
@@ -1002,7 +1018,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
       })
     },
 
-    unmute(who, id, agent) {
+    unmute(who, id, agent, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -1010,14 +1026,14 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         const done = await store.unmute(id, agent)
         if (!done.ok) return done
         if (!done.changed) return { ok: true as const, channel: ch, changed: false }
-        const line = await notice(ch, unmutedLine(ch.name, nameOf(agent)), 'unmute', agent, who)
+        const line = await notice(ch, unmutedLine(ch.name, nameOf(agent)), 'unmute', agent, who, opts)
         emitChannel(ch)
         await tell(agent, ch, unmutedNotice(ch.name), line)
         return { ok: true as const, channel: ch, changed: true, line }
       })
     },
 
-    close(who, id) {
+    close(who, id, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -1027,14 +1043,14 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (!done.ok) return done
         for (const agent of Object.keys(ch.members)) { cancelWaiting(agent, id); forgetMissed(agent, id) }
         await closeAllPolls(ch)
-        const line = await notice(ch, closedLine(ch.name, nameOf(who)), 'close', undefined, who)
+        const line = await notice(ch, closedLine(ch.name, nameOf(who)), 'close', undefined, who, opts)
         emitChannel(ch)
         await fanout(ch, line, who === USER ? undefined : who)
         return { ok: true as const, channel: ch, line }
       })
     },
 
-    reopen(who, id) {
+    reopen(who, id, opts) {
       return lane(id, async () => {
         const ch = store.get(id)
         if (!ch) return fail('unknown-channel')
@@ -1042,7 +1058,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (refusal) return fail(refusal)
         const done = await store.reopen(id)
         if (!done.ok) return done
-        const line = await notice(ch, reopenedLine(ch.name, nameOf(who)), 'reopen', undefined, who)
+        const line = await notice(ch, reopenedLine(ch.name, nameOf(who)), 'reopen', undefined, who, opts)
         emitChannel(ch)
         await fanout(ch, line, who === USER ? undefined : who)
         return { ok: true as const, channel: ch, line }

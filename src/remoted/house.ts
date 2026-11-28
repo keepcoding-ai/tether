@@ -862,6 +862,14 @@ export class House {
       case 'channels.vote':
       case 'channels.poll':
       case 'channels.seen':
+      case 'channels.create':
+      case 'channels.join':
+      case 'channels.remove':
+      case 'channels.mute':
+      case 'channels.unmute':
+      case 'channels.close':
+      case 'channels.reopen':
+      case 'channels.poll-close':
         return this.#extWrite(s, line.name, req, body)
       case 'channels.file': return this.#fileRead(s, body)
       case 'channels.upload': return this.#upload(s, body)

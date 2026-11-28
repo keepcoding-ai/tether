@@ -99,9 +99,9 @@ export const EXT_READS = {
 
 /**
  * The extension writes a device may reach, by the line that reaches each one: total by type over ExtWriteOp, as EXT_READS
- * is over ExtReadOp. One line per write. The channels' five are the person's speech (requests.ts gate `person`, which takes
- * `app` and `remote`); everything that manages a channel stays out (gate `moderator`, the app alone), and
- * test/unit/ext.channels-person.test.ts keeps this list and that gate in step.
+ * is over ExtReadOp. One line per write. The channels' first five are the person's speech (requests.ts gate `person`), the
+ * next eight her managing the channel (gate `manager`, RR5); both gates take `app` and `remote`, and
+ * test/unit/ext.channels-person.test.ts keeps these lists and those gates in step.
  */
 export const EXT_WRITES = {
   'channels.say': { ext: 'channels', name: 'say' },
@@ -109,6 +109,14 @@ export const EXT_WRITES = {
   'channels.vote': { ext: 'channels', name: 'vote' },
   'channels.poll': { ext: 'channels', name: 'poll' },
   'channels.seen': { ext: 'channels', name: 'seen' },
+  'channels.create': { ext: 'channels', name: 'create' },
+  'channels.join': { ext: 'channels', name: 'join' },
+  'channels.remove': { ext: 'channels', name: 'remove' },
+  'channels.mute': { ext: 'channels', name: 'mute' },
+  'channels.unmute': { ext: 'channels', name: 'unmute' },
+  'channels.close': { ext: 'channels', name: 'close' },
+  'channels.reopen': { ext: 'channels', name: 'reopen' },
+  'channels.poll-close': { ext: 'channels', name: 'poll-close' },
   // The gestures only the app knows (RR5 5.1): ONE request of the Regency, `act`, whose args are the act of the op, built
   // and taken by the closed list of src/remote/app-acts.ts (APP_ACT_FIELDS, field by field; tetherd refuses anything else
   // from `remote` in extensions/regency/daemon.ts). The op decides the act, never the device.

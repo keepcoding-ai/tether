@@ -1,8 +1,9 @@
 // The moderator's requests (contract 5.2) over the extension seam of the pipe (N1): the channel's pane asks, the daemon answers.
 // A thin shell over the fan-out (fanout.ts): every refusal of the rules comes back as the request's error with the same code
 // as the verbs (`not-owner`, `closed`, `unknown-channel`...). Reading (`list`, `members`, `history`) is open to every client;
-// the speech (say, react, vote, poll, seen) is the person's, from the `app` or from afar (`remote`); managing the channel is the `app`'s
-// alone. Any other client is refused with `not-moderator`.
+// the speech (say, react, vote, poll, seen) is the person's, from the `app` or from afar (`remote`); managing the channel (create,
+// join, remove, mute, unmute, close, reopen, close a poll) too, since RR5, and from afar its system line carries the mark.
+// Any other client is refused with `not-moderator`.
 // Memory: one timer for every channel (`seen`), cleared on dispose.
 import { slotIsLive } from '../../../app/shared/agent-info.ts'
 import { toDisposable, type IDisposable } from '../../../app/shared/vscode-lifecycle.ts'
@@ -159,14 +160,17 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
   void ready.then((c) => { channels = c }, () => {})
 
   const live = async (): Promise<Channels> => channels ?? ready
-  // Two gates. `person`: the person talking (say, react, vote, open a poll, mark seen), from the app or from afar (`remote`).
-  // `moderator`: the person managing the channel (create, join, remove, mute, close, reopen, close any poll): the app alone.
-  // Every `person` request is a pair of EXT_WRITES (src/remoted/reach.ts); test/unit/ext.channels-person.test.ts keeps both in step.
+  // Two gates, the same clients, kept apart so each list stays in step with its own pairs. `person`: the person talking (say,
+  // react, vote, open a poll, mark seen). `manager`: the person managing the channel (create, join, remove, mute, unmute, close,
+  // reopen, close any poll; RR5). Both take the app and the device (`remote`); from afar a managing act's system line says so
+  // (`fromAfar`, from the pipe's client, never from the arguments). Every request of either gate is a pair of EXT_WRITES
+  // (src/remoted/reach.ts); test/unit/ext.channels-person.test.ts keeps the lists and the gates in step.
   const person = (ctx: ExtRequestContext): void => {
     if (ctx.client !== 'app' && ctx.client !== 'remote') throw refuse('not-moderator', 'só a pessoa (no app ou de longe) fala e age como moderadora')
   }
-  const moderator = (ctx: ExtRequestContext): void => {
-    if (ctx.client !== 'app') throw refuse('not-moderator', 'só o app fala e age como moderador')
+  const manager = (ctx: ExtRequestContext): { fromAfar?: true } => {
+    if (ctx.client !== 'app' && ctx.client !== 'remote') throw refuse('not-moderator', 'só a pessoa (no app ou de longe) gere o canal')
+    return ctx.client === 'remote' ? { fromAfar: true } : {}
   }
   const channelOf = (c: Channels, a: Record<string, unknown>): Channel => {
     const ch = c.store.get(text(a, 'channel'))
@@ -246,11 +250,11 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
 
     // The person closes a poll before its time (she may close any): the result is the answer.
     ['poll-close', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
       const poll = int(a, 'poll')
       if (poll === undefined) throw refuse('bad-request', 'o argumento poll é um inteiro')
-      const r = done(await c.pollClose(USER, ch.id, poll))
+      const r = done(await c.pollClose(USER, ch.id, poll, afar))
       return { result: r.result, closedAt: r.line.at }
     }],
 
@@ -285,49 +289,49 @@ export function registerChannelRequests(api: RequestsApi, ready: Promise<Channel
     }],
 
     ['create', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const title = typeof a.title === 'string' && a.title !== '' ? a.title : undefined
-      const r = done(await c.create(USER, { name: text(a, 'name'), ...(title !== undefined ? { title } : {}) }))
+      const r = done(await c.create(USER, { name: text(a, 'name'), ...(title !== undefined ? { title } : {}), ...afar }))
       return { channel: summaryOf(r.channel) }
     }],
 
     ['join', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      const r = done(await c.join(USER, ch.id, agentOf(a)))
+      const r = done(await c.join(USER, ch.id, agentOf(a), afar))
       return { channel: summaryOf(r.channel), already: r.already }
     }],
 
     ['remove', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      return { channel: summaryOf(done(await c.remove(USER, ch.id, agentOf(a))).channel) }
+      return { channel: summaryOf(done(await c.remove(USER, ch.id, agentOf(a), afar)).channel) }
     }],
 
     ['mute', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      const r = done(await c.mute(USER, ch.id, agentOf(a)))
+      const r = done(await c.mute(USER, ch.id, agentOf(a), afar))
       return { channel: summaryOf(r.channel), already: !r.changed }
     }],
 
     ['unmute', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      const r = done(await c.unmute(USER, ch.id, agentOf(a)))
+      const r = done(await c.unmute(USER, ch.id, agentOf(a), afar))
       return { channel: summaryOf(r.channel), already: !r.changed }
     }],
 
     ['close', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      return { channel: summaryOf(done(await c.close(USER, ch.id)).channel) }
+      return { channel: summaryOf(done(await c.close(USER, ch.id, afar)).channel) }
     }],
 
     ['reopen', async (c, a, ctx) => {
-      moderator(ctx)
+      const afar = manager(ctx)
       const ch = channelOf(c, a)
-      return { channel: summaryOf(done(await c.reopen(USER, ch.id)).channel) }
+      return { channel: summaryOf(done(await c.reopen(USER, ch.id, afar)).channel) }
     }],
 
     // The reactions that ask the person (❓/❌ of an agent on her speeches) and she has not seen: the tail of the channel, one read.

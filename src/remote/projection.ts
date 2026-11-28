@@ -102,6 +102,8 @@ export const TALK_ERROR_CODES = [
   // The files of a speech (step 4.3): a secret's name, more files than a speech carries, the files of a speech that are not
   // whole at the portal, a copy into the channel's folder that failed.
   'secret-file', 'too-many', 'unknown-file', 'copy-failed',
+  // Managing a channel (RR5, fio-spec 18; src/remote/talk.ts TALK_REFUSALS).
+  'unknown-agent', 'name-taken', 'bad-name', 'exists', 'desk', 'not-closed', 'not-member',
 ] as const
 /**
  * The refusals of a management act (RR5 5.2), by tetherd's own error codes (src/daemon/protocol.ts ErrorCode): an id that
@@ -715,6 +717,32 @@ function seenMark(s: WriteSource): SeenMark {
   return { seenByUser: int(rec(s.answer).seenByUser) ?? 0 }
 }
 
+// ---- the person managing a channel from afar (RR5, fio-spec 18): what changed, never the channel's summary whole.
+
+/** A channel made: its id and its room name (the screen reads its page next). */
+export interface ChannelMade { channel: string; name: string }
+/** A join, a mute or an unmute: whether it was so already (nothing changed, no line). */
+export interface ChannelAlready { already: boolean }
+/** A poll closed by the person: its card as channels.page draws it, with the result. */
+export interface PollClosedState { state: PagePollState }
+const MADE_ID_RE = /^[\w.:-]{1,64}$/
+const MADE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+
+function channelMade(s: WriteSource): ChannelMade {
+  const c = rec(rec(s.answer).channel)
+  return {
+    channel: typeof c.id === 'string' && MADE_ID_RE.test(c.id) ? c.id : '',
+    name: typeof c.name === 'string' && c.name.length <= 40 && MADE_NAME_RE.test(c.name) ? c.name : '',
+  }
+}
+const channelAlready = (s: WriteSource): ChannelAlready => ({ already: rec(s.answer).already === true })
+const channelActed = (_: WriteSource): Record<string, never> => ({})
+function pollClosedState(s: WriteSource): PollClosedState {
+  const a = rec(s.answer)
+  const result = a.result ? pollOutcome(a.result) : undefined
+  return { state: result ? opt<PagePollState>({ seq: result.poll, result }, { closedAt: iso(a.closedAt) }) : { seq: 0 } }
+}
+
 // ---- the files of a speech from afar (step 4.3)
 
 /**
@@ -1083,6 +1111,14 @@ export const RESULTS = {
   'channels.file': fileChunk,
   'channels.upload': uploaded,
   'channels.upload-cancel': empty,
+  'channels.create': channelMade,
+  'channels.join': channelAlready,
+  'channels.remove': channelActed,
+  'channels.mute': channelAlready,
+  'channels.unmute': channelAlready,
+  'channels.close': channelActed,
+  'channels.reopen': channelActed,
+  'channels.poll-close': pollClosedState,
   'regency.tree': regencyTree,
   'agents.stop': slotActed,
   'agents.start': slotActed,
