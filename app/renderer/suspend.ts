@@ -204,6 +204,12 @@ export class SuspendBook {
     return { changed: this.suspended.delete(id) }
   }
 
+  /** The slot's intent says it is no longer suspended (it turned to run or ended while stopped): the mark goes. */
+  unsuspended(id: string): SuspendOutcome {
+    if (this.resuming.has(id)) return NOTHING
+    return { changed: this.suspended.delete(id) }
+  }
+
   /** The person typed or pasted into the pane: held while it resumes; the first input of a suspended pane resumes it. */
   userInput(id: string, data: string): SuspendOutcome & { held: boolean } {
     if (this.resuming.has(id)) { this.input.hold(id, data); return { changed: false, held: true } }

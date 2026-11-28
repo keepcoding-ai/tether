@@ -2,7 +2,7 @@
 // Transport: a named pipe (Windows) / unix socket, newline-delimited JSON, one message per line.
 // Terminal bytes travel as UTF-8 strings (node-pty emits strings).
 
-import type { AgentName, Binding } from '../core/event.ts'
+import type { AgentName, Binding, SlotWant } from '../core/event.ts'
 import type { PerfSnapshot } from '../core/perf.ts'
 import type { Probe } from '../core/perf-probe.ts'
 import type { Profile, ProfileInput } from '../core/profile.ts'
@@ -11,7 +11,13 @@ import type { Ronda } from './ronda.ts'
 import type { ProcBy, ProcEvent, ProcRecipe, ProcState } from './procs.ts'
 import type { PortRow } from './ports.ts'
 
-export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow }
+export type { PerfSnapshot, Probe, Profile, ProfileInput, PauseBatch, Ronda, ProcBy, ProcEvent, ProcRecipe, ProcState, PortRow, SlotWant }
+
+/**
+ * Why a `stop` stops the slot: the lifecycle intent it leaves (end -> 'ended', hibernate -> 'asleep', suspend -> 'suspended').
+ * 'quit' (the app quitting everything) only stops the process and leaves the intent as it is: what ran comes back at boot.
+ */
+export type StopWhy = 'end' | 'hibernate' | 'suspend' | 'quit'
 
 /**
  * 2: the client proves it is the user who runs tetherd (`auth`, then `hello` with `proof`; see pipe-key.ts), and tetherd
@@ -127,6 +133,11 @@ export interface SlotState {
   held?: SlotHold
   /** This slot's attention is rerouted to a live slot: `attention` is then ABSENT and its value lives here. */
   attentionFor?: { slotId: string; value: 'done' | 'waiting' }
+  /**
+   * The slot's lifecycle intent (SlotMeta.want), kept by tetherd: 'run' with no live process = interrupted (tetherd relaunches
+   * it at boot when it can). Absent on slots from before it existed and on daemons older than 0.3.8.
+   */
+  want?: SlotWant
 }
 
 /** Who holds a pane given to an agent: the extension that says so and the holder (an agent's slotId). */
@@ -245,8 +256,14 @@ export type Request =
   /** Agent door: reads the slot's screen without attaching or resizing. Reply: `screen`. */
   | { t: 'read-screen'; id: number; slotId: string; since?: number }
   | { t: 'resize'; id: number; slotId: string; cols: number; rows: number }
-  /** Kill the slot's process (the slot and its binding stay). */
-  | { t: 'stop'; id: number; slotId: string }
+  /**
+   * Kill the slot's process (the slot and its binding stay). `why` (absent = 'end') is the intent left in the slot's meta,
+   * written before the kill: 'end' -> want 'ended', 'hibernate' -> 'asleep', 'suspend' -> 'suspended'. None of them is
+   * relaunched at boot. 'quit' leaves the intent untouched (a slot that wanted to run is relaunched at the next boot).
+   */
+  | { t: 'stop'; id: number; slotId: string; why?: StopWhy }
+  /** Records the slot's intent without touching its process (migration of the app's hibernated/suspended panes). Reply: `slot`. */
+  | { t: 'set-want'; id: number; slotId: string; want: 'asleep' | 'suspended' }
   /** Stop and remove the slot from tether (agent session files are never touched). */
   | { t: 'forget'; id: number; slotId: string }
   | { t: 'rename-slot'; id: number; slotId: string; name: string }

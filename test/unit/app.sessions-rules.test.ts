@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import type { SlotState, SlotStatus } from '../../src/daemon/protocol.ts'
 import type { PauseBatch, PauseEntry, PauseEntryState } from '../../src/daemon/pause.ts'
 import {
-  CHOOSE_PLACE_LABEL, deskChoices, rowMenuPlan, bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
+  CHOOSE_PLACE_LABEL, deskChoices, INTERRUPTED_TEXT, isInterrupted, rowGroupOf, rowMenuPlan, bulkCloseAction, bulkCloseSituation, forgetEndedSituation, formatAgo, formatMemory, liveMemoryTotal, groupClosed, isIdleForCleanup, pauseAction, pausePreview, popupGroups,
   resolvePopupSelection, resumePreview, shortFolder, sessionRows, sessionsCounter, stopHeldSituation,
   sessionsSummary, type SessionSlot,
 } from '../../app/renderer/sessions-rules.ts'
@@ -395,5 +395,45 @@ describe('the rows\' right-click menus and the desk list', () => {
       { id: 'c', label: 'casa', current: true },
     ])
     assert.equal(CHOOSE_PLACE_LABEL, 'Escolher o lugar…')
+  })
+})
+
+describe('interrupted sessions (stopped while meant to run)', () => {
+  test('exited or unconfirmed with want run is interrupted: "Sem guia" with Reabrir, labelled "interrompida", not "Encerradas"', () => {
+    const slots = [
+      mk('crash', { status: 'exited', want: 'run', endedAt: ago(5 * MIN) }),
+      mk('unconf', { status: 'unconfirmed', want: 'run' }),
+      mk('ended', { status: 'exited', want: 'ended', endedAt: ago(5 * MIN) }),
+      mk('legacy', { status: 'exited', endedAt: ago(5 * MIN) }),
+      mk('tabbed', { status: 'exited', want: 'run' }),
+    ]
+    const rows = sessionRows(slots, tabs('tabbed'), NOW)
+    const by = (id: string) => rows.find(r => r.slotId === id)!
+    for (const id of ['crash', 'unconf']) {
+      assert.equal(by(id).interrupted, true, id)
+      assert.equal(by(id).noTab, true, `${id} is in "Sem guia"`)
+      assert.equal(by(id).text, INTERRUPTED_TEXT)
+      assert.equal(rowGroupOf(by(id)), 'interrupted')
+    }
+    assert.equal(INTERRUPTED_TEXT, 'interrompida')
+    for (const id of ['ended', 'legacy']) {
+      assert.equal(by(id).interrupted, false, id)
+      assert.equal(by(id).noTab, false)
+      assert.equal(rowGroupOf(by(id)), 'ended')
+    }
+    assert.equal(by('tabbed').noTab, false, 'with a tab it is not "sem guia"')
+    assert.equal(isInterrupted(mk('live', { status: 'running', want: 'run' })), false)
+    assert.equal(isInterrupted(mk('asleep', { status: 'exited', want: 'asleep' })), false)
+  })
+
+  test('the interrupted row menu reopens (here, elsewhere) and can end it; no forget', () => {
+    const plan = rowMenuPlan('interrupted')
+    assert.equal(plan[0]!.action, 'reopen')
+    assert.deepEqual(plan.map(i => i.action), ['reopen', 'reopen-here', 'reopen-other', 'stop'])
+  })
+
+  test('the summary counts an interrupted session as "sem guia", not "encerrada"', () => {
+    const s = sessionsSummary([mk('i', { status: 'exited', want: 'run' }), mk('e', { status: 'exited', want: 'ended' })], none, null)
+    assert.equal(s.header, '1 sem guia · 1 encerrada')
   })
 })

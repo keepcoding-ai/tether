@@ -1306,3 +1306,5 @@ A suspensão por economia ganhou entrada manual, como alternativa a hibernar: a 
 - **Mapa e MCP.** `DeskMapPane.noSuspend` (protocolo, `deskMapOf`, `parseDeskMap`). `agents list` mostra `noSuspend: true`. O verbo `suspend` recusa com `no-suspend` checando o mapa no daemon (caminho mais simples, sem ida ao app; o app ainda recusa com `cannot-suspend` pela porta `door.suspend`). Skill e instrução do servidor atualizadas.
 - **Prova.** Blocos novos em `app.suspend`, `app.commands`, `ext.for-agents-suspend`. `tsc -p .` limpo.
 - **Entrega pede reiniciar o tetherd** (verbo, mapa e instrução são do daemon) e rebuild do app.
+
+- **Atualização (2026-11-27): "Dividir (vazio)" sem atalho padrão.** As quatro `Ctrl+Shift+seta` saíram de `DEFAULT_KEYBINDINGS`; os comandos `pane.split-empty.pane.*` seguem na paleta e no menu, só sem tecla (a nota acima descreve o estado anterior).

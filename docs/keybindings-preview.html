@@ -539,7 +539,7 @@ const SCHEME=[
  {g:'abas',vs:'ctrl+k ctrl+\\',vc:'Dividir editor para baixo',te:'Duplicar painel abaixo (apelido)',id:'pane.duplicate.pane.below',today:'Ctrl+Alt+↓ (fica) · Ctrl+Shift+E (sai)',st:'change',c:'c6'},
  {g:'abas',vs:'ctrl+alt+right|ctrl+alt+left',vc:'Mover editor para o grupo seguinte / anterior',te:'Duplicar painel à direita / à esquerda (mantém; mover fica no "Mover…")',id:'pane.duplicate.pane.*',today:'igual',st:'same',c:'c6'},
  {g:'abas',vs:'',tvs:'ctrl+alt+up|ctrl+alt+down',vc:'— (no editor: cursor acima / abaixo)',te:'Duplicar painel acima / abaixo',id:'pane.duplicate.pane.*',today:'igual',st:'same'},
- {g:'abas',vs:'',tvs:'ctrl+shift+right',vc:'— (no editor: seleção por palavra)',te:'Dividir ao lado (vazio), nos quatro sentidos',id:'pane.split-empty.pane.*',today:'igual',st:'same',c:'c5'},
+ {g:'abas',vs:'',tvs:'',vc:'—',te:'Dividir ao lado (vazio), nos quatro sentidos: sem atalho padrão',id:'pane.split-empty.pane.*',today:'igual',st:'same',c:'c5'},
  {g:'abas',vs:'',tvs:'ctrl+shift+h',vc:'Substituir nos arquivos (sem equivalente)',te:'Mostrar ou ocultar a barra de status do painel',id:'pane.details',today:'igual',st:'same'},
  // quadros
  {g:'quadros',vs:'ctrl+k ctrl+right|ctrl+k ctrl+left|ctrl+k ctrl+up|ctrl+k ctrl+down',vc:'Focar o grupo à direita / esquerda / acima / abaixo',te:'Focar o painel vizinho na direção (dentro do quadro e, na borda, no quadro ao lado)',id:'frame.focus.*',today:'— (só mouse)',st:'new',isNew:true},
@@ -651,7 +651,7 @@ const REG=[
  ...DIRS.map(([d,l])=>B(`pane.duplicate.pane.${d}`,`Duplicar painel ${l}`,'Painel',[`ctrl+alt+${{right:'right',left:'left',above:'up',below:'down'}[d]}`,...(d==='right'?['ctrl+\\']:d==='below'?['ctrl+k ctrl+\\']:[])])),
  ...DIRS.map(([d,l])=>B(`pane.duplicate.frame.${d}`,`Duplicar painel na borda do quadro, ${l}`,'Painel',[`ctrl+alt+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
  ...DIRS.map(([d,l])=>B(`pane.duplicate.desk.${d}`,`Duplicar painel num quadro novo, ${l}`,'Painel',[`alt+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
- ...DIRS.map(([d,l])=>B(`pane.split-empty.pane.${d}`,`Dividir ${l} (vazio)`,'Painel',[`ctrl+shift+${{right:'right',left:'left',above:'up',below:'down'}[d]}`])),
+ ...DIRS.map(([d,l])=>B(`pane.split-empty.pane.${d}`,`Dividir ${l} (vazio)`,'Painel',[])),
  ...DIRS.map(([d,l])=>B(`pane.split-empty.frame.${d}`,`Dividir na borda do quadro, ${l} (vazio)`,'Painel',[])),
  B('pane.new-at-frame-edge','Novo painel na borda do quadro…','Painel',[]),
  B('pane.next-tab','Próxima aba do quadro','Painel',['ctrl+pgdn'],{isNew:true}),

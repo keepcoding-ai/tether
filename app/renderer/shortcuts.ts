@@ -226,10 +226,6 @@ export const DEFAULT_KEYBINDINGS: readonly DefaultEntry[] = [
   { key: 'shift+alt+left', command: 'pane.duplicate.desk.left' },
   { key: 'shift+alt+up', command: 'pane.duplicate.desk.above' },
   { key: 'shift+alt+down', command: 'pane.duplicate.desk.below' },
-  { key: 'ctrl+shift+right', command: 'pane.split-empty.pane.right' },
-  { key: 'ctrl+shift+left', command: 'pane.split-empty.pane.left' },
-  { key: 'ctrl+shift+up', command: 'pane.split-empty.pane.above' },
-  { key: 'ctrl+shift+down', command: 'pane.split-empty.pane.below' },
   { key: 'ctrl+pgdn', command: 'pane.next-tab' },                   // "next editor in group"
   { key: 'ctrl+pgup', command: 'pane.previous-tab' },
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n): DefaultEntry => ({ key: `alt+${n}`, command: `pane.go.${n}` })), // "open editor N" (top row; the numpad is Windows' Alt+code)

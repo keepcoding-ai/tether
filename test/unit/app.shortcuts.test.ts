@@ -69,7 +69,7 @@ describe('the key table', () => {
     assert.deepEqual(t.bindingsOf('pane.duplicate.pane.below').map(b => formatKeys(b.keys)), ['ctrl+alt+down', 'ctrl+k ctrl+\\'])
     assert.equal(hint('pane.duplicate.frame.below'), 'Ctrl+Alt+Shift+↓')
     assert.equal(hint('pane.duplicate.desk.left'), 'Alt+Shift+←')
-    assert.equal(hint('pane.split-empty.pane.right'), 'Ctrl+Shift+→')
+    assert.equal(hint('pane.split-empty.pane.right'), '')
     assert.equal(hint('pane.next-tab'), 'Ctrl+PgDn')
     assert.equal(hint('pane.previous-tab'), 'Ctrl+PgUp')
     assert.equal(hint('pane.go.3'), 'Alt+3')

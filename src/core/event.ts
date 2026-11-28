@@ -64,7 +64,23 @@ export interface SlotMeta {
   held?: { ext: string; by: string }
   /** Agent door: the slotId this slot's attention is rerouted to. */
   attentionTo?: string
+  /**
+   * The slot's lifecycle intent, kept by tetherd (see SlotWant). Absent: a slot from before the field existed, never
+   * relaunched at boot.
+   */
+  want?: SlotWant
+  /** Boot relaunches in a row that did not prove healthy (crash-loop guard); cleared by a healthy run or a manual start. */
+  bootTries?: number
 }
+
+/**
+ * What the slot should be doing, whatever process runs it now:
+ * - run:       running; tetherd relaunches it at boot when it is not up
+ * - asleep:    hibernated; only an explicit start wakes it
+ * - suspended: stopped to save resources; comes back when used
+ * - ended:     the user (or the owner, through the door) ended it
+ */
+export type SlotWant = 'run' | 'asleep' | 'suspended' | 'ended'
 
 /** Who is running the slot right now: <home>/slots/<slotId>.run.json (written by the launcher). */
 export interface RunInfo {
