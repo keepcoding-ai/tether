@@ -18,6 +18,8 @@ import {
   type GateContext, type PipeReach, type PipeType,
 } from '../../src/remoted/gate.ts'
 import { DEFAULT_SCOPES } from '../../src/remoted/house.ts'
+import { REMOTE_ACT_ARGS, remoteMayAct } from '../../src/remoted/reach.ts'
+import { isManageOp } from '../../src/remote/manage.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -296,5 +298,30 @@ describe('the gate decides by the table alone', () => {
     assert.equal(/STRICT_KEYS|Record<string, readonly string\[\]>/.test(house), false, 'the strict keys of a body live on its line')
     assert.equal(/'(?:attention|channels|regency:read|manage:\w+|peek:[\w:]+)'/.test(house), false, 'house.ts names no scope')
     assert.match(gateSrc, /opByCode\(req\.op\)/)
+  })
+})
+
+describe("the class 'op' (RR5 5.2): the management acts, each type with its closed fields", () => {
+  test('the rules are exactly the types of the class, and every management line emits only types of it (and proc-info for a board)', () => {
+    const ops = Object.entries(PIPE_REACH as Record<string, PipeReach>).filter(([, r]) => r === 'op').map(([t]) => t).sort()
+    assert.deepEqual(Object.keys(REMOTE_ACT_ARGS).sort(), ops)
+    for (const l of OPS.filter(l => isManageOp(l.name))) {
+      assert.ok(l.pipe.length >= 1 && l.pipe.every(t => ops.includes(t)), l.name)
+      assert.ok(l.body !== undefined, `${l.name}: a strict body`)
+    }
+    for (const kept of ['create', 'set-want', 'set-profile', 'proc-adopt', 'proc-host-stop', 'proc-attach', 'pause-start', 'object-set', 'verb', 'input'])
+      assert.equal(PIPE_REACH[kept as PipeType], 'never', `${kept}: still no remote path`)
+  })
+
+  test('a message passes only with the fields and values of its rule: never by, a recipe, a wait or another why', () => {
+    assert.equal(remoteMayAct({ t: 'stop', id: 1, slotId: 's1', why: 'end' }), true)
+    assert.equal(remoteMayAct({ t: 'proc-stop', id: 1, name: 'web', force: 'porque' }), true)
+    assert.equal(remoteMayAct({ t: 'ronda-off', slotId: 's1', force: true }), true)
+    for (const m of [
+      { t: 'stop', slotId: 's1', why: 'hibernate' }, { t: 'proc-stop', name: 'web', by: { slotId: 's2' } }, { t: 'proc-stop', name: 'web', waitMs: 1000 },
+      { t: 'proc-start', name: 'web', recipe: { command: 'x', args: [], cwd: '.' } }, { t: 'proc-start', name: 'web', force: true },
+      { t: 'ronda-off', slotId: 's1', force: false }, { t: 'rename-slot', slotId: 's1', name: 7 }, { t: 'create', kind: 'claude', cwd: '.' },
+      { t: 'ext-request', ext: 'channels', name: 'say' }, { t: 'proc-use', name: 'web', purpose: 'x', constructor: 'x' }, { t: 7 },
+    ]) assert.equal(remoteMayAct(m as Record<string, unknown>), false, JSON.stringify(m))
   })
 })

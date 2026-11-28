@@ -17,6 +17,9 @@ import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
 import { EXT_READS, EXT_WRITES, PIPE_REACH, REMOTE_EXT_PAIRS, type ExtReadOp, type ExtWriteOp, type PipeType } from '../../src/remoted/gate.ts'
 import { pipeReads, type ExtRequestFn } from '../../src/remoted/reads.ts'
 import { pipeWrites } from '../../src/remoted/writes.ts'
+import { ActError, pipeActs } from '../../src/remoted/acts.ts'
+import { manageArgs, type ManageOp } from '../../src/remote/manage.ts'
+import { opByName } from '../../src/remote/index.ts'
 import { removeHome, uniquePipe } from './daemon.helpers.ts'
 import { benchHome, until } from './remoted.helpers.ts'
 
@@ -145,5 +148,44 @@ describe('tetherd: the reach of the remote client (B-8)', () => {
     assert.deepEqual(calls.map((c) => [c.name, c.client]), Object.values(EXT_WRITES).map((p) => [p.name, 'remote']))
     // And the reach tetherd enforces is exactly what the portal's tables list: the reads, then the writes.
     assert.deepEqual(REMOTE_EXT_PAIRS, [...Object.values(EXT_READS), ...Object.values(EXT_WRITES)])
+  })
+
+  test('RR5 5.2 parity: every act the portal builds passes the reach; a target that does not exist is unknown, never denied', async () => {
+    const acts = pipeActs(async (m) => await remote.request(m as never) as Record<string, unknown>)
+    const bodies: Record<ManageOp, Record<string, unknown>> = {
+      'agents.stop': { slotId: MARKER }, 'agents.start': { slotId: MARKER, choice: 'resume' }, 'agents.restart': { slotId: MARKER },
+      'agents.rename': { slotId: MARKER, name: 'novo' }, 'agents.forget': { slotId: MARKER },
+      'ronda.get': { slotId: MARKER }, 'ronda.set': { slotId: MARKER, interval: '10m', nudge: 'oi', criterion: '' }, 'ronda.off': { slotId: MARKER },
+      'procs.list': {}, 'procs.info': { name: 'nada' }, 'procs.start': { name: 'nada' }, 'procs.stop': { name: 'nada', reason: 'r' },
+      'procs.stop-force': { name: 'nada', reason: 'r' }, 'procs.restart': { name: 'nada' }, 'procs.restart-force': { name: 'nada', reason: 'r' },
+      'procs.use': { name: 'nada', duration: '5m', purpose: 'p' }, 'procs.release': { name: 'nada' }, 'procs.forget': { name: 'nada' },
+      'procs.forget-force': { name: 'nada', reason: 'r' },
+    }
+    const from = logs.length
+    for (const [op, body] of Object.entries(bodies) as [ManageOp, Record<string, unknown>][]) {
+      const a = manageArgs(op, body)
+      assert.ok(typeof a !== 'string', op)
+      const run = opByName(op)!.mutates ? acts.act(a.msg).answer : acts.read(a.msg)
+      try {
+        const reply = await run
+        assert.ok(op === 'procs.list' || op === 'procs.release', `${op}: ${JSON.stringify(reply)}`)
+      } catch (e) {
+        assert.ok(e instanceof ActError && e.why === 'refused' && e.code !== 'door-denied' && e.code !== 'outside-reach', `${op}: ${String(e)}`)
+        assert.ok(['unknown-slot', 'unknown-proc', 'proc-host'].includes(e.code!), `${op}: ${e.code}`)
+      }
+    }
+    assert.equal(logs.slice(from).some((l) => l.startsWith('remote client:')), false, logs.slice(from).join('\n'))
+  })
+
+  test('RR5 5.2: an act with a field outside its rule is refused by tetherd itself (never by, a recipe, a wait, another why)', async () => {
+    const from = logs.length
+    for (const m of [
+      { t: 'stop', slotId: MARKER, why: 'hibernate' }, { t: 'proc-stop', name: 'nada', by: { slotId: MARKER } }, { t: 'proc-forget', name: 'nada', waitMs: 10 },
+      { t: 'proc-start', name: 'nada', recipe: { command: MARKER, args: [], cwd: '.' } }, { t: 'proc-start', name: 'nada', force: true },
+      { t: 'ronda-off', slotId: MARKER, force: false }, { t: 'proc-use', name: 'nada', purpose: 'p', by: { as: MARKER } },
+    ]) await assert.rejects(remote.request(m as never), denied, JSON.stringify(m))
+    const lines = logs.slice(from)
+    assert.equal(lines.filter((l) => /^remote client: a [\w-]+ outside its reach refused$/.test(l)).length, 7, lines.join('\n'))
+    assert.equal(lines.some((l) => l.includes(MARKER)), false, 'the log names the type alone')
   })
 })

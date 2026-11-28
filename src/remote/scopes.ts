@@ -60,6 +60,26 @@ export const OP_CODES = {
   'channels.upload': 0x0208,
   'channels.upload-cancel': 0x0209,
   'regency.tree': 0x0300,
+  // Management (RR5 5.2, fio-spec 16): direct acts on tetherd, each one pipe message of its own.
+  'agents.stop': 0x0400,
+  'agents.start': 0x0401,
+  'agents.restart': 0x0402,
+  'agents.rename': 0x0403,
+  'agents.forget': 0x0404,
+  'ronda.get': 0x0410,
+  'ronda.set': 0x0411,
+  'ronda.off': 0x0412,
+  'procs.list': 0x0420,
+  'procs.info': 0x0421,
+  'procs.start': 0x0422,
+  'procs.stop': 0x0423,
+  'procs.stop-force': 0x0424,
+  'procs.restart': 0x0425,
+  'procs.restart-force': 0x0426,
+  'procs.use': 0x0427,
+  'procs.release': 0x0428,
+  'procs.forget': 0x0429,
+  'procs.forget-force': 0x042a,
   'device.list': 0x0600,
   'device.revoke': 0x0601,
 } as const
@@ -140,6 +160,35 @@ export const OP_TABLE = {
   'channels.upload-cancel': { scope: 'channels', presence: 'unlocked', mutates: true, gesture: true, body: ['act', 'file'], pipe: [] },
   // The Regency's tree as tetherd keeps it (ext `regency`, `tree.read`).
   'regency.tree': { scope: 'regency:read', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['ext-request'] },
+  // Management from afar (RR5 5.2, fio-spec 16). Each line sends tetherd the ONE pipe message of its `pipe`, built by
+  // src/remote/manage.ts from the checked body, and tetherd takes from a `remote` client only the keys and values
+  // src/remoted/reach.ts REMOTE_ACT_ARGS lists for that type (never `by`, a recipe or a wait). The target is named by its
+  // real id (a slot's, a process's) and resolved by tetherd; a stale id is 0x06. What destroys (forgetting a slot or a
+  // process) is `manage:destructive` with a proof per act; forcing over another's use is an op of its own, with a reason.
+  // A slot: stop (its intent becomes `ended`), start or resume, restart in place, rename; forget is destructive.
+  'agents.stop': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId'], pipe: ['stop'] },
+  'agents.start': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId', 'choice'], pipe: ['start'] },
+  'agents.restart': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId'], pipe: ['restart'] },
+  'agents.rename': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId', 'name'], pipe: ['rename-slot'] },
+  'agents.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['slotId'], pipe: ['forget'] },
+  // A slot's ronda: see it, switch it on or reassemble it, switch it off (always forced, as the app does).
+  'ronda.get': { scope: 'manage:agents', presence: 'unlocked', mutates: false, gesture: false, body: ['slotId'], pipe: ['ronda-get'] },
+  'ronda.set': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId', 'interval', 'nudge', 'criterion'], pipe: ['ronda-set'] },
+  'ronda.off': { scope: 'manage:agents', presence: 'unlocked', mutates: true, gesture: true, body: ['slotId'], pipe: ['ronda-off'] },
+  // The background processes: list and see (src/remote/projection.ts remoteProc: env by names only), start the stored recipe
+  // (a new recipe is step 5.5), stop, restart, hold and let go; refused "in use" comes back with who, until when and what
+  // for, and going ahead anyway is the `-force` op with a reason. Forgetting is destructive.
+  'procs.list': { scope: 'manage:procs', presence: 'unlocked', mutates: false, gesture: false, body: [], pipe: ['proc-list'] },
+  'procs.info': { scope: 'manage:procs', presence: 'unlocked', mutates: false, gesture: false, body: ['name'], pipe: ['proc-info'] },
+  'procs.start': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name'], pipe: ['proc-start'] },
+  'procs.stop': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-stop', 'proc-info'] },
+  'procs.stop-force': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-stop'] },
+  'procs.restart': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-restart', 'proc-info'] },
+  'procs.restart-force': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-restart'] },
+  'procs.use': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name', 'duration', 'purpose'], pipe: ['proc-use'] },
+  'procs.release': { scope: 'manage:procs', presence: 'unlocked', mutates: true, gesture: true, body: ['name'], pipe: ['proc-release'] },
+  'procs.forget': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name'], pipe: ['proc-forget', 'proc-info'] },
+  'procs.forget-force': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['name', 'reason'], pipe: ['proc-forget'] },
   'device.list': { scope: 'manage:destructive', presence: 'unlocked', mutates: false, gesture: false, pipe: [] },
   'device.revoke': { scope: 'manage:destructive', presence: 'per-act', mutates: true, gesture: true, body: ['deviceId'], pipe: [] },
 } as const satisfies { readonly [K in OpName]: OpRule }

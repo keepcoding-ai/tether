@@ -72,7 +72,12 @@ export interface RemoteProc {
   card: { command: string; cwd: string; ports: number[]; description?: string; registeredBy?: RemoteAuthor; createdAt: string }
   /** The names of the card's variables; their values never leave the machine. */
   envNames: string[]
+  /** The uses declared on it (RR5 5.2): who, until when, what for. */
+  uses?: RemoteUse[]
 }
+
+/** A declared use of a process, as the app's "in use" board shows it: who, until when, what for. */
+export interface RemoteUse { by: RemoteAuthor; until: string; purpose: string }
 
 /** A profile as a device may see it: no args, no per-extension options, the env by names only. */
 export interface RemoteProfile {
@@ -97,11 +102,22 @@ export const TALK_ERROR_CODES = [
   // whole at the portal, a copy into the channel's folder that failed.
   'secret-file', 'too-many', 'unknown-file', 'copy-failed',
 ] as const
+/**
+ * The refusals of a management act (RR5 5.2), by tetherd's own error codes (src/daemon/protocol.ts ErrorCode): an id that
+ * names nothing (`unknown-slot`, `unknown-proc`, status 0x06), and what tetherd refused to do and why, by its code alone
+ * (src/remote/manage.ts ACT_REFUSALS gives each its status). Never tetherd's message: it carries agents' text and paths.
+ */
+const MANAGE_ERROR_CODES_LIST = [
+  'unknown-slot', 'unknown-proc', 'proc-in-use', 'proc-running', 'proc-not-stopped', 'port-busy', 'proc-host', 'unconfirmed',
+  'ronda-unavailable', 'session-missing', 'cwd-missing', 'already-open', 'spawn-failed', 'agent-unavailable',
+] as const
+export const MANAGE_ERROR_CODES = MANAGE_ERROR_CODES_LIST
 /** The error codes a body may carry; nothing else of a failure goes out. `too-large`: a read whose body passes READ_BODY_MAX. */
 export const ERROR_CODES = [
   'unknown-op', 'bad-request', 'not-implemented', 'failed', 'refused', 'too-large', ...TALK_ERROR_CODES,
   // Web Push (step 4.4): the subscription's endpoint is not of a push service the portal posts to (M-11).
   'push-service',
+  ...MANAGE_ERROR_CODES_LIST,
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
@@ -136,6 +152,7 @@ export interface ProcSource {
   ports?: readonly { port: number; listening: boolean }[]
   memoryMB?: number
   external?: boolean
+  uses?: readonly { by: AuthorSource; until: string; purpose: string }[]
   card: {
     command: string
     cwd: string
@@ -262,8 +279,19 @@ export function remoteProc(p: ProcSource): RemoteProc {
       attention: p.attention === true ? true : undefined, error: text(p.error), ports,
       memoryMB: typeof p.memoryMB === 'number' && Number.isFinite(p.memoryMB) && p.memoryMB >= 0 ? p.memoryMB : undefined,
       external: p.external === true ? true : undefined,
+      uses: Array.isArray(p.uses) ? remoteUses(p.uses) : undefined,
     },
   )
+}
+
+/** Uses of a process, each one line: who (an author), until when (ISO), what for (folded, at most 200 as tetherd keeps it). */
+export function remoteUses(uses: readonly unknown[]): RemoteUse[] {
+  return uses.slice(0, LIST_MAX).flatMap((u0): RemoteUse[] => {
+    const u = (u0 && typeof u0 === 'object' ? u0 : {}) as { by?: AuthorSource; until?: unknown; purpose?: unknown }
+    const by = author(u.by)
+    const until = iso(u.until)
+    return by && until ? [{ by, until, purpose: typeof u.purpose === 'string' ? sanitizeDeclaredName(u.purpose).slice(0, 200) : '' }] : []
+  })
 }
 
 export function remoteProfile(p: ProfileSource): RemoteProfile {
@@ -914,6 +942,109 @@ export function pushNotice(s: { kind: PushKind; slotId?: string; channelId?: str
 /** Whether this device is subscribed, after push-on / push-off. */
 export function pushState(s: { on: boolean }): { on: boolean } { return { on: s.on === true } }
 
+// ---- management from afar (RR5 5.2): the answers of tetherd's own requests, field by field ----------------------
+
+/** A slot's ronda as a device may see it. `nudge` and `criterion` are an agent's text: one line each, capped. */
+export interface RemoteRonda { intervalMs: number; nextAt: string; nudge?: string; criterion?: string; lastAt?: string; due?: true; channel?: 'listening' | 'none' }
+/** A slot after an act on it: what it is and how it stands, never its folder, args, env or binding. */
+export interface RemoteSlot {
+  slotId: string
+  kind: string
+  name?: string
+  status: string
+  want?: string
+  turn?: 'busy'
+  attention?: 'done' | 'waiting'
+  canRestart?: true
+  stopping?: true
+  ronda?: RemoteRonda
+}
+/** One event of a process's history: what happened, when, by whom; the reason and the purpose as one line each. */
+export interface RemoteProcEvent { kind: string; ts: string; by?: RemoteAuthor; run?: number; code?: number; cause?: string; action?: string; reason?: string; until?: string; purpose?: string }
+export interface SlotActed { slot: RemoteSlot }
+export interface RondaView { ronda: RemoteRonda | null; outcome?: 'created' | 'updated' | 'unchanged' | 'off' | 'was-off' }
+export interface ProcsList { procs: RemoteProc[]; more: number }
+export interface ProcInfo { proc: RemoteProc; events: RemoteProcEvent[] }
+export interface ProcActed { proc: RemoteProc }
+export interface ProcReleased { proc: RemoteProc; released: boolean }
+/** A refusal "in use by another" (proc-in-use): the uses that refused it, as the app's board shows them. */
+export interface InUseRefused { error: 'proc-in-use'; uses: RemoteUse[] }
+
+/** Processes in one procs.list; past them `more` counts (READ_BODY_MAX holds this many cards with room). */
+export const PROCS_LIST_MAX = 128
+const PROC_EVENTS_MAX = 20
+const PROC_EVENT_KINDS = [
+  'registered', 'recipe-changed', 'adopted', 'started', 'start-failed', 'stop-requested', 'restart-requested', 'ended', 'forgotten',
+  'use-declared', 'use-released', 'use-expired', 'refused-in-use', 'forced',
+] as const
+const SLOT_STATUS = ['running', 'queued', 'starting', 'exited', 'unconfirmed', 'error'] as const
+const SLOT_WANT = ['run', 'ended', 'asleep', 'suspended'] as const
+const RONDA_OUTCOME = ['created', 'updated', 'unchanged', 'off', 'was-off'] as const
+const GUARDED = ['stop', 'restart', 'forget'] as const
+
+function remoteRonda(v: unknown): RemoteRonda | undefined {
+  const r = rec(v)
+  const intervalMs = int(r.intervalMs, 1)
+  const nextAt = iso(r.nextAt)
+  if (intervalMs === undefined || nextAt === undefined) return undefined
+  return opt<RemoteRonda>({ intervalMs, nextAt }, {
+    nudge: typeof r.nudge === 'string' && r.nudge !== '' ? line(r.nudge, 500) : undefined,
+    criterion: typeof r.criterion === 'string' && r.criterion !== '' ? line(r.criterion, 500) : undefined,
+    lastAt: iso(r.lastAt), due: r.due === true ? true : undefined, channel: oneOf(r.channel, ['listening', 'none'] as const),
+  })
+}
+
+export function remoteSlot(v: unknown): RemoteSlot {
+  const s = rec(v)
+  return opt<RemoteSlot>(
+    { slotId: idOf(s.slotId, 64), kind: typeof s.kind === 'string' && KIND_RE.test(s.kind) ? s.kind : '', status: oneOf(s.status, SLOT_STATUS) ?? '' },
+    {
+      name: typeof s.name === 'string' && s.name !== '' ? name64(s.name) : undefined, want: oneOf(s.want, SLOT_WANT),
+      turn: s.turn === 'busy' ? 'busy' : undefined, attention: oneOf(s.attention, ['done', 'waiting'] as const),
+      canRestart: s.canRestart === true ? true : undefined, stopping: s.stopping === true ? true : undefined, ronda: remoteRonda(s.ronda),
+    },
+  )
+}
+
+function remoteProcEvent(v: unknown): RemoteProcEvent | undefined {
+  const e = rec(v)
+  const kind = oneOf(e.kind, PROC_EVENT_KINDS)
+  const ts = iso(e.ts)
+  if (!kind || !ts) return undefined
+  // Never `before`/`after` (a recipe's change carries env values), `message`, `pid` or a path.
+  return opt<RemoteProcEvent>({ kind, ts }, {
+    by: author(e.by as AuthorSource | undefined), run: int(e.run), code: int(e.code, -0x8000_0000, 0xffff_ffff), cause: text(e.cause, 32),
+    action: oneOf(e.action, GUARDED), reason: typeof e.reason === 'string' && e.reason !== '' ? line(e.reason, 200) : undefined,
+    until: iso(e.until), purpose: typeof e.purpose === 'string' && e.purpose !== '' ? line(e.purpose, 200) : undefined,
+  })
+}
+
+const procOf = (v: unknown): RemoteProc => remoteProc(rec(v) as unknown as ProcSource)
+
+function slotActed(s: WriteSource): SlotActed { return { slot: remoteSlot(rec(s.answer).slot) } }
+function rondaView(s: WriteSource): RondaView {
+  const a = rec(s.answer)
+  return opt<RondaView>({ ronda: remoteRonda(a.ronda) ?? null }, { outcome: oneOf(a.rondaOutcome, RONDA_OUTCOME) })
+}
+function procsList(s: WriteSource): ProcsList {
+  const all = Array.isArray(rec(s.answer).procs) ? (rec(s.answer).procs as unknown[]) : []
+  return { procs: all.slice(0, PROCS_LIST_MAX).map(procOf), more: Math.max(0, all.length - PROCS_LIST_MAX) }
+}
+function procInfo(s: WriteSource): ProcInfo {
+  const a = rec(s.answer)
+  const events = arr(Array.isArray(a.events) ? (a.events as unknown[]).slice(-PROC_EVENTS_MAX) : [], PROC_EVENTS_MAX)
+  return { proc: procOf(a.proc), events: events.map(remoteProcEvent).filter((e): e is RemoteProcEvent => e !== undefined) }
+}
+function procActed(s: WriteSource): ProcActed { return { proc: procOf(rec(s.answer).proc) } }
+function procReleased(s: WriteSource): ProcReleased { return { proc: procOf(rec(s.answer).proc), released: rec(s.answer).released === true } }
+const forgot = (_: WriteSource): Record<string, never> => ({})
+
+/** The body of a refusal "in use by another": the uses of others the board shows (the person's own never refuses her). */
+export function inUseBody(uses: readonly unknown[]): Bytes {
+  const body: InUseRefused = { error: 'proc-in-use', uses: remoteUses(uses) }
+  return encode(body)
+}
+
 const empty = (_: Record<string, never>): Record<string, never> => ({})
 /** The projector of an op that has no handler yet: its source is `never`, so no result of it can be built. */
 const unbuilt = (src: never): never => src
@@ -945,6 +1076,25 @@ export const RESULTS = {
   'channels.upload': uploaded,
   'channels.upload-cancel': empty,
   'regency.tree': regencyTree,
+  'agents.stop': slotActed,
+  'agents.start': slotActed,
+  'agents.restart': slotActed,
+  'agents.rename': slotActed,
+  'agents.forget': forgot,
+  'ronda.get': rondaView,
+  'ronda.set': rondaView,
+  'ronda.off': rondaView,
+  'procs.list': procsList,
+  'procs.info': procInfo,
+  'procs.start': procActed,
+  'procs.stop': procActed,
+  'procs.stop-force': procActed,
+  'procs.restart': procActed,
+  'procs.restart-force': procActed,
+  'procs.use': procActed,
+  'procs.release': procReleased,
+  'procs.forget': forgot,
+  'procs.forget-force': forgot,
   'device.list': unbuilt,
   'device.revoke': empty,
 } as const satisfies { readonly [K in OpName]: (src: never) => unknown }

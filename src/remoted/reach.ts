@@ -20,18 +20,21 @@ export const PIPE_REACH = {
   // The portal's own client: its handshake and the list that feeds the attention view.
   'auth': 'portal', 'hello': 'portal', 'list': 'portal',
   'perf': 'never', 'debug-block': 'never',
-  'create': 'never', 'start': 'never', 'attach': 'never', 'detach': 'never', 'read-screen': 'never', 'resize': 'never',
-  'stop': 'never', 'set-want': 'never', 'forget': 'never', 'rename-slot': 'never', 'shutdown': 'never',
-  'profiles-list': 'never', 'profile-save': 'never', 'profile-delete': 'never', 'set-profile': 'never', 'restart': 'never',
+  // The management acts (RR5 5.2, class `op`): sent only as REMOTE_ACT_ARGS (below) lets each one be built.
+  'start': 'op', 'stop': 'op', 'forget': 'op', 'rename-slot': 'op', 'restart': 'op',
+  'create': 'never', 'attach': 'never', 'detach': 'never', 'read-screen': 'never', 'resize': 'never',
+  'set-want': 'never', 'shutdown': 'never',
+  'profiles-list': 'never', 'profile-save': 'never', 'profile-delete': 'never', 'set-profile': 'never',
   'seen': 'never', 'unseen': 'never', 'desk-map': 'never',
   // Tunnels (rule 4): a remote op never carries another type inside its body. An extension request that is exposed gets its
   // own op, and `ext-request` reaches tetherd only as one pair of the reach (below): every other one stays without a path.
   'ext-request': 'ext-read',
   'verb-list': 'never', 'verb': 'never', 'object-get': 'never', 'object-set': 'never',
   'pause-start': 'never', 'pause-get': 'never', 'pause-remove': 'never', 'pause-cancel': 'never', 'pause-resume': 'never',
-  'ronda-set': 'never', 'ronda-get': 'never', 'ronda-off': 'never',
-  'proc-list': 'never', 'proc-info': 'never', 'proc-start': 'never', 'proc-stop': 'never', 'proc-restart': 'never',
-  'proc-adopt': 'never', 'proc-forget': 'never', 'proc-use': 'never', 'proc-release': 'never', 'proc-ports': 'never',
+  'ronda-set': 'op', 'ronda-get': 'op', 'ronda-off': 'op',
+  'proc-list': 'op', 'proc-info': 'op', 'proc-start': 'op', 'proc-stop': 'op', 'proc-restart': 'op',
+  'proc-forget': 'op', 'proc-use': 'op', 'proc-release': 'op',
+  'proc-adopt': 'never', 'proc-ports': 'never',
   'proc-seen': 'never', 'proc-attach': 'never', 'proc-detach': 'never', 'proc-host': 'never', 'proc-host-stop': 'never',
   'input': 'never', 'typed': 'never',
 } as const satisfies { readonly [T in PipeType]: PipeReach }
@@ -125,6 +128,63 @@ const REMOTE_EXT_KEYS: ReadonlySet<string> = new Set(REMOTE_EXT_PAIRS.map((p) =>
 /** Whether a `remote` client may send a message of type `t` at all (a type PIPE_REACH does not list is refused). */
 export const remoteMaySend = (t: unknown): boolean =>
   typeof t === 'string' && Object.hasOwn(PIPE_REACH, t) && PIPE_REACH[t as PipeType] !== 'never'
+
+// ---- the class `op`: the management acts (RR5 5.2), each type with the only fields a `remote` client may put in it ----
+
+/** The pipe types of the class `op`. */
+export type OpPipeType = { [T in PipeType]: (typeof PIPE_REACH)[T] extends 'op' ? T : never }[PipeType]
+/**
+ * What a field of an `op` message may hold from a `remote` client: `string` any text (tetherd checks and folds it itself),
+ * or the closed list of its values. A field absent from the type's rule is refused, so a `remote` never sends `by` (it
+ * would speak as an agent's panel), a recipe, a wait, a `force` on start, or a `why` other than `end`.
+ */
+type ArgRule = 'string' | readonly (string | boolean)[]
+/**
+ * Total by type over the class: a type marked `op` without its rule, or a rule for a type outside the class, does not
+ * compile. The portal builds its messages by src/remote/manage.ts and checks them here before sending (the same function
+ * tetherd refuses by), so the two cannot drift; test/unit/daemon.remote-reach.test.ts proves the parity on a real pipe.
+ */
+export const REMOTE_ACT_ARGS = {
+  'stop': { slotId: 'string', why: ['end'] },
+  'start': { slotId: 'string', choice: ['resume', 'new'] },
+  'restart': { slotId: 'string' },
+  'rename-slot': { slotId: 'string', name: 'string' },
+  'forget': { slotId: 'string' },
+  'ronda-get': { slotId: 'string' },
+  'ronda-set': { slotId: 'string', interval: 'string', nudge: 'string', criterion: 'string' },
+  'ronda-off': { slotId: 'string', force: [true] },
+  'proc-list': {},
+  'proc-info': { name: 'string' },
+  'proc-start': { name: 'string' },
+  'proc-stop': { name: 'string', reason: 'string', force: 'string' },
+  'proc-restart': { name: 'string', reason: 'string', force: 'string' },
+  'proc-use': { name: 'string', duration: 'string', purpose: 'string' },
+  'proc-release': { name: 'string' },
+  'proc-forget': { name: 'string', force: 'string' },
+} as const satisfies { readonly [T in OpPipeType]: Readonly<Record<string, ArgRule>> }
+
+/** Every type the management lines emit is of the class `op` (a line emitting a `never` type does not compile). */
+type EmittedActs = Exclude<EmittedByOps, 'ext-request'>
+const actsAreOps: [EmittedActs] extends [OpPipeType] ? ([OpPipeType] extends [EmittedActs] ? true : false) : false = true
+void actsAreOps
+
+/**
+ * Whether a `remote` client may send this `op` message as it is: its type is of the class, and every field but `t` and `id`
+ * is one its rule lists, with a value the rule allows. Checked by tetherd (src/daemon/server.ts) and by the portal before
+ * the pipe (src/remoted/acts.ts).
+ */
+export function remoteMayAct(msg: Readonly<Record<string, unknown>>): boolean {
+  const t = msg.t
+  if (typeof t !== 'string' || !Object.hasOwn(REMOTE_ACT_ARGS, t)) return false
+  const rule = REMOTE_ACT_ARGS[t as OpPipeType] as Readonly<Record<string, ArgRule>>
+  for (const [k, v] of Object.entries(msg)) {
+    if (k === 't' || k === 'id') continue
+    if (!Object.hasOwn(rule, k)) return false
+    const r = rule[k]!
+    if (r === 'string' ? typeof v !== 'string' : !r.includes(v as string | boolean)) return false
+  }
+  return true
+}
 
 /** Whether a `remote` client may send `ext-request` for this extension and request name. */
 export const remoteMayRequest = (ext: unknown, name: unknown): boolean =>

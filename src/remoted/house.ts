@@ -33,6 +33,9 @@ import { ReadFeeds } from './feeds.ts'
 import { DeviceLimiter, LIMITS, type Limits } from './limits.ts'
 import { ReadError, SharedRead, type PipeReads } from './reads.ts'
 import { PIPE_WRITE_TIMEOUT_MS, WriteError, type PipeWrites, type WriteOutcome } from './writes.ts'
+import { ActError, PIPE_ACT_TIMEOUT_MS, type ActOutcome, type PipeActs } from './acts.ts'
+import { ACT_REFUSALS, isActRefusal, isManageOp, manageArgs, type ManageOp } from '../remote/manage.ts'
+import { inUseBody } from '../remote/projection.ts'
 import { linePathOf, type PortalFiles } from './files.ts'
 import { cancelArgs, fileReadArgs, uploadArgs } from '../remote/files.ts'
 import { usableCredential, type CredentialRow, type DenyRow, type LiveDevice, type PairBegun, type PairView, type PortalAsk, type PortalDevice, type PortalNote, type PortalStatus, type SessionEnded } from './ipc.ts'
@@ -108,6 +111,10 @@ export interface HouseDeps {
   uploadIdleMs?: number
   /** Web Push (./push.ts, step 4.4). Absent: the push lines answer `not-implemented` and no notice is sent. */
   push?: PortalPush
+  /** The management acts on tetherd (./acts.ts, RR5 5.2). Absent: the management lines answer `not-implemented`. */
+  acts?: PipeActs
+  /** How long a repeat of an act still in flight waits for its outcome (the act path's deadline; a bench lowers both). */
+  actTimeoutMs?: number
 }
 
 /** The scope a device needs to be told anything (the push lines'), and the one a channel's notice also needs (it says a channel calls her and opens one). */
@@ -767,7 +774,7 @@ export class House {
     }
     if (req.actId) {
       // An actId names one act of one op: the same id on another op is a malformed request, never that act's answer.
-      const done = mem.acts.get(req.actId, nowMs) ?? (await this.#pendingAct(mem, req.actId, req.op))
+      const done = mem.acts.get(req.actId, nowMs) ?? (await this.#pendingAct(mem, req.actId, req.op, isManageOp(line.name) ? (this.#d.actTimeoutMs ?? PIPE_ACT_TIMEOUT_MS) : undefined))
       if (done) {
         const same = done.op === req.op
         if (audited(line)) this.#audit(line.name, same ? 'replay' : statusName(RES_STATUS.badRequest), s.deviceId)
@@ -813,8 +820,10 @@ export class House {
     // A per-act line runs only after its proof verified against the challenge recomputed from THIS request (spec 7.4 point 4).
     if (line.presence === 'per-act') {
       const v = await this.#checkProof(s, line, req)
-      if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, ...(v.lockout ? { lockout: true } : {}) }
+      // Not kept for the actId: the same act may come again with a good proof.
+      if (!v.ok) return { status: v.status, bytes: emptyBody(), audit: v.audit, final: false, ...(v.lockout ? { lockout: true } : {}) }
     }
+    if (isManageOp(line.name)) return this.#manage(s, line.name, req, body)
     switch (line.name) {
       case 'session.info':
         return ok(resultBody('session.info', { house: this.#fingerprint, name: this.#d.houseName, deviceId: s.deviceId, ver: s.session.ver, presence, scopes: dv?.scopes ?? [] }))
@@ -1077,14 +1086,95 @@ export class House {
   }
 
   /**
+   * One management act (RR5 5.2, fio-spec 16): the body checked field by field and the ONE pipe message of the op rebuilt
+   * (src/remote/manage.ts), the door conferred again as it is dispatched (RR4 B-4), then the act path (./acts.ts), which
+   * checks the message by tetherd's own rule before sending. The target is the real id the device named; tetherd resolves
+   * it and a stale one comes back `0x06`. A read answers through the projector; an act like a write (#extWrite): by its
+   * deadline to the device, its real outcome kept for the actId whenever it comes (a repeat waits for it meanwhile), so a
+   * resend after reconnecting never stops or restarts twice. Refused "in use by another", the answer carries the uses of
+   * the others (a fresh read of the process), the board the app shows; going ahead is the `-force` op, a second act.
+   */
+  async #manage(s: SessionRoute, op: ManageOp, req: Req, body: Record<string, unknown>): Promise<Served> {
+    const acts = this.#d.acts
+    if (!acts) return { status: RES_STATUS.failed, bytes: errorBody('not-implemented'), final: false }
+    const checked = manageArgs(op, body)
+    if (typeof checked === 'string') return { status: RES_STATUS.badRequest, bytes: errorBody(checked), final: false }
+    const { msg, target } = checked
+    const aim = target === '' ? {} : { target }
+    if (this.#closedTo(s)) return { status: RES_STATUS.failed, bytes: errorBody('failed'), audit: 'refused:revoked', ...aim, final: false }
+    if (!opByName(op)!.mutates) {
+      try {
+        const reply = await acts.read(msg)
+        const bytes = resultBody(op, { answer: reply })
+        return bytes.length > READ_BODY_MAX ? { status: RES_STATUS.failed, bytes: errorBody('too-large') } : { status: RES_STATUS.ok, bytes }
+      } catch (e) {
+        return this.#acted(op, { ok: false, error: e instanceof ActError ? e : new ActError('failed') }, target)
+      }
+    }
+    const flight = acts.act(msg)
+    // The real outcome as the device would be told it (the board of uses read once), whenever tetherd answers.
+    const result = flight.settled.then((o) => this.#acted(op, o, target)).catch((): Served => ({ status: RES_STATUS.failed, bytes: errorBody('failed'), ...aim }))
+    const mem = this.#memOf(s.deviceId)
+    if (req.actId) {
+      const actId = req.actId
+      const id = toHex(actId)
+      const kept = Promise.all([flight.settled, result]).then(([o, sv]): DoneAct => {
+        if (!(o.ok === false && o.error.why === 'limit')) mem.acts.put(actId, { op: req.op, status: sv.status, body: sv.bytes }, this.#d.now())
+        return { op: req.op, status: sv.status, body: sv.bytes }
+      })
+      mem.pending.set(id, kept)
+      void kept.finally(() => { if (mem.pending.get(id) === kept) mem.pending.delete(id) })
+    }
+    try {
+      await flight.answer
+    } catch (e) {
+      if (e instanceof ActError && e.why === 'timeout') {
+        const late = result.then((sv) => sv.audit ?? statusName(sv.status))
+        return { status: RES_STATUS.failed, bytes: errorBody('timeout'), audit: 'timeout', ...aim, final: false, late }
+      }
+    }
+    return { ...(await result), final: false }
+  }
+
+  /** The answer of an act's outcome: the line's projector on success; tetherd's code mapped by ACT_REFUSALS otherwise. */
+  async #acted(op: ManageOp, o: ActOutcome, target: string): Promise<Served> {
+    const aim = target === '' ? {} : { target }
+    if (o.ok) {
+      const bytes = resultBody(op, { answer: o.reply })
+      return bytes.length > READ_BODY_MAX ? { status: RES_STATUS.failed, bytes: errorBody('too-large'), ...aim } : { status: RES_STATUS.ok, bytes, ...aim }
+    }
+    const e = o.error
+    if (e.why === 'limit') return { status: RES_STATUS.limit, bytes: errorBody('busy'), audit: 'limit:busy', ...aim }
+    if (e.why === 'timeout') return { status: RES_STATUS.failed, bytes: errorBody('timeout'), audit: 'timeout', ...aim }
+    if (e.why === 'refused' && isActRefusal(e.code)) {
+      if (e.code === 'proc-in-use') return { status: ACT_REFUSALS[e.code], bytes: inUseBody(await this.#othersUses(target)), audit: 'refused:proc-in-use', ...aim }
+      return { status: ACT_REFUSALS[e.code], bytes: errorBody(e.code), audit: `refused:${e.code}`, ...aim }
+    }
+    this.#d.log(`act ${op}: ${e.message}`)
+    return { status: RES_STATUS.failed, bytes: errorBody('failed'), ...aim }
+  }
+
+  /** The uses of a process by others than the person (the app's `othersUses`), read now; none when it cannot be read. */
+  async #othersUses(name: string): Promise<unknown[]> {
+    try {
+      const reply = await this.#d.acts!.read({ t: 'proc-info', name })
+      const uses = (reply.proc as { uses?: unknown } | undefined)?.uses
+      const now = this.#d.now()
+      return Array.isArray(uses)
+        ? uses.filter((u) => recOf(recOf(u).by).kind !== 'app' && Date.parse(String(recOf(u).until)) > now)
+        : []
+    } catch { return [] }
+  }
+
+  /**
    * The outcome of a write of this device still waiting for tetherd under the same actId, within one write's deadline; past
    * it, `timeout` again (the act is NOT run a second time). Undefined when no write of that actId is waiting.
    */
-  async #pendingAct(mem: DeviceMem, actId: Bytes, op: number): Promise<DoneAct | undefined> {
+  async #pendingAct(mem: DeviceMem, actId: Bytes, op: number, waitMs?: number): Promise<DoneAct | undefined> {
     const waiting = mem.pending.get(toHex(actId))
     if (!waiting) return undefined
     let timer: ReturnType<typeof setTimeout> | undefined
-    const late = new Promise<undefined>((r) => { timer = setTimeout(() => r(undefined), this.#d.writeTimeoutMs ?? PIPE_WRITE_TIMEOUT_MS) })
+    const late = new Promise<undefined>((r) => { timer = setTimeout(() => r(undefined), waitMs ?? this.#d.writeTimeoutMs ?? PIPE_WRITE_TIMEOUT_MS) })
     try {
       const done = await Promise.race([waiting, late])
       return done ?? { op, status: RES_STATUS.failed, body: errorBody('timeout') }

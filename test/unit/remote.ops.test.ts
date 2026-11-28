@@ -48,6 +48,25 @@ describe('remote operations registry', () => {
       [0x0208, 'channels.upload', 'channels', 'unlocked', false, true],
       [0x0209, 'channels.upload-cancel', 'channels', 'unlocked', true, true],
       [0x0300, 'regency.tree', 'regency:read', 'unlocked', false, false],
+      [0x0400, 'agents.stop', 'manage:agents', 'unlocked', true, true],
+      [0x0401, 'agents.start', 'manage:agents', 'unlocked', true, true],
+      [0x0402, 'agents.restart', 'manage:agents', 'unlocked', true, true],
+      [0x0403, 'agents.rename', 'manage:agents', 'unlocked', true, true],
+      [0x0404, 'agents.forget', 'manage:destructive', 'per-act', true, true],
+      [0x0410, 'ronda.get', 'manage:agents', 'unlocked', false, false],
+      [0x0411, 'ronda.set', 'manage:agents', 'unlocked', true, true],
+      [0x0412, 'ronda.off', 'manage:agents', 'unlocked', true, true],
+      [0x0420, 'procs.list', 'manage:procs', 'unlocked', false, false],
+      [0x0421, 'procs.info', 'manage:procs', 'unlocked', false, false],
+      [0x0422, 'procs.start', 'manage:procs', 'unlocked', true, true],
+      [0x0423, 'procs.stop', 'manage:procs', 'unlocked', true, true],
+      [0x0424, 'procs.stop-force', 'manage:procs', 'unlocked', true, true],
+      [0x0425, 'procs.restart', 'manage:procs', 'unlocked', true, true],
+      [0x0426, 'procs.restart-force', 'manage:procs', 'unlocked', true, true],
+      [0x0427, 'procs.use', 'manage:procs', 'unlocked', true, true],
+      [0x0428, 'procs.release', 'manage:procs', 'unlocked', true, true],
+      [0x0429, 'procs.forget', 'manage:destructive', 'per-act', true, true],
+      [0x042a, 'procs.forget-force', 'manage:destructive', 'per-act', true, true],
       [0x0600, 'device.list', 'manage:destructive', 'unlocked', false, false],
       [0x0601, 'device.revoke', 'manage:destructive', 'per-act', true, true],
     ])
@@ -64,14 +83,20 @@ describe('remote operations registry', () => {
     for (const l of OPS) {
       assert.ok(Number.isInteger(l.code) && l.code > 0 && l.code <= 0xffff, l.name)
       const family = l.code >>> 8
-      assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
+      if (family === 4) assert.ok(l.scope.startsWith('manage:'), l.name)
+      else assert.equal(l.scope, family === 0 ? 'session' : family === 1 ? 'attention' : family === 2 ? 'channels' : family === 3 ? 'regency:read' : 'manage:destructive', l.name)
+      // What destroys is manage:destructive with a proof per act, and only it (RR5 5.2).
+      if (family === 4) assert.equal(l.presence === 'per-act', l.scope === 'manage:destructive', l.name)
       assert.ok(l.scope.length > 0, 'a line always declares its scope')
     }
   })
 
   test('only lines triggered by the person are gestures; the one exception to E-8 is declared on its line', () => {
     assert.deepEqual(OPS.filter(l => l.gesture).map(l => l.name), [
-      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'attention.push-on', 'attention.push-off', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel', 'device.revoke',
+      'uv.assert', 'uv.register', 'device.revoke-self', 'session.lock', 'attention.push-on', 'attention.push-off', 'channels.say', 'channels.react', 'channels.vote', 'channels.poll', 'channels.upload-cancel',
+      'agents.stop', 'agents.start', 'agents.restart', 'agents.rename', 'agents.forget', 'ronda.set', 'ronda.off',
+      'procs.start', 'procs.stop', 'procs.stop-force', 'procs.restart', 'procs.restart-force', 'procs.use', 'procs.release', 'procs.forget', 'procs.forget-force',
+      'device.revoke',
     ])
     assert.deepEqual(OPS.filter(l => l.allowedWithoutCredential).map(l => l.name), ['house.key-rotate.ack'])
     for (const l of OPS) if (l.gesture) assert.equal(l.mutates, true, `${l.name}: a gesture changes state`)

@@ -32,7 +32,7 @@ import { encode, guessId, LineParser } from './ndjson.ts'
 import { forBroadcast } from './env-names.ts'
 import { clientProof, daemonProof, discardKeyFile, fillKeyFile, folderIsPrivate, isNonce, newNonce, pipeKeyPath, prepareKeyFile, sameProof, servedHome, servePipeHome, unservePipeHome } from './pipe-key.ts'
 import { isPortalCredential } from './handshake.ts'
-import { PIPE_REACH, remoteMayRequest, remoteMaySend } from '../remoted/reach.ts'
+import { PIPE_REACH, remoteMayAct, remoteMayRequest, remoteMaySend } from '../remoted/reach.ts'
 import {
   KILL_WAIT_CAP_MS,
   MIN_AGENT_AGE_MS,
@@ -603,7 +603,8 @@ class DaemonImpl implements Daemon {
   private procAuthor(by: ProcBy | undefined, client: string | undefined): ProcAuthor {
     const label = typeof by?.as === 'string' && by.as.trim() ? by.as.trim() : undefined
     const user = typeof by?.user === 'string' && by.user ? by.user : osUser()
-    if (!by && client === 'app') return { kind: 'app', ...(user ? { user } : {}) }
+    // The portal acts for the person (RR5 5.2): her use is the app's, and it never carries `by` (reach.ts REMOTE_ACT_ARGS).
+    if (!by && (client === 'app' || client === 'remote')) return { kind: 'app', ...(user ? { user } : {}) }
     const slotId = typeof by?.slotId === 'string' && by.slotId ? by.slotId : undefined
     const slot = slotId ? this.slotMap.get(slotId) : undefined
     const a: ProcAuthor = slot ? { kind: slot.meta.agent === 'shell' ? 'shell' : 'agent', slotId: slot.meta.slotId } : { kind: 'external', ...(slotId ? { slotId } : {}) }
@@ -2178,8 +2179,10 @@ class DaemonImpl implements Daemon {
   private withinRemoteReach(client: Client, msg: Partial<ClientMessage>): boolean {
     const t = (msg as { t?: unknown }).t
     const typeOk = remoteMaySend(t)
-    if (typeOk && (t !== 'ext-request' || remoteMayRequest((msg as { ext?: unknown }).ext, (msg as { name?: unknown }).name))) return true
-    const what = typeOk ? 'an ext-request outside its reach' : typeof t === 'string' && Object.hasOwn(PIPE_REACH, t) ? t : 'a message of unknown type'
+    // An act (class `op`, RR5 5.2) only with the fields and values its rule lists: never `by`, a recipe nor a wait.
+    const isAct = typeOk && PIPE_REACH[t as keyof typeof PIPE_REACH] === 'op'
+    if (typeOk && (t === 'ext-request' ? remoteMayRequest((msg as { ext?: unknown }).ext, (msg as { name?: unknown }).name) : !isAct || remoteMayAct(msg as Record<string, unknown>))) return true
+    const what = typeOk ? (isAct ? `a ${String(t)} outside its reach` : 'an ext-request outside its reach') : typeof t === 'string' && Object.hasOwn(PIPE_REACH, t) ? t : 'a message of unknown type'
     this.log(`remote client: ${what} refused`)
     const id = (msg as { id?: unknown }).id
     if (typeof id === 'number') this.send(client, { t: 'error', id, code: 'door-denied', message: 'fora do alcance do portal remoto' })
