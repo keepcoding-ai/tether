@@ -28,6 +28,7 @@ import { PortalPush } from './push.ts'
 import { benchPushOrigin } from '../remote/webpush.ts'
 import { pipeReads } from './reads.ts'
 import { pipeWrites } from './writes.ts'
+import { pipeActs } from './acts.ts'
 import { PortalFiles } from './files.ts'
 import { audOf, RelayLink } from './relay.ts'
 
@@ -164,7 +165,9 @@ async function main(): Promise<void> {
     // The class `ext-read` of PIPE_REACH: the only paths from a device to tetherd's extensions, the reads (./reads.ts) and,
     // apart, with slots of their own, the person's speech (./writes.ts).
     reads: pipeReads((body) => client.request(body)),
-    writes: pipeWrites((body) => client.request(body), { log }),
+    writes: pipeWrites((body) => client.request(body), { log, onStuck: () => leave(PORTAL_EXIT.pipe, 'tetherd does not answer the writes') }),
+    // The class `op`: the management acts (RR5 5.2), one pipe message each, by tetherd's own rule (./acts.ts).
+    acts: pipeActs((msg) => client.request(msg as never) as Promise<Record<string, unknown>>, { log }),
     userHome: homedir(),
     // The files of a speech from afar: read from and written to the channels' folders under tetherd's home, nowhere else.
     files: new PortalFiles({ home, now: Date.now, log }),
