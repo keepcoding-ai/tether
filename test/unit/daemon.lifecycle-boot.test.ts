@@ -190,6 +190,23 @@ describe('lifecycle intent: the boot relaunches what is meant to run', () => {
     rec.close()
   })
 
+  test('3b. set-want records asleep/suspended without touching the process (the app migration); the boot then leaves it', async () => {
+    const b = bench()
+    await b.boot()
+    const rec = await Recorder.connect(b.daemon!.pipe)
+    const id = await b.running(rec, 'sess-3w')
+    const pid = b.state(id).pid!
+    const set = await rec.client.request({ t: 'set-want', slotId: id, want: 'asleep' })
+    assert.equal(set.slot!.want, 'asleep')
+    assert.equal(set.slot!.pid, pid, 'the process is untouched')
+    assert.equal(b.meta(id).want, 'asleep', 'on disk when it answers')
+    await assert.rejects(rec.client.request({ t: 'set-want', slotId: id, want: 'run' as 'asleep' }), /want inválido/)
+    rec.close()
+    await b.close()
+    await b.boot()
+    await noLaunch(b, id, 1)
+  })
+
   test('4. a legacy slot (meta without want) is never relaunched', async () => {
     const b = bench()
     await b.boot()
