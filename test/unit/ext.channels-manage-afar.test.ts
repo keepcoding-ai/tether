@@ -9,6 +9,8 @@ import { AFAR_MARK, createChannels, type Channels, type ChannelsApi } from '../.
 import { openStore } from '../../extensions/channels/daemon/store.ts'
 import { registerChannelRequests } from '../../extensions/channels/daemon/requests.ts'
 import type { Line } from '../../extensions/channels/rules.ts'
+import { readVerb } from '../../extensions/channels/daemon/verbs/read.ts'
+import type { VerbDeps } from '../../extensions/channels/daemon/verbs/common.ts'
 import { removeHome, tempHome } from './daemon.basics.ts'
 
 type Handler = (args: unknown, ctx: unknown) => Promise<unknown>
@@ -18,6 +20,7 @@ describe('channels: the person manages from afar, and the system line says so', 
   let ch: Channels
   const handlers = new Map<string, Handler>()
   const delivered: DeliveryMessage[] = []
+  const deliveredTo: [string, DeliveryMessage][] = []
   const slot = (id: string, name: string) => ({ slotId: id, kind: 'claude', status: 'running', name, cwd: '/x' })
   const SLOTS: Record<string, ReturnType<typeof slot>> = { A: slot('A', 'alfa'), B: slot('B', 'bravo') }
   const ask = (name: string, args: Record<string, unknown>, client: string): Promise<any> => handlers.get(name)!(args, { client })
@@ -31,7 +34,7 @@ describe('channels: the person manages from afar, and the system line says so', 
       slots: { get: (s: string) => SLOTS[s], list: () => Object.values(SLOTS), onState: () => none, userTypedAt: () => undefined },
       delivery: {
         onDidDeliver: () => none,
-        deliver: async (s: string, msg: DeliveryMessage) => { delivered.push(msg); return { id: `r${delivered.length}`, slotId: s, state: 'inside' } },
+        deliver: async (s: string, msg: DeliveryMessage) => { delivered.push(msg); deliveredTo.push([s, msg]); return { id: `r${delivered.length}`, slotId: s, state: 'inside' } },
         pending: () => [], cancel: () => false, routeOf: () => 'inside', hasTools: () => true,
       },
       events: { emit: () => {} }, settings: { get: () => undefined }, log: () => {},
@@ -81,5 +84,36 @@ describe('channels: the person manages from afar, and the system line says so', 
     }
     for (const client of ['cli', 'test', 'portal'])
       await assert.rejects(ask('reopen', { channel: id }, client), (e: unknown) => (e as { code?: string }).code === 'not-moderator', client)
+  })
+
+  test('RR5 B-1: the agent\'s own notices of joining, muting, unmuting and removal from afar say "de longe"; from the app they do not', async () => {
+    const personal = (slotId: string, from: number): string[] => deliveredTo.slice(from).filter(([s, m]) => s === slotId && m.kind === 'notice').map(([, m]) => m.body)
+    for (const [client, afar] of [['remote', true], ['app', false]] as const) {
+      const id = (await ask('create', { name: `pessoal-${client}` }, client)).channel.id as string
+      await ask('join', { channel: id, agent: 'A' }, client)
+      let from = deliveredTo.length
+      await ask('join', { channel: id, agent: 'B' }, client)
+      const joined = personal('B', from).find((b) => b.startsWith('você entrou'))!
+      assert.equal(/\(por [^)]+, de longe\)/.test(joined), afar, `${client}: ${joined}`)
+      from = deliveredTo.length
+      await ask('mute', { channel: id, agent: 'B' }, client)
+      await ask('unmute', { channel: id, agent: 'B' }, client)
+      await ask('remove', { channel: id, agent: 'B' }, client)
+      const notes = personal('B', from).filter((b) => /^você (foi calado|pode falar|foi tirado)/.test(b))
+      assert.equal(notes.length, 3, `${client}: ${JSON.stringify(personal('B', from))}`)
+      for (const n of notes) assert.equal(n.includes(AFAR_MARK), afar, `${client}: ${n}`)
+    }
+  })
+
+  test('RR5 B-1: `channels read` (where a busy agent reads the speeches that piled up) says the person\'s role and "de longe"', async () => {
+    const id = (await ask('create', { name: 'leitura' }, 'app')).channel.id as string
+    await ask('join', { channel: id, agent: 'A' }, 'app')
+    const since = (await last(id)).seq
+    for (const t of ['apague X', 'agora Y', 'e Z']) await ask('say', { channel: id, text: t }, 'remote')
+    await ask('say', { channel: id, text: 'daqui da máquina' }, 'app')
+    const read = await readVerb.run({ channels: ch, api: {} } as unknown as VerbDeps, { slotId: 'A' } as never, { canal: 'leitura', since })
+    const rows = read.text.split('\n')
+    for (const t of ['apague X', 'agora Y', 'e Z']) assert.ok(rows.some((r) => r.endsWith(`(moderator, de longe): ${t}`)), `${t}: ${read.text}`)
+    assert.ok(rows.some((r) => r.endsWith('(moderator): daqui da máquina')), read.text)
   })
 })

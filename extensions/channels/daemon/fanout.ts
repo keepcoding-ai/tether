@@ -49,7 +49,7 @@ import { storeFiles, type FileSource } from './files.ts'
 import { TAIL_LINES, type ChannelStore, type NewLine, type StoreError } from './store.ts'
 import {
   clockText, closedLine, createdLine, createdNotice, DESK_JOINER, deskClosedLine, deskCreatedLine, deskReopenedLine, forgottenLine,
-  joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
+  AFAR_MARK, joinedLine, joinedNotice, leftLine, mergedNotice, MODERATOR_NAME, mutedLine, mutedNotice, ownerChangedLine, ownerEndedLine,
   removedLine, removedNotice, reopenedLine, returnNotice, SYSTEM_FROM, unmutedLine, unmutedNotice, withReplyHint, withVoteHint, type DeskClosedWhy, type Tally,
 } from './notices.ts'
 
@@ -142,8 +142,8 @@ export interface ReactInput {
  * carries the mark (`afar`, and "(de longe)" in its text). Written by the tether from the pipe's client, never from a body.
  */
 export interface FromAfar { fromAfar?: boolean }
-/** What a system line of the person's management from a device says after who did it. */
-export const AFAR_MARK = ' (de longe)'
+/** What a system line of the person's management from a device says after who did it (one source with the agents' notices). */
+export { AFAR_MARK }
 
 export interface Channels {
   readonly store: ChannelStore
@@ -958,7 +958,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         const line = await notice(ch, joinedLine(ch.name, nameOf(target)), 'join', target, who, opts)
         emitChannel(ch)
         const members = Object.keys(ch.members).filter((m) => m !== target).map(nameOf)
-        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target), api.delivery.hasTools(target), nameOf(target))
+        const text = joinedNotice(ch.name, who === target ? undefined : nameOf(who), members, api.delivery.routeOf(target), api.delivery.hasTools(target), nameOf(target), opts?.fromAfar === true)
         await fanout(ch, line, undefined, new Map([[target, text]]))
         return { ok: true as const, channel: ch, already: false, line }
       })
@@ -995,7 +995,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (done.endedOwner) await ownerEnded(ch, agent, name)
         emitChannel(ch)
         // The removed one is no longer a member: it gets its own notice apart from the fan-out.
-        if (!isAway(agent)) await send(agent, noticeOf(ch, removedNotice(ch.name, nameOf(who)), line.seq))
+        if (!isAway(agent)) await send(agent, noticeOf(ch, removedNotice(ch.name, nameOf(who), opts?.fromAfar === true), line.seq))
         await fanout(ch, line)
         await settlePolls(ch)
         return { ok: true as const, channel: ch, line }
@@ -1013,7 +1013,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         const line = await notice(ch, mutedLine(ch.name, nameOf(agent), nameOf(who)), 'mute', agent, who, opts)
         emitChannel(ch)
         // P9: the line is in the conversation for everyone; the notice goes to the one muted.
-        await tell(agent, ch, mutedNotice(ch.name, nameOf(who)), line)
+        await tell(agent, ch, mutedNotice(ch.name, nameOf(who), opts?.fromAfar === true), line)
         return { ok: true as const, channel: ch, changed: true, line }
       })
     },
@@ -1028,7 +1028,7 @@ export function createChannels(api: ChannelsApi, store: ChannelStore, clock: Pol
         if (!done.changed) return { ok: true as const, channel: ch, changed: false }
         const line = await notice(ch, unmutedLine(ch.name, nameOf(agent)), 'unmute', agent, who, opts)
         emitChannel(ch)
-        await tell(agent, ch, unmutedNotice(ch.name), line)
+        await tell(agent, ch, unmutedNotice(ch.name, opts?.fromAfar === true), line)
         return { ok: true as const, channel: ch, changed: true, line }
       })
     },

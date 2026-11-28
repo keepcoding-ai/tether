@@ -285,8 +285,9 @@ describe('attachments: the fan-out and the two roads', () => {
     // `channels read` shows the same block under each speech.
     const deps = { channels: ch, api: {} } as unknown as VerbDeps
     const read = await readVerb.run(deps, { slotId: IN } as never, { canal: 'obra' })
-    assert.ok(read.text.includes(`${r.line.seq} ${ch.nameOf(USER)}: Veja o erro do print.\n${block}`), read.text)
-    assert.ok(read.text.includes(`${only.line.seq} ${ch.nameOf(USER)}:\nanexos:\n${second}`), read.text)
+    // The person's line names her role (RR5 B-1), as the live header does.
+    assert.ok(read.text.includes(`${r.line.seq} ${ch.nameOf(USER)} (moderator): Veja o erro do print.\n${block}`), read.text)
+    assert.ok(read.text.includes(`${only.line.seq} ${ch.nameOf(USER)} (moderator):\nanexos:\n${second}`), read.text)
     const lines = (read.data as { lines: Array<{ seq: number; files?: unknown[] }> }).lines
     assert.equal(lines.find((l) => l.seq === r.line.seq)!.files!.length, 2)
   })

@@ -13,6 +13,8 @@ import { CANAL_PROP, hhmm, optFlag, optInt, ok, refOf, resolveChannel, wantStrin
 
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
+/** The person's role in every channel, as the live delivery's header and `role` attribute name it to the agent. */
+const PERSON_ROLE = 'moderator'
 
 const pills = (tallies: readonly ReactionTally[]): string => tallies.map((t) => `${t.emoji} ${t.by.map((b) => b.name).join(', ')}`).join(' · ')
 
@@ -95,7 +97,10 @@ export const readVerb: VerbDef = {
     const row = (l: Line): string => {
       if (l.kind === 'poll' && l.poll) return pollRow(l, polls.get(l.seq))
       if (l.kind === 'notice' && l.event?.type === 'poll-close' && l.result) return `${l.seq} tether: [enquete ${l.result.poll} fechou · ${closedByText(l.result)}] ${tallyText(l.result.tally)}`
-      const head = l.kind === 'notice' ? '·' : `${l.from.name}${l.to?.length ? ` → ${l.to.join(', ')}` : ''}:`
+      // The person's line says her role, and "de longe" when she said it from a device (RR5 B-1): the same marks the live
+      // delivery's header carries, so a speech read later is never taken for one typed on the machine, nor for an agent's.
+      const marks = l.kind !== 'notice' && l.from.id === 'user' ? [PERSON_ROLE, ...(l.afar === true ? ['de longe'] : [])] : []
+      const head = l.kind === 'notice' ? '·' : `${l.from.name}${marks.length ? ` (${marks.join(', ')})` : ''}${l.to?.length ? ` → ${l.to.join(', ')}` : ''}:`
       const tallies = l.kind === 'message' ? sums.get(l.seq) : undefined
       // A speech's files: the same block the agents got (`anexos:` and one absolute path per line), under the speech's line.
       const [first = '', ...rest] = withFiles(l.body, l.files).split('\n')

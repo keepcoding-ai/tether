@@ -110,17 +110,23 @@ export const createdNotice = (room: string, name?: string): string => `você abr
  * To the agent that joined. `by` absent: it joined itself. `path` is the delivery's `routeOf` (the road, not the instant): a pane that does not hear
  * inside learns how to speak by the CLI, and one that hears nothing now (`wait`) is told the lines wait for it.
  */
-export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait', tools = false, name?: string): string {
-  let text = `você entrou em #${room}${name ? ` como ${asName(name)}` : ''}${by ? ` (por ${by})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
+/** What a line or a notice says after who did it, when the person did it from a device (RR5: the pipe's client is `remote`). */
+export const AFAR_MARK = ' (de longe)'
+
+/** `afar`: the person put the agent in from a device (RR5 B-1): the agent's own notice says so, as the channel's line does. */
+export function joinedNotice(room: string, by: string | undefined, members: readonly string[], path: 'inside' | 'terminal' | 'wait', tools = false, name?: string, afar = false): string {
+  let text = `você entrou em #${room}${name ? ` como ${asName(name)}` : ''}${by ? ` (por ${by}${afar ? ', de longe' : ''})` : ''} · members: ${namesOf(members, 12) || 'só você'}`
   if (path === 'inside') text += ` · para responder no canal chame a ferramenta ${claudeToolName('say')} (se ela não estiver carregada, carregue-a antes pela busca de ferramentas); o texto do seu turno não vai ao canal`
   else text += ` · ${cliHint(room, tools)}; o texto do seu turno não vai ao canal`
   if (path === 'wait') text += ' · agora esta guia não ouve as falas: elas esperam até ela poder ouvir, juntadas num aviso só'
   return text
 }
 
-export const removedNotice = (room: string, by: string): string => `você foi tirado de #${room} por ${by}`
-export const mutedNotice = (room: string, by: string): string => `você foi calado em #${room} por ${by}: continua ouvindo`
-export const unmutedNotice = (room: string): string => `você pode falar de novo em #${room}`
+// `afar`: done by the person from a device (RR5 B-1): "(de longe)" after who did it, as on the channel's line.
+const afarMark = (afar: boolean): string => (afar ? AFAR_MARK : '')
+export const removedNotice = (room: string, by: string, afar = false): string => `você foi tirado de #${room} por ${by}${afarMark(afar)}`
+export const mutedNotice = (room: string, by: string, afar = false): string => `você foi calado em #${room} por ${by}${afarMark(afar)}: continua ouvindo`
+export const unmutedNotice = (room: string, afar = false): string => `você pode falar de novo em #${room}${afarMark(afar)}`
 
 // ---- what was missed (the merge of 2.4 and the return of 2.5) -----------------------------------
 
