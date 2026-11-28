@@ -23,6 +23,11 @@
 // act says "O tether não está aberto na máquina"; at 1440 the menu opens at the right click and Esc gives the row the keyboard
 // back; at 2560 OK opens it and the arrows walk it. The bench's app does the app's half of each act (it claims, changes its
 // desks, sends its map and tree, answers); a process host of the bench in this process serves "Sistema".
+// RR5 (fio-spec 18), the rest of managing from afar: at 390 px a terminal made in a desk by the "+ Novo" card (what › where ›
+// details, the new row when the tree comes), a channel made by the card and agents called into it, a channel closed with the
+// proof of the act, "Novo processo" with a common variable (and its value nowhere in the page) and a secret-looking name
+// barred before anything goes; at 1440 muting and giving the voice back, and a poll closed on its card; at 2560 "+ Novo" by
+// the arrows and OK.
 // Captures go to REMOTE_SHOTS_DIR (else test/e2e/artifacts): rr3-live-*.png and rr4-*.png, the TV's under rr3-tv/, RR5's under rr5/.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
@@ -206,7 +211,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     })
     extHost.activate()
     // The processes' host of the bench (RR5 5.4: "Sistema" from afar), in this process, with a home of its own.
-    daemon = await startDaemon({ home, pipe, memoryIntervalMs: 0, door: d, log: (m) => logs.push(m), connectProcHost: () => HostClient.open(hostPipe, 5_000, { home: procHome }) })
+    // No terminal-pane host on the bench: a terminal made from afar ("+ Novo", RR5) runs in tetherd itself, as in remote.manage.
+    daemon = await startDaemon({ home, pipe, memoryIntervalMs: 0, door: d, log: (m) => logs.push(m), panelHost: false, connectProcHost: () => HostClient.open(hostPipe, 5_000, { home: procHome }) })
     extHost.emitStarted()
     app = await DaemonClient.open(pipe, 'app', { home })
     cli = await DaemonClient.open(pipe, 'cli', { home })
@@ -237,7 +243,11 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
 
   /** The Regency's entry in the shape the app publishes it: two desks, the channel's member as an agent, the open channels. */
   /** What the bench's app changed by the acts asked from afar (RR5 5.4): the desks' names, the hibernating ones, the closed panes. */
-  const desksNow = { names: { 'desk-obra': 'Obra', 'desk-migr': 'Migração' } as Record<string, string>, asleep: new Set<string>(), gone: new Set<string>() }
+  const desksNow = {
+    names: { 'desk-obra': 'Obra', 'desk-migr': 'Migração' } as Record<string, string>, asleep: new Set<string>(), gone: new Set<string>(),
+    /** Panes born from afar ("+ Novo", RR5) that the bench's app placed, as the app places a new slot's pane in its desk. */
+    born: [] as { deskId: string; id: string; title: string }[],
+  }
   const treeOf = (o: { conferente?: string; revisor?: string } = {}): Record<string, unknown> => ({
     desks: {
       desks: [
@@ -245,6 +255,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
           id: 'desk-obra', name: desksNow.names['desk-obra'], color: 'blue', kind: 'queue', asleep: desksNow.asleep.has('desk-obra'), panes: [
             { id: memberId, type: 'terminal', icon: 'sparkle', title: o.conferente ?? 'conferente', busy: true, lines: ['Revisando a tela de filtro'] },
             { id: 'p-web', type: 'terminal', icon: 'terminal-window', title: 'web · npm run dev' },
+            ...desksNow.born.filter((b) => b.deskId === 'desk-obra').map((b) => ({ id: b.id, type: 'terminal', icon: 'terminal-window', title: b.title })),
           ].filter((p) => !desksNow.gone.has(p.id)),
         },
         {
@@ -429,6 +440,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await browser?.close().catch(() => undefined)
     killTree(electron)
     try { await cli.request({ t: 'proc-stop', name: PROC, force: 'fim da bancada' }) } catch { /* gone, or never started */ }
+    // What the RR5 steps made from afar, should a step have stopped before its own clean-up.
+    try { await cli.request({ t: 'proc-stop', name: 'bench-novo', force: 'fim da bancada' } as never) } catch { /* gone, or never made */ }
+    for (const b of desksNow.born) await cli.request({ t: 'stop', slotId: b.id }).catch(() => undefined)
     await stopHouse().catch(() => undefined)
     await procHost?.close().catch(() => undefined)
     killTree(relay)
@@ -544,10 +558,10 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     }, 15_000, 'the vote with its reason in the house')
     assert.deepEqual([vote.option, vote.reason], [2, 'falta a revisão'])
     await eventually(async () => (await card.locator('button.ch-opt.mine[data-n="2"]').count()) === 1 || undefined, 10_000, 'the card says her vote')
-    // Closing a poll early is managing the channel: not on this device.
+    // Closing a poll early is managing the channel: since RR5 a device with the channels' scope has it (step "RR5 canal 4").
     await card.locator('.ch-pmore').click()
     await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
-    assert.doesNotMatch(await text('#ctx-menu'), /Encerrar/, 'no "Encerrar agora" from afar')
+    assert.match(await text('#ctx-menu'), /Encerrar agora…/, '"Encerrar agora…" from afar (RR5)')
     await page.keyboard.press('Escape')
     await card.scrollIntoViewIfNeeded()
     await shot('9-enquete')
@@ -909,6 +923,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
         case 'desks.wake': desksNow.asleep.delete(deskId); break
         case 'desks.rename': desksNow.names[deskId] = String(act.name); break
         case 'panes.close': desksNow.gone.add(String(act.paneId)); break
+        // "+ Novo" › Mesa from afar (RR5): the app makes the desk at the end of the queue and says its id.
+        case 'desks.create': answer = { ask, ok: true, state: 'done', deskId: 'desk-longe' }; break
         default: answer = { ask, ok: false, code: 'refused' }
       }
       await sendMap()
@@ -990,7 +1006,7 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await page.click('.rg-sys-open')
     const row = `.rg-sr.proc[data-proc="${PROC}"]`
     await page.waitForSelector(`${row} [data-sys="stop"]`, { timeout: 15_000 })
-    assert.equal(await page.locator('[data-sys="proc-new"]:visible').count(), 0, 'no "Novo processo" from afar yet')
+    assert.equal(await page.locator('[data-sys="proc-new"]:visible').count(), 1, '"Novo processo" from afar (RR5)')
     await page.click(`${row} [data-sys="stop"]`)
     await page.waitForSelector(`${row} .rg-sr-x.inuse`, { timeout: 15_000 })
     const board = await text(`${row} .rg-sr-x.inuse`)
@@ -1091,6 +1107,301 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await publish()
     await page.setViewportSize({ width: 1440, height: 900 })
     await sleep(300)
+  })
+
+  // ---- RR5 (fio-spec 18): "+ Novo", managing a channel and "Novo processo" from afar, on the protected device -----------
+  // Each step starts at its own place (no box open, "Sistema" closed, the size it needs) and makes what it needs itself.
+  const card = 'dialog.rg-cr[open]:not(.rg-np)'
+  const npForm = 'dialog.rg-cr.rg-np[open]'
+  const box = 'dialog.rr-ask[open]'
+  const slotsNow = async (): Promise<{ slotId: string; kind: string; name: string }[]> => ((await cli.request({ t: 'list' })).slots ?? []) as never
+  const channelsNow = async (): Promise<{ id: string; name: string }[]> => (await ext(app, 'list', {}, 'channels')).channels as { id: string; name: string }[]
+  const membersOf = async (channel: string): Promise<{ id: string; muted?: boolean }[]> => (await ext(app, 'members', { channel }, 'channels')).members as { id: string; muted?: boolean }[]
+  /** The bench's app reads its channels again and publishes them (the app's tree carries the open channels). */
+  const republishChannels = async (): Promise<void> => { channelRows = (await ext(app, 'list', {}, 'channels')).channels as unknown[]; await publish() }
+  const startAt = async (width: number, height: number, tier: string): Promise<void> => {
+    mkdirSync(rr5, { recursive: true })
+    for (let i = 0; i < 4 && (await page.locator('#ctx-menu, dialog[open]').count()) > 0; i++) { await page.keyboard.press('Escape'); await sleep(150) }
+    await page.setViewportSize({ width, height })
+    await page.waitForSelector(`.rr[data-tier="${tier}"]`, { timeout: 10_000 })
+    await toTree()
+  }
+  /** A channel of the bench in the centre (its row in "Canais"; on the phone, the "Canal" place). */
+  const openChannel = async (id: string): Promise<string> => {
+    if (await page.isVisible('.rg-tab[data-tab="conversation"]')) await page.click('.rg-tab[data-tab="conversation"]')
+    const conv = `.rg-conv[data-target="channel:${id}"]`
+    // On the phone "Canais" folds over the conversation once one was chosen: its head unfolds it again.
+    await eventually(async () => {
+      if (await page.isVisible(conv)) return true
+      if (await page.isVisible('.rg-convs-tg[aria-expanded="false"]')) await tap('.rg-convs-tg[aria-expanded="false"]')
+      return undefined
+    }, 15_000, `the channel ${id} in "Canais"`)
+    await page.click(conv)
+    const pane = `.ch-pane[data-channel="${id}"]`
+    await page.waitForSelector(`${pane} .ch-bar`, { timeout: 15_000 })
+    return pane
+  }
+  /** The channel's "⋯" and a row of its menu (the app's words). */
+  const channelMenuRow = async (pane: string, label: string): Promise<void> => {
+    // The menu says what the view read of the channel: a row that depends on a change just made comes once it is read again.
+    await eventually(async () => {
+      await page.click(`${pane} .ch-bar .ch-more`, { timeout: 10_000 })
+      await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+      if (await page.locator('#ctx-menu .rr-mi', { hasText: label }).count() > 0) return true
+      await page.keyboard.press('Escape')
+      await sleep(300)
+      return undefined
+    }, 15_000, `the row "${label}" in the channel's menu`)
+    await menuRow(label)
+  }
+
+  // The device has 30 gestures a minute (the portal's limits.ts): the steps of RR5 5.4 above spent theirs, these spend about
+  // fifteen, and the steps after them unlock again. A fresh minute before and after keeps each block within its own.
+  test('RR5 um minuto novo de gestos antes de "+ Novo", canal e processo', async () => { await sleep(61_000) })
+
+  test('RR5 novo 1. a 390: criar um terminal numa mesa pelo "+ Novo" (o quê › onde › detalhes, um passo por vez, "Voltar")', async () => {
+    await startAt(390, 844, 'mobile')
+    const before = new Set((await slotsNow()).map((s) => s.slotId))
+    await page.click('.rg-right .rg-new')
+    await page.waitForSelector(`${card}[data-step="what"]`, { timeout: 15_000 })
+    const sheet = (await page.locator(card).boundingBox())!
+    assert.ok(sheet.height >= 844 * 0.85 && sheet.width >= 380, `a sheet of nearly the whole screen: ${JSON.stringify(sheet)}`)
+    const tiles = await page.locator(`${card} [data-do="tile"]`).evaluateAll((bs) => bs.map((b) => (b as HTMLElement).dataset.arg))
+    assert.deepEqual(tiles, ['agent', 'terminal', 'note', 'browser', 'desk', 'channel'], 'every tile the scopes allow')
+    await rr5shot('novo-390-o-que')
+    await page.click(`${card} [data-do="tile"][data-arg="terminal"]`)
+    await page.waitForSelector(`${card}[data-step="where"]`, { timeout: 5_000 })
+    assert.equal(await page.locator(`${card} .rg-cr-up`).isVisible(), true, '"Voltar" a step, on the phone')
+    assert.equal(await page.locator(`${card} input[data-f="desk"][value="desk-obra"]`).count(), 1)
+    await page.check(`${card} input[data-f="desk"][value="desk-obra"]`)
+    await rr5shot('novo-390-onde')
+    await page.click(`${card} [data-do="next"]`)
+    await page.waitForSelector(`${card}[data-step="details"]`, { timeout: 5_000 })
+    // The folder is one of the tether's list, by its label; nothing of the machine's screen ("Ir até a guia", an address).
+    const folder = await text(`${card} [data-do="folder"]`)
+    assert.ok(folder.includes(home.split(/[\\/]/).filter(Boolean).pop()!), `the folder's label: ${folder}`)
+    assert.doesNotMatch(folder, /[\\/]/, 'never a path')
+    assert.equal(await page.locator(`${card} input[data-f="go"], ${card} input[data-f="url"]`).count(), 0)
+    await rr5shot('novo-390-detalhes')
+    await page.click(`${card} [data-do="next"]`)
+    const born = await eventually(async () => (await slotsNow()).find((s) => !before.has(s.slotId) && s.kind === 'shell'), 20_000, 'the terminal at tetherd')
+    assert.equal(born.name, 'Terminal 1')
+    await eventually(async () => (await page.locator(card).count()) === 0 || undefined, 15_000, 'the card closed')
+    await eventually(async () => /Terminal criado em Obra/.test(await notice()) || undefined, 10_000, 'the result said')
+    // She stays where she was ("Mesas"); the new row shows when the tree comes (the app places the slot's pane).
+    assert.ok(await page.isVisible('.rg-tree [data-key]'), 'still on "Mesas"')
+    desksNow.born.push({ deskId: 'desk-obra', id: born.slotId, title: born.name })
+    await publish()
+    await page.waitForSelector(`.rg-tree [data-target="pane:${born.slotId}"]`, { timeout: 15_000 })
+    await rr5shot('novo-390-linha-nova')
+    await cli.request({ t: 'stop', slotId: born.slotId }).catch(() => undefined)
+  })
+
+  test('RR5 canal 1. a 390: criar um canal pelo "+ Novo" e chamar o agente da bancada ("Chamar agente…", vários de uma vez)', async () => {
+    await startAt(390, 844, 'mobile')
+    await page.click('.rg-right .rg-new')
+    await page.waitForSelector(`${card} [data-do="tile"][data-arg="channel"]`, { timeout: 15_000 })
+    await page.click(`${card} [data-do="tile"][data-arg="channel"]`)
+    await page.waitForSelector(`${card}[data-step="details"] input[data-f="channel-name"]`, { timeout: 5_000 })
+    await page.fill(`${card} input[data-f="channel-name"]`, 'longe')
+    await page.click(`${card} [data-do="next"]`)
+    const made = await eventually(async () => (await channelsNow()).find((c) => c.name === 'longe'), 15_000, 'the channel in the house')
+    await republishChannels()
+    const pane = await openChannel(made.id)
+    await page.click(`${pane} .ch-bar .ch-join`)
+    await page.waitForSelector(`${box} .rr-ask-ck`, { timeout: 10_000 })
+    assert.equal(await page.getAttribute(box, 'data-form'), 'sheet')
+    const rows = await page.locator(`${box} .rr-ask-ck`).allTextContents()
+    assert.ok(rows.some((r) => r.includes('conferente')) && rows.some((r) => r.includes('revisor')), `the agents by desk: ${rows.join(' | ')}`)
+    await page.locator(`${box} .rr-ask-ck`, { hasText: 'conferente' }).first().click()
+    await page.locator(`${box} .rr-ask-ck`, { hasText: 'revisor' }).first().click()
+    assert.match(await text(`${box} [data-choice="confirm"]`), /Chamar 2/)
+    await rr5shot('canal-390-chamar')
+    await page.click(`${box} [data-choice="confirm"]`)
+    await eventually(async () => (await membersOf(made.id)).some((m) => m.id === memberId) || undefined, 15_000, 'conferente in the channel')
+    // revisor is no slot of tetherd (only a pane the app published): the app's dialog says who did not come, in words.
+    await page.waitForSelector(`${box}`, { timeout: 10_000 })
+    const told = await text(box)
+    assert.match(told, /Entraram: conferente/)
+    assert.doesNotMatch(told, /unknown-agent/)
+    await rr5shot('canal-390-chamados')
+    await page.click(`${box} [data-choice="ok"]`)
+    const notices = ((await historyOf(made.id)).lines as { kind: string; body: string; afar?: true }[]).filter((l) => l.kind === 'notice')
+    assert.ok(notices.some((l) => l.afar === true && l.body.includes('(de longe)')), JSON.stringify(notices))
+  })
+
+  test('RR5 canal 2. a 1440: calar e devolver a voz pelo "⋯" do canal (o menu no ponto, a pergunta do app)', async (t) => {
+    await startAt(1440, 900, 'desktop')
+    // Whatever this step leaves, the bench's agent speaks again after it (the steps after it make it talk).
+    t.after(() => ext(app, 'unmute', { channel: channelId, agent: memberId }, 'channels').then(() => undefined, () => undefined))
+    const pane = await openChannel(channelId)
+    await channelMenuRow(pane, 'Calar agente…')
+    await page.waitForSelector(`${box} .rr-ask-o`, { timeout: 10_000 })
+    await page.locator(`${box} .rr-ask-o`, { hasText: 'conferente' }).first().click()
+    await page.waitForSelector(`${box} [data-choice="mute"]`, { timeout: 5_000 })
+    assert.equal(await page.getAttribute(box, 'data-form'), 'dialog')
+    assert.match(await text(box), /Calar conferente em #obra\?/)
+    await rr5shot('canal-1440-calar')
+    await page.click(`${box} [data-choice="mute"]`)
+    await eventually(async () => (await membersOf(channelId)).find((m) => m.id === memberId)?.muted === true || undefined, 15_000, 'conferente muted')
+    await eventually(async () => /conferente calado em #obra/.test(await notice()) || undefined, 10_000, 'the result said')
+    await channelMenuRow(pane, 'Devolver a voz…')
+    await page.waitForSelector(`${box} .rr-ask-o`, { timeout: 10_000 })
+    await page.locator(`${box} .rr-ask-o`, { hasText: 'conferente' }).first().click()
+    await eventually(async () => (await membersOf(channelId)).find((m) => m.id === memberId)?.muted !== true || undefined, 15_000, 'conferente heard again')
+    await eventually(async () => /voz de volta/.test(await notice()) || undefined, 10_000, 'the result said')
+  })
+
+  test('RR5 canal 3. a 1440: encerrar uma enquete no cartão (a pergunta do app; o resultado no canal)', async () => {
+    await startAt(1440, 900, 'desktop')
+    // A channel of its own, where the bench's agent owes no vote (it may open a poll only then).
+    const room = ((await ext(app, 'create', { name: 'enquete-longe' }, 'channels')).channel as { id: string }).id
+    await ext(app, 'join', { channel: room, agent: memberId }, 'channels')
+    await republishChannels()
+    const pane = await openChannel(room)
+    await agent('poll', { canal: room, question: 'Fecho a enquete de longe?', to: ['usuário'] })
+    const pollCard = page.locator(`${pane} .ch-poll[data-state="open"]`, { hasText: 'Fecho a enquete de longe?' })
+    await pollCard.waitFor({ timeout: 15_000 })
+    await pollCard.locator('.ch-pmore').click()
+    await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+    await menuRow('Encerrar agora…')
+    await page.waitForSelector(`${box} [data-choice="close"]`, { timeout: 5_000 })
+    assert.match(await text(box), /Encerrar a enquete agora\?/)
+    await rr5shot('canal-1440-enquete')
+    await page.click(`${box} [data-choice="close"]`)
+    await eventually(async () => {
+      const polls = (await historyOf(room)).polls as { seq: number; open?: { question: string }; result?: unknown }[]
+      return polls.some((p) => p.open?.question === 'Fecho a enquete de longe?') ? undefined : true
+    }, 15_000, 'the poll closed in the house')
+    await page.locator(`${pane} .ch-poll:not([data-state="open"])`, { hasText: 'Fecho a enquete de longe?' }).waitFor({ timeout: 15_000 })
+  })
+
+  test('RR5 canal 4. a 390: encerrar o canal com a prova deste ato (a pergunta do app, a frase da biometria antes)', async () => {
+    await startAt(390, 844, 'mobile')
+    const made = (await ext(app, 'create', { name: 'fechar-longe' }, 'channels')).channel as { id: string }
+    await republishChannels()
+    const pane = await openChannel(made.id)
+    const signs = (await credentials())[0]!.signCount
+    await channelMenuRow(pane, 'Encerrar canal…')
+    await page.waitForSelector(`${box} [data-choice="close"]`, { timeout: 5_000 })
+    const q = await text(box)
+    assert.match(q, /Encerrar #fechar-longe\?/)
+    assert.match(q, /Para isso, o tether pede a biometria deste aparelho\./, 'what is going to be done, before the system asks')
+    await rr5shot('canal-390-encerrar')
+    await page.click(`${box} [data-choice="close"]`)
+    await eventually(async () => !(await channelsNow()).some((c) => c.id === made.id) || undefined, 20_000, 'the channel closed in the house')
+    assert.ok((await credentials())[0]!.signCount > signs, 'the act was proved by the platform authenticator')
+    await eventually(async () => /#fechar-longe encerrado/.test(await notice()) || undefined, 10_000, 'the result said')
+    await republishChannels()
+  })
+
+  test('RR5 processo 1. a 390: "Novo processo" com variável comum sobe; o valor não fica em lugar nenhum da página', async () => {
+    const MARK = `canary${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`
+    const NAME = 'bench-novo'
+    await startAt(390, 844, 'mobile')
+    await page.click('.rg-sys-open')
+    await page.waitForSelector('[data-sys="proc-new"]', { state: 'visible', timeout: 15_000 })
+    await page.click('[data-sys="proc-new"]')
+    await page.waitForSelector(`${npForm} input[data-f="name"]`, { timeout: 15_000 })
+    assert.match(await text(`${npForm} .rg-np-warn`), /Aqui não é lugar de senha nem chave\./)
+    await page.fill(`${npForm} input[data-f="name"]`, NAME)
+    await page.fill(`${npForm} input[data-f="command"]`, 'node -e "setInterval(() => {}, 1000)"')
+    await page.fill(`${npForm} input[data-f="description"]`, 'de longe')
+    await page.click(`${npForm} [data-do="env-add"]`)
+    await page.fill(`${npForm} input[data-f="env-name"]`, 'BENCH_MODE')
+    await page.fill(`${npForm} input[data-f="env-value"]`, MARK)
+    assert.equal(await page.getAttribute(`${npForm} input[data-f="env-value"]`, 'type'), 'password')
+    await rr5shot('processo-390-form')
+    const signs = (await credentials())[0]!.signCount
+    await page.click(`${npForm} [data-do="create"]`)
+    await eventually(async () => ((await cli.request({ t: 'proc-info', name: NAME } as never).catch(() => ({}))) as unknown as { proc?: { status: string } }).proc?.status === 'running' || undefined, 30_000, 'the new process running')
+    assert.ok((await credentials())[0]!.signCount > signs, 'a command on the machine is proved by the act')
+    await eventually(async () => (await page.locator(npForm).count()) === 0 || undefined, 10_000, 'the form closed')
+    await eventually(async () => /Processo bench-novo criado/.test(await notice()) || undefined, 10_000, 'the result said')
+    // THE CANARY on the page: no storage of the browser, no field, no text, no attribute and no database holds the value.
+    const found = await page.evaluate(async (mark) => {
+      const where: string[] = []
+      const sweep = (s: Storage, n: string): void => { for (let i = 0; i < s.length; i++) { const k = s.key(i)!; if (k.includes(mark) || (s.getItem(k) ?? '').includes(mark)) where.push(`${n}:${k}`) } }
+      sweep(localStorage, 'localStorage')
+      sweep(sessionStorage, 'sessionStorage')
+      for (const i of document.querySelectorAll('input, textarea')) if ((i as HTMLInputElement).value.includes(mark)) where.push('field')
+      if (document.documentElement.outerHTML.includes(mark)) where.push('dom')
+      const dbs = (await indexedDB.databases?.()) ?? []
+      if (dbs.some((d) => (d.name ?? '').includes(mark))) where.push('indexedDB')
+      if (performance.getEntries().some((e) => e.name.includes(mark))) where.push('performance')
+      return where
+    }, MARK)
+    assert.deepEqual(found, [], `the value is nowhere in the page: ${found.join(', ')}`)
+    assert.equal(pageErrors.some((e) => e.includes(MARK)), false, 'nor in an error of the page')
+    await rr5shot('processo-390-criado')
+    await cli.request({ t: 'proc-stop', name: NAME, force: 'fim do passo' } as never).catch(() => undefined)
+  })
+
+  test('RR5 processo 2. a 390: um nome com cara de segredo é barrado antes de enviar, com a sugestão do dotenvx e sem "mesmo assim"', async () => {
+    await startAt(390, 844, 'mobile')
+    await page.click('.rg-sys-open')
+    await page.waitForSelector('[data-sys="proc-new"]', { state: 'visible', timeout: 15_000 })
+    await page.click('[data-sys="proc-new"]')
+    await page.waitForSelector(`${npForm} input[data-f="name"]`, { timeout: 15_000 })
+    await page.fill(`${npForm} input[data-f="name"]`, 'bench-segredo')
+    await page.fill(`${npForm} input[data-f="command"]`, 'node -e "1"')
+    await page.click(`${npForm} [data-do="env-add"]`)
+    await page.fill(`${npForm} input[data-f="env-name"]`, 'API_TOKEN')
+    await page.fill(`${npForm} input[data-f="env-value"]`, 'qualquer')
+    const signs = (await credentials())[0]!.signCount
+    await page.click(`${npForm} [data-do="create"]`)
+    await page.waitForSelector(`${npForm} .rg-cr-err`, { timeout: 5_000 })
+    const err = await text(`${npForm} .rg-cr-err`)
+    assert.match(err, /API_TOKEN parece um segredo/)
+    assert.match(err, /dotenvx run --/)
+    assert.doesNotMatch(err, /qualquer/, 'never the value')
+    assert.equal(await page.locator(`${npForm} [data-do="ask-go"]`).count(), 0, 'no "create anyway"')
+    assert.equal(await page.locator(npForm).getByText('mesmo assim').count(), 0, 'no "create anyway"')
+    assert.equal((await credentials())[0]!.signCount, signs, 'nothing was asked of the biometrics: nothing went')
+    await rr5shot('processo-390-segredo')
+    const info = await cli.request({ t: 'proc-info', name: 'bench-segredo' } as never).catch((e: unknown) => ({ error: String(e) })) as { proc?: unknown }
+    assert.equal(info.proc, undefined, 'nothing at the machine')
+    await page.keyboard.press('Escape')
+    await eventually(async () => (await page.locator(npForm).count()) === 0 || undefined, 5_000, 'the form closed')
+  })
+
+  test('RR5 novo 2. a 2560: "+ Novo" pelas setas e OK, uma mesa nova (o cartão em diálogo, o anel de foco)', async () => {
+    await startAt(2560, 1440, 'wide')
+    // The remote's arrows reach "+ Novo" in the heading of "Mesas"; OK opens the card.
+    await page.focus(deskRow('desk-obra'))
+    let at = await eventually(held, 5_000, 'a row of the tree')
+    for (let i = 0; i < 8 && !/rg-new/.test(at.key) && at.key !== 'new'; i++) {
+      await page.keyboard.press('ArrowUp')
+      at = await eventually(held, 5_000, 'the focus after ArrowUp')
+    }
+    assert.ok(at.key === 'new' || /rg-new/.test(at.key), `the arrows reach "+ Novo" (${at.key})`)
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(`${card}[data-step="what"][data-tier="wide"]`, { timeout: 15_000 })
+    const dlg = (await page.locator(card).boundingBox())!
+    assert.ok(dlg.width < 2560 * 0.6, `a dialog, not the whole screen: ${JSON.stringify(dlg)}`)
+    // The arrows walk the tiles; OK on "Mesa" goes on to its details.
+    const focused = async (): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return `${a?.dataset.do ?? ''}:${a?.dataset.arg ?? ''}` })
+    for (let i = 0; i < 10 && (await focused()) !== 'tile:desk'; i++) await page.keyboard.press('ArrowDown')
+    if ((await focused()) !== 'tile:desk') for (let i = 0; i < 10 && (await focused()) !== 'tile:desk'; i++) await page.keyboard.press('ArrowRight')
+    assert.equal(await focused(), 'tile:desk', 'the arrows reach the tile "Mesa"')
+    await page.screenshot({ path: join(rr5, '2560-novo-setas.png') })
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(`${card}[data-step="details"] input[data-f="desk-name"]`, { timeout: 5_000 })
+    await page.keyboard.type('Longe')
+    await page.screenshot({ path: join(rr5, '2560-novo-mesa.png') })
+    app.on('ext-event', onAppAct)
+    await page.keyboard.press('Enter')
+    await eventually(async () => appActs.some((a) => a.act === 'desks.create' && a.name === 'Longe') || undefined, 20_000, 'the desk asked of the app')
+    app.off('ext-event', onAppAct)
+    await eventually(async () => (await page.locator(card).count()) === 0 || undefined, 15_000, 'the card closed')
+    await page.setViewportSize({ width: 1440, height: 900 })
+  })
+
+  test('RR5 um minuto novo de gestos depois de "+ Novo", canal e processo', async () => {
+    await sleep(61_000)
+    // The steps after these read the bench's first channel in the centre, as they found it.
+    await startAt(1440, 900, 'desktop')
+    await openChannel(channelId)
   })
 
   test('12. rajada de eventos não quebra a tela: falas, uma enquete e árvores em sequência rápida, e a tela chega ao último estado', async () => {

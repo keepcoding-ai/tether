@@ -87,11 +87,14 @@ export function itemKeyOf(place: Place, f: ItemFacts): string | undefined {
 
 /** Who takes the keyboard first: whoever waits for the person, else the first channel, else the first item. */
 export function initialKeyOf(keys: readonly string[]): string | undefined {
-  return keys.find(k => k.startsWith('wait:')) ?? keys.find(k => k.startsWith('conv:')) ?? keys.find(k => !k.startsWith('lock:')) ?? keys[0]
+  return keys.find(k => k.startsWith('wait:')) ?? keys.find(k => k.startsWith('conv:')) ?? keys.find(k => !isGesture(k)) ?? keys[0]
 }
 
-/** The casing's own items ("Trancar"): there from the first paint, they are not the house's content and never take the first focus. */
-const isCasing = (k: string): boolean => k.startsWith('chip:') || k.startsWith('lock:')
+/** The gestures of the casing ("Trancar", "+ Novo", the channel's bar): never the first focus while there is content. */
+const isGesture = (k: string): boolean => k.startsWith('lock:') || k.startsWith('new:') || k.startsWith('bar:')
+
+/** The casing's own items: there from the first paint, they are not the house's content and never take the first focus. */
+const isCasing = (k: string): boolean => k.startsWith('chip:') || isGesture(k)
 
 /**
  * The first focus of the TV is decided when real content arrives, not at the first paint (which has only the filter chips and

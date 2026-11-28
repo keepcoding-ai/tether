@@ -34,6 +34,10 @@ describe('firstFocusOf', () => {
     assert.deepEqual(firstFocusOf(['lock:lock', 'chip:all'], false), { settled: false })
     assert.deepEqual(firstFocusOf(['lock:lock', 'chip:all', 'conv:x', 'msg:4'], false), { settled: true, key: 'conv:x' })
     assert.equal(initialKeyOf(['lock:lock', 'chip:all']), 'chip:all')
+    // "+ Novo" and the channel's bar (RR5) are there from the first paint too: gestures, never the first focus.
+    assert.deepEqual(firstFocusOf(['new:new', 'chip:all', 'bar:join'], false), { settled: false })
+    assert.deepEqual(firstFocusOf(['new:new', 'chip:all', 'conv:x', 'wait:a'], false), { settled: true, key: 'wait:a' })
+    assert.equal(initialKeyOf(['new:new', 'bar:more', 'chip:all']), 'chip:all')
   })
   test('the person already walked: her focus stays, the decision is closed', () => {
     assert.deepEqual(firstFocusOf(['chip:all', 'conv:x', 'wait:a'], true), { settled: true })

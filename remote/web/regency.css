@@ -434,6 +434,7 @@ dialog.rg-cr[data-tier="wide"] { zoom: 1.6; }
 .rg-cr[data-tier="wide"] :is(button, input):focus { outline: 3px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent); }
 /* The process form from afar: the line of what is going to run, and the line of the biometrics, before the system asks. */
 .rg-np-run { display: flex; flex-direction: column; gap: 4px; margin: 6px 14px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); font-size: 12px; }
+.rg-np-run[hidden] { display: none; }
 .rg-np-run code { font-family: var(--mono, monospace); overflow-wrap: anywhere; }
 .rg-np-run b { font-weight: 600; }
 .rg-cr[data-tier="mobile"] .rg-np-run { font-size: 14px; }
