@@ -260,7 +260,8 @@ export class ActBridge {
   #answering(args: unknown, ctx: ExtRequestContext): Waiting {
     if (!(ctx.client === 'app' || (this.#d.bench && ctx.client === 'test'))) refuseAct('door-denied', 'só o app responde a um ato')
     const app = this.#d.app()
-    if (app.conn !== undefined && ctx.conn !== undefined && ctx.conn !== app.conn) refuseAct('door-denied', 'só o app que publica a árvore responde')
+    // Fails closed (RR5 O-2): an answer comes only on the connection known to hold the lease; unknown on either side is no.
+    if (app.conn === undefined || ctx.conn === undefined || ctx.conn !== app.conn) refuseAct('door-denied', 'só o app que publica a árvore responde')
     const ask = (args as { ask?: unknown } | undefined)?.ask
     const w = typeof ask === 'string' ? this.#waiting.get(ask) : undefined
     return w ?? refuseAct('bad-request', 'nenhum ato com esse ask')

@@ -128,6 +128,20 @@ describe('the bridge of acts: the app there or not', () => {
     b.bridge.done({ ask, ok: true, state: 'already' }, APP)
     assert.deepEqual(await p, { state: 'already' })
   })
+
+  test('RR5 O-2: fails closed: with the lease\'s connection unknown, or the answer\'s, nobody claims nor answers', async () => {
+    const b = bench({ app: () => ({ live: true }) })
+    const p = b.bridge.act({ act: 'desks.wake', deskId: 'desk-2' }, REMOTE)
+    for (let i = 0; i < 50 && b.events.length === 0; i++) await new Promise((r) => setTimeout(r, 5))
+    const ask = b.events[0]!.ask
+    for (const ctx of [APP, { client: 'app' }] as ExtRequestContext[]) assert.throws(() => b.bridge.take({ ask }, ctx), code('door-denied'), JSON.stringify(ctx))
+    await assert.rejects(p, code('no-app'))
+    const c = bench()
+    const q = c.bridge.act({ act: 'desks.wake', deskId: 'desk-2' }, REMOTE)
+    for (let i = 0; i < 50 && c.events.length === 0; i++) await new Promise((r) => setTimeout(r, 5))
+    assert.throws(() => c.bridge.take({ ask: c.events[0]!.ask }, { client: 'app' }), code('door-denied'), 'an answer without its connection')
+    await assert.rejects(q, code('no-app'))
+  })
 })
 
 describe('the bridge of acts: what tetherd confers alone', () => {

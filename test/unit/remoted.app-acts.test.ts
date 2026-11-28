@@ -80,6 +80,10 @@ describe('appActArgs and parseAppAct: one closed list for the portal, tetherd an
     }
     for (const v of [undefined, null, [], 'desks.hibernate', { act: 'object-set', kind: 'desk', id: 'd', key: 'owner' }, { act: 'tree.publish' }, { act: '__proto__' }, { act: 'constructor', deskId: 'd' }])
       assert.equal(parseAppAct(v), undefined, JSON.stringify(v))
+    // RR5 O-1: a key of Object.prototype in the body is a field outside the rule, refused without a throw.
+    for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty'])
+      for (const body of ['"act":"owners.give","deskId":"d","seen":"D","to":"a"', '"act":"desks.create","name":"N"'])
+        assert.equal(parseAppAct(JSON.parse(`{${body},"${k}":"x"}`)), undefined, `${body} with ${k}`)
     assert.equal(parseAppAct({ act: 'desks.rename', deskId: 'd', name: ' Obra ' }), undefined, 'a name not in its folded form')
     assert.equal(parseAppAct({ act: 'desks.rename', deskId: 'd', name: 'Obra‮' }), undefined)
     assert.equal(parseAppAct({ act: 'desks.rename', deskId: 'd', name: 'n'.repeat(DESK_NAME_MAX + 1) }), undefined)

@@ -121,7 +121,9 @@ export function parseAppAct(v: unknown): AppAct | undefined {
   for (const [k, f] of Object.entries(rule.need)) if (!Object.hasOwn(o, k) || !fieldOk(f, o[k])) return undefined
   for (const [k, val] of Object.entries(o)) {
     if (k === 'act' || Object.hasOwn(rule.need, k)) continue
-    const f = rule.may?.[k]
+    // Own keys only: `__proto__` or `constructor` in a body is a field outside the rule, never Object.prototype's (RR5 O-1).
+    const may = rule.may ?? {}
+    const f = Object.hasOwn(may, k) ? (may as Record<string, Field>)[k] : undefined
     if (f === undefined || !fieldOk(f, val)) return undefined
   }
   return { ...o } as AppAct
