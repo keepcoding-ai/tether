@@ -17,7 +17,13 @@
 // opens a poll; the four sizes are captured with the box and a poll's card; she locks the device from its strip, and once
 // unlocked what waited to be said goes; two windows of the device: the second says where the Regency is, "Usar aqui" takes
 // it, and closing the owner gives it back to the other.
-// Captures go to REMOTE_SHOTS_DIR (else test/e2e/artifacts): rr3-live-*.png and rr4-*.png, and the TV's under rr3-tv/.
+// RR5 5.4, she manages from afar (the protected device, every manage:* scope): at 390 px she hibernates and wakes a desk by
+// its row's sheet (the app's question when an agent works there), renames a desk in its row, stops a process an agent uses
+// (the board "em uso", then the force with a reason), closes a pane with the proof of that act, and with the app closed the
+// act says "O tether não está aberto na máquina"; at 1440 the menu opens at the right click and Esc gives the row the keyboard
+// back; at 2560 OK opens it and the arrows walk it. The bench's app does the app's half of each act (it claims, changes its
+// desks, sends its map and tree, answers); a process host of the bench in this process serves "Sistema".
+// Captures go to REMOTE_SHOTS_DIR (else test/e2e/artifacts): rr3-live-*.png and rr4-*.png, the TV's under rr3-tv/, RR5's under rr5/.
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -32,6 +38,9 @@ import { DoorHost } from '../../src/daemon/door/host.ts'
 import type { VerbResult } from '../../src/daemon/door/types.ts'
 import { DaemonExtensionHost } from '../../src/daemon/ext-host.ts'
 import { startDaemon, type Daemon } from '../../src/daemon/server.ts'
+import { HostClient } from '../../src/procd/client.ts'
+import { ProcHost } from '../../src/procd/host.ts'
+import { hostStore } from '../../src/procd/run-store.ts'
 import { activateWith as activateRemote } from '../../extensions/remote/daemon.ts'
 import { manifest as remoteManifest } from '../../extensions/remote/manifest.ts'
 import { activate as activateChannels } from '../../extensions/channels/daemon.ts'
@@ -129,6 +138,11 @@ interface Held { key: string; left: number; right: number; inTree: boolean; inLe
 describe('remote web client live (RR3): the real PWA over the real relay, portal and tetherd of the bench', () => {
   const home = benchHome('tether-remote-web-live-')
   const pipe = uniquePipe(home)
+  const hostPipe = uniquePipe(home)
+  const procHome = join(home, 'procd')
+  /** A process of the bench an agent declares it uses (RR5 5.4: stop it from afar, over the board "em uso"). */
+  const PROC = 'bench-web'
+  let procHost: ProcHost | undefined
   const out = join(home, 'web-dist')
   const profile = join(home, 'browser-profile')
   const logs: string[] = []
@@ -191,7 +205,8 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
       ],
     })
     extHost.activate()
-    daemon = await startDaemon({ home, pipe, memoryIntervalMs: 0, door: d, log: (m) => logs.push(m) })
+    // The processes' host of the bench (RR5 5.4: "Sistema" from afar), in this process, with a home of its own.
+    daemon = await startDaemon({ home, pipe, memoryIntervalMs: 0, door: d, log: (m) => logs.push(m), connectProcHost: () => HostClient.open(hostPipe, 5_000, { home: procHome }) })
     extHost.emitStarted()
     app = await DaemonClient.open(pipe, 'app', { home })
     cli = await DaemonClient.open(pipe, 'cli', { home })
@@ -221,20 +236,22 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
   // ---- what the app does for the Regency: publish the tree and keep its lease ----------------------------------------
 
   /** The Regency's entry in the shape the app publishes it: two desks, the channel's member as an agent, the open channels. */
+  /** What the bench's app changed by the acts asked from afar (RR5 5.4): the desks' names, the hibernating ones, the closed panes. */
+  const desksNow = { names: { 'desk-obra': 'Obra', 'desk-migr': 'Migração' } as Record<string, string>, asleep: new Set<string>(), gone: new Set<string>() }
   const treeOf = (o: { conferente?: string; revisor?: string } = {}): Record<string, unknown> => ({
     desks: {
       desks: [
         {
-          id: 'desk-obra', name: 'Obra', color: 'blue', kind: 'queue', asleep: false, panes: [
+          id: 'desk-obra', name: desksNow.names['desk-obra'], color: 'blue', kind: 'queue', asleep: desksNow.asleep.has('desk-obra'), panes: [
             { id: memberId, type: 'terminal', icon: 'sparkle', title: o.conferente ?? 'conferente', busy: true, lines: ['Revisando a tela de filtro'] },
             { id: 'p-web', type: 'terminal', icon: 'terminal-window', title: 'web · npm run dev' },
-          ],
+          ].filter((p) => !desksNow.gone.has(p.id)),
         },
         {
-          id: 'desk-migr', name: 'Migração', color: 'green', kind: 'queue', asleep: false, panes: [
+          id: 'desk-migr', name: desksNow.names['desk-migr'], color: 'green', kind: 'queue', asleep: desksNow.asleep.has('desk-migr'), panes: [
             { id: 'p-migra', type: 'terminal', icon: 'ghost', title: 'migra', busy: true },
             { id: 'p-revisor', type: 'terminal', icon: 'sparkle', title: o.revisor ?? 'revisor', attention: 'waiting', lines: ['Esperando você'] },
-          ],
+          ].filter((p) => !desksNow.gone.has(p.id)),
         },
       ],
     },
@@ -352,6 +369,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
       'relay.listening', relayLines)
     relay = r.proc
 
+    mkdirSync(procHome, { recursive: true })
+    procHost = new ProcHost({ home: procHome, pipe: hostPipe, store: hostStore })
+    await procHost.listen()
     await startHouse()
     assert.deepEqual(await remoteOn(), { on: true })
     await houseUp()
@@ -408,7 +428,9 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     appCloses()
     await browser?.close().catch(() => undefined)
     killTree(electron)
+    try { await cli.request({ t: 'proc-stop', name: PROC, force: 'fim da bancada' }) } catch { /* gone, or never started */ }
     await stopHouse().catch(() => undefined)
+    await procHost?.close().catch(() => undefined)
     killTree(relay)
     killTree(web)
     await removeHome(home)
@@ -859,6 +881,195 @@ describe('remote web client live (RR3): the real PWA over the real relay, portal
     await sleep(300)
     assert.equal(await page.isVisible('.rr-top .rr-push'), false)
     assert.match(await text('.rr-top .rr-push-na'), /não disponível aqui/)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await sleep(300)
+  })
+
+  // ---- RR5 5.4: managing from afar, on the protected device ----------------------------------------------------------
+  // The bench's app does the app's half of each act (extensions/regency/renderer/remote-acts.ts in the real app): it claims
+  // the act (`act.take`), changes its desks, sends tetherd its desk map and the tree again, and answers (`act.done`).
+  const rr5 = join(shots, 'rr5')
+  const rr5shot = async (name: string): Promise<void> => { await page.screenshot({ path: join(rr5, `${name}.png`) }) }
+  const appActs: Record<string, unknown>[] = []
+  const deskMapOf = (): Record<string, unknown> => {
+    const t = treeOf() as { desks: { desks: { id: string; name: string; asleep: boolean; panes: { id: string; type: string }[] }[] } }
+    return { desks: t.desks.desks.map((d) => ({ id: d.id, name: d.name, kind: 'queue', ...(d.asleep ? { asleep: true } : {}), panes: d.panes.map((p) => ({ id: p.id, type: p.type })) })), drawer: [] }
+  }
+  const sendMap = async (): Promise<void> => { await app.request({ t: 'desk-map', map: deskMapOf() } as never) }
+  const onAppAct = (e: { ext: string; name: string; payload?: unknown }): void => {
+    if (e.ext !== 'regency' || e.name !== 'act') return
+    const { ask, act } = e.payload as { ask: string; act: Record<string, unknown> }
+    void (async () => {
+      await ext(app, 'act.take', { ask }, 'regency')
+      appActs.push(act)
+      let answer: Record<string, unknown> = { ask, ok: true, state: 'done' }
+      const deskId = String(act.deskId)
+      switch (act.act) {
+        case 'desks.hibernate': desksNow.asleep.add(deskId); break
+        case 'desks.wake': desksNow.asleep.delete(deskId); break
+        case 'desks.rename': desksNow.names[deskId] = String(act.name); break
+        case 'panes.close': desksNow.gone.add(String(act.paneId)); break
+        default: answer = { ask, ok: false, code: 'refused' }
+      }
+      await sendMap()
+      await publish()
+      await ext(app, 'act.done', answer, 'regency')
+    })().catch((err: unknown) => logs.push(`bench app act: ${String(err)}`))
+  }
+  const deskRow = (id: string): string => `.rg-tree [data-target="desk:${id}"]`
+  /** The row's "⋯" (the phone has it always in view): its menu, a sheet from the bottom. */
+  const rowMenu = async (row: string): Promise<void> => {
+    await page.click(`${row} [data-action="row-menu"]`, { timeout: 5_000 })
+    await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+  }
+  const menuRow = (label: string): Promise<void> => page.locator('#ctx-menu .rr-mi', { hasText: label }).first().click({ timeout: 5_000 })
+  const notice = (): Promise<string> => page.evaluate(() => document.querySelector('.rg-toast:not([hidden]) .rg-toast-t')?.textContent ?? '')
+
+  test('RR5 gerir 1. a 390: hibernar e despertar uma mesa pela gaveta (a pergunta do app quando um agente trabalha)', async () => {
+    mkdirSync(rr5, { recursive: true })
+    app.on('ext-event', onAppAct)
+    await sendMap()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForSelector('.rr[data-tier="mobile"]', { timeout: 10_000 })
+    // The device's scopes came (`session.info`): the pane manages, the row's "⋯" shows.
+    await page.waitForSelector('.rr[data-manage~="desks"] .rg:not([data-readonly])', { timeout: 15_000 })
+    await page.click('.rg-tab[data-tab="tether"]')
+    await rowMenu(deskRow('desk-migr'))
+    assert.equal(await page.getAttribute('#ctx-menu', 'data-form'), 'sheet', 'a sheet from the bottom on the phone')
+    const items = await page.locator('#ctx-menu .rr-mi').evaluateAll((bs) => bs.map((b) => ({ t: b.textContent ?? '', h: b.getBoundingClientRect().height })))
+    assert.ok(items.some((i) => i.t.includes('Hibernar mesa')), JSON.stringify(items))
+    assert.ok(!items.some((i) => i.t.includes('Despertar mesa')), 'an awake desk offers "Hibernar mesa" only')
+    assert.ok(items.every((i) => i.h >= 44), `targets of 44 px: ${JSON.stringify(items)}`)
+    await rr5shot('390-gaveta-mesa')
+    await menuRow('Hibernar mesa')
+    // migra works on that desk: the app's question first.
+    await page.waitForSelector('.rr-ask[data-form="sheet"]', { timeout: 5_000 })
+    assert.match(await text('.rr-ask'), /Um agente da mesa "Migração" está trabalhando/)
+    await rr5shot('390-pergunta-hibernar')
+    await page.click('.rr-ask [data-choice="hibernate"]')
+    await eventually(async () => (await text(deskRow('desk-migr'))).includes('hibernando') || undefined, 15_000, 'the desk hibernating in the tree')
+    assert.ok(appActs.some((a) => a.act === 'desks.hibernate' && a.deskId === 'desk-migr'), JSON.stringify(appActs))
+    await eventually(async () => /hibernando/.test(await notice()) || undefined, 5_000, 'the result said')
+    await rr5shot('390-hibernando')
+    await rowMenu(deskRow('desk-migr'))
+    const again = await text('#ctx-menu')
+    assert.match(again, /Despertar mesa/, 'a hibernating desk offers "Despertar mesa"')
+    assert.doesNotMatch(again, /Hibernar mesa/)
+    await menuRow('Despertar mesa')
+    await eventually(async () => !(await text(deskRow('desk-migr'))).includes('hibernando') || undefined, 15_000, 'the desk awake again')
+    assert.ok(appActs.some((a) => a.act === 'desks.wake' && a.deskId === 'desk-migr'))
+  })
+
+  test('RR5 gerir 2. a 390: renomear a mesa na própria linha', async () => {
+    await rowMenu(deskRow('desk-obra'))
+    await menuRow('Renomear')
+    await page.waitForSelector('.rg-rename', { timeout: 5_000 })
+    await page.fill('.rg-rename', 'Obra nova')
+    await rr5shot('390-renomear')
+    await page.press('.rg-rename', 'Enter')
+    await eventually(async () => (await text(deskRow('desk-obra'))).includes('Obra nova') || undefined, 15_000, 'the new name in the tree')
+    assert.ok(appActs.some((a) => a.act === 'desks.rename' && a.name === 'Obra nova'))
+  })
+
+  test('RR5 gerir 3. a 390: parar um processo que um agente usa: o quadro "em uso" (quem, até quando, para quê), então forçar com o motivo', async () => {
+    const recipe = { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: home }
+    assert.equal((await cli.request({ t: 'proc-start', name: PROC, recipe } as never)).proc!.status, 'running')
+    await cli.request({ t: 'proc-use', name: PROC, duration: '30m', purpose: 'rodando a bateria', by: { slotId: memberId } } as never)
+    await page.click('.rg-sys-open')
+    const row = `.rg-sr.proc[data-proc="${PROC}"]`
+    await page.waitForSelector(`${row} [data-sys="stop"]`, { timeout: 15_000 })
+    assert.equal(await page.locator('[data-sys="proc-new"]:visible').count(), 0, 'no "Novo processo" from afar yet')
+    await page.click(`${row} [data-sys="stop"]`)
+    await page.waitForSelector(`${row} .rg-sr-x.inuse`, { timeout: 15_000 })
+    const board = await text(`${row} .rg-sr-x.inuse`)
+    assert.match(board, /Não dá para parar "bench-web" agora/)
+    assert.match(board, /conferente usa até daqui a .*, para: rodando a bateria/)
+    assert.equal(await page.locator(`${row} [data-sys="inuse-wait"]`).count(), 0, 'waiting for the use to end is not from afar')
+    await rr5shot('390-processo-em-uso')
+    await page.click(`${row} [data-sys="inuse-force"]`)
+    await page.fill(`${row} [data-field="reason"]`, 'preciso da porta')
+    await page.click(`${row} [data-sys="inuse-force-go"]`)
+    await eventually(async () => {
+      const info = (await cli.request({ t: 'proc-info', name: PROC } as never)) as unknown as { proc: { status: string } }
+      return info.proc.status !== 'running' || undefined
+    }, 30_000, 'the process stopped')
+    await eventually(async () => ((await page.getAttribute(row, 'data-state')) !== 'ok') || undefined, 15_000, 'the row read again')
+    await rr5shot('390-processo-parado')
+    await page.click('.rg-sys-back')
+  })
+
+  test('RR5 gerir 4. a 390: fechar uma guia com a prova deste ato (a frase da biometria antes; a guia sai da mesa)', async () => {
+    const before = (await credentials())[0]!.signCount
+    await page.click('.rg-tab[data-tab="tether"]').catch(() => undefined)
+    await rowMenu('.rg-tree [data-target="pane:p-web"]')
+    await menuRow('Fechar guia')
+    await page.waitForSelector('.rr-ask', { timeout: 5_000 })
+    const q = await text('.rr-ask')
+    assert.match(q, /Esta guia tem um shell aberto/)
+    assert.match(q, /Para isso, o tether pede a biometria deste aparelho\./, 'what is going to be done, before the system asks')
+    await rr5shot('390-fechar-guia')
+    await page.click('.rr-ask [data-choice="keep"]')
+    await eventually(async () => (await page.locator('.rg-tree [data-target="pane:p-web"]').count()) === 0 || undefined, 20_000, 'the pane gone from the tree')
+    assert.ok(appActs.some((a) => a.act === 'panes.close' && a.paneId === 'p-web' && a.process === 'keep'), JSON.stringify(appActs))
+    assert.ok((await credentials())[0]!.signCount > before, 'the act was proved by the platform authenticator')
+    await eventually(async () => /fechada/.test(await notice()) || undefined, 5_000, 'the result said')
+  })
+
+  test('RR5 gerir 5. a 390: com o app fechado na máquina, o ato diz "O tether não está aberto na máquina", nunca o código', async () => {
+    appCloses()
+    lease.skewMs = STALE_MS + 5_000
+    lease.expire?.()
+    await page.waitForSelector('.rr[data-link="closed"]', { timeout: 15_000 })
+    await rowMenu(deskRow('desk-obra'))
+    await menuRow('Hibernar mesa')
+    // conferente works on that desk: the question first, then the house's answer.
+    await page.click('.rr-ask [data-choice="hibernate"]', { timeout: 5_000 })
+    await eventually(async () => /O tether não está aberto na máquina/.test(await notice()) || undefined, 10_000, 'the sentence of no-app')
+    assert.doesNotMatch(await notice(), /no-app/)
+    await rr5shot('390-app-fechado')
+    lease.skewMs = 0
+    await publish()
+    appOpens()
+    await page.waitForSelector('.rr[data-link="live"]', { timeout: 15_000 })
+  })
+
+  test('RR5 gerir 6. a 1440: o menu no ponto do botão direito; Esc fecha e devolve o teclado à linha', async () => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.waitForSelector('.rr[data-tier="desktop"]', { timeout: 10_000 })
+    const row = `.rg-tree [data-target="agent:${memberId}"]`
+    await page.click(row, { button: 'right' })
+    await page.waitForSelector('#ctx-menu[data-form="point"]', { timeout: 5_000 })
+    const m = await text('#ctx-menu')
+    for (const l of ['O agente conferente', 'Espiar', 'Fechar guia']) assert.ok(m.includes(l), `${l}: ${m}`)
+    await rr5shot('1440-menu')
+    await page.keyboard.press('Escape')
+    await eventually(async () => (await page.locator('#ctx-menu').count()) === 0 || undefined, 5_000, 'the menu closed')
+    await eventually(async () => (await page.evaluate(() => (document.activeElement as HTMLElement | null)?.closest('.rg-tree [data-key]') !== null)) || undefined, 5_000, 'the keyboard back on the row')
+  })
+
+  test('RR5 gerir 7. a 2560: OK numa linha abre o menu, as setas andam nele, Voltar fecha', async () => {
+    await page.setViewportSize({ width: 2560, height: 1440 })
+    await page.waitForSelector('.rr[data-tier="wide"]', { timeout: 10_000 })
+    await page.focus(deskRow('desk-migr'))
+    await page.keyboard.press('ArrowDown')
+    const at = await eventually(held, 5_000, 'a row of the tree')
+    assert.ok(at.inTree, at.key)
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('#ctx-menu', { timeout: 5_000 })
+    const first = await page.evaluate(() => document.activeElement?.textContent ?? '')
+    await page.keyboard.press('ArrowDown')
+    const second = await page.evaluate(() => (document.activeElement?.closest('#ctx-menu') ? document.activeElement.textContent ?? '' : ''))
+    assert.ok(second !== '' && second !== first, `the arrows walk the menu (${first} → ${second})`)
+    await page.screenshot({ path: join(rr5, '2560-menu-setas.png') })
+    await page.keyboard.press('Escape')
+    await eventually(async () => (await page.locator('#ctx-menu').count()) === 0 || undefined, 5_000, 'the menu closed')
+    // The bench's desks as they were for the tests that follow.
+    desksNow.names['desk-obra'] = 'Obra'
+    desksNow.gone.clear()
+    desksNow.asleep.clear()
+    app.off('ext-event', onAppAct)
+    await sendMap()
+    await publish()
     await page.setViewportSize({ width: 1440, height: 900 })
     await sleep(300)
   })
