@@ -17,6 +17,10 @@ export const PIPE_WRITES_MAX = 4
 export const PIPE_WRITE_TIMEOUT_MS = 10_000
 /** Writes past their deadline that tetherd has not answered yet: over it, no write is sent until one comes back. */
 export const PIPE_WRITES_LATE_MAX = 8
+/** How long the real outcome of a write may take for what waits on it (`settled`): past it, `timeout` (a speech's uploads are freed). */
+export const PIPE_WRITE_SETTLE_MS = 10 * 60_000
+/** How long the late ceiling may stay reached before the portal leaves to be reborn. */
+export const PIPE_WRITES_STUCK_MS = 60_000
 
 /** Why a write did not come back: over a ceiling, past its deadline, refused by tetherd with a code, or the pipe failed. */
 export class WriteError extends Error {
@@ -52,13 +56,40 @@ const outcomeOf = (e: unknown): WriteError => {
   return typeof code === 'string' ? new WriteError('refused', code) : new WriteError('failed')
 }
 
-export function pipeWrites(request: ExtRequestFn, o: { max?: number; timeoutMs?: number; lateMax?: number; log?: (m: string) => void } = {}): PipeWrites {
+export interface PipeWritesOptions {
+  max?: number
+  timeoutMs?: number
+  lateMax?: number
+  /** How long a write's real outcome may take before `settled` gives up on it (`timeout`), so what waits on it is freed. */
+  settleMs?: number
+  /** How long the late ceiling may stay reached before `onStuck` is called. */
+  stuckMs?: number
+  /** The late ceiling stayed reached for `stuckMs`: tetherd does not answer; the portal should leave and be reborn. Once per stretch. */
+  onStuck?: () => void
+  log?: (m: string) => void
+}
+
+export function pipeWrites(request: ExtRequestFn, o: PipeWritesOptions = {}): PipeWrites {
   const max = o.max ?? PIPE_WRITES_MAX
   const timeoutMs = o.timeoutMs ?? PIPE_WRITE_TIMEOUT_MS
   const lateMax = o.lateMax ?? PIPE_WRITES_LATE_MAX
+  const settleMs = o.settleMs ?? PIPE_WRITE_SETTLE_MS
+  const stuckMs = o.stuckMs ?? PIPE_WRITES_STUCK_MS
   const log = o.log ?? (() => {})
   let inflight = 0
   let late = 0
+  let stuckTimer: ReturnType<typeof setTimeout> | undefined
+  // The ceiling reached starts the clock; one answer below it stops it. Past `stuckMs` the portal is told once.
+  const watchStuck = (): void => {
+    if (late >= lateMax) {
+      if (stuckTimer !== undefined || !o.onStuck) return
+      stuckTimer = setTimeout(() => {
+        log(`pipe: ${late} writes late at tetherd for ${Math.round(stuckMs / 1000)} s, the portal leaves`)
+        o.onStuck?.()
+      }, stuckMs)
+      stuckTimer.unref?.()
+    } else if (stuckTimer !== undefined) { clearTimeout(stuckTimer); stuckTimer = undefined }
+  }
   return {
     get inflight() { return inflight },
     get late() { return late },
@@ -71,10 +102,18 @@ export function pipeWrites(request: ExtRequestFn, o: { max?: number; timeoutMs?:
       }
       inflight++
       let state: 'flight' | 'late' | 'done' = 'flight'
-      const settled: Promise<WriteOutcome> = request({ t: 'ext-request', ext: pair.ext, name: pair.name, args }).then(
+      const real: Promise<WriteOutcome> = request({ t: 'ext-request', ext: pair.ext, name: pair.name, args }).then(
         (reply): WriteOutcome => ({ ok: true, result: reply.result }),
         (e: unknown): WriteOutcome => ({ ok: false, error: outcomeOf(e) }),
       )
+      // What the house keeps (a speech's files marked `said`) must not wait forever for a tetherd that never answers: past
+      // `settleMs` the outcome is `timeout`. The late count below still follows the real answer.
+      let giveUp: ReturnType<typeof setTimeout> | undefined
+      const settled: Promise<WriteOutcome> = Promise.race([
+        real,
+        new Promise<WriteOutcome>((resolve) => { giveUp = setTimeout(() => resolve({ ok: false, error: new WriteError('timeout') }), settleMs); giveUp.unref?.() }),
+      ])
+      void real.then(() => clearTimeout(giveUp))
       let timer: ReturnType<typeof setTimeout> | undefined
       const deadline = new Promise<WriteOutcome>((resolve) => {
         timer = setTimeout(() => {
@@ -83,16 +122,17 @@ export function pipeWrites(request: ExtRequestFn, o: { max?: number; timeoutMs?:
           inflight--
           late++
           log(`pipe: a write past its deadline, ${late} late at tetherd`)
+          watchStuck()
           resolve({ ok: false, error: new WriteError('timeout') })
         }, timeoutMs)
       })
-      void settled.then(() => {
+      void real.then(() => {
         clearTimeout(timer)
         if (state === 'flight') inflight--
-        else if (state === 'late') { late--; log(`pipe: a late write answered, ${late} late at tetherd`) }
+        else if (state === 'late') { late--; log(`pipe: a late write answered, ${late} late at tetherd`); watchStuck() }
         state = 'done'
       })
-      const answer = Promise.race([settled, deadline]).then((r) => { if (r.ok) return r.result; throw r.error })
+      const answer = Promise.race([real, deadline]).then((r) => { if (r.ok) return r.result; throw r.error })
       return { answer, settled }
     },
   }
